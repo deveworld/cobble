@@ -66,6 +66,14 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         .or_else(|| config.as_ref().map(|c| c.project.pack_format as u32))
         .unwrap_or(88); // Minecraft 1.21.9+ (recommended)
 
+    // Validate pack_format
+    if pack_format > 255 {
+        return Err(format!(
+            "pack_format must be between 1 and 255, got {}",
+            pack_format
+        ));
+    }
+
     // Check if source is a file or directory
     let files_to_compile = if source_path.is_file() {
         vec![source_path.clone()]

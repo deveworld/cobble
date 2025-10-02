@@ -3,7 +3,6 @@
 # Global Variables
 score = 0
 player_count = 5
-message = "Hello World"
 
 # Simple function
 def hello():

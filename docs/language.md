@@ -465,7 +465,6 @@ Cobble requires **Minecraft 1.21.7+** (minimum pack format 81) and defaults to *
 
 - No support for classes (yet)
 - No support for lists/arrays (yet)
-- No parentheses for grouping expressions (e.g., `(a + b) * c`) - but operator precedence works correctly
 - Boolean `and` and `not` operators are supported; `or` operator not yet implemented
 - Function parameters require Minecraft 1.20.2+ for macro support
 - For loops only support `range()` iterators
