@@ -8,17 +8,28 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.1.0 Pre-Alpha** - Early development version | Minecraft 1.21.9+ compatible
+**✨ Version 0.2.1** - Feature-rich development version | Minecraft 1.21.9+ compatible
+
+## ⚠️ Pre-release Notice
+
+**Cobble is currently in active development (v0.2.1 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+
+**We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
+- **GitHub Issues**: https://github.com/deveworld/cobble/issues
+
+Your bug reports and feature requests help make Cobble better for everyone. Thank you for being an early adopter! 🙏
 
 ## ✨ Features
 
 - ✅ **Python-like Syntax** - Familiar, clean syntax with proper indentation
 - ✅ **Function Parameters** - Full support using Minecraft 1.20.2+ macro system
 - ✅ **Event System** - Built-in event handling for load and tick events
-- ✅ **Control Flow** - If statements, for loops, while loops with smart optimization
-- ✅ **Boolean Operators** - `and`, `not` operators for complex conditions (e.g., `if x > 0 and not y == 5:`)
+- ✅ **Control Flow** - If statements, for loops (with step support), while loops with smart optimization
+- ✅ **Boolean Operators** - `and`, `or`, `not` operators for complex conditions (e.g., `if x > 0 and y < 5 or z == 10:`)
 - ✅ **Complex Expressions** - Multi-operator expressions with proper precedence (e.g., `a + b * c`)
-- ✅ **Arithmetic Operations** - Full support for +, -, *, / with variable and constant operands
+- ✅ **Arithmetic Operations** - Full support for +, -, *, /, %, ^ with variable and constant operands
+- ✅ **Advanced Operators** - Modulo (%) and power (^) operators with compile-time optimization
+- ✅ **Expressions in Conditions** - Use arithmetic directly in if/while (e.g., `if x % 3 == 1:`)
 - ✅ **Module-level Variables** - Top-level assignments automatically initialized at pack load
 - ✅ **Modern CLI** - Full-featured command-line interface with watch mode and ZIP creation
 - ✅ **Project Management** - Configuration via `cobble.toml`
@@ -169,14 +180,32 @@ def check_score():
     if score >= 10:
         /say High score!
         /advancement grant @p only namespace:achievement
+
+    # Complex expressions in conditions
+    x = 10
+    if x % 3 == 1:
+        /say x mod 3 equals 1
+
+    # Multiple conditions with AND/OR
+    if score >= 10 and x % 2 == 0 or score >= 20:
+        /say Complex condition met!
 ```
 
 #### For Loops
 
 ```python
 def spawn_multiple():
+    # Basic loop
     for i in range(5):
         /summon minecraft:pig ~i ~ ~
+
+    # Loop with step
+    for i in range(10) by 2:
+        /say Count by 2: 0, 2, 4, 6, 8
+
+    # Countdown with negative step
+    for i in range(10) by -1:
+        /say Countdown: 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
 ```
 
 #### While Loops
@@ -206,30 +235,42 @@ def calculations():
     diff = a - b         # 5
     product = a * b      # 50
     quotient = a / b     # 2
+    remainder = a % c    # 1 (modulo)
+    power = b ^ 2        # 25 (exponentiation)
 
     # Multi-operator expressions
     result1 = a + b + c          # (a + b) + c = 18
     result2 = a * b * c          # (a * b) * c = 150
 
-    # Operator precedence (multiplication before addition)
+    # Operator precedence
     result3 = a + b * c          # a + (b * c) = 25, NOT (a + b) * c
     result4 = a * b + c          # (a * b) + c = 53
+    result5 = a % c + b          # (a % c) + b = 6
+    result6 = b ^ 2 * c          # (b ^ 2) * c = 75
 
     # Loop variable arithmetic
     for i in range(5):
         x = i * 10       # Uses correct loop_counter objective
         y = i + 5        # Loop variables work in all operations
+
+    # Complex expressions in conditions
+    if a % 3 == 1:       # Use arithmetic directly in conditions
+        /say Modulo check passed
 ```
 
 **Operator Precedence** (highest to lowest):
-1. `*`, `/` - Multiplication and division
-2. `+`, `-` - Addition and subtraction
-3. `==`, `!=`, `<`, `<=`, `>`, `>=` - Comparisons
+1. `^` - Power/exponentiation
+2. `*`, `/`, `%` - Multiplication, division, and modulo
+3. `+`, `-` - Addition and subtraction
+4. `==`, `!=`, `<`, `<=`, `>`, `>=` - Comparisons
 
 **Implementation Details**:
 - Simple operations compile to optimized scoreboard commands
 - Complex expressions use temporary variables automatically
+- Power operator uses compile-time expansion (e.g., `x^3` becomes `x*x*x`)
+- Modulo and division use temporary helper variables (`modulus`, `divisor`)
 - Loop variables correctly track their objective (e.g., `loop_counter`)
+- Arithmetic expressions in conditions are automatically evaluated to temporary variables
 
 ### Imports and Modules
 
@@ -501,11 +542,29 @@ cargo watch -x test -x "run -- check examples/"
 - For loops only support `range()` iterators
 - Function parameters require Minecraft 1.20.2+ (macro system)
 - No array/list data structures yet
-- No parentheses for grouping expressions (e.g., `(a + b) * c` not supported, but operator precedence works correctly)
+- **While loops**: Execute all iterations in a single game tick, which can cause server lag with large iteration counts (>100)
 
 ## 🗺️ Roadmap
 
-### Recently Completed (v0.1.0)
+### Recently Completed
+
+#### v0.2.1 (2025-10-02)
+- [x] **Complex expressions in conditions** - Use arithmetic directly in if/while (e.g., `if x % 3 == 1:`)
+- [x] **Automatic temporary variables** - Unique variables for each expression in conditions
+- [x] **Nested expression support** - Works with AND/OR operators
+
+#### v0.2.0 (2025-10-02)
+- [x] **Modulo operator (%)** - Compute remainders (e.g., `x % y`)
+- [x] **Power operator (^)** - Exponentiation with compile-time expansion (e.g., `x ^ 2`)
+- [x] **OR operator** - Boolean OR in conditions (e.g., `if x == 5 or y == 10:`)
+- [x] **For loop step support** - Control increment/decrement (e.g., `for i in range(10) by 2:`)
+- [x] **Java Edition compatibility** - Fixed negative loop steps
+
+#### v0.1.1 (2025-10-02)
+- [x] **Parenthesized expressions** - Support for `(a + b) * c` style expressions
+- [x] **Self-assignment optimization** - Removed unnecessary operations
+
+#### v0.1.0 (Pre-release)
 - [x] elif and else branch support
 - [x] Scoreboard objectives auto-generation
 - [x] User function calls
@@ -516,27 +575,18 @@ cargo watch -x test -x "run -- check examples/"
 - [x] **Loop variable arithmetic fix** - Correct objective tracking in loops
 - [x] **Variable division** - Full division operation support
 - [x] **CLI watch enhancements** - All build options available in watch mode
-- [x] **Token Display bug fix** - Execute conditions now generate correct syntax (e.g., `matches ..0`)
-- [x] **elif with != operator fix** - Proper negation handling in elif/else chains
-- [x] **Scoreboard variable tracking** - Variables correctly converted to macro syntax
-- [x] **String escaping** - Proper quote and backslash escaping in commands
-- [x] **Execute parameter handling** - Function parameters work in execute modifiers
-- [x] **Number + variable arithmetic** - All arithmetic combinations now supported
+- [x] **Boolean operators** - `and`, `not` operators in conditions
 - [x] chumsky parser integration
 - [x] Improved error messages with ariadne
 - [x] as/at/asat/if execute support
 - [x] global keyword
-- [x] Single-line docstring support
-- [x] Comprehensive test suite (24 tests: 7 parser + 17 integration)
+- [x] Comprehensive test suite (41 tests: 7 parser + 34 integration)
 
 ### Near Term
-- [ ] Parentheses for expression grouping `(a + b) * c`
 - [ ] Const variables (Compile time variables)
 - [ ] Array and list data structures
 - [ ] More built-in functions (math, strings)
-- [ ] Optimization: Eliminate redundant self-assignments
-- [x] Boolean operators (and, not) in conditions
-- [ ] Boolean OR operator (requires complex branching logic)
+- [ ] Enhanced loop optimizations
 
 ### Medium Term
 - [ ] Class and object support for entities

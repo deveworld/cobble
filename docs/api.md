@@ -45,7 +45,7 @@ let program = parse(source)
 - Uses chumsky 0.11 parser combinator library
 - Manual tokenizer handles indentation with INDENT/DEDENT tokens and distinguishes `/` division from `/` command prefix
 - Supports all Cobble syntax including execute blocks, global keyword, and complex expressions
-- **Operator precedence**: Three-level precedence for expressions (mul/div > add/sub > comparisons)
+- **Operator precedence**: Four-level precedence for expressions (pow > mul/div/mod > add/sub > comparisons)
 - **Multi-operator expressions**: Chains operations using `.foldl().repeated()` pattern
 - Error reporting integrated with ariadne for beautiful error messages
 
@@ -139,7 +139,7 @@ Binary operators.
 
 ```rust
 pub enum BinaryOp {
-    Add, Sub, Mul, Div, Mod,
+    Add, Sub, Mul, Div, Mod, Pow,
     Eq, NotEq, Lt, LtEq, Gt, GtEq,
     And, Or,
 }
@@ -482,7 +482,7 @@ Data Pack (.mcfunction files, pack.mcmeta, tags)
 
 1. **Python-style Syntax**: Familiar to many programmers, clean and readable
 2. **chumsky Parser Combinators**: Modern, composable parsing with excellent error handling
-3. **Operator Precedence**: Three-level precedence system matches standard mathematical conventions
+3. **Operator Precedence**: Four-level precedence system matches standard mathematical conventions (pow > mul/div/mod > add/sub > comparisons)
 4. **Complex Expression Handling**: Recursive evaluation for nested binary expressions with temporary variables
 5. **Macro-based Parameters**: Uses Minecraft 1.20.2+ macro system for function parameters
 6. **Automatic Recursion**: For loops and while loops compile to recursive functions
