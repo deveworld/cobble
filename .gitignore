@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cobble output
+/output/
+/dist/
+*.zip
+
+# Test files
+test*.cbl
+test*.cobble
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Debug
+*.log
+*.prof
+
+.serena/

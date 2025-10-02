@@ -1,0 +1,575 @@
+# Cobble 🧱
+
+> A modern, Python-like language for creating Minecraft Data Packs
+
+[![Rust](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](https://www.rust-lang.org)
+[![Minecraft](https://img.shields.io/badge/minecraft-1.21.9+-green.svg)](https://minecraft.net)
+[![Pack Format](https://img.shields.io/badge/pack%20format-88-blue.svg)](https://minecraft.wiki/w/Data_pack)
+
+Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
+
+**✨ Version 0.1.0 Pre-Alpha** - Early development version | Minecraft 1.21.9+ compatible
+
+## ✨ Features
+
+- ✅ **Python-like Syntax** - Familiar, clean syntax with proper indentation
+- ✅ **Function Parameters** - Full support using Minecraft 1.20.2+ macro system
+- ✅ **Event System** - Built-in event handling for load and tick events
+- ✅ **Control Flow** - If statements, for loops, while loops with smart optimization
+- ✅ **Boolean Operators** - `and`, `not` operators for complex conditions (e.g., `if x > 0 and not y == 5:`)
+- ✅ **Complex Expressions** - Multi-operator expressions with proper precedence (e.g., `a + b * c`)
+- ✅ **Arithmetic Operations** - Full support for +, -, *, / with variable and constant operands
+- ✅ **Module-level Variables** - Top-level assignments automatically initialized at pack load
+- ✅ **Modern CLI** - Full-featured command-line interface with watch mode and ZIP creation
+- ✅ **Project Management** - Configuration via `cobble.toml`
+- ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
+- ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
+- ✅ **Nested If Optimization** - Automatically splits complex control flow
+- ✅ **Comprehensive Tests** - 36 tests (7 parser + 29 integration) with output verification
+- ✅ **Modern Parser** - Built with chumsky combinator library for reliability
+- ✅ **Beautiful Errors** - Clear error messages powered by ariadne
+
+## 📦 Installation
+
+### From Source
+
+```bash
+# Clone the repository
+git clone https://github.com/deveworld/cobble.git
+cd cobble
+
+# Build with Cargo
+cargo build --release
+
+# Binary will be in target/release/cobble
+```
+
+### Add to PATH (Optional)
+
+```bash
+# Linux/macOS
+export PATH="$PATH:/path/to/cobble/target/release"
+
+# Or copy to system bin
+sudo cp target/release/cobble /usr/local/bin/
+```
+
+## 🚀 Quick Start
+
+### 1. Create a New Project
+
+```bash
+cobble init --name my-datapack
+cd my-datapack
+```
+
+This creates:
+```
+my-datapack/
+├── cobble.toml      # Project configuration
+├── src/
+│   └── main.cbl     # Main source file
+└── .gitignore
+```
+
+### 2. Write Your Code
+
+Edit `src/main.cbl`:
+
+```python
+import stdlib
+from stdlib import event
+
+def init():
+    """Initialize the data pack"""
+    /scoreboard objectives add score dummy "Score"
+    /tellraw @a {"text":"Data pack loaded!", "color":"green"}
+
+def on_tick():
+    """Called every game tick"""
+    as @a at @s:
+        /particle minecraft:happy_villager ~ ~2 ~ 0.5 0.5 0.5 0 1
+
+def give_reward(player, amount):
+    """Give reward to player using macro parameters"""
+    /give {player} minecraft:diamond {amount}
+    /tellraw {player} {"text":"You received diamonds!", "color":"gold"}
+
+# Register event handlers
+stdlib.addEventListener(event.LOAD, init)
+stdlib.addEventListener(event.TICK, on_tick)
+```
+
+### 3. Build the Data Pack
+
+```bash
+# Build to output directory
+cobble build
+
+# Build with ZIP
+cobble build --zip
+```
+
+### 4. Use in Minecraft
+
+Copy the output folder to your Minecraft world's `datapacks` directory:
+```
+.minecraft/saves/YourWorld/datapacks/
+```
+
+## 📖 Language Guide
+
+### Functions
+
+Define functions with Python-style syntax:
+
+```python
+def function_name(param1, param2):
+    """Documentation string"""
+    /give {param1} minecraft:diamond {param2}
+    /tellraw @a {"text":"Message"}
+```
+
+**Parameter Substitution:**
+- Use `{param}` syntax directly for macro parameters (Minecraft 1.20.2+)
+- Cobble convert it to the `$()` syntax for function parameters
+
+### Variables
+
+```python
+# Module-level variables (initialized automatically at pack load)
+score = 0
+player_count = 5
+max_health = 20
+
+def my_function():
+    # Local variables (initialized when function is called)
+    temp = 100
+    result = temp * 2
+```
+
+**Module-level variables** are automatically initialized in the `_cobble_init` function when the data pack loads.
+
+### Minecraft Commands
+
+Direct Minecraft commands start with `/`:
+
+```python
+def spawn_villager():
+    /summon minecraft:villager ~ ~ ~
+    /effect give @e[type=villager,distance=..5] minecraft:glowing 30
+```
+
+### Control Flow
+
+#### If Statements
+
+```python
+def check_score():
+    if score >= 10:
+        /say High score!
+        /advancement grant @p only namespace:achievement
+```
+
+#### For Loops
+
+```python
+def spawn_multiple():
+    for i in range(5):
+        /summon minecraft:pig ~i ~ ~
+```
+
+#### While Loops
+
+```python
+def countdown():
+    counter = 10
+    while counter > 0:
+        /tellraw @a {"score":{"name":"counter","objective":"temp"}}
+        counter = counter - 1
+```
+
+**Note**: To display scoreboard values in-game, use Minecraft's JSON score display syntax as shown above.
+
+### Arithmetic Operations
+
+Cobble supports full arithmetic operations with proper operator precedence:
+
+```python
+def calculations():
+    a = 10
+    b = 5
+    c = 3
+
+    # Simple operations
+    sum = a + b          # 15
+    diff = a - b         # 5
+    product = a * b      # 50
+    quotient = a / b     # 2
+
+    # Multi-operator expressions
+    result1 = a + b + c          # (a + b) + c = 18
+    result2 = a * b * c          # (a * b) * c = 150
+
+    # Operator precedence (multiplication before addition)
+    result3 = a + b * c          # a + (b * c) = 25, NOT (a + b) * c
+    result4 = a * b + c          # (a * b) + c = 53
+
+    # Loop variable arithmetic
+    for i in range(5):
+        x = i * 10       # Uses correct loop_counter objective
+        y = i + 5        # Loop variables work in all operations
+```
+
+**Operator Precedence** (highest to lowest):
+1. `*`, `/` - Multiplication and division
+2. `+`, `-` - Addition and subtraction
+3. `==`, `!=`, `<`, `<=`, `>`, `>=` - Comparisons
+
+**Implementation Details**:
+- Simple operations compile to optimized scoreboard commands
+- Complex expressions use temporary variables automatically
+- Loop variables correctly track their objective (e.g., `loop_counter`)
+
+### Imports and Modules
+
+```python
+import stdlib
+from stdlib import event
+
+# Use imported functions
+stdlib.addEventListener(event.LOAD, my_function)
+```
+
+### Event System
+
+Register functions to run on specific events:
+
+```python
+from stdlib import event
+
+def on_load():
+    /say Data pack loaded!
+
+def on_tick():
+    # Runs 20 times per second
+    pass
+
+stdlib.addEventListener(event.LOAD, on_load)
+stdlib.addEventListener(event.TICK, on_tick)
+```
+
+## 🛠️ CLI Commands
+
+### `cobble init [OPTIONS]`
+
+Initialize a new Cobble project.
+
+```bash
+cobble init                     # In current directory
+cobble init --name my-project   # Create new directory named 'my-project'
+```
+
+**Options:**
+- `--name <NAME>` - Project name (creates a new directory if specified)
+- `--description <DESCRIPTION>` - Project description
+- `--pack-format <FORMAT>` - Pack format version (default: 88)
+
+### `cobble build [input] [options]`
+
+Build the data pack from source files.
+
+```bash
+cobble build                  # Use cobble.toml settings
+cobble build src/             # Build specific directory
+cobble build -o dist          # Custom output directory
+cobble build --zip            # Create ZIP file
+```
+
+Options:
+- `-o, --output <dir>` - Output directory
+- `--zip` - Create ZIP archive
+
+### `cobble watch [input] [options]`
+
+Watch files and rebuild on changes.
+
+```bash
+cobble watch                  # Watch project
+cobble watch src/             # Watch specific directory
+cobble watch -o output        # With custom output
+```
+
+### `cobble check [input]`
+
+Check syntax without building.
+
+```bash
+cobble check                  # Check all project files
+cobble check src/main.cbl     # Check specific file
+```
+
+## ⚙️ Configuration
+
+`cobble.toml` configures your project:
+
+```toml
+[project]
+name = "my-datapack"
+description = "My awesome data pack"
+namespace = "my_namespace"
+version = "1.0.0"
+pack_format = 88  # Minecraft 1.21.9+
+
+[build]
+source = "src"         # Source directory
+output = "output"      # Output directory
+entry_points = []      # Main files to compile
+```
+
+### Pack Format Versions
+
+| Minecraft Version | Pack Format |
+|------------------|-------------|
+| 1.21.9+         | 88.0 (default) |
+| 1.21.7 - 1.21.8 | 81          |
+| 1.21.6          | 80          |
+| 1.21.5          | 71          |
+| 1.21.4          | 61          |
+| 1.21.2 - 1.21.3 | 57          |
+| 1.21 - 1.21.1   | 48          |
+| 1.20.5 - 1.20.6 | 41          |
+| 1.20.3 - 1.20.4 | 26          |
+| 1.20.2          | 18          |
+| 1.20 - 1.20.1   | 15          |
+
+**Note**: Cobble requires Minecraft 1.21.7+ (minimum pack format 81) and defaults to pack format 88 for Minecraft 1.21.9+ to support the latest features and improvements. Starting from Minecraft 1.21.9, pack format includes minor versions (e.g., 88.0).
+
+## 📁 Project Structure
+
+```
+my-datapack/
+├── cobble.toml           # Configuration
+├── src/
+│   ├── main.cbl         # Main entry point
+│   ├── events.cbl       # Event handlers
+│   ├── functions.cbl    # Utility functions
+│   └── entities/
+│       └── mobs.cbl     # Mob-related functions
+├── output/              # Generated data pack
+│   ├── pack.mcmeta
+│   └── data/
+│       └── namespace/
+│           ├── functions/
+│           └── tags/
+└── my-datapack.zip      # Distributable pack
+```
+
+## 🎮 Complete Example
+
+### Boss Fight System
+
+`src/boss.cbl`:
+```python
+import stdlib
+from stdlib import event
+
+# Global variables
+boss_health = 100
+phase = 1
+
+def spawn_boss():
+    """Spawn the boss entity"""
+    /summon minecraft:wither_skeleton ~ ~1 ~ {
+        CustomName:'{"text":"Dark Lord","color":"dark_red","bold":true}',
+        Health:200f,
+        Attributes:[{Name:generic.max_health,Base:200}],
+        HandItems:[{id:"minecraft:netherite_sword",Count:1b},{}],
+        ArmorItems:[{},{},{},{id:"minecraft:dragon_head",Count:1b}]
+    }
+    /bossbar add boss {"text":"Dark Lord"}
+    /bossbar set boss players @a
+    /bossbar set boss max 200
+    /bossbar set boss value 200
+    /bossbar set boss color red
+
+def boss_tick():
+    """Boss fight logic - runs every tick"""
+    global phase
+
+    # Update boss bar
+    /execute store result bossbar boss value run data get entity @e[type=wither_skeleton,name="Dark Lord",limit=1] Health
+
+    # Phase transitions
+    if boss_health <= 50 and phase == 1:
+        phase = 2
+        enter_phase_2()
+
+def enter_phase_2():
+    """Boss enters rage mode"""
+    /tellraw @a {"text":"The Dark Lord enters rage mode!","color":"red","bold":true}
+    /effect give @e[type=wither_skeleton,name="Dark Lord"] minecraft:strength 999999 1
+    /effect give @e[type=wither_skeleton,name="Dark Lord"] minecraft:speed 999999 0
+
+    # Spawn minions
+    for i in range(3):
+        asat @s:
+            /summon minecraft:zombie ~ ~ ~ {IsBaby:0b,ArmorItems:[{},{},{},{id:"minecraft:iron_helmet",Count:1b}]}
+
+def boss_defeated():
+    """Called when boss is defeated"""
+    /bossbar remove boss
+    /tellraw @a {"text":"Victory! The Dark Lord has been defeated!","color":"gold","bold":true}
+    /advancement grant @a only namespace:defeat_boss
+    asat @s:
+        /summon minecraft:firework_rocket ~ ~1 ~ {FireworksItem:{id:"minecraft:firework_rocket",Count:1,tag:{Fireworks:{Flight:2,Explosions:[{Type:1,Colors:[I;16711680,16776960],FadeColors:[I;16777215]}]}}}}
+
+# Register events
+stdlib.addEventListener(event.TICK, boss_tick)
+```
+
+### Parkour System
+
+`src/parkour.cbl`:
+```python
+def create_checkpoint(x, y, z):
+    """Create a checkpoint at coordinates"""
+    /summon minecraft:armor_stand x y z {Invisible:1b,Marker:1b,CustomName:'{"text":"Checkpoint"}'}
+    /particle minecraft:end_rod x y z 0.5 1 0.5 0.01 20
+
+def on_checkpoint():
+    """Player reaches checkpoint"""
+    /spawnpoint @p ~ ~ ~
+    /playsound minecraft:entity.player.levelup master @p
+    /title @p subtitle {"text":"Checkpoint Saved!","color":"green"}
+    /title @p title ""
+
+def reset_player():
+    """Teleport player to last checkpoint"""
+    /tp @p @e[type=armor_stand,name="Checkpoint",limit=1,sort=nearest]
+    /effect give @p minecraft:resistance 3 255 true
+```
+
+## 🧪 Testing
+
+Run the test suite:
+
+```bash
+cargo test
+```
+
+Check syntax of example files:
+
+```bash
+cobble check examples/
+```
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+### Development Setup
+
+```bash
+# Clone and setup
+git clone https://github.com/deveworld/cobble.git
+cd cobble
+
+# Install development dependencies
+cargo install cargo-watch
+
+# Run in watch mode
+cargo watch -x test -x "run -- check examples/"
+```
+
+## 📚 Documentation
+
+- [Language Reference](docs/language.md)
+- [CLI Documentation](docs/cli.md)
+- [API Reference](docs/api.md)
+- [Examples](examples/)
+
+## 🐛 Known Limitations
+
+- **Variable Scope**: All variables are effectively global due to Minecraft's scoreboard architecture. The `global` keyword is accepted for code clarity but has no functional effect. Variables defined in one function can affect variables in another function if they share the same name.
+- For loops only support `range()` iterators
+- Function parameters require Minecraft 1.20.2+ (macro system)
+- No array/list data structures yet
+- No parentheses for grouping expressions (e.g., `(a + b) * c` not supported, but operator precedence works correctly)
+
+## 🗺️ Roadmap
+
+### Recently Completed (v0.1.0)
+- [x] elif and else branch support
+- [x] Scoreboard objectives auto-generation
+- [x] User function calls
+- [x] **Multi-operator expressions** - Chained operations like `a + b + c`
+- [x] **Operator precedence** - Proper math order (`*`/`/` before `+`/`-`)
+- [x] **Complex nested expressions** - Full arithmetic expression support
+- [x] **Module-level variable initialization** - Top-level vars auto-initialized
+- [x] **Loop variable arithmetic fix** - Correct objective tracking in loops
+- [x] **Variable division** - Full division operation support
+- [x] **CLI watch enhancements** - All build options available in watch mode
+- [x] **Token Display bug fix** - Execute conditions now generate correct syntax (e.g., `matches ..0`)
+- [x] **elif with != operator fix** - Proper negation handling in elif/else chains
+- [x] **Scoreboard variable tracking** - Variables correctly converted to macro syntax
+- [x] **String escaping** - Proper quote and backslash escaping in commands
+- [x] **Execute parameter handling** - Function parameters work in execute modifiers
+- [x] **Number + variable arithmetic** - All arithmetic combinations now supported
+- [x] chumsky parser integration
+- [x] Improved error messages with ariadne
+- [x] as/at/asat/if execute support
+- [x] global keyword
+- [x] Single-line docstring support
+- [x] Comprehensive test suite (24 tests: 7 parser + 17 integration)
+
+### Near Term
+- [ ] Parentheses for expression grouping `(a + b) * c`
+- [ ] Const variables (Compile time variables)
+- [ ] Array and list data structures
+- [ ] More built-in functions (math, strings)
+- [ ] Optimization: Eliminate redundant self-assignments
+- [x] Boolean operators (and, not) in conditions
+- [ ] Boolean OR operator (requires complex branching logic)
+
+### Medium Term
+- [ ] Class and object support for entities
+- [ ] NBT data manipulation
+- [ ] Custom advancement generation
+- [ ] Recipe generation
+- [ ] Loot table generation
+- [ ] Predicate support
+
+### Long Term
+- [ ] Resource pack integration
+- [ ] VS Code extension with syntax highlighting
+- [ ] Language server protocol (LSP) support
+- [ ] Online playground/REPL
+- [ ] Standard library expansion
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Minecraft command system documentation
+- Rust community for excellent libraries:
+  - [chumsky](https://github.com/zesterer/chumsky) - Parser combinator library
+  - [ariadne](https://github.com/zesterer/ariadne) - Beautiful error reporting
+  - [clap](https://github.com/clap-rs/clap) - Command-line argument parsing
+
+## Support
+
+- **Issues**: [GitHub Issues](https://github.com/deveworld/cobble/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/deveworld/cobble/discussions)
+
+---
+
+Made with ❤️ for the Minecraft community

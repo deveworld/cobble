@@ -1,0 +1,153 @@
+use crate::commands::build::{build, BuildOptions};
+use crate::config::CobbleConfig;
+use notify::{Event, EventKind, RecursiveMode, Watcher};
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::Duration;
+
+pub fn watch(
+    input: Option<PathBuf>,
+    output: Option<PathBuf>,
+    namespace: Option<String>,
+    pack_format: Option<u32>,
+    description: Option<String>,
+    verbose: bool,
+    zip: bool,
+) -> Result<(), String> {
+    // Try to find cobble.toml
+    let (config, config_dir) = if let Some(config_path) = find_config(&input) {
+        let config = CobbleConfig::load(&config_path)?;
+        let config_dir = config_path.parent().unwrap().to_path_buf();
+        (Some(config), config_dir)
+    } else {
+        (
+            None,
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        )
+    };
+
+    // Determine source path to watch
+    let watch_path = if let Some(ref input_path) = input {
+        input_path.clone()
+    } else if let Some(ref cfg) = config {
+        config_dir.join(&cfg.build.source)
+    } else {
+        return Err("No input specified and no cobble.toml found".to_string());
+    };
+
+    if !watch_path.exists() {
+        return Err(format!("Watch path does not exist: {:?}", watch_path));
+    }
+
+    println!("Watching: {:?}", watch_path);
+    println!("Press Ctrl+C to stop watching");
+    println!();
+
+    // Initial build
+    println!("Performing initial build...");
+    let build_result = build(BuildOptions {
+        input: Some(watch_path.clone()),
+        output: output.clone(),
+        namespace: namespace.clone(),
+        pack_format,
+        description: description.clone(),
+        verbose,
+        zip,
+    });
+
+    match build_result {
+        Ok(()) => println!("✓ Initial build succeeded\n"),
+        Err(e) => println!("✗ Initial build failed: {}\n", e),
+    }
+
+    // Set up file watcher
+    let (tx, rx) = mpsc::channel();
+
+    let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+        if let Ok(event) = res {
+            let _ = tx.send(event);
+        }
+    })
+    .map_err(|e| format!("Failed to create watcher: {}", e))?;
+
+    // Watch the path recursively
+    watcher
+        .watch(&watch_path, RecursiveMode::Recursive)
+        .map_err(|e| format!("Failed to watch path: {}", e))?;
+
+    // Process events
+    loop {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(event) => {
+                // Check if the event is relevant (file modification or creation)
+                let should_rebuild = match event.kind {
+                    EventKind::Modify(_) | EventKind::Create(_) => {
+                        // Check if it's a Cobble file
+                        event.paths.iter().any(|p| {
+                            p.extension()
+                                .map(|ext| ext == "cbl" || ext == "cobble")
+                                .unwrap_or(false)
+                        })
+                    }
+                    _ => false,
+                };
+
+                if should_rebuild {
+                    // Get the changed file name for display
+                    let changed_file = event
+                        .paths
+                        .first()
+                        .and_then(|p| p.file_name())
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    println!("File changed: {}", changed_file);
+                    println!("Rebuilding...");
+
+                    let build_result = build(BuildOptions {
+                        input: Some(watch_path.clone()),
+                        output: output.clone(),
+                        namespace: namespace.clone(),
+                        pack_format,
+                        description: description.clone(),
+                        verbose,
+                        zip,
+                    });
+
+                    match build_result {
+                        Ok(()) => println!("✓ Build succeeded\n"),
+                        Err(e) => println!("✗ Build failed: {}\n", e),
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // No events, continue watching
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("Watcher disconnected".to_string());
+            }
+        }
+
+        // Note: Ctrl+C is handled by signal handlers, no need to check stdin
+    }
+
+    // Note: This code is unreachable, but Rust requires a return
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
+    if let Some(path) = input {
+        if path.is_file() {
+            // If input is a file, look for config in parent directories
+            if let Some(parent) = path.parent() {
+                return CobbleConfig::find_in_path(parent);
+            }
+        } else {
+            // If input is a directory, look for config in it
+            return CobbleConfig::find_in_path(path);
+        }
+    }
+    // Look in current directory
+    CobbleConfig::find_in_path(".")
+}
