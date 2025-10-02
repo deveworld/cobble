@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Negative step: starts at `n-1`, decrements, continues while `i >= 0`
   - Default step is 1 if not specified
 
+### Fixed
+- **Java Edition compatibility**: Negative loop steps now use `scoreboard players remove` instead of `add` with negative values
+
 ### Improved
 - Updated operator precedence: `^` > `*/%` > `+-` > comparisons
 - Enhanced assignment processor to handle all new operators

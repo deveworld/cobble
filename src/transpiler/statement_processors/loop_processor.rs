@@ -80,9 +80,10 @@ impl Transpiler {
                                 for_loop.target, step
                             ));
                         } else {
+                            // Use 'remove' for negative step (Java Edition compatibility)
                             loop_commands.push(format!(
-                                "scoreboard players add {} loop_counter {}",
-                                for_loop.target, step
+                                "scoreboard players remove {} loop_counter {}",
+                                for_loop.target, step.abs()
                             ));
                         }
 
