@@ -6,7 +6,10 @@ impl Transpiler {
         &mut self,
         if_stmt: &IfStatement,
     ) -> Result<(), String> {
-        let mut condition_cmd = self.translate_condition(&if_stmt.condition)?;
+        // Preprocess condition to handle complex expressions
+        let processed_condition = self.preprocess_condition(&if_stmt.condition)?;
+
+        let mut condition_cmd = self.translate_condition(&processed_condition)?;
 
         // Handle OR conditions specially
         if condition_cmd.starts_with("OR(") {
@@ -96,7 +99,8 @@ impl Transpiler {
         let mut previous_conditions = vec![condition_cmd.clone()];
 
         for (elif_condition, elif_branch) in &if_stmt.elif_branches {
-            let elif_condition_cmd = self.translate_condition(elif_condition)?;
+            let processed_elif_condition = self.preprocess_condition(elif_condition)?;
+            let elif_condition_cmd = self.translate_condition(&processed_elif_condition)?;
 
             // Build the compound condition: unless (all previous conditions) if (current condition)
             let mut compound_condition = String::new();

@@ -155,7 +155,8 @@ impl Transpiler {
         let mut loop_commands = vec![];
 
         // Add condition check and body execution
-        let condition_cmd = self.translate_condition(&while_loop.condition)?;
+        let processed_condition = self.preprocess_condition(&while_loop.condition)?;
+        let condition_cmd = self.translate_condition(&processed_condition)?;
 
         // Process loop body
         let old_function = self.current_function.take();

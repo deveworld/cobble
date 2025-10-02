@@ -456,6 +456,107 @@ impl Transpiler {
         Ok(())
     }
 
+    fn preprocess_condition(&mut self, condition: &Expression) -> Result<Expression, String> {
+        // Check if the condition has a complex expression on the left side of a comparison
+        // For example: (x % 3) == 1 or (x ^ 2) > 10
+        match condition {
+            Expression::Binary(left, op, right) => {
+                // Check if this is a comparison operator and left is a binary expression
+                let is_comparison = matches!(
+                    op,
+                    BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
+                );
+
+                if is_comparison {
+                    match &**left {
+                        Expression::Binary(_, _, _) => {
+                            // Left side is a binary expression, need to evaluate it first
+                            // Use unique temp variable name to avoid conflicts in AND/OR chains
+                            let temp_var = format!("expr_cond_temp_{}", self.temp_counter);
+                            self.temp_counter += 1;
+
+                            self.data_pack.track_objective("temp");
+                            self.variable_objectives
+                                .insert(temp_var.clone(), "temp".to_string());
+                            self.scoreboard_variables.insert(temp_var.clone());
+
+                            // Evaluate the left expression into the unique temp variable
+                            let eval_commands = self.evaluate_expression_to_target(left, &temp_var)?;
+
+                            if let Some(ref mut commands) = self.current_function {
+                                commands.extend(eval_commands);
+                            }
+
+                            // Return a simplified condition with the temporary variable
+                            Ok(Expression::Binary(
+                                Box::new(Expression::Identifier(temp_var)),
+                                op.clone(),
+                                right.clone(),
+                            ))
+                        }
+                        _ => {
+                            // Left side is simple, check if right side needs preprocessing
+                            match &**right {
+                                Expression::Binary(_, _, _) => {
+                                    // Right side is a binary expression
+                                    let temp_var = format!("expr_cond_temp_{}", self.temp_counter);
+                                    self.temp_counter += 1;
+
+                                    self.data_pack.track_objective("temp");
+                                    self.variable_objectives
+                                        .insert(temp_var.clone(), "temp".to_string());
+                                    self.scoreboard_variables.insert(temp_var.clone());
+
+                                    let eval_commands = self.evaluate_expression_to_target(right, &temp_var)?;
+
+                                    if let Some(ref mut commands) = self.current_function {
+                                        commands.extend(eval_commands);
+                                    }
+
+                                    Ok(Expression::Binary(
+                                        left.clone(),
+                                        op.clone(),
+                                        Box::new(Expression::Identifier(temp_var)),
+                                    ))
+                                }
+                                _ => {
+                                    // Both sides are simple, return as is
+                                    Ok(condition.clone())
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Not a comparison, might be And/Or - recursively preprocess
+                    match op {
+                        BinaryOp::And | BinaryOp::Or => {
+                            let new_left = self.preprocess_condition(left)?;
+                            let new_right = self.preprocess_condition(right)?;
+                            Ok(Expression::Binary(
+                                Box::new(new_left),
+                                op.clone(),
+                                Box::new(new_right),
+                            ))
+                        }
+                        _ => {
+                            // Other binary operators (arithmetic) shouldn't be in conditions
+                            Ok(condition.clone())
+                        }
+                    }
+                }
+            }
+            Expression::Unary(op, expr) => {
+                // Recursively preprocess the inner expression
+                let new_expr = self.preprocess_condition(expr)?;
+                Ok(Expression::Unary(op.clone(), Box::new(new_expr)))
+            }
+            _ => {
+                // Simple expressions (Identifier, Number, etc.) don't need preprocessing
+                Ok(condition.clone())
+            }
+        }
+    }
+
     fn translate_condition(&self, condition: &Expression) -> Result<String, String> {
         let translator = ConditionTranslator::new(&self.variable_objectives);
         translator.translate(condition)

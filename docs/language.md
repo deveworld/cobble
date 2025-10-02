@@ -159,6 +159,32 @@ def check_score(score):
 
 Supported operators: `==`, `!=`, `>`, `>=`, `<`, `<=`
 
+**Complex Expressions in Conditions:**
+
+You can use arithmetic expressions directly in conditions:
+
+```python
+def check_value():
+    x = 10
+
+    # Modulo in condition
+    if x % 3 == 1:
+        /say x mod 3 equals 1
+
+    # Power in condition
+    y = 2
+    if y ^ 3 == 8:
+        /say y cubed equals 8
+
+    # Complex expressions with AND/OR
+    a = 17
+    b = 5
+    if a % 5 == 2 and b ^ 2 == 25:
+        /say Both conditions are true!
+```
+
+Under the hood, Cobble automatically creates temporary variables to evaluate complex expressions before comparison.
+
 ### Boolean Operators
 
 Cobble supports boolean operators for combining multiple conditions:
