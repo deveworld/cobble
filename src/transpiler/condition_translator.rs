@@ -39,10 +39,10 @@ impl<'a> ConditionTranslator<'a> {
                         Ok(format!("{} {}", left_final, right_final))
                     }
                     BinaryOp::Or => {
-                        // Or is complex in Minecraft - requires separate functions for each branch
-                        // For now, return an error with helpful message
+                        // OR is not yet implemented - requires complex branching logic
                         Err(
-                            "The 'or' operator is not yet supported.\n\
+                            "The 'or' operator is not yet supported (planned for v0.2.0).\n\
+                            \n\
                             Use separate if statements instead:\n\
                             \n\
                             Instead of:\n\

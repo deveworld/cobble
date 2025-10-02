@@ -94,20 +94,26 @@ impl Transpiler {
 
                             match op {
                                 BinaryOp::Add => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} temp = {} {}",
-                                        assign.target, var, var_obj
-                                    ));
+                                    // Optimization: Skip self-assignment if target == var
+                                    if assign.target != *var || var_obj != "temp" {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp = {} {}",
+                                            assign.target, var, var_obj
+                                        ));
+                                    }
                                     commands.push(format!(
                                         "scoreboard players add {} temp {}",
                                         assign.target, value
                                     ));
                                 }
                                 BinaryOp::Sub => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} temp = {} {}",
-                                        assign.target, var, var_obj
-                                    ));
+                                    // Optimization: Skip self-assignment if target == var
+                                    if assign.target != *var || var_obj != "temp" {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp = {} {}",
+                                            assign.target, var, var_obj
+                                        ));
+                                    }
                                     commands.push(format!(
                                         "scoreboard players remove {} temp {}",
                                         assign.target, value
@@ -115,10 +121,13 @@ impl Transpiler {
                                 }
                                 BinaryOp::Mul => {
                                     self.data_pack.track_objective("multiplier");
-                                    commands.push(format!(
-                                        "scoreboard players operation {} temp = {} {}",
-                                        assign.target, var, var_obj
-                                    ));
+                                    // Optimization: Skip self-assignment if target == var
+                                    if assign.target != *var || var_obj != "temp" {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp = {} {}",
+                                            assign.target, var, var_obj
+                                        ));
+                                    }
                                     commands.push(format!(
                                         "scoreboard players set multiplier temp {}",
                                         value
@@ -130,10 +139,13 @@ impl Transpiler {
                                 }
                                 BinaryOp::Div => {
                                     self.data_pack.track_objective("divisor");
-                                    commands.push(format!(
-                                        "scoreboard players operation {} temp = {} {}",
-                                        assign.target, var, var_obj
-                                    ));
+                                    // Optimization: Skip self-assignment if target == var
+                                    if assign.target != *var || var_obj != "temp" {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp = {} {}",
+                                            assign.target, var, var_obj
+                                        ));
+                                    }
                                     commands.push(format!(
                                         "scoreboard players set divisor temp {}",
                                         value
@@ -239,11 +251,15 @@ impl Transpiler {
                                 .unwrap_or(&"temp".to_string())
                                 .clone();
 
-                            // First assign var1 to target
-                            commands.push(format!(
-                                "scoreboard players operation {} temp = {} {}",
-                                assign.target, var1, var1_obj
-                            ));
+                            // Optimization: Skip self-assignment if target == var1
+                            // (e.g., x = x + 1 shouldn't generate "x = x")
+                            if assign.target != *var1 || var1_obj != "temp" {
+                                // First assign var1 to target
+                                commands.push(format!(
+                                    "scoreboard players operation {} temp = {} {}",
+                                    assign.target, var1, var1_obj
+                                ));
+                            }
 
                             // Then apply operation with var2
                             match op {

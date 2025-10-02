@@ -25,7 +25,7 @@ Cobble is a transpiler that converts Python-like code into Minecraft Data Packs,
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
 - ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
 - ✅ **Nested If Optimization** - Automatically splits complex control flow
-- ✅ **Comprehensive Tests** - 36 tests (7 parser + 29 integration) with output verification
+- ✅ **Comprehensive Tests** - 41 tests (7 parser + 34 integration) with output verification
 - ✅ **Modern Parser** - Built with chumsky combinator library for reliability
 - ✅ **Beautiful Errors** - Clear error messages powered by ariadne
 

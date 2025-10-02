@@ -64,7 +64,6 @@ pub fn check(input: Option<PathBuf>) -> Result<(), String> {
             Ok(program) => {
                 // File parsed successfully
                 let import_count = program.imports.len();
-                let _stmt_count = program.statements.len();
 
                 // Count functions and other elements
                 let mut func_count = 0;

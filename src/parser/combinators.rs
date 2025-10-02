@@ -15,7 +15,12 @@ pub fn token_parser<'a>(
                 Token::False_ => Expression::Boolean(false),
                 Token::None_ => Expression::None,
                 Token::Ident(s) => Expression::Identifier(s.clone()),
-            };
+            }.or(
+                // Parenthesized expression
+                just(&Token::LParen)
+                    .ignore_then(expr.clone())
+                    .then_ignore(just(&Token::RParen))
+            );
 
             // Attribute access (e.g., stdlib.event)
             let postfix = atom.foldl(
