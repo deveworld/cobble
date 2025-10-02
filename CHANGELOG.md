@@ -5,6 +5,21 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-10-02
+
+### Added
+- **Complex expressions in conditions**: Arithmetic expressions can now be used directly in `if`/`while` conditions
+  - Example: `if x % 3 == 1:` (no temporary variable needed)
+  - Example: `if y ^ 2 == 16:`
+  - Works with nested conditions: `if x % 3 == 1 and y ^ 2 == 25:`
+  - Automatically creates unique temporary variables (`expr_cond_temp_N`) for evaluation
+  - Supports complex expressions on both left and right sides of comparisons
+  - Works seamlessly with AND/OR operators
+
+### Improved
+- Intelligent condition preprocessing that recursively handles nested expressions
+- Each complex expression in AND/OR chains gets a unique temporary variable to prevent conflicts
+
 ## [0.2.0] - 2025-10-02
 
 ### Added
@@ -12,12 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Works with constants and variables
   - Uses temporary `modulus` scoreboard objective
   - Compile-time evaluation for constant expressions
-  - **Can be used directly in conditions**: `if x % 3 == 1:`
 - **Power operator (`^`)**: Exponentiation with `x ^ n`
   - Compile-time expansion: `x^3` becomes `x*x*x`
   - Exponent must be a constant (variables not supported)
   - Uses temporary `power_base` scoreboard objective
-  - **Can be used directly in conditions**: `if x ^ 2 == 16:`
 - **OR operator (`or`)**: Boolean OR for conditions
   - Syntax: `if x == 5 or y == 10:`
   - Uses temporary `or_result` scoreboard to track results
@@ -27,20 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Positive step: starts at 0, increments, continues while `i < n`
   - Negative step: starts at `n-1`, decrements, continues while `i >= 0`
   - Default step is 1 if not specified
-- **Complex expressions in conditions**: Arithmetic expressions can now be used directly in `if`/`while` conditions
-  - Example: `if x % 3 == 1 and y ^ 2 == 25:`
-  - Automatically creates unique temporary variables for evaluation
-  - Works with AND/OR operators
 
 ### Fixed
 - **Java Edition compatibility**: Negative loop steps now use `scoreboard players remove` instead of `add` with negative values
-- **AND/OR with complex expressions**: Each complex expression now uses a unique temporary variable to prevent conflicts
 
 ### Improved
 - Updated operator precedence: `^` > `*/%` > `+-` > comparisons
 - Enhanced assignment processor to handle all new operators
 - Comprehensive documentation updates for all new features
-- Intelligent condition preprocessing to handle nested complex expressions
 
 ## [0.1.2] - 2025-10-02
 
