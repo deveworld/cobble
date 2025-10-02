@@ -14,6 +14,21 @@ impl Transpiler {
                 if name == "range" && args.len() == 1 {
                     if let Expression::Number(n) = &args[0] {
                         let count = *n as i32;
+
+                        // Determine step value (default 1, or from for_loop.step)
+                        let step = if let Some(ref step_expr) = for_loop.step {
+                            match step_expr {
+                                Expression::Number(s) => *s as i32,
+                                _ => return Err("Step must be a constant number".to_string()),
+                            }
+                        } else {
+                            1
+                        };
+
+                        if step == 0 {
+                            return Err("Step cannot be zero".to_string());
+                        }
+
                         // Generate a helper function for the loop
                         let loop_func_name = format!("loop_temp_{}", self.temp_counter);
                         self.temp_counter += 1;
@@ -26,10 +41,17 @@ impl Transpiler {
                             .insert(for_loop.target.clone(), "loop_counter".to_string());
                         self.scoreboard_variables.insert(for_loop.target.clone());
 
-                        // Initialize loop counter
+                        // Initialize loop counter based on step direction
+                        let start_value = if step > 0 {
+                            0
+                        } else {
+                            // For negative step, start at count + step (e.g., count - 1 for step = -1)
+                            count + step
+                        };
+
                         for_commands.push(format!(
-                            "scoreboard players set {} loop_counter 0",
-                            for_loop.target
+                            "scoreboard players set {} loop_counter {}",
+                            for_loop.target, start_value
                         ));
 
                         // Create loop function with body inside
@@ -51,15 +73,32 @@ impl Transpiler {
                         self.current_function = old_function;
                         self.current_context = saved_context;
 
-                        // THEN add increment and recursive call
+                        // THEN add increment/decrement and recursive call
+                        if step > 0 {
+                            loop_commands.push(format!(
+                                "scoreboard players add {} loop_counter {}",
+                                for_loop.target, step
+                            ));
+                        } else {
+                            loop_commands.push(format!(
+                                "scoreboard players add {} loop_counter {}",
+                                for_loop.target, step
+                            ));
+                        }
+
+                        // Condition depends on step direction
+                        let condition = if step > 0 {
+                            // For positive step: continue while i < count
+                            format!("..{}", count - 1)
+                        } else {
+                            // For negative step: continue while i >= 0
+                            "0..".to_string()
+                        };
+
                         loop_commands.push(format!(
-                            "scoreboard players add {} loop_counter 1",
-                            for_loop.target
-                        ));
-                        loop_commands.push(format!(
-                            "execute if score {} loop_counter matches ..{} run function {}:{}",
+                            "execute if score {} loop_counter matches {} run function {}:{}",
                             for_loop.target,
-                            count - 1,
+                            condition,
                             self.data_pack.namespace,
                             loop_func_name
                         ));

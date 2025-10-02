@@ -68,6 +68,7 @@ pub struct IfStatement {
 pub struct ForLoop {
     pub target: String,
     pub iter: Expression,
+    pub step: Option<Expression>, // Optional step value (for range with step)
     pub body: Vec<Statement>,
 }
 

@@ -39,23 +39,13 @@ impl<'a> ConditionTranslator<'a> {
                         Ok(format!("{} {}", left_final, right_final))
                     }
                     BinaryOp::Or => {
-                        // OR is not yet implemented - requires complex branching logic
-                        Err(
-                            "The 'or' operator is not yet supported (planned for v0.2.0).\n\
-                            \n\
-                            Use separate if statements instead:\n\
-                            \n\
-                            Instead of:\n\
-                              if x > 0 or y < 10:\n\
-                                  /say test\n\
-                            \n\
-                            Use:\n\
-                              if x > 0:\n\
-                                  /say test\n\
-                              if y < 10:\n\
-                                  /say test"
-                                .to_string(),
-                        )
+                        // Or: requires setting a flag variable
+                        // Returns a special marker that if_processor will handle
+                        let left_cond = self.translate(left)?;
+                        let right_cond = self.translate(right)?;
+
+                        // Return special format: OR(cond1, cond2)
+                        Ok(format!("OR({}, {})", left_cond, right_cond))
                     }
                     // Comparison operators
                     _ => {

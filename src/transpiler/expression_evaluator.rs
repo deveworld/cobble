@@ -92,6 +92,38 @@ impl<'a> ExpressionEvaluator<'a> {
                                     target
                                 ));
                             }
+                            BinaryOp::Mod => {
+                                self.data_pack.track_objective("modulus");
+                                commands
+                                    .push(format!("scoreboard players set modulus temp {}", value));
+                                commands.push(format!(
+                                    "scoreboard players operation {} temp %= modulus temp",
+                                    target
+                                ));
+                            }
+                            BinaryOp::Pow => {
+                                // Compile-time expansion: x^n becomes x*x*...*x (n times)
+                                if value < 1 {
+                                    return Err("Power exponent must be at least 1".to_string());
+                                }
+                                if value == 1 {
+                                    // x^1 = x, no operation needed
+                                } else {
+                                    // Store original value for multiplication
+                                    self.data_pack.track_objective("power_base");
+                                    commands.push(format!(
+                                        "scoreboard players operation power_base temp = {} temp",
+                                        target
+                                    ));
+                                    // Multiply (value - 1) times
+                                    for _ in 0..(value - 1) {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp *= power_base temp",
+                                            target
+                                        ));
+                                    }
+                                }
+                            }
                             _ => return Err(format!("Unsupported binary operation: {:?}", op)),
                         }
                     }
@@ -123,6 +155,12 @@ impl<'a> ExpressionEvaluator<'a> {
                             BinaryOp::Div => {
                                 commands.push(format!(
                                     "scoreboard players operation {} temp /= {} {}",
+                                    target, var, var_obj
+                                ));
+                            }
+                            BinaryOp::Mod => {
+                                commands.push(format!(
+                                    "scoreboard players operation {} temp %= {} {}",
                                     target, var, var_obj
                                 ));
                             }
@@ -160,6 +198,12 @@ impl<'a> ExpressionEvaluator<'a> {
                             BinaryOp::Div => {
                                 commands.push(format!(
                                     "scoreboard players operation {} temp /= expr_temp temp",
+                                    target
+                                ));
+                            }
+                            BinaryOp::Mod => {
+                                commands.push(format!(
+                                    "scoreboard players operation {} temp %= expr_temp temp",
                                     target
                                 ));
                             }

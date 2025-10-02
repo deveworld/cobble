@@ -155,6 +155,50 @@ impl Transpiler {
                                         assign.target
                                     ));
                                 }
+                                BinaryOp::Mod => {
+                                    self.data_pack.track_objective("modulus");
+                                    // Optimization: Skip self-assignment if target == var
+                                    if assign.target != *var || var_obj != "temp" {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp = {} {}",
+                                            assign.target, var, var_obj
+                                        ));
+                                    }
+                                    commands.push(format!(
+                                        "scoreboard players set modulus temp {}",
+                                        value
+                                    ));
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp %= modulus temp",
+                                        assign.target
+                                    ));
+                                }
+                                BinaryOp::Pow => {
+                                    // Power operation: compile-time expansion
+                                    if value < 1 {
+                                        return Err("Power exponent must be at least 1".to_string());
+                                    }
+                                    // Optimization: Skip self-assignment if target == var
+                                    if assign.target != *var || var_obj != "temp" {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp = {} {}",
+                                            assign.target, var, var_obj
+                                        ));
+                                    }
+                                    if value > 1 {
+                                        self.data_pack.track_objective("power_base");
+                                        commands.push(format!(
+                                            "scoreboard players operation power_base temp = {} temp",
+                                            assign.target
+                                        ));
+                                        for _ in 0..(value - 1) {
+                                            commands.push(format!(
+                                                "scoreboard players operation {} temp *= power_base temp",
+                                                assign.target
+                                            ));
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -165,6 +209,15 @@ impl Transpiler {
                                 BinaryOp::Sub => (*n1 - *n2) as i32,
                                 BinaryOp::Mul => (*n1 * *n2) as i32,
                                 BinaryOp::Div => (*n1 / *n2) as i32,
+                                BinaryOp::Mod => (*n1 as i32) % (*n2 as i32),
+                                BinaryOp::Pow => {
+                                    let base = *n1 as i32;
+                                    let exp = *n2 as i32;
+                                    if exp < 0 {
+                                        return Err("Power exponent must be non-negative".to_string());
+                                    }
+                                    base.pow(exp as u32)
+                                },
                                 _ => 0,
                             };
                             commands.push(format!(
@@ -235,6 +288,22 @@ impl Transpiler {
                                         assign.target, var, var_obj
                                     ));
                                 }
+                                BinaryOp::Mod => {
+                                    // score = value % var
+                                    self.data_pack.track_objective("modulus");
+                                    commands.push(format!(
+                                        "scoreboard players set {} temp {}",
+                                        assign.target, value
+                                    ));
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp %= {} {}",
+                                        assign.target, var, var_obj
+                                    ));
+                                }
+                                BinaryOp::Pow => {
+                                    // Power with variable exponent is not supported at compile time
+                                    return Err("Power with variable exponent is not supported. Use constant exponents only.".to_string());
+                                }
                                 _ => {}
                             }
                         }
@@ -286,6 +355,16 @@ impl Transpiler {
                                         "scoreboard players operation {} temp /= {} {}",
                                         assign.target, var2, var2_obj
                                     ));
+                                }
+                                BinaryOp::Mod => {
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp %= {} {}",
+                                        assign.target, var2, var2_obj
+                                    ));
+                                }
+                                BinaryOp::Pow => {
+                                    // Power with variable exponent is not supported at compile time
+                                    return Err("Power with variable exponent is not supported. Use constant exponents only.".to_string());
                                 }
                                 _ => {}
                             }

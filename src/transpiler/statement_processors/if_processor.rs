@@ -6,7 +6,13 @@ impl Transpiler {
         &mut self,
         if_stmt: &IfStatement,
     ) -> Result<(), String> {
-        let condition_cmd = self.translate_condition(&if_stmt.condition)?;
+        let mut condition_cmd = self.translate_condition(&if_stmt.condition)?;
+
+        // Handle OR conditions specially
+        if condition_cmd.starts_with("OR(") {
+            self.data_pack.track_objective("or_result");
+            condition_cmd = self.handle_or_condition(&condition_cmd)?;
+        }
 
         // Check if we need to create a separate function for complex if statements
         // If the then_branch has multiple statements or nested control flow, use a function

@@ -172,6 +172,10 @@ def check_conditions():
     if x > 0 and y < 15:
         /say Both conditions are true!
 
+    # OR operator - at least one condition must be true
+    if x == 5 or y == 20:
+        /say At least one condition is true!
+
     # NOT operator - negates the condition
     if not x == 10:
         /say x is not equal to 10!
@@ -182,14 +186,20 @@ def check_conditions():
     c = 30
     if a > 5 and b < 25 and not c == 40:
         /say Complex condition met!
+
+    if a == 10 or b == 30 or c > 25:
+        /say OR combination works!
 ```
 
 **Transpilation Details:**
 - `and` operator chains conditions using `execute if ... if ...`
+- `or` operator uses a temporary scoreboard variable (`or_result`) to track if any condition is true
 - `not` operator converts `if` to `unless` (or vice versa)
 - Double negatives are automatically simplified (`not not x == 5` → `if score x temp matches 5`)
 
-**Example:**
+**Examples:**
+
+AND operator:
 ```python
 if x > 0 and y < 15:
     /say test
@@ -197,6 +207,19 @@ if x > 0 and y < 15:
 Transpiles to:
 ```mcfunction
 execute if score x temp matches 1.. if score y temp matches ..14 run say test
+```
+
+OR operator:
+```python
+if x == 5 or y == 10:
+    /say test
+```
+Transpiles to:
+```mcfunction
+scoreboard players set or_result temp 0
+execute if score x temp matches 5 run scoreboard players set or_result temp 1
+execute if score y temp matches 10 run scoreboard players set or_result temp 1
+execute if score or_result temp matches 1 run say test
 ```
 
 **Note:** Boolean operators are only supported in regular `if` and `while` statements. Execute blocks (`as`, `at`, `asat`) use raw Minecraft syntax for their `if` modifiers:
@@ -249,9 +272,25 @@ def spawn_particles():
         asat @s:
             /summon minecraft:pig ~ ~1 ~
             /particle minecraft:heart ~ ~ ~ 0.5 0.5 0.5 0 10
+
+def count_by_twos():
+    # Step support: increment by 2 each iteration
+    for i in range(10) by 2:
+        /say i = 0, 2, 4, 6, 8
+
+def countdown():
+    # Negative step: count backwards
+    for i in range(10) by -1:
+        /say i = 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
 ```
 
 For loops are compiled into recursive functions with automatic loop counters.
+
+**Step Support:**
+- Use `by` keyword to specify step value: `for i in range(n) by step:`
+- Positive step: starts at 0, increments by step, continues while `i < n`
+- Negative step: starts at `n-1`, decrements by step (e.g., `by -1`), continues while `i >= 0`
+- Default step is 1 if not specified
 
 ### While Loops
 
@@ -373,6 +412,8 @@ def calculate():
     diff = a - b         # Subtraction: 5
     product = a * b      # Multiplication: 50 (uses multiplier helper)
     quotient = a / b     # Division: 2 (uses divisor helper)
+    remainder = a % c    # Modulo: 1 (uses modulus helper)
+    power = b ^ 2        # Power: 25 (compile-time expansion)
 
     # Multi-operator expressions
     result1 = a + b + c          # Chain addition: 18
@@ -383,19 +424,23 @@ def calculate():
     result4 = a + b * c          # Evaluates as: a + (b * c) = 25
     result5 = a * b + c          # Evaluates as: (a * b) + c = 53
     result6 = a - b / c          # Evaluates as: a - (b / c) = 9
+    result7 = a % c + b          # Evaluates as: (a % c) + b = 6
 
     # Complex expressions
     complex = a + b * c - d / e  # Full precedence support
 ```
 
 **Operator Precedence** (highest to lowest):
-1. `*`, `/` - Multiplication and division (left to right)
-2. `+`, `-` - Addition and subtraction (left to right)
-3. `==`, `!=`, `<`, `<=`, `>`, `>=` - Comparisons
+1. `^` - Power/exponentiation (left to right)
+2. `*`, `/`, `%` - Multiplication, division, and modulo (left to right)
+3. `+`, `-` - Addition and subtraction (left to right)
+4. `==`, `!=`, `<`, `<=`, `>`, `>=` - Comparisons
 
 **Important Notes**:
 - Operators follow standard mathematical precedence
-- Multiplication and division use temporary scoreboard objectives (`multiplier`, `divisor`)
+- Multiplication, division, and modulo use temporary scoreboard objectives (`multiplier`, `divisor`, `modulus`)
+- Power operator (`^`) uses compile-time expansion: `x^3` becomes `x*x*x`
+- Power exponent must be a constant (variables not supported)
 - Complex expressions automatically use `expr_temp` for intermediate results
 - All operations work with both constants and variables
 - Loop variables (like `i` in `for i in range(5)`) use the correct objective (`loop_counter`)

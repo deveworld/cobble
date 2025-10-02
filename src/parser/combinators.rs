@@ -52,24 +52,36 @@ pub fn token_parser<'a>(
                 });
 
             // Binary operations with proper precedence
-            // Highest precedence: * /
-            let mul_div = call.clone().foldl(
+            // Highest precedence: ^ (power) - using foldl for now
+            // Note: This makes power left-associative (2^3^2 = (2^3)^2)
+            // Right-associativity would require a different parsing approach
+            let power = call.clone().foldl(
+                just(&Token::Caret)
+                    .to(BinaryOp::Pow)
+                    .then(call.clone())
+                    .repeated(),
+                |left, (op, right)| Expression::Binary(Box::new(left), op, Box::new(right)),
+            );
+
+            // Second highest: *, /, %
+            let mul_div_mod = power.clone().foldl(
                 choice((
                     just(&Token::Star).to(BinaryOp::Mul),
                     just(&Token::Slash).to(BinaryOp::Div),
+                    just(&Token::Percent).to(BinaryOp::Mod),
                 ))
-                .then(call.clone())
+                .then(power.clone())
                 .repeated(),
                 |left, (op, right)| Expression::Binary(Box::new(left), op, Box::new(right)),
             );
 
             // Middle precedence: + -
-            let add_sub = mul_div.clone().foldl(
+            let add_sub = mul_div_mod.clone().foldl(
                 choice((
                     just(&Token::Plus).to(BinaryOp::Add),
                     just(&Token::Minus).to(BinaryOp::Sub),
                 ))
-                .then(mul_div.clone())
+                .then(mul_div_mod.clone())
                 .repeated(),
                 |left, (op, right)| Expression::Binary(Box::new(left), op, Box::new(right)),
             );
@@ -244,10 +256,15 @@ pub fn token_parser<'a>(
             .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
             .then_ignore(just(&Token::In))
             .then(expr.clone())
+            .then(
+                select_ref! { Token::Ident(s) if s == "by" => s.clone() }
+                    .ignore_then(expr.clone())
+                    .or_not()
+            )
             .then_ignore(just(&Token::Colon))
             .then_ignore(just(&Token::Newline).or_not())
             .then(block.clone())
-            .map(|((target, iter), body)| Statement::For(ForLoop { target, iter, body }));
+            .map(|(((target, iter), step), body)| Statement::For(ForLoop { target, iter, step, body }));
 
         // While loop
         let while_loop = just(&Token::While)

@@ -45,6 +45,8 @@ pub enum Token {
     Minus,
     Star,
     Slash,
+    Percent,
+    Caret,
 
     // Comparison
     EqEq,
@@ -80,6 +82,8 @@ impl std::fmt::Display for Token {
             Token::Minus => write!(f, "-"),
             Token::Star => write!(f, "*"),
             Token::Slash => write!(f, "/"),
+            Token::Percent => write!(f, "%"),
+            Token::Caret => write!(f, "^"),
             Token::Equals => write!(f, "="),
             Token::EqEq => write!(f, "=="),
             Token::NotEq => write!(f, "!="),
@@ -277,7 +281,7 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                 }
                 tokens.push(Token::Ident(selector));
             }
-            '~' | '^' => {
+            '~' => {
                 // Coordinate marker
                 let mut coord = String::new();
                 coord.push(chars.next().unwrap());
@@ -289,6 +293,30 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                     }
                 }
                 tokens.push(Token::Ident(coord));
+            }
+            '^' => {
+                chars.next();
+                // Check if it's a coordinate (^number) or power operator (^)
+                if let Some(&ch) = chars.peek() {
+                    if ch.is_ascii_digit() || ch == '.' || ch == '-' {
+                        // It's a coordinate marker
+                        let mut coord = String::from("^");
+                        while let Some(&ch) = chars.peek() {
+                            if ch.is_ascii_digit() || ch == '.' || ch == '-' {
+                                coord.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        tokens.push(Token::Ident(coord));
+                    } else {
+                        // It's a power operator
+                        tokens.push(Token::Caret);
+                    }
+                } else {
+                    // End of input, it's a power operator
+                    tokens.push(Token::Caret);
+                }
             }
             '=' => {
                 chars.next();
@@ -382,6 +410,10 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
             '*' => {
                 chars.next();
                 tokens.push(Token::Star);
+            }
+            '%' => {
+                chars.next();
+                tokens.push(Token::Percent);
             }
             '{' | '}' => {
                 // Part of JSON or NBT data - consume as identifier for now

@@ -461,6 +461,75 @@ impl Transpiler {
         translator.translate(condition)
     }
 
+    fn handle_or_condition(&mut self, or_expr: &str) -> Result<String, String> {
+        // Parse OR(cond1, cond2) format
+        if !or_expr.starts_with("OR(") || !or_expr.ends_with(')') {
+            return Err("Invalid OR expression format".to_string());
+        }
+
+        let inner = &or_expr[3..or_expr.len() - 1];
+
+        // Find the comma that separates cond1 and cond2
+        // Need to handle nested parentheses
+        let mut depth = 0;
+        let mut comma_pos = None;
+        for (i, ch) in inner.chars().enumerate() {
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ',' if depth == 0 => {
+                    comma_pos = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        let (cond1, cond2) = if let Some(pos) = comma_pos {
+            let cond1 = inner[..pos].trim();
+            let cond2 = inner[pos + 1..].trim();
+            (cond1, cond2)
+        } else {
+            return Err("OR expression must have two conditions".to_string());
+        };
+
+        // Generate commands to implement OR logic:
+        // 1. Set or_result to 0 (assume false)
+        // 2. If cond1, set or_result to 1
+        // 3. If cond2, set or_result to 1
+        // 4. Return condition checking if or_result == 1
+
+        if let Some(ref mut commands) = self.current_function {
+            // Initialize or_result to 0
+            commands.push("scoreboard players set or_result temp 0".to_string());
+
+            // If cond1 is true, set or_result to 1
+            let cond1_prefix = if cond1.starts_with("if ") || cond1.starts_with("unless ") {
+                cond1.to_string()
+            } else {
+                format!("if {}", cond1)
+            };
+            commands.push(format!(
+                "execute {} run scoreboard players set or_result temp 1",
+                cond1_prefix
+            ));
+
+            // If cond2 is true, set or_result to 1
+            let cond2_prefix = if cond2.starts_with("if ") || cond2.starts_with("unless ") {
+                cond2.to_string()
+            } else {
+                format!("if {}", cond2)
+            };
+            commands.push(format!(
+                "execute {} run scoreboard players set or_result temp 1",
+                cond2_prefix
+            ));
+        }
+
+        // Return the condition that checks if or_result is 1
+        Ok("score or_result temp matches 1".to_string())
+    }
+
     pub fn write_data_pack(&self) -> std::io::Result<()> {
         self.data_pack.write()
     }
