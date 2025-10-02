@@ -126,6 +126,9 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
             )
         })?;
 
+        // Set current file for import resolution
+        transpiler.set_current_file(file_path);
+
         transpiler
             .transpile(&program)
             .map_err(|e| format!("Transpilation failed for {:?}: {}", file_path, e))?;

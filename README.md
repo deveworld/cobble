@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.2.1** - Feature-rich development version | Minecraft 1.21.9+ compatible
+**✨ Version 0.4.0** - Feature-rich development version | Minecraft 1.21.9+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.2.1 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.4.0 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -25,18 +25,22 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 - ✅ **Function Parameters** - Full support using Minecraft 1.20.2+ macro system
 - ✅ **Event System** - Built-in event handling for load and tick events
 - ✅ **Control Flow** - If statements, for loops (with step support), while loops with smart optimization
+- ✅ **Match/Switch Statements** - Efficient multi-way branching with literal/range/wildcard patterns
 - ✅ **Boolean Operators** - `and`, `or`, `not` operators for complex conditions (e.g., `if x > 0 and y < 5 or z == 10:`)
 - ✅ **Complex Expressions** - Multi-operator expressions with proper precedence (e.g., `a + b * c`)
 - ✅ **Arithmetic Operations** - Full support for +, -, *, /, %, ^ with variable and constant operands
 - ✅ **Advanced Operators** - Modulo (%) and power (^) operators with compile-time optimization
 - ✅ **Expressions in Conditions** - Use arithmetic directly in if/while (e.g., `if x % 3 == 1:`)
+- ✅ **Compile-time Constants** - Define constants with `const` keyword for compile-time evaluation
+- ✅ **Entity Selector Definitions** - Create custom selector aliases (e.g., `@Player = @a[type=player]`)
+- ✅ **File Import System** - Import functions and definitions from other `.cbl` files
 - ✅ **Module-level Variables** - Top-level assignments automatically initialized at pack load
 - ✅ **Modern CLI** - Full-featured command-line interface with watch mode and ZIP creation
 - ✅ **Project Management** - Configuration via `cobble.toml`
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
 - ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
 - ✅ **Nested If Optimization** - Automatically splits complex control flow
-- ✅ **Comprehensive Tests** - 41 tests (7 parser + 34 integration) with output verification
+- ✅ **Comprehensive Tests** - 55 tests (7 parser + 48 integration) with output verification
 - ✅ **Modern Parser** - Built with chumsky combinator library for reliability
 - ✅ **Beautiful Errors** - Clear error messages powered by ariadne
 
@@ -161,6 +165,71 @@ def my_function():
 
 **Module-level variables** are automatically initialized in the `_cobble_init` function when the data pack loads.
 
+### Compile-time Constants
+
+Define constants that are evaluated at compile time:
+
+```python
+const MAX_HEALTH = 100
+const PLAYER_SPEED = 2
+const GAME_DURATION = 300
+
+def setup():
+    health = MAX_HEALTH  # Replaced with 100 at compile time
+    /say Game duration: {GAME_DURATION}
+```
+
+Constants are replaced with their values during compilation, resulting in optimized code.
+
+### Entity Selector Definitions
+
+Create custom selector aliases for cleaner, more maintainable code:
+
+```python
+# Define custom selectors
+@Player = @a[type=player,gamemode=survival]
+@Admin = @a[tag=admin]
+@Boss = @e[type=zombie,tag=boss]
+
+def give_rewards():
+    as @Player:
+        /give @s diamond 5
+
+    as @Admin:
+        /tellraw @s {"text":"Admin panel opened"}
+
+def buff_boss():
+    as @Boss:
+        /effect give @s strength 999999 2
+```
+
+Selector aliases are replaced at compile time with zero runtime overhead.
+
+### File Import System
+
+Import functions and definitions from other `.cbl` files:
+
+```python
+# utils.cbl
+def helper_function():
+    /say Helper called
+
+@Admin = @a[tag=admin]
+
+# main.cbl
+import utils  # Imports utils.cbl
+
+def test():
+    helper_function()  # Use imported function
+    as @Admin:         # Use imported selector
+        /say Hello admin
+```
+
+Features:
+- Relative import resolution
+- Automatic circular dependency prevention
+- Functions and selectors are merged into current namespace
+
 ### Minecraft Commands
 
 Direct Minecraft commands start with `/`:
@@ -201,11 +270,11 @@ def spawn_multiple():
 
     # Loop with step
     for i in range(10) by 2:
-        /say Count by 2: 0, 2, 4, 6, 8
+        /say Count by 2: {i}
 
     # Countdown with negative step
     for i in range(10) by -1:
-        /say Countdown: 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
+        /say Countdown by -1: {i}
 ```
 
 #### While Loops
@@ -214,11 +283,49 @@ def spawn_multiple():
 def countdown():
     counter = 10
     while counter > 0:
-        /tellraw @a {"score":{"name":"counter","objective":"temp"}}
+        /tellraw @a {counter}
         counter = counter - 1
 ```
 
-**Note**: To display scoreboard values in-game, use Minecraft's JSON score display syntax as shown above.
+#### Match/Switch Statements
+
+Efficient multi-way branching based on integer values:
+
+```python
+def check_score():
+    score = 75
+
+    match score:
+        case 0 to 59:
+            /say Grade: F
+        case 60 to 69:
+            /say Grade: D
+        case 70 to 79:
+            /say Grade: C
+        case 80 to 89:
+            /say Grade: B
+        case 90 to 100:
+            /say Grade: A
+        case _:
+            /say Invalid score
+
+def handle_difficulty(level):
+    match level:
+        case 1:
+            /difficulty easy
+        case 2:
+            /difficulty normal
+        case 3:
+            /difficulty hard
+        case _:
+            /say Invalid difficulty level
+```
+
+Features:
+- **Literal matching**: `case 5:` - matches exactly 5
+- **Range matching**: `case 1 to 10:` - matches values from 1 to 10 (inclusive)
+- **Wildcard pattern**: `case _:` - matches anything not matched by previous cases
+- Uses efficient 4-way split algorithm for optimal branching
 
 ### Arithmetic Operations
 
@@ -274,13 +381,23 @@ def calculations():
 
 ### Imports and Modules
 
+Import from the standard library or other `.cbl` files:
+
 ```python
+# Standard library imports
 import stdlib
 from stdlib import event
 
-# Use imported functions
+# File imports (imports from other .cbl files)
+import utils      # Imports utils.cbl
+import helpers    # Imports helpers.cbl
+
+# Use imported functions and selectors
 stdlib.addEventListener(event.LOAD, my_function)
+helper_function()  # From utils.cbl
 ```
+
+See [File Import System](#file-import-system) for more details on importing from `.cbl` files.
 
 ### Event System
 
@@ -548,6 +665,25 @@ cargo watch -x test -x "run -- check examples/"
 
 ### Recently Completed
 
+#### v0.4.0 (2025-10-03)
+- [x] **Entity Selector Definitions** - Custom selector aliases (e.g., `@Player = @a[type=player]`)
+- [x] **File Import System** - Import functions and definitions from other `.cbl` files
+- [x] **Circular dependency prevention** - Automatic detection and prevention
+- [x] **Relative import resolution** - Import files relative to current file location
+
+#### v0.3.0 (2025-10-03)
+- [x] **Compile-time constants** - `const` keyword for compile-time evaluation
+- [x] **Match/switch statements** - Efficient multi-way branching
+- [x] **Literal matching** - Match exact values (e.g., `case 5:`)
+- [x] **Range matching** - Match value ranges (e.g., `case 1 to 10:`)
+- [x] **Wildcard pattern** - Default case with `case _:`
+- [x] **4-way split algorithm** - Optimized branching implementation
+
+#### v0.2.2 (2025-10-02)
+- [x] **Critical bug fixes** - If/elif/else inlining bug, while loop condition bug
+- [x] **Automatic gamerule configuration** - `maxCommandChainLength` set automatically
+- [x] **Module variable initialization order** - Proper command ordering
+
 #### v0.2.1 (2025-10-02)
 - [x] **Complex expressions in conditions** - Use arithmetic directly in if/while (e.g., `if x % 3 == 1:`)
 - [x] **Automatic temporary variables** - Unique variables for each expression in conditions
@@ -580,10 +716,10 @@ cargo watch -x test -x "run -- check examples/"
 - [x] Improved error messages with ariadne
 - [x] as/at/asat/if execute support
 - [x] global keyword
-- [x] Comprehensive test suite (41 tests: 7 parser + 34 integration)
+- [x] Comprehensive test suite (55 tests: 7 parser + 48 integration)
 
 ### Near Term
-- [ ] Const variables (Compile time variables)
+- [ ] **Template functions** - Parameterized code generation (e.g., `def summon[entity]: /summon {entity} ~ ~ ~`)
 - [ ] Array and list data structures
 - [ ] More built-in functions (math, strings)
 - [ ] Enhanced loop optimizations

@@ -7,6 +7,7 @@ pub struct CommandProcessor<'a> {
     pub scoreboard_variables: &'a HashSet<String>,
     pub variables: &'a HashMap<String, Expression>,
     pub variable_objectives: &'a HashMap<String, String>,
+    pub selector_aliases: &'a HashMap<String, String>,
 }
 
 impl<'a> CommandProcessor<'a> {
@@ -15,12 +16,14 @@ impl<'a> CommandProcessor<'a> {
         scoreboard_variables: &'a HashSet<String>,
         variables: &'a HashMap<String, Expression>,
         variable_objectives: &'a HashMap<String, String>,
+        selector_aliases: &'a HashMap<String, String>,
     ) -> Self {
         Self {
             current_params,
             scoreboard_variables,
             variables,
             variable_objectives,
+            selector_aliases,
         }
     }
 
@@ -175,6 +178,12 @@ impl<'a> CommandProcessor<'a> {
         // If the command has macro variables, prefix with $ for Minecraft 1.21.8+ macro system
         if has_macro_vars && !result.starts_with('$') {
             result = format!("${}", result);
+        }
+
+        // Replace selector aliases (@Name -> @a[...])
+        for (alias_name, selector) in self.selector_aliases {
+            let pattern = format!("@{}", alias_name);
+            result = result.replace(&pattern, selector);
         }
 
         Ok(result)

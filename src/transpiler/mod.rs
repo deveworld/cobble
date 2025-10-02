@@ -47,6 +47,10 @@ pub struct Transpiler {
     function_params: HashMap<String, Vec<String>>, // Track function parameter names
     global_variables: HashSet<String>,     // Track global variables declared in current function
     module_level_vars: HashMap<String, Expression>, // Store module-level assignments
+    compile_time_constants: HashMap<String, f64>, // Store compile-time constant values
+    selector_aliases: HashMap<String, String>,    // Store selector definitions (@Name -> @a[...])
+    imported_files: HashSet<PathBuf>,             // Track imported files to prevent circular dependencies
+    current_file_dir: PathBuf,                    // Current file's directory for resolving relative imports
 }
 
 impl Transpiler {
@@ -62,6 +66,16 @@ impl Transpiler {
             function_params: HashMap::new(),
             global_variables: HashSet::new(),
             module_level_vars: HashMap::new(),
+            compile_time_constants: HashMap::new(),
+            selector_aliases: HashMap::new(),
+            imported_files: HashSet::new(),
+            current_file_dir: PathBuf::from("."),
+        }
+    }
+
+    pub fn set_current_file(&mut self, file_path: &PathBuf) {
+        if let Some(parent) = file_path.parent() {
+            self.current_file_dir = parent.to_path_buf();
         }
     }
 
@@ -134,28 +148,32 @@ impl Transpiler {
                 }
             }
 
-            // Add these commands after objective creation
+            // Add these commands after gamerule and objective creation
             if !init_commands.is_empty() {
                 if let Some(existing_init) = self.data_pack.functions.get_mut("_cobble_init") {
-                    // Insert after objective creation
-                    let objective_count = existing_init
+                    // Find the position after gamerule and all objectives
+                    let setup_end = existing_init
                         .iter()
-                        .take_while(|cmd| cmd.starts_with("scoreboard objectives add"))
-                        .count();
+                        .position(|cmd| !cmd.starts_with("gamerule") && !cmd.starts_with("scoreboard objectives add"))
+                        .unwrap_or(existing_init.len());
+
+                    // Insert module vars after setup commands
                     for (i, cmd) in init_commands.iter().enumerate() {
-                        existing_init.insert(objective_count + i, cmd.clone());
+                        existing_init.insert(setup_end + i, cmd.clone());
                     }
                 } else {
                     // Find the load handler function
                     let load_handlers = self.data_pack.stdlib.get_event_handlers(&EventType::Load);
                     if let Some(handler_name) = load_handlers.first() {
                         if let Some(handler_func) = self.data_pack.functions.get_mut(handler_name) {
-                            let objective_count = handler_func
+                            // Find the position after gamerule and all objectives
+                            let setup_end = handler_func
                                 .iter()
-                                .take_while(|cmd| cmd.starts_with("scoreboard objectives add"))
-                                .count();
+                                .position(|cmd| !cmd.starts_with("gamerule") && !cmd.starts_with("scoreboard objectives add"))
+                                .unwrap_or(handler_func.len());
+
                             for (i, cmd) in init_commands.iter().enumerate() {
-                                handler_func.insert(objective_count + i, cmd.clone());
+                                handler_func.insert(setup_end + i, cmd.clone());
                             }
                         }
                     } else {
@@ -178,7 +196,77 @@ impl Transpiler {
         // Handle stdlib imports
         if import.module == "stdlib" {
             // stdlib is automatically available, no action needed
+            return Ok(());
         }
+
+        // Handle file imports
+        let import_path = self.current_file_dir.join(format!("{}.cbl", import.module));
+
+        // Check if already imported
+        if self.imported_files.contains(&import_path) {
+            return Ok(()); // Already imported, skip
+        }
+
+        // Check if file exists
+        if !import_path.exists() {
+            return Err(format!(
+                "Cannot import '{}': file '{}' not found",
+                import.module,
+                import_path.display()
+            ));
+        }
+
+        // Mark as imported to prevent circular dependencies
+        self.imported_files.insert(import_path.clone());
+
+        // Read the file
+        let source = std::fs::read_to_string(&import_path).map_err(|e| {
+            format!(
+                "Failed to read import file '{}': {}",
+                import_path.display(),
+                e
+            )
+        })?;
+
+        // Parse the imported file
+        use crate::parser::{tokenize, token_parser};
+        use chumsky::Parser;
+
+        let tokens = tokenize(&source).map_err(|e| {
+            format!("Tokenization failed for '{}': {}", import.module, e)
+        })?;
+
+        let program = token_parser()
+            .parse(&tokens)
+            .into_result()
+            .map_err(|errors| {
+                format!(
+                    "Parse failed for '{}': {}",
+                    import.module,
+                    errors
+                        .iter()
+                        .map(|e| format!("{:?}", e))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+
+        // Save current file dir
+        let saved_dir = self.current_file_dir.clone();
+
+        // Set directory for nested imports
+        if let Some(parent) = import_path.parent() {
+            self.current_file_dir = parent.to_path_buf();
+        }
+
+        // Process imported program statements
+        for statement in &program.statements {
+            self.process_statement(statement)?;
+        }
+
+        // Restore previous directory
+        self.current_file_dir = saved_dir;
+
         Ok(())
     }
 
@@ -204,6 +292,9 @@ impl Transpiler {
             Statement::Assignment(assign) => {
                 self.process_assignment(assign)?;
             }
+            Statement::ConstAssignment(const_assign) => {
+                self.process_const_assignment(const_assign)?;
+            }
             Statement::Expression(expr) => {
                 self.process_expression(expr)?;
             }
@@ -215,6 +306,9 @@ impl Transpiler {
             }
             Statement::While(while_loop) => {
                 self.process_while(while_loop)?;
+            }
+            Statement::Match(match_stmt) => {
+                self.process_match(match_stmt)?;
             }
             Statement::Return(_) => {
                 // Return statements in minecraft functions don't have a direct equivalent
@@ -237,6 +331,7 @@ impl Transpiler {
                     &self.scoreboard_variables,
                     &self.variables,
                     &self.variable_objectives,
+                    &self.selector_aliases,
                 );
 
                 let processed_cmd = processor.process_command_string(&clean_cmd)?;
@@ -249,6 +344,9 @@ impl Transpiler {
             }
             Statement::Execute(exec_block) => {
                 self.process_execute_block(exec_block)?;
+            }
+            Statement::SelectorDef(selector_def) => {
+                self.process_selector_def(selector_def)?;
             }
         }
         Ok(())

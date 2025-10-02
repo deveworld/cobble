@@ -14,7 +14,7 @@ impl Transpiler {
             match modifier {
                 ExecuteModifier::As(selector) => {
                     // Check if selector contains a variable interpolation pattern {param}
-                    let processed_selector = if selector.starts_with('{') && selector.ends_with('}') {
+                    let mut processed_selector = if selector.starts_with('{') && selector.ends_with('}') {
                         let param_name = &selector[1..selector.len()-1];
                         if self.current_context.is_param(param_name) {
                             has_macro_params = true;
@@ -25,11 +25,20 @@ impl Transpiler {
                     } else {
                         selector.clone()
                     };
+
+                    // Replace selector aliases (@Name -> @a[...])
+                    if processed_selector.starts_with('@') {
+                        let selector_name = processed_selector.strip_prefix('@').unwrap_or("");
+                        if let Some(actual_selector) = self.selector_aliases.get(selector_name) {
+                            processed_selector = actual_selector.clone();
+                        }
+                    }
+
                     execute_parts.push(format!("as {}", processed_selector));
                 }
                 ExecuteModifier::At(selector) => {
                     // Check if selector contains a variable interpolation pattern {param}
-                    let processed_selector = if selector.starts_with('{') && selector.ends_with('}') {
+                    let mut processed_selector = if selector.starts_with('{') && selector.ends_with('}') {
                         let param_name = &selector[1..selector.len()-1];
                         if self.current_context.is_param(param_name) {
                             has_macro_params = true;
@@ -40,6 +49,15 @@ impl Transpiler {
                     } else {
                         selector.clone()
                     };
+
+                    // Replace selector aliases (@Name -> @a[...])
+                    if processed_selector.starts_with('@') {
+                        let selector_name = processed_selector.strip_prefix('@').unwrap_or("");
+                        if let Some(actual_selector) = self.selector_aliases.get(selector_name) {
+                            processed_selector = actual_selector.clone();
+                        }
+                    }
+
                     execute_parts.push(format!("at {}", processed_selector));
                 }
                 ExecuteModifier::If(expr) => {

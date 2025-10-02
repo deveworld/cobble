@@ -63,25 +63,37 @@ impl DataPack {
         if let Some(init_func_name) = load_handlers.first() {
             // Add objectives to the beginning of the load function
             if let Some(commands) = self.functions.get_mut(init_func_name) {
-                // Collect objectives that aren't already in the function
-                let mut new_objectives = Vec::new();
+                let mut setup_commands = Vec::new();
+
+                // Add gamerule first
+                let gamerule_cmd = "gamerule maxCommandChainLength 1000000000".to_string();
+                if !commands.contains(&gamerule_cmd) {
+                    setup_commands.push(gamerule_cmd);
+                }
+
+                // Then add objectives
                 for objective in &self.used_objectives {
                     let obj_cmd = format!("scoreboard objectives add {} dummy", objective);
                     // Only add if not already present
                     if !commands.contains(&obj_cmd) {
-                        new_objectives.push(obj_cmd);
+                        setup_commands.push(obj_cmd);
                     }
                 }
 
-                // Prepend new objectives to existing commands
-                if !new_objectives.is_empty() {
-                    new_objectives.extend(commands.clone());
-                    *commands = new_objectives;
+                // Prepend setup commands to existing commands
+                if !setup_commands.is_empty() {
+                    setup_commands.extend(commands.clone());
+                    *commands = setup_commands;
                 }
             }
         } else if !self.used_objectives.is_empty() {
             // No load handler exists, create a default init function
             let mut commands = Vec::new();
+
+            // Add gamerule first
+            commands.push("gamerule maxCommandChainLength 1000000000".to_string());
+
+            // Then add objectives
             for objective in &self.used_objectives {
                 commands.push(format!("scoreboard objectives add {} dummy", objective));
             }

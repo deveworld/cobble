@@ -18,15 +18,18 @@ pub enum Statement {
     FunctionDef(FunctionDef),
     Class(ClassDef),
     Assignment(Assignment),
+    ConstAssignment(ConstAssignment), // const NAME = value
     Expression(Expression),
     If(IfStatement),
     For(ForLoop),
     While(WhileLoop),
+    Match(MatchStatement), // match/switch statement
     Return(Option<Expression>),
     Pass,
     MinecraftCommand(String), // Commands starting with /
     Global(Vec<String>),      // global var1, var2, ...
     Execute(ExecuteBlock),    // as @s at @s: ... or asat @s: ...
+    SelectorDef(SelectorDef), // @Name = @a[...]
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +60,12 @@ pub struct Assignment {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstAssignment {
+    pub target: String,
+    pub value: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IfStatement {
     pub condition: Expression,
     pub then_branch: Vec<Statement>,
@@ -79,6 +88,25 @@ pub struct WhileLoop {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchStatement {
+    pub value: Expression,
+    pub cases: Vec<MatchCase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchCase {
+    pub pattern: MatchPattern,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MatchPattern {
+    Literal(i32),                // case 5:
+    Range(i32, i32),             // case 1 to 10:
+    Wildcard,                    // case _:
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecuteBlock {
     pub modifiers: Vec<ExecuteModifier>, // as @a, at @s, if block ..., etc.
     pub body: Vec<Statement>,
@@ -98,6 +126,12 @@ pub enum ExecuteModifier {
     Anchored(String),     // anchored eyes
     Align(String),        // align xyz
     Store(String),        // store result score ...
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SelectorDef {
+    pub name: String,     // e.g., "Player"
+    pub selector: String, // e.g., "@a[type=player,gamemode=survival]"
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

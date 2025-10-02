@@ -19,7 +19,9 @@ impl Transpiler {
 
         // Check if we need to create a separate function for complex if statements
         // If the then_branch has multiple statements or nested control flow, use a function
-        let needs_function = if_stmt.then_branch.len() > 3
+        // IMPORTANT: We use > 1 (not > 3) to prevent bugs where earlier statements modify
+        // the condition variables, causing later statements to not execute
+        let needs_function = if_stmt.then_branch.len() > 1
             || if_stmt.then_branch.iter().any(|stmt| {
                 matches!(
                     stmt,
@@ -122,7 +124,7 @@ impl Transpiler {
             }
 
             // Check if elif needs a function
-            let elif_needs_function = elif_branch.len() > 3
+            let elif_needs_function = elif_branch.len() > 1
                 || elif_branch.iter().any(|stmt| {
                     matches!(
                         stmt,
@@ -198,7 +200,7 @@ impl Transpiler {
             }
             else_condition = else_condition.trim_end().to_string();
 
-            let else_needs_function = else_branch.len() > 3
+            let else_needs_function = else_branch.len() > 1
                 || else_branch.iter().any(|stmt| {
                     matches!(
                         stmt,

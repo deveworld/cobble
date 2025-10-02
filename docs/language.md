@@ -112,6 +112,37 @@ def func2():
     counter = counter + 10
 ```
 
+### Compile-time Constants
+
+Cobble supports compile-time constants using the `const` keyword. Constants are evaluated at compile time and can be used in expressions:
+
+```python
+# Define constants
+const MAX_HEALTH = 100
+const BASE_DAMAGE = 10
+const CRITICAL_MULTIPLIER = 2
+
+def apply_damage():
+    health = MAX_HEALTH
+    damage = BASE_DAMAGE * CRITICAL_MULTIPLIER
+```
+
+**Key Points:**
+- Constants are evaluated at compile time when possible
+- Constants can be used in arithmetic expressions
+- Constants are stored as Expression values and used like variables in most contexts
+
+**Example:**
+
+```python
+const PI = 3.14159
+const RADIUS = 10
+
+def calculate_area():
+    # PI and RADIUS will be used in the calculation
+    area = PI * RADIUS * RADIUS
+```
+
 ## Functions
 
 ### Function Definition
@@ -335,6 +366,85 @@ While loops are also compiled into recursive functions.
 - Tick-based iteration (use a tick event handler that runs incrementally)
 - For loops with known small iteration counts
 
+### Match Statements
+
+Match statements (also known as switch statements) provide efficient multi-way branching based on integer values:
+
+```python
+def check_score():
+    score = 75
+    match score:
+        case 0:
+            /say No score
+        case 1 to 50:
+            /say Low score
+        case 51 to 80:
+            /say Medium score
+        case 81 to 100:
+            /say High score
+        case _:
+            /say Out of range
+```
+
+**Pattern Types:**
+- **Literal match**: `case 5:` - Matches exactly 5
+- **Range match**: `case 1 to 10:` - Matches any value from 1 to 10 (inclusive)
+- **Wildcard**: `case _:` - Matches anything not matched by previous cases
+
+**Implementation Details:**
+- Match statements use a 4-way split algorithm for efficient branching
+- Single-statement cases are inlined when possible
+- Multi-statement cases create separate functions
+- Generates optimal `execute if score ... matches ...` commands
+
+**Examples:**
+
+Simple literal matching:
+```python
+def handle_phase():
+    phase = 2
+    match phase:
+        case 0:
+            /say Phase 0: Waiting
+        case 1:
+            /say Phase 1: Starting
+        case 2:
+            /say Phase 2: Running
+```
+
+Range matching for grades:
+```python
+def assign_grade():
+    score = 85
+    match score:
+        case 0 to 59:
+            /tellraw @s {"text":"F","color":"red"}
+        case 60 to 69:
+            /tellraw @s {"text":"D","color":"gold"}
+        case 70 to 79:
+            /tellraw @s {"text":"C","color":"yellow"}
+        case 80 to 89:
+            /tellraw @s {"text":"B","color":"green"}
+        case 90 to 100:
+            /tellraw @s {"text":"A","color":"aqua"}
+        case _:
+            /tellraw @s {"text":"Invalid score","color":"red"}
+```
+
+Multi-statement cases:
+```python
+def handle_event():
+    event_type = 3
+    match event_type:
+        case 1:
+            /say Event 1 triggered
+            /playsound minecraft:block.note_block.pling master @a
+            /particle minecraft:happy_villager ~ ~ ~ 1 1 1 0 20
+        case 2:
+            /say Event 2 triggered
+            /playsound minecraft:block.note_block.bass master @a
+```
+
 ## Minecraft Commands
 
 Minecraft commands are prefixed with `/`:
@@ -367,6 +477,63 @@ def teleport_player(player, x, y, z):
     /tp {player} {x} {y} {z}
     /tellraw {player} {"text":"Teleported!", "color":"green"}
 ```
+
+## Entity Selector Definitions
+
+Define custom selector aliases to simplify your code:
+
+```python
+# Define selector aliases
+@Player = @a[type=player,gamemode=survival]
+@Boss = @e[type=zombie,tag=boss]
+@Admin = @a[tag=admin]
+
+# Use in commands
+def give_rewards():
+    as @Player:
+        /give @s diamond
+
+    as @Boss:
+        /effect give @s strength 10 2
+
+def admin_command():
+    /tellraw @Admin {"text":"Admin message"}
+```
+
+**Key Points:**
+- Selector definitions use `@Name = @selector[...]` syntax
+- Aliases are replaced at compile time
+- Works in execute blocks and commands
+- Helps avoid repeating complex selectors
+
+## File Imports
+
+Import functions and definitions from other files:
+
+```python
+# utils.cbl
+def helper_function():
+    /say Helper called
+
+@AllPlayers = @a[gamemode=!spectator]
+```
+
+```python
+# main.cbl
+import utils
+
+def test():
+    helper_function()
+    as @AllPlayers:
+        /say Test
+```
+
+**Key Points:**
+- Use `import filename` to import another `.cbl` file
+- Imported files are resolved relative to the importing file
+- All functions and selector definitions are merged
+- Circular imports are prevented automatically
+- Standard library imports (`import stdlib`) work as before
 
 ## Standard Library
 

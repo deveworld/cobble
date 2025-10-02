@@ -176,6 +176,23 @@ pub fn token_parser<'a>(
             .then(expr.clone())
             .map(|(target, value)| Statement::Assignment(Assignment { target, value }));
 
+        // Const assignment
+        let const_assignment = just(&Token::Const)
+            .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+            .then_ignore(just(&Token::Equals))
+            .then(expr.clone())
+            .map(|(target, value)| Statement::ConstAssignment(ConstAssignment { target, value }));
+
+        // Selector definition: @Name = @selector[...]
+        let selector_def = select_ref! { Token::Ident(s) if s.starts_with('@') => s.clone() }
+            .then_ignore(just(&Token::Equals))
+            .then(select_ref! { Token::Ident(s) if s.starts_with('@') => s.clone() })
+            .map(|(name_with_at, selector)| {
+                // Strip @ from name (e.g., "@Player" -> "Player")
+                let name = name_with_at.strip_prefix('@').unwrap_or(&name_with_at).to_string();
+                Statement::SelectorDef(SelectorDef { name, selector })
+            });
+
         // Pass
         let pass = just(&Token::Pass).to(Statement::Pass);
 
@@ -273,6 +290,44 @@ pub fn token_parser<'a>(
             .then_ignore(just(&Token::Newline).or_not())
             .then(block.clone())
             .map(|(condition, body)| Statement::While(WhileLoop { condition, body }));
+
+        // Match pattern
+        let match_pattern = choice((
+            // Wildcard: _
+            just(&Token::Underscore).to(MatchPattern::Wildcard),
+            // Range: expr to expr
+            select_ref! { Token::Number(n) => n.parse::<i32>().unwrap() }
+                .then(
+                    just(&Token::To)
+                        .ignore_then(select_ref! { Token::Number(n) => n.parse::<i32>().unwrap() })
+                        .or_not()
+                )
+                .map(|(start, end)| {
+                    if let Some(end) = end {
+                        MatchPattern::Range(start, end)
+                    } else {
+                        MatchPattern::Literal(start)
+                    }
+                }),
+        ));
+
+        // Match case
+        let match_case = just(&Token::Case)
+            .ignore_then(match_pattern)
+            .then_ignore(just(&Token::Colon))
+            .then_ignore(just(&Token::Newline).or_not())
+            .then(block.clone())
+            .map(|(pattern, body)| MatchCase { pattern, body });
+
+        // Match statement
+        let match_stmt = just(&Token::Match)
+            .ignore_then(expr.clone())
+            .then_ignore(just(&Token::Colon))
+            .then_ignore(just(&Token::Newline))
+            .then_ignore(just(&Token::Indent))
+            .then(match_case.repeated().at_least(1).collect())
+            .then_ignore(just(&Token::Dedent))
+            .map(|(value, cases)| Statement::Match(MatchStatement { value, cases }));
 
         // Execute block modifiers
         // Helper to parse execute condition (for if/unless modifiers)
@@ -374,13 +429,15 @@ pub fn token_parser<'a>(
             global,
             return_stmt,
             pass,
+            selector_def,
+            const_assignment,
             assignment,
             expr_stmt,
         ))
         .then_ignore(just(&Token::Newline).or_not());
 
         // Compound statement (has block)
-        let compound_stmt = choice((function, if_stmt, for_loop, while_loop, execute_block));
+        let compound_stmt = choice((function, if_stmt, for_loop, while_loop, match_stmt, execute_block));
 
         choice((compound_stmt, simple_stmt))
     })

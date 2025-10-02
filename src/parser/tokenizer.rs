@@ -21,6 +21,12 @@ pub enum Token {
     Or,
     Not,
     Unless,
+    Match,
+    Case,
+    Const,
+    To,
+    By,
+    Underscore,
 
     // Literals
     Number(String), // Store as string to avoid f64 Eq/Hash issues
@@ -245,6 +251,12 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                     "or" => Token::Or,
                     "not" => Token::Not,
                     "unless" => Token::Unless,
+                    "match" => Token::Match,
+                    "case" => Token::Case,
+                    "const" => Token::Const,
+                    "to" => Token::To,
+                    "by" => Token::By,
+                    "_" => Token::Underscore,
                     "True" => Token::True_,
                     "False" => Token::False_,
                     "None" => Token::None_,
@@ -253,12 +265,15 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                 tokens.push(token);
             }
             '@' => {
-                // Selector (e.g., @a, @p, @s, @e[...])
+                // Selector (e.g., @a, @p, @s, @e[...], @Player)
                 let mut selector = String::new();
                 selector.push(chars.next().unwrap()); // @
-                if let Some(&ch) = chars.peek() {
-                    if ch.is_alphanumeric() {
+                // Collect all alphanumeric characters (for @Player, @Boss, etc.)
+                while let Some(&ch) = chars.peek() {
+                    if ch.is_alphanumeric() || ch == '_' {
                         selector.push(chars.next().unwrap());
+                    } else {
+                        break;
                     }
                 }
                 // Handle selector arguments

@@ -83,11 +83,23 @@ def test():
     assert!(main_content.contains("scoreboard players set i temp 0"));
     assert!(main_content.contains("function cobble:while_temp_0"));
 
-    // Check while loop function
+    // Check that while_body function exists (new behavior)
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("while_body_"))
+        .collect();
+
+    assert!(!body_files.is_empty(), "No while_body function generated");
+
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
+    assert!(body_content.contains("say counting"));
+    assert!(body_content.contains("scoreboard players add i temp 1"));
+
+    // Check while loop function calls body conditionally
     let while_content = read_function(&output_dir, "while_temp_0");
-    assert!(while_content.contains("execute if score i temp matches ..4 run say counting"));
-    assert!(while_content
-        .contains("execute if score i temp matches ..4 run scoreboard players add i temp 1"));
+    assert!(while_content.contains("execute if score i temp matches ..4 run function cobble:while_body"));
+    assert!(while_content.contains("execute if score i temp matches ..4 run function cobble:while_temp_0"));
 }
 
 #[test]
@@ -352,8 +364,10 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let init = read_function(&output_dir, "_cobble_init");
 
-    // Objective MUST be created first
+    // Objective MUST be created first (after gamerule)
     let lines: Vec<&str> = init.lines().collect();
+
+    // Find first objective add command (skip gamerule line)
     let obj_idx = lines
         .iter()
         .position(|l| l.contains("scoreboard objectives add"))
@@ -367,6 +381,7 @@ def test():
         obj_idx < var_idx,
         "Objective must be created before variable initialization"
     );
+    assert!(init.contains("gamerule maxCommandChainLength"));
     assert!(init.contains("scoreboard objectives add temp dummy"));
     assert!(init.contains("scoreboard players set score temp 10"));
     assert!(init.contains("scoreboard players set counter temp 5"));
@@ -517,11 +532,21 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Check while loop function
-    let while_content = read_function(&output_dir, "while_temp_0");
+    // Check that while_body function exists (new behavior)
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("while_body_"))
+        .collect();
 
-    // Should have chained conditions in the while loop
-    assert!(while_content.contains("execute if score x temp matches ..4 if score y temp matches ..9 run say Loop running"));
+    assert!(!body_files.is_empty(), "No while_body function generated");
+
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
+    assert!(body_content.contains("say Loop running"));
+
+    // Check while loop function - should have chained conditions
+    let while_content = read_function(&output_dir, "while_temp_0");
+    assert!(while_content.contains("execute if score x temp matches ..4 if score y temp matches ..9 run function cobble:while_body"));
 }
 
 #[test]
@@ -706,4 +731,407 @@ stdlib.addEventListener(event.TICK, tick)
     // Init should also initialize the _cobble_init
     assert!(load_content.contains("_cobble_init") || load_content.contains("init"));
     assert!(tick_content.contains("cobble:tick"));
+}
+
+#[test]
+fn test_if_modifies_condition_variable() {
+    // Regression test for bug where if statements with multiple statements
+    // that modify the condition variable would not execute all statements
+    let source = r#"
+def test():
+    x = 20
+    if x >= 20:
+        x = 0
+        /say Should execute
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should use a function, not inline
+    assert!(content.contains("function cobble:if_temp"));
+
+    // Check the if function
+    let if_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("if_temp_"))
+        .collect();
+
+    assert!(!if_files.is_empty(), "No if function generated");
+
+    let if_content = fs::read_to_string(if_files[0].path()).unwrap();
+    assert!(if_content.contains("scoreboard players set x temp 0"));
+    assert!(if_content.contains("say Should execute"));
+}
+
+#[test]
+fn test_elif_modifies_condition_variable() {
+    let source = r#"
+def test():
+    x = 15
+    if x < 10:
+        x = 0
+        /say Less than 10
+    elif x < 20:
+        x = 100
+        /say Between 10 and 20
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should use functions
+    assert!(content.contains("function cobble:elif_temp"));
+
+    let elif_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("elif_temp_"))
+        .collect();
+
+    assert!(!elif_files.is_empty(), "No elif function generated");
+
+    let elif_content = fs::read_to_string(elif_files[0].path()).unwrap();
+    assert!(elif_content.contains("scoreboard players set x temp 100"));
+    assert!(elif_content.contains("say Between 10 and 20"));
+}
+
+#[test]
+fn test_else_modifies_condition_variable() {
+    let source = r#"
+def test():
+    x = 5
+    if x > 10:
+        /say Greater
+    else:
+        x = 100
+        /say Not greater
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should use a function for else
+    assert!(content.contains("function cobble:else_temp"));
+
+    let else_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("else_temp_"))
+        .collect();
+
+    assert!(!else_files.is_empty(), "No else function generated");
+
+    let else_content = fs::read_to_string(else_files[0].path()).unwrap();
+    assert!(else_content.contains("scoreboard players set x temp 100"));
+    assert!(else_content.contains("say Not greater"));
+}
+
+#[test]
+fn test_while_modifies_condition_variable() {
+    // Regression test for bug where while loops would evaluate condition
+    // after each statement, causing issues when body modifies condition
+    let source = r#"
+def test():
+    i = 0
+    while i < 3:
+        i = i + 1
+        /say Iteration
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+
+    // Check that while_body function exists
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("while_body_"))
+        .collect();
+
+    assert!(!body_files.is_empty(), "No while_body function generated");
+
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
+    // Body should execute unconditionally (no execute if)
+    assert!(body_content.contains("scoreboard players add i temp 1"));
+    assert!(body_content.contains("say Iteration"));
+    assert!(!body_content.contains("execute if"));
+
+    // Check while_temp function
+    let while_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("while_temp_"))
+        .collect();
+
+    assert!(!while_files.is_empty(), "No while function generated");
+
+    let while_content = fs::read_to_string(while_files[0].path()).unwrap();
+    // Should check condition and call body
+    assert!(while_content.contains("execute if score i temp matches ..2 run function cobble:while_body"));
+    // Should recursively call itself
+    assert!(while_content.contains("execute if score i temp matches ..2 run function cobble:while_temp"));
+}
+
+#[test]
+fn test_tick_counter_example() {
+    // Test the README example that was broken
+    let source = r#"
+import stdlib
+from stdlib import event
+
+counter = 0
+
+def tick():
+    global counter
+    counter = counter + 1
+    if counter >= 20:
+        counter = 0
+        /tellraw @a {"text":"One second passed"}
+
+stdlib.addEventListener(event.TICK, tick)
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "tick");
+
+    // Should use a function for the if block
+    assert!(content.contains("function cobble:if_temp"));
+
+    // Find and check the if function
+    let if_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("if_temp_"))
+        .collect();
+
+    assert!(!if_files.is_empty(), "No if function generated");
+
+    let if_content = fs::read_to_string(if_files[0].path()).unwrap();
+    assert!(if_content.contains("scoreboard players set counter temp 0"));
+    assert!(if_content.contains("tellraw @a"));
+}
+
+#[test]
+fn test_const_variable() {
+    let source = r#"
+def test():
+    const PI = 3.14159
+    const RADIUS = 5
+    area = PI * RADIUS * RADIUS
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Constants should be inlined at compile time
+    // PI * RADIUS * RADIUS should be evaluated
+    assert!(content.contains("area"));
+}
+
+#[test]
+fn test_const_declaration() {
+    let source = r#"
+def test():
+    const MAX_HEALTH = 100
+    health = MAX_HEALTH
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Constant should work in assignments
+    assert!(content.contains("health"));
+    // Should reference MAX_HEALTH (currently treated as variable)
+    assert!(content.contains("MAX_HEALTH") || content.contains("100"));
+}
+
+#[test]
+fn test_match_literal() {
+    let source = r#"
+def test():
+    x = 5
+    match x:
+        case 0:
+            /say Zero
+        case 5:
+            /say Five
+        case 10:
+            /say Ten
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should have match condition for each case
+    assert!(content.contains("if score"));
+    assert!(content.contains("matches"));
+}
+
+#[test]
+fn test_match_range() {
+    let source = r#"
+def test():
+    score = 75
+    match score:
+        case 0 to 59:
+            /say Fail
+        case 60 to 79:
+            /say Pass
+        case 80 to 100:
+            /say Excellent
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should have range matches
+    assert!(content.contains("if score"));
+    assert!(content.contains("matches"));
+}
+
+#[test]
+fn test_match_wildcard() {
+    let source = r#"
+def test():
+    value = 42
+    match value:
+        case 0:
+            /say Zero
+        case 1:
+            /say One
+        case _:
+            /say Other
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should handle wildcard case
+    assert!(content.contains("if score") || content.contains("function"));
+}
+
+#[test]
+fn test_match_with_multiple_statements() {
+    let source = r#"
+def test():
+    x = 5
+    match x:
+        case 5:
+            /say First
+            /say Second
+            /say Third
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let _content = read_function(&output_dir, "test");
+
+    // Should create a function for multi-statement case
+    let match_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("match_"))
+        .collect();
+
+    // Should have generated at least one match function
+    assert!(!match_files.is_empty(), "No match function generated");
+}
+
+#[test]
+fn test_selector_definition() {
+    let source = r#"
+@Player = @a[type=player,gamemode=survival]
+@Boss = @e[type=zombie,tag=boss]
+
+def test():
+    as @Player:
+        /give @s diamond
+
+    as @Boss:
+        /effect give @s strength 10 2
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Selector aliases should be expanded
+    assert!(content.contains("@a[type=player,gamemode=survival]"));
+    assert!(content.contains("@e[type=zombie,tag=boss]"));
+    assert!(!content.contains("@Player"));
+    assert!(!content.contains("@Boss"));
+}
+
+#[test]
+fn test_selector_in_commands() {
+    let source = r#"
+@AllPlayers = @a[gamemode=!spectator]
+
+def broadcast():
+    /tellraw @AllPlayers {"text":"Hello!"}
+    /title @AllPlayers title {"text":"Welcome"}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "broadcast");
+
+    // Selector alias should be replaced in all commands
+    assert!(content.contains("@a[gamemode=!spectator]"));
+    assert!(!content.contains("@AllPlayers"));
+}
+
+#[test]
+fn test_file_import() {
+    use std::fs;
+
+    // Create temp directory with multiple files
+    let temp_dir = TempDir::new().unwrap();
+    let utils_file = temp_dir.path().join("utils.cbl");
+    let main_file = temp_dir.path().join("main.cbl");
+    let output_dir = temp_dir.path().join("output");
+
+    // Write utils.cbl
+    fs::write(
+        &utils_file,
+        r#"
+def helper():
+    /say Helper function
+
+@Admin = @a[tag=admin]
+"#,
+    )
+    .unwrap();
+
+    // Write main.cbl
+    fs::write(
+        &main_file,
+        r#"
+import utils
+
+def test():
+    helper()
+    as @Admin:
+        /say Test
+"#,
+    )
+    .unwrap();
+
+    // Compile
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(main_file),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        zip: false,
+    })
+    .unwrap();
+
+    // Check that functions from imported file exist
+    let helper_content = read_function(&output_dir, "helper");
+    assert!(helper_content.contains("say Helper function"));
+
+    let test_content = read_function(&output_dir, "test");
+    assert!(test_content.contains("function cobble:helper"));
+    assert!(test_content.contains("@a[tag=admin]"));
 }

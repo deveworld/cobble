@@ -80,16 +80,24 @@ pub enum Statement {
     MinecraftCommand(String),
     FunctionDef(FunctionDef),
     Assignment(Assignment),
+    ConstAssignment(ConstAssignment),  // v0.3.0
     Expression(Expression),
     If(IfStatement),
     For(ForLoop),
     While(WhileLoop),
+    Match(MatchStatement),  // v0.3.0
     Return(Option<Expression>),
     Pass,
     Import(Import),
     Class(ClassDef),
+    SelectorDef(SelectorDef),  // v0.4.0
 }
 ```
+
+**Recent Additions:**
+- **v0.4.0**: `SelectorDef` - Entity selector definitions (e.g., `@Player = @a[type=player]`)
+- **v0.3.0**: `ConstAssignment` - Compile-time constants (e.g., `const MAX_HEALTH = 100`)
+- **v0.3.0**: `Match` - Match/switch statements with literal, range, and wildcard patterns
 
 #### Struct: `FunctionDef`
 
@@ -114,6 +122,56 @@ pub struct Parameter {
     pub default: Option<Expression>,
 }
 ```
+
+#### Struct: `ConstAssignment` (v0.3.0)
+
+Represents a compile-time constant assignment.
+
+```rust
+pub struct ConstAssignment {
+    pub name: String,
+    pub value: i32,
+}
+```
+
+Constants are evaluated at compile time and replaced with their literal values.
+
+#### Struct: `MatchStatement` (v0.3.0)
+
+Represents a match/switch statement.
+
+```rust
+pub struct MatchStatement {
+    pub value: String,  // Variable to match against
+    pub cases: Vec<MatchCase>,
+}
+
+pub struct MatchCase {
+    pub pattern: MatchPattern,
+    pub body: Vec<Statement>,
+}
+
+pub enum MatchPattern {
+    Literal(i32),        // case 5:
+    Range(i32, i32),     // case 1 to 10:
+    Wildcard,            // case _:
+}
+```
+
+Match statements compile to efficient 4-way split algorithm for optimal branching.
+
+#### Struct: `SelectorDef` (v0.4.0)
+
+Represents an entity selector definition.
+
+```rust
+pub struct SelectorDef {
+    pub name: String,      // e.g., "Player"
+    pub selector: String,  // e.g., "@a[type=player,gamemode=survival]"
+}
+```
+
+Selector aliases are replaced at compile time with zero runtime overhead.
 
 #### Enum: `Expression`
 
@@ -162,17 +220,30 @@ pub struct Transpiler {
     current_context: FunctionContext,
     variables: HashMap<String, Expression>,
     module_level_vars: HashMap<String, Expression>,  // Top-level variables to initialize
+    constants: HashMap<String, i32>,                  // v0.3.0: Compile-time constants
+    selector_aliases: HashMap<String, String>,        // v0.4.0: Entity selector definitions
+    imported_files: HashSet<PathBuf>,                 // v0.4.0: Imported file tracking
+    current_file_dir: PathBuf,                        // v0.4.0: Current file directory for imports
     temp_counter: u32,
     variable_objectives: HashMap<String, String>,  // Tracks which objective each variable uses
     function_params: HashMap<String, Vec<String>>,  // Tracks parameter names for each function
 }
 ```
 
-**Recent Enhancements (v0.1.0)**:
-- **Module-level variable initialization**: Top-level assignments are automatically initialized in `_cobble_init`
-- **Complex expression evaluation**: New `evaluate_expression_to_target()` helper handles nested binary expressions
-- **Correct loop variable objectives**: Loop variables (like `i` in for loops) now correctly track their objective
-- **Duplicate objective prevention**: `ensure_init_function()` checks for existing objectives before adding
+**Recent Enhancements:**
+- **v0.4.0**:
+  - **Entity selector definitions**: Custom selector aliases with compile-time replacement
+  - **File import system**: Import functions and definitions from other `.cbl` files
+  - **Circular dependency prevention**: Automatic detection via `imported_files` HashSet
+  - **Relative import resolution**: Resolve imports relative to current file location
+- **v0.3.0**:
+  - **Compile-time constants**: `const` keyword for constant declarations
+  - **Match/switch statements**: Efficient multi-way branching with 4-way split algorithm
+- **v0.1.0**:
+  - **Module-level variable initialization**: Top-level assignments are automatically initialized in `_cobble_init`
+  - **Complex expression evaluation**: New `evaluate_expression_to_target()` helper handles nested binary expressions
+  - **Correct loop variable objectives**: Loop variables (like `i` in for loops) now correctly track their objective
+  - **Duplicate objective prevention**: `ensure_init_function()` checks for existing objectives before adding
 
 #### Implementation: `Transpiler`
 

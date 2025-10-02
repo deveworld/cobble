@@ -158,7 +158,15 @@ impl Transpiler {
         let processed_condition = self.preprocess_condition(&while_loop.condition)?;
         let condition_cmd = self.translate_condition(&processed_condition)?;
 
-        // Process loop body
+        // IMPORTANT: We need to wrap the body in a conditional function call
+        // to prevent bugs where body statements modify condition variables.
+        // The condition should be evaluated ONCE per iteration, not per statement.
+
+        // Create inner body function that executes unconditionally
+        let body_func_name = format!("while_body_{}", self.temp_counter);
+        self.temp_counter += 1;
+
+        // Process loop body into the body function
         let old_function = self.current_function.take();
         let saved_context = self.current_context.clone();
 
@@ -166,23 +174,29 @@ impl Transpiler {
         for stmt in &while_loop.body {
             self.process_statement(stmt)?;
         }
+
         if let Some(body_commands) = self.current_function.take() {
-            for cmd in body_commands {
-                // Strip any leading slash before adding to execute
-                let clean_cmd = Self::strip_command_prefix(&cmd);
-                // Check if condition already has "if" or "unless" prefix
-                if condition_cmd.starts_with("if ") || condition_cmd.starts_with("unless ") {
-                    loop_commands.push(format!("execute {} run {}", condition_cmd, clean_cmd));
-                } else {
-                    loop_commands.push(format!("execute if {} run {}", condition_cmd, clean_cmd));
-                }
-            }
+            // Add body function to data pack
+            self.data_pack.add_function(body_func_name.clone(), body_commands);
         }
 
         self.current_function = old_function;
         self.current_context = saved_context;
 
-        // Add recursive call
+        // In the while loop function, check condition once and call body
+        if condition_cmd.starts_with("if ") || condition_cmd.starts_with("unless ") {
+            loop_commands.push(format!(
+                "execute {} run function {}:{}",
+                condition_cmd, self.data_pack.namespace, body_func_name
+            ));
+        } else {
+            loop_commands.push(format!(
+                "execute if {} run function {}:{}",
+                condition_cmd, self.data_pack.namespace, body_func_name
+            ));
+        }
+
+        // Add recursive call (check condition again after body execution)
         if condition_cmd.starts_with("if ") || condition_cmd.starts_with("unless ") {
             loop_commands.push(format!(
                 "execute {} run function {}:{}",
