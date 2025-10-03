@@ -5,6 +5,40 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-10-03
+
+### Added
+- **Loop variable macro support**: Loop variables can now be used directly in Minecraft commands
+  - For loop bodies are compiled as macro functions with the loop variable as a parameter
+  - Syntax: `/say Count: {i}` in loop body compiles to `$say Count: $(i)` in macro function
+  - Loop variable values are passed via storage to macro functions
+  - Works in all command contexts: coordinates (`~{i} ~ ~`), JSON text components, command arguments
+  - Example:
+    ```python
+    for i in range(5):
+        /say Countdown: {i}
+        /title @a title {"text":"{i}", "color":"red"}
+    ```
+- **Comprehensive tests**: Added 3 new integration tests (51 total, all passing ✅)
+  - `test_loop_variable_in_commands`
+  - `test_loop_variable_with_step`
+  - `test_parameterless_function_call`
+
+### Fixed
+- **Function call bug**: Fixed parameterless functions being incorrectly called with `with storage` syntax
+  - Functions without parameters now use simple `function namespace:name` syntax
+  - Only functions with parameters use `function namespace:name with storage namespace:global args`
+- **Parser bug**: Fixed `by` keyword not being recognized in for loop step syntax
+  - Changed from string matching to proper token matching
+  - For loops like `for i in range(10) by 2:` now parse correctly
+
+### Improved
+- **Loop processor**: Enhanced to create macro functions for loop bodies
+- **Test coverage**: Updated 3 existing tests to verify new loop body structure
+  - `test_for_loop`
+  - `test_for_loop_with_arithmetic`
+  - `test_for_loop_variable_in_tellraw`
+
 ## [0.4.0] - 2025-10-03
 
 ### Added

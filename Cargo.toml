@@ -1,6 +1,6 @@
 [package]
 name = "cobble"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["deveworld <world@worldsw.dev>"]
 description = "A modern, Python-like language for creating Minecraft Data Packs"

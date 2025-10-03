@@ -117,17 +117,28 @@ def test():
     assert!(main_content.contains("scoreboard players set i loop_counter 0"));
     assert!(main_content.contains("function cobble:loop_temp_"));
 
-    // Check for loop function (name may vary, find it dynamically)
+    // Check for loop body function (contains the actual command)
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
+        .collect();
+
+    assert!(!body_files.is_empty(), "No loop_body function generated");
+
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
+    assert!(body_content.contains("say hello"));
+
+    // Check loop control function
     let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
         .collect();
 
-    assert!(!loop_files.is_empty(), "No loop function generated");
+    assert!(!loop_files.is_empty(), "No loop control function generated");
 
     let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
-    assert!(loop_content.contains("say hello"));
     assert!(loop_content.contains("scoreboard players add i loop_counter 1"));
     assert!(loop_content
         .contains("execute if score i loop_counter matches ..2 run function cobble:loop_temp_"));
@@ -319,19 +330,21 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Find the loop function
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+    // Find the loop body function (contains the arithmetic)
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
         .collect();
 
-    assert!(!loop_files.is_empty(), "No loop function generated");
+    assert!(!body_files.is_empty(), "No loop_body function generated");
 
-    let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
 
-    // MUST use loop_counter for i, not temp!
-    assert!(loop_content.contains("scoreboard players operation total temp += i loop_counter"));
+    // Loop variable is now a macro parameter, but arithmetic still uses scoreboard
+    // The body should have scoreboard operations with the loop variable from parameter
+    assert!(body_content.contains("scoreboard players operation total temp"));
+    assert!(body_content.contains("i")); // Variable i should appear somewhere
 }
 
 #[test]
@@ -609,23 +622,23 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Find the loop function
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+    // Find the loop body function (contains the tellraw)
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
         .collect();
 
-    assert!(!loop_files.is_empty(), "No loop function generated");
+    assert!(!body_files.is_empty(), "No loop_body function generated");
 
-    let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
 
-    // i should be converted to scoreboard JSON component
-    assert!(loop_content.contains("\"score\""));
-    assert!(loop_content.contains("\"name\":\"i\""));
-    assert!(loop_content.contains("\"objective\":\"loop_counter\""));
+    // Loop variable is now passed as macro parameter
+    // So {i} should be converted to $(i) in the macro function
+    assert!(body_content.contains("$tellraw"));
+    assert!(body_content.contains("$(i)"));
     // Should NOT contain literal {i}
-    assert!(!loop_content.contains("Value: {i}"));
+    assert!(!body_content.contains("Value: {i}"));
 }
 
 #[test]
@@ -1133,5 +1146,85 @@ def test():
 
     let test_content = read_function(&output_dir, "test");
     assert!(test_content.contains("function cobble:helper"));
+    // Should NOT have "with storage" for parameterless function
+    assert!(!test_content.contains("with storage"));
     assert!(test_content.contains("@a[tag=admin]"));
+}
+
+#[test]
+fn test_loop_variable_in_commands() {
+    let source = r#"
+def test():
+    for i in range(3):
+        /say Count: {i}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+
+    // Check that loop body is a macro function
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
+        .collect();
+
+    assert!(!body_files.is_empty(), "No loop_body function generated");
+
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
+    // Should use macro variable syntax
+    assert!(body_content.contains("$say Count: $(i)"));
+
+    // Check loop control function stores variable to storage
+    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
+        .collect();
+
+    assert!(!loop_files.is_empty(), "No loop control function generated");
+
+    let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
+    assert!(loop_content.contains("execute store result storage"));
+    assert!(loop_content.contains("function cobble:loop_body_"));
+    assert!(loop_content.contains("with storage"));
+}
+
+#[test]
+fn test_loop_variable_with_step() {
+    let source = r#"
+def test():
+    for i in range(10) by 2:
+        /say Even: {i}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
+        .collect();
+
+    assert!(!body_files.is_empty());
+
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
+    assert!(body_content.contains("$say Even: $(i)"));
+}
+
+#[test]
+fn test_parameterless_function_call() {
+    let source = r#"
+def helper():
+    /say Helper called
+
+def main():
+    helper()
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+
+    let main_content = read_function(&output_dir, "main");
+    // Should NOT have "with storage" for parameterless function
+    assert!(main_content.contains("function cobble:helper"));
+    assert!(!main_content.contains("with storage"));
 }

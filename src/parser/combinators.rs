@@ -274,7 +274,7 @@ pub fn token_parser<'a>(
             .then_ignore(just(&Token::In))
             .then(expr.clone())
             .then(
-                select_ref! { Token::Ident(s) if s == "by" => s.clone() }
+                just(&Token::By)
                     .ignore_then(expr.clone())
                     .or_not()
             )

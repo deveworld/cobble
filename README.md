@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.4.0** - Feature-rich development version | Minecraft 1.21.9+ compatible
+**✨ Version 0.4.1** - Feature-rich development version | Minecraft 1.21.9+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.4.0 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.4.1 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -40,7 +40,7 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
 - ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
 - ✅ **Nested If Optimization** - Automatically splits complex control flow
-- ✅ **Comprehensive Tests** - 55 tests (7 parser + 48 integration) with output verification
+- ✅ **Comprehensive Tests** - 58 tests (7 parser + 51 integration) with output verification
 - ✅ **Modern Parser** - Built with chumsky combinator library for reliability
 - ✅ **Beautiful Errors** - Clear error messages powered by ariadne
 
@@ -665,6 +665,12 @@ cargo watch -x test -x "run -- check examples/"
 
 ### Recently Completed
 
+#### v0.4.1 (2025-10-03)
+- [x] **Loop variable macro support** - Use loop variables directly in commands (e.g., `/say Count: {i}`)
+- [x] **Loop body as macro functions** - Loop bodies compile to macro functions for variable access
+- [x] **Function call fix** - Fixed parameterless function calls (no longer incorrectly use `with storage`)
+- [x] **Parser improvements** - Fixed `by` keyword recognition in for loops
+
 #### v0.4.0 (2025-10-03)
 - [x] **Entity Selector Definitions** - Custom selector aliases (e.g., `@Player = @a[type=player]`)
 - [x] **File Import System** - Import functions and definitions from other `.cbl` files
@@ -716,7 +722,7 @@ cargo watch -x test -x "run -- check examples/"
 - [x] Improved error messages with ariadne
 - [x] as/at/asat/if execute support
 - [x] global keyword
-- [x] Comprehensive test suite (55 tests: 7 parser + 48 integration)
+- [x] Comprehensive test suite (58 tests: 7 parser + 51 integration)
 
 ### Near Term
 - [ ] **Template functions** - Parameterized code generation (e.g., `def summon[entity]: /summon {entity} ~ ~ ~`)

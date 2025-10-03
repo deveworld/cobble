@@ -54,24 +54,46 @@ impl Transpiler {
                             for_loop.target, start_value
                         ));
 
-                        // Create loop function with body inside
-                        let mut loop_commands = vec![];
+                        // Create a macro function for the loop body
+                        // This allows loop variables to be used in commands like /say
+                        let body_func_name = format!("loop_body_{}", self.temp_counter - 1);
 
-                        // Process loop body and add commands to the loop function
+                        // Process loop body as a macro function with loop variable as parameter
                         let old_function = self.current_function.take();
                         let saved_context = self.current_context.clone();
 
+                        // Set up function context with loop variable as a parameter
+                        self.current_context = crate::transpiler::FunctionContext::with_params(vec![for_loop.target.clone()]);
                         self.current_function = Some(Vec::new());
+
                         for stmt in &for_loop.body {
                             self.process_statement(stmt)?;
                         }
+
                         if let Some(body_commands) = self.current_function.take() {
-                            // Add body commands FIRST, before increment
-                            loop_commands.extend(body_commands);
+                            // Store as a macro function
+                            self.data_pack.add_function(body_func_name.clone(), body_commands);
+                            // Track this function as having parameters
+                            self.function_params.insert(body_func_name.clone(), vec![for_loop.target.clone()]);
                         }
 
                         self.current_function = old_function;
                         self.current_context = saved_context;
+
+                        // Create loop control function
+                        let mut loop_commands = vec![];
+
+                        // Store loop variable value into storage for macro function
+                        loop_commands.push(format!(
+                            "execute store result storage {}:global args.{} int 1 run scoreboard players get {} loop_counter",
+                            self.data_pack.namespace, for_loop.target, for_loop.target
+                        ));
+
+                        // Call the macro body function with the loop variable
+                        loop_commands.push(format!(
+                            "function {}:{} with storage {}:global args",
+                            self.data_pack.namespace, body_func_name, self.data_pack.namespace
+                        ));
 
                         // THEN add increment/decrement and recursive call
                         if step > 0 {

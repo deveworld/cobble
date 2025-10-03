@@ -492,15 +492,21 @@ impl Transpiler {
                         }
                     }
                 }
-            }
 
-            // Generate macro call with storage
-            commands.push(format!(
-                "function {}:{} with storage {}:global args",
-                self.data_pack.namespace, func_name, self.data_pack.namespace
-            ));
+                // Generate macro call with storage (only when parameters are provided)
+                commands.push(format!(
+                    "function {}:{} with storage {}:global args",
+                    self.data_pack.namespace, func_name, self.data_pack.namespace
+                ));
+            } else {
+                // Function has no parameters or no arguments provided - regular call
+                commands.push(format!(
+                    "function {}:{}",
+                    self.data_pack.namespace, func_name
+                ));
+            }
         } else {
-            // Regular function call without parameters
+            // Function not found in params map - regular function call
             commands.push(format!(
                 "function {}:{}",
                 self.data_pack.namespace, func_name
