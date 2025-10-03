@@ -92,6 +92,49 @@ impl Transpiler {
     }
 
     /// Infer the type of an expression
+    /// Evaluate a constant expression to a number if possible
+    fn try_eval_const(&self, expr: &Expression) -> Option<f64> {
+        match expr {
+            Expression::Number(n) => Some(*n),
+            Expression::Binary(left, op, right) => {
+                let left_val = self.try_eval_const(left)?;
+                let right_val = self.try_eval_const(right)?;
+
+                use crate::ast::BinaryOp;
+                match op {
+                    BinaryOp::Add => Some(left_val + right_val),
+                    BinaryOp::Sub => Some(left_val - right_val),
+                    BinaryOp::Mul => Some(left_val * right_val),
+                    BinaryOp::Div => {
+                        if right_val == 0.0 {
+                            None
+                        } else {
+                            Some(left_val / right_val)
+                        }
+                    }
+                    BinaryOp::Mod => {
+                        if right_val == 0.0 {
+                            None
+                        } else {
+                            Some((left_val as i32 % right_val as i32) as f64)
+                        }
+                    }
+                    BinaryOp::Pow => {
+                        let base = left_val as i32;
+                        let exp = right_val as i32;
+                        if exp < 0 {
+                            None
+                        } else {
+                            Some(base.pow(exp as u32) as f64)
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn infer_type(&self, expr: &Expression) -> crate::ast::CobbleType {
         use crate::ast::CobbleType;
 
@@ -109,8 +152,8 @@ impl Transpiler {
             Expression::Binary(left, op, right) => {
                 use crate::ast::BinaryOp;
 
-                let left_type = self.infer_type(left);
-                let right_type = self.infer_type(right);
+                let _left_type = self.infer_type(left);
+                let _right_type = self.infer_type(right);
 
                 match op {
                     // Arithmetic operations return integers

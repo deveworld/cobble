@@ -1,106 +1,46 @@
 # Cobble Examples
 
-This directory contains example Cobble scripts demonstrating various features and use cases.
+This directory contains example Cobble programs demonstrating various language features.
 
-## Examples Overview
+## Basic Examples
 
-### 📚 basics.cbl
-Basic syntax and language features:
-- Variables and functions
-- Control flow (if, for, while)
-- Simple Minecraft commands
+- **hello_world.cbl** - Simple "Hello World" example
+- **counter.cbl** - Tick counter with module-level variables
+- **functions.cbl** - Function parameters and macro system
 
-### 👋 hello.cbl
-Complete "Hello World" example with:
-- Event system usage
-- Score tracking
-- Particle effects
-- Player interactions
+## Control Flow
 
-### 🎮 events.cbl
-Event-driven programming:
-- Load and tick event handlers
-- Player initialization
-- Timed events (every second)
-- Day/night cycle control
+- **conditionals.cbl** - If/elif/else and match statements
+- **loops.cbl** - For loops and while loops
 
-### 🗡️ boss.cbl
-Boss fight system:
-- Multi-phase boss battle
-- Health bar (bossbar) integration
-- Minion spawning
-- Victory conditions
+## Advanced Features
 
-### 🏃 parkour.cbl
-Parkour/checkpoint system:
-- Checkpoint creation and management
-- Player respawn handling
-- Timer system
-- Completion rewards
-
-### 🎒 inventory.cbl
-Inventory and item management:
-- Custom item creation
-- Enchanted items
-- Starter kits
-- Shop systems
-- Chest organization
-
-### 🎯 game_mechanics.cbl
-Minigame mechanics:
-- Team system
-- Scoring and currency
-- Random events
-- Arena creation
-- Match management
+- **execute_blocks.cbl** - Execute command modifiers
+- **selectors.cbl** - Custom selector definitions
+- **arithmetic.cbl** - Arithmetic operations and precedence
+- **type_system.cbl** - Static type system examples
 
 ## Running Examples
 
-1. Create a new project:
-```bash
-cobble init my-project
-cd my-project
-```
+To compile an example:
 
-2. Copy an example to your src directory:
 ```bash
-cp /path/to/cobble/examples/hello.cbl src/main.cbl
-```
+# From the examples directory
+cobble build hello_world.cbl -o output/hello_world
 
-3. Build the data pack:
-```bash
-cobble build
-```
-
-4. Copy to Minecraft:
-```bash
-cp -r output/* ~/.minecraft/saves/YourWorld/datapacks/
+# Or with zip output
+cobble build counter.cbl -o output/counter --zip
 ```
 
 ## Learning Path
 
 Recommended order for learning:
 
-1. **basics.cbl** - Start here to learn syntax
-2. **hello.cbl** - Understanding event system
-3. **events.cbl** - Advanced event handling
-4. **inventory.cbl** - Working with items
-5. **game_mechanics.cbl** - Building minigames
-6. **parkour.cbl** - Checkpoint systems
-7. **boss.cbl** - Complex multi-phase mechanics
+1. Start with **hello_world.cbl** - Basic syntax
+2. Try **functions.cbl** - Function parameters
+3. Explore **conditionals.cbl** - Control flow
+4. Practice with **loops.cbl** - Iteration
+5. Study **type_system.cbl** - Type safety
+6. Advanced: **execute_blocks.cbl** and **selectors.cbl**
 
-## Tips
-
-- Functions starting with `/` are direct Minecraft commands
-- Use `stdlib.addEventListener()` for event-driven code
-- Variables are scoped to functions
-- For loops with `range()` are optimized to Minecraft functions
-- Check generated `.mcfunction` files to understand the output
-
-## Contributing
-
-Feel free to submit new examples via pull requests! Examples should:
-- Demonstrate specific features or patterns
-- Include helpful comments
-- Be self-contained and runnable
-- Follow Cobble best practices
+Each example is self-contained and demonstrates specific language features.

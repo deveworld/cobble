@@ -178,6 +178,12 @@ impl<'a> ExpressionEvaluator<'a> {
                                     target, var, var_obj
                                 ));
                             }
+                            BinaryOp::Pow => {
+                                // Power with variable: target = target ^ var
+                                // We need to implement iterative multiplication
+                                // For now, this is complex and not commonly used
+                                return Err("Power operator with variable exponent is not supported. Use constant exponents like: x ^ 2".to_string());
+                            }
                             _ => return Err(format!("Unsupported binary operation: {:?}", op)),
                         }
                     }
@@ -220,6 +226,12 @@ impl<'a> ExpressionEvaluator<'a> {
                                     "scoreboard players operation {} temp %= expr_temp temp",
                                     target
                                 ));
+                            }
+                            BinaryOp::Pow => {
+                                // Power with nested expression: target = target ^ (complex_expr)
+                                // This would require loop unrolling based on runtime value
+                                // Not practical for Minecraft commands
+                                return Err("Power operator with complex expressions is not supported. Use constant exponents like: x ^ 2".to_string());
                             }
                             _ => return Err(format!("Unsupported binary operation: {:?}", op)),
                         }

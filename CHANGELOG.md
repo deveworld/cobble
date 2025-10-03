@@ -5,6 +5,49 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2025-10-03
+
+### Fixed
+- **Power operator associativity**: Fixed power operator to be right-associative following mathematical conventions
+  - `2^3^2` now correctly evaluates as `2^(3^2) = 512` instead of `(2^3)^2 = 64`
+  - Matches standard mathematical notation where exponentiation is right-associative
+  - Parser updated to build right-associative expression trees for power operations
+- **Constant expression folding**: Implemented recursive constant evaluation for nested expressions
+  - Complex constant expressions like `2^3^2` are now evaluated at compile time
+  - Added `try_eval_const()` method that recursively evaluates arithmetic expressions
+  - Reduces generated commands and improves runtime performance
+- **Compiler warnings**: Removed unused variable warnings in type inference code
+  - Prefixed unused variables with underscore to silence warnings
+  - Zero compiler warnings in clean build
+
+### Added
+- **Example files**: Added 9 comprehensive example files to `examples/` directory
+  - `hello_world.cbl` - Basic syntax and event handlers
+  - `counter.cbl` - Tick counter with module-level variables
+  - `loops.cbl` - For loops and while loops with various patterns
+  - `conditionals.cbl` - If/elif/else and match statements
+  - `functions.cbl` - Function parameters and macro system
+  - `execute_blocks.cbl` - Execute block modifiers and conditions
+  - `selectors.cbl` - Custom selector definitions
+  - `arithmetic.cbl` - Arithmetic operations and operator precedence
+  - `type_system.cbl` - Static type system examples
+  - `README.md` - Examples guide with learning path
+- **Power operator error messages**: Improved error messages for unsupported power operations
+  - Clear guidance when attempting to use variables or complex expressions as exponents
+  - Suggests using constant exponents for supported operations
+
+### Technical Details
+- Modified `src/parser/combinators.rs` to build right-associative power expression trees
+- Added `try_eval_const()` recursive evaluator in `src/transpiler/mod.rs`
+- Updated `process_assignment()` to use constant folding before expression evaluation
+- Added test `test_power_operator_simple` to verify correct power operation compilation
+- All 66 tests passing (7 parser + 59 integration tests)
+
+### Documentation
+- Added 9 example files demonstrating all major language features
+- Examples provide hands-on learning materials for new users
+- README.md in examples directory provides recommended learning path
+
 ## [0.5.0] - 2025-10-03
 
 ### Added

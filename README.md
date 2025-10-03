@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.5.0** - Type system and bug fixes | Minecraft 1.21.9+ compatible
+**✨ Version 0.5.1** - Power operator fixes and examples | Minecraft 1.21.9+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.5.0 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.5.1 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -42,7 +42,7 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
 - ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
 - ✅ **Nested If Optimization** - Automatically splits complex control flow
-- ✅ **Comprehensive Tests** - 58 integration tests with output verification
+- ✅ **Comprehensive Tests** - 59 integration tests with output verification
 - ✅ **Modern Parser** - Built with chumsky combinator library for reliability
 - ✅ **Beautiful Errors** - Clear error messages powered by ariadne
 

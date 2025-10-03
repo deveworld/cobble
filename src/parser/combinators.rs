@@ -52,16 +52,35 @@ pub fn token_parser<'a>(
                 });
 
             // Binary operations with proper precedence
-            // Highest precedence: ^ (power) - using foldl for now
-            // Note: This makes power left-associative (2^3^2 = (2^3)^2)
-            // Right-associativity would require a different parsing approach
-            let power = call.clone().foldl(
-                just(&Token::Caret)
-                    .to(BinaryOp::Pow)
-                    .then(call.clone())
-                    .repeated(),
-                |left, (op, right)| Expression::Binary(Box::new(left), op, Box::new(right)),
-            );
+            // Highest precedence: ^ (power) - right-associative
+            // Power operator is right-associative: 2^3^2 = 2^(3^2) = 512
+            // We parse left-to-right but fold right-to-left for right-associativity
+            let power = call
+                .clone()
+                .then(just(&Token::Caret).to(BinaryOp::Pow).then(call.clone()).repeated().collect::<Vec<_>>())
+                .map(|(first, rest)| {
+                    if rest.is_empty() {
+                        first
+                    } else {
+                        // Collect all operands: [first, second, third, ...]
+                        let mut all_operands = vec![first];
+                        for (_, operand) in &rest {
+                            all_operands.push(operand.clone());
+                        }
+
+                        // Build right-associative tree by folding from right to left
+                        // For [a, b, c]: a ^ (b ^ c)
+                        let mut result = all_operands.pop().unwrap();
+                        while let Some(operand) = all_operands.pop() {
+                            result = Expression::Binary(
+                                Box::new(operand),
+                                BinaryOp::Pow,
+                                Box::new(result),
+                            );
+                        }
+                        result
+                    }
+                });
 
             // Second highest: *, /, %
             let mul_div_mod = power.clone().foldl(

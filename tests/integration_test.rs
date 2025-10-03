@@ -1391,3 +1391,23 @@ def test():
         assert!(!line.contains(" At "), "Line contains capitalized 'At': {}", line);
     }
 }
+
+#[test]
+fn test_power_operator_simple() {
+    // Test that basic power operator works
+    let source = r#"
+def test():
+    x = 2
+    result = x ^ 3
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should have power_base and multiplications
+    assert!(content.contains("power_base"));
+
+    // For x^3, we need 2 multiplications (x * x * x = x * (x * x))
+    let mult_count = content.matches("scoreboard players operation result temp *= power_base temp").count();
+    assert_eq!(mult_count, 2, "Expected 2 multiplications for x^3, found {}", mult_count);
+}

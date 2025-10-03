@@ -27,6 +27,48 @@ impl Transpiler {
             return Ok(());
         }
 
+        // Try to evaluate constant expressions first
+        if let Some(const_value) = self.try_eval_const(&assign.value) {
+            // The expression is a constant - fold it at compile time
+            if let Some(ref mut commands) = self.current_function {
+                self.data_pack.track_objective("temp");
+                self.variable_objectives
+                    .insert(assign.target.clone(), "temp".to_string());
+                self.scoreboard_variables.insert(assign.target.clone());
+
+                // Warn if number exceeds scoreboard range
+                if const_value > i32::MAX as f64 || const_value < i32::MIN as f64 {
+                    eprintln!(
+                        "⚠️  Warning: Constant expression result {} for variable '{}' exceeds Minecraft scoreboard range.\n\
+                        Scoreboard range: {} to {}\n\
+                        Value will be clamped to: {}",
+                        const_value,
+                        assign.target,
+                        i32::MIN,
+                        i32::MAX,
+                        if const_value > i32::MAX as f64 { i32::MAX } else { i32::MIN }
+                    );
+                }
+
+                // Warn if float has fractional part
+                if const_value.fract() != 0.0 {
+                    eprintln!(
+                        "⚠️  Warning: Constant expression result {} for variable '{}' will lose precision.\n\
+                        Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                        const_value,
+                        assign.target,
+                        const_value as i32
+                    );
+                }
+
+                commands.push(format!(
+                    "scoreboard players set {} temp {}",
+                    assign.target, const_value as i32
+                ));
+            }
+            return Ok(());
+        }
+
         // Check if we need to use the complex expression evaluator
         // Do this before borrowing to avoid borrow checker issues
         let needs_complex_eval = if let Expression::Binary(left, _, right) = &assign.value {
