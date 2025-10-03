@@ -305,7 +305,7 @@ def loop_example():
         y = y + 1
 ```
 
-**Note:** The `or` operator is not yet implemented as it requires complex branching logic. Use separate if statements or nested conditions as a workaround.
+**Note:** The `or` operator is fully implemented with automatic temporary variable handling. Complex nested OR expressions and combinations with AND are supported.
 
 ### Nested If Statements
 

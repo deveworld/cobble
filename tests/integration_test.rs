@@ -532,6 +532,110 @@ def test():
 }
 
 #[test]
+fn test_nested_or_operators() {
+    let source = r#"
+def test():
+    a = 10
+    b = 20
+    c = 30
+    if a == 10 or b == 30 or c > 25:
+        /say Triple OR works!
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Must NOT contain "OR("
+    assert!(!content.contains("OR("), "Generated code contains invalid OR(...) syntax");
+
+    // Should use or_result variable
+    assert!(content.contains("or_result"), "Missing or_result variable");
+    assert!(content.contains("scoreboard players set or_result temp 0"), "Missing or_result initialization");
+
+    // Should have three separate condition checks
+    assert!(content.contains("execute if score a temp matches 10 run scoreboard players set or_result temp 1"));
+    assert!(content.contains("execute if score b temp matches 30 run scoreboard players set or_result temp 1"));
+    assert!(content.contains("execute if score c temp matches 26.. run scoreboard players set or_result temp 1"));
+}
+
+#[test]
+fn test_or_with_and_combination() {
+    let source = r#"
+def test():
+    a = 5
+    b = 10
+    if (a == 5 or a == 10) and b == 10:
+        /say Combined works!
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Must NOT contain "OR("
+    assert!(!content.contains("OR("), "Generated code contains invalid OR(...) syntax");
+
+    // Should use or_result
+    assert!(content.contains("or_result"));
+}
+
+#[test]
+fn test_match_wildcard_single_statement() {
+    let source = r#"
+def test():
+    x = 75
+    match x:
+        case 0 to 50:
+            /say Low
+        case 51 to 100:
+            /say High
+        case _:
+            /say Other
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Wildcard must have unless conditions
+    assert!(content.contains("unless"), "Wildcard case missing unless condition");
+
+    // Should have chained unless for both ranges
+    assert!(content.contains("execute unless score x temp matches 0..50 unless score x temp matches 51..100 run say Other"),
+            "Wildcard case not properly conditioned");
+
+    // Must NOT have bare "say Other"
+    let lines: Vec<&str> = content.lines().map(|l| l.trim()).collect();
+    assert!(!lines.iter().any(|line| *line == "say Other"),
+            "Wildcard case executed unconditionally");
+}
+
+#[test]
+fn test_match_wildcard_multi_statement() {
+    let source = r#"
+def test():
+    x = 25
+    match x:
+        case 0 to 10:
+            /say A
+        case 50 to 100:
+            /say B
+        case _:
+            /say Line1
+            /say Line2
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should have single chained unless command
+    assert!(content.contains("execute unless score x temp matches 0..10 unless score x temp matches 50..100 run function cobble:match_default_"),
+            "Wildcard function not properly conditioned");
+
+    // Should only call the function once
+    let unless_count = content.matches("execute unless").count();
+    assert_eq!(unless_count, 1, "Wildcard function called multiple times (expected 1, got {})", unless_count);
+}
+
+#[test]
 fn test_boolean_and_in_while_loop() {
     let source = r#"
 def test():

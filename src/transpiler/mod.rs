@@ -667,13 +667,62 @@ impl Transpiler {
     }
 
     fn handle_or_condition(&mut self, or_expr: &str) -> Result<String, String> {
-        // Parse OR(cond1, cond2) format
-        if !or_expr.starts_with("OR(") || !or_expr.ends_with(')') {
-            return Err("Invalid OR expression format".to_string());
+        // Flatten all OR conditions into a single list
+        let conditions = self.flatten_or_conditions(or_expr)?;
+
+        // Generate commands for OR logic
+        if let Some(ref mut commands) = self.current_function {
+            // Initialize or_result to 0
+            commands.push("scoreboard players set or_result temp 0".to_string());
+
+            // For each condition, if true, set or_result to 1
+            for cond in &conditions {
+                let cond_prefix = if cond.starts_with("if ") || cond.starts_with("unless ") {
+                    cond.clone()
+                } else {
+                    format!("if {}", cond)
+                };
+                commands.push(format!(
+                    "execute {} run scoreboard players set or_result temp 1",
+                    cond_prefix
+                ));
+            }
         }
 
-        let inner = &or_expr[3..or_expr.len() - 1];
+        // Return the condition that checks if or_result is 1
+        Ok("score or_result temp matches 1".to_string())
+    }
 
+    fn flatten_or_conditions(&self, or_expr: &str) -> Result<Vec<String>, String> {
+        let mut conditions = Vec::new();
+
+        if !or_expr.starts_with("OR(") {
+            // Not an OR expression, return as-is
+            return Ok(vec![or_expr.to_string()]);
+        }
+
+        // Extract inner content
+        let inner = &or_expr[3..or_expr.len()-1];
+        let (cond1, cond2) = self.split_or_conditions(inner)?;
+
+        // Recursively flatten left side
+        if cond1.starts_with("OR(") {
+            conditions.extend(self.flatten_or_conditions(cond1)?);
+        } else {
+            conditions.push(cond1.to_string());
+        }
+
+        // Recursively flatten right side
+        if cond2.starts_with("OR(") {
+            conditions.extend(self.flatten_or_conditions(cond2)?);
+        } else {
+            conditions.push(cond2.to_string());
+        }
+
+        Ok(conditions)
+    }
+
+    fn split_or_conditions<'a>(&self, inner: &'a str) -> Result<(&'a str, &'a str), String> {
         // Find the comma that separates cond1 and cond2
         // Need to handle nested parentheses
         let mut depth = 0;
@@ -690,49 +739,54 @@ impl Transpiler {
             }
         }
 
-        let (cond1, cond2) = if let Some(pos) = comma_pos {
+        if let Some(pos) = comma_pos {
             let cond1 = inner[..pos].trim();
             let cond2 = inner[pos + 1..].trim();
-            (cond1, cond2)
+            Ok((cond1, cond2))
         } else {
-            return Err("OR expression must have two conditions".to_string());
-        };
-
-        // Generate commands to implement OR logic:
-        // 1. Set or_result to 0 (assume false)
-        // 2. If cond1, set or_result to 1
-        // 3. If cond2, set or_result to 1
-        // 4. Return condition checking if or_result == 1
-
-        if let Some(ref mut commands) = self.current_function {
-            // Initialize or_result to 0
-            commands.push("scoreboard players set or_result temp 0".to_string());
-
-            // If cond1 is true, set or_result to 1
-            let cond1_prefix = if cond1.starts_with("if ") || cond1.starts_with("unless ") {
-                cond1.to_string()
-            } else {
-                format!("if {}", cond1)
-            };
-            commands.push(format!(
-                "execute {} run scoreboard players set or_result temp 1",
-                cond1_prefix
-            ));
-
-            // If cond2 is true, set or_result to 1
-            let cond2_prefix = if cond2.starts_with("if ") || cond2.starts_with("unless ") {
-                cond2.to_string()
-            } else {
-                format!("if {}", cond2)
-            };
-            commands.push(format!(
-                "execute {} run scoreboard players set or_result temp 1",
-                cond2_prefix
-            ));
+            Err("OR expression must have two conditions".to_string())
         }
+    }
 
-        // Return the condition that checks if or_result is 1
-        Ok("score or_result temp matches 1".to_string())
+    fn handle_or_and_condition(&mut self, expr: &str) -> Result<String, String> {
+        // Handle both OR(...) and OR_AND(...) expressions
+        if expr.starts_with("OR_AND(") {
+            // Extract the two parts
+            let inner = &expr[7..expr.len()-1];
+            let (left, right) = self.split_or_conditions(inner)?;
+
+            // Process left side first (which may contain OR)
+            let left_processed = if left.contains("OR(") {
+                self.handle_or_condition(left)?
+            } else {
+                left.to_string()
+            };
+
+            // Process right side
+            let right_processed = if right.contains("OR(") {
+                self.handle_or_condition(right)?
+            } else {
+                right.to_string()
+            };
+
+            // Now combine with AND
+            let left_final = if left_processed.starts_with("if ") || left_processed.starts_with("unless ") {
+                left_processed
+            } else {
+                format!("if {}", left_processed)
+            };
+
+            let right_final = if right_processed.starts_with("if ") || right_processed.starts_with("unless ") {
+                right_processed
+            } else {
+                format!("if {}", right_processed)
+            };
+
+            Ok(format!("{} {}", left_final, right_final))
+        } else {
+            // Regular OR(...)
+            self.handle_or_condition(expr)
+        }
     }
 
     pub fn write_data_pack(&self) -> std::io::Result<()> {

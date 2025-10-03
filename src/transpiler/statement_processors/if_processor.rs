@@ -12,9 +12,25 @@ impl Transpiler {
         let mut condition_cmd = self.translate_condition(&processed_condition)?;
 
         // Handle OR conditions specially
-        if condition_cmd.starts_with("OR(") {
+        let is_negated = condition_cmd.starts_with("NOT_");
+        let clean_cmd = if is_negated {
+            &condition_cmd[4..] // Remove "NOT_" prefix
+        } else {
+            &condition_cmd
+        };
+
+        if clean_cmd.starts_with("OR(") || clean_cmd.starts_with("OR_AND(") {
             self.data_pack.track_objective("or_result");
-            condition_cmd = self.handle_or_condition(&condition_cmd)?;
+            condition_cmd = self.handle_or_and_condition(clean_cmd)?;
+
+            // Apply NOT if needed
+            if is_negated {
+                condition_cmd = if condition_cmd.starts_with("score ") {
+                    format!("unless {}", condition_cmd)
+                } else {
+                    condition_cmd.replace("if ", "unless ")
+                };
+            }
         }
 
         // Check if we need to create a separate function for complex if statements

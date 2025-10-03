@@ -5,6 +5,32 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2025-10-03
+
+### Fixed
+- **CRITICAL: Nested OR operator bug**: Fixed bug where multiple OR expressions or OR combined with AND would generate invalid `OR(...)` syntax
+  - `a or b or c` now correctly expands to multiple scoreboard checks
+  - `(a or b) and c` now properly combines OR and AND operators
+  - All OR expressions are recursively processed and expanded to valid Minecraft commands
+- **CRITICAL: Match wildcard single-statement bug**: Fixed bug where single-statement wildcard cases would execute unconditionally
+  - Wildcard cases now properly check all previous ranges with chained `unless` conditions
+  - Example: `case _: /say Other` now generates `execute unless ... unless ... run say Other`
+- **CRITICAL: Match wildcard multi-statement bug**: Fixed bug where multi-statement wildcard functions would be called multiple times
+  - Wildcard functions now called exactly once with all `unless` conditions chained in single execute command
+  - Prevents duplicate execution of wildcard code
+
+### Added
+- **Comprehensive tests**: Added 4 new integration tests (55 total, all passing ✅)
+  - `test_nested_or_operators` - Validates triple OR expressions
+  - `test_or_with_and_combination` - Validates OR combined with AND
+  - `test_match_wildcard_single_statement` - Validates single-statement wildcard cases
+  - `test_match_wildcard_multi_statement` - Validates multi-statement wildcard cases
+
+### Improved
+- **OR operator**: Now fully supports nested and combined expressions
+- **Match statements**: Wildcard cases now work correctly in all scenarios
+- **Test coverage**: Increased from 51 to 55 integration tests
+
 ## [0.4.1] - 2025-10-03
 
 ### Added

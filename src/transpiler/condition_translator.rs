@@ -23,6 +23,14 @@ impl<'a> ConditionTranslator<'a> {
                         let left_cond = self.translate(left)?;
                         let right_cond = self.translate(right)?;
 
+                        // Check if either condition contains OR - if so, mark the whole expression as OR
+                        // The if_processor will handle expanding nested ORs
+                        if left_cond.contains("OR(") || right_cond.contains("OR(") {
+                            // Return combined OR expression for if_processor to handle
+                            // Format: OR_AND(left, right) to indicate AND with nested OR
+                            return Ok(format!("OR_AND({}, {})", left_cond, right_cond));
+                        }
+
                         // Add "if" prefix if not present (for chaining)
                         let left_final = if left_cond.starts_with("if ") || left_cond.starts_with("unless ") {
                             left_cond
@@ -162,6 +170,9 @@ impl<'a> ConditionTranslator<'a> {
                         if inner_cond.starts_with("unless ") {
                             // Double negative: "unless" becomes "if"
                             Ok(inner_cond.replace("unless ", "if "))
+                        } else if inner_cond.starts_with("OR(") || inner_cond.starts_with("OR_AND(") {
+                            // NOT with OR - mark it for special handling
+                            Ok(format!("NOT_{}", inner_cond))
                         } else if inner_cond.starts_with("score ") || inner_cond.starts_with("entity ") || inner_cond.starts_with("block ") {
                             // Add "unless" prefix
                             Ok(format!("unless {}", inner_cond))

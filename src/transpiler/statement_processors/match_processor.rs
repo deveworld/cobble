@@ -75,9 +75,40 @@ impl Transpiler {
         // Handle wildcard case if present (executes if no other case matched)
         if let Some(wildcard_idx) = wildcard_case {
             let case = &match_stmt.cases[wildcard_idx];
+
+            // Generate condition that excludes all ranges
+            let mut unless_conditions = Vec::new();
+            for (min, max, _) in &cases {
+                unless_conditions.push(format!("unless score {} {} matches {}..{}",
+                    result_var, result_obj, min, max));
+            }
+
             if case.body.len() == 1 {
-                // Inline single statement
-                self.inline_match_case(result_var, result_obj, &cases, &case.body)?;
+                // Inline single statement with condition
+                let saved_function = self.current_function.take();
+                self.current_function = Some(Vec::new());
+                self.process_statement(&case.body[0])?;
+
+                if let Some(stmt_commands) = self.current_function.take() {
+                    self.current_function = saved_function;
+
+                    if let Some(ref mut commands) = self.current_function {
+                        for cmd in stmt_commands {
+                            let clean_cmd = Self::strip_command_prefix(&cmd);
+                            if unless_conditions.is_empty() {
+                                commands.push(clean_cmd);
+                            } else {
+                                commands.push(format!(
+                                    "execute {} run {}",
+                                    unless_conditions.join(" "),
+                                    clean_cmd
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    self.current_function = saved_function;
+                }
             } else {
                 // Create function for multi-statement wildcard
                 let func_name = format!("match_default_{}", self.temp_counter);
@@ -88,23 +119,15 @@ impl Transpiler {
                 // Call function only if no other case matched
                 let call_cmd = format!("function {}:{}", self.data_pack.namespace, func_name);
                 if let Some(ref mut commands) = self.current_function {
-                    // Generate condition that excludes all ranges
-                    let mut excluded_ranges = Vec::new();
-                    for (min, max, _) in &cases {
-                        excluded_ranges.push(format!("{}..{}", min, max));
-                    }
-
-                    if excluded_ranges.is_empty() {
+                    if unless_conditions.is_empty() {
                         commands.push(call_cmd);
                     } else {
-                        // Execute unless score matches any of the handled ranges
-                        for range in excluded_ranges {
-                            let cond = format!(
-                                "execute unless score {} {} matches {} run {}",
-                                result_var, result_obj, range, call_cmd
-                            );
-                            commands.push(cond);
-                        }
+                        // Chain all unless conditions in a single execute command
+                        commands.push(format!(
+                            "execute {} run {}",
+                            unless_conditions.join(" "),
+                            call_cmd
+                        ));
                     }
                 }
             }
@@ -262,19 +285,4 @@ impl Transpiler {
         Ok(())
     }
 
-    /// Inline a simple match case
-    fn inline_match_case(
-        &mut self,
-        _var: &str,
-        _obj: &str,
-        _handled_cases: &[(i32, i32, usize)],
-        body: &[Statement],
-    ) -> Result<(), String> {
-        // For wildcard cases, we just execute the body unconditionally
-        // The caller is responsible for adding the condition
-        for stmt in body {
-            self.process_statement(stmt)?;
-        }
-        Ok(())
-    }
 }
