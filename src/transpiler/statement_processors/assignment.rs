@@ -6,6 +6,15 @@ impl Transpiler {
         &mut self,
         assign: &Assignment,
     ) -> Result<(), String> {
+        // Infer the type of the value being assigned
+        let value_type = self.infer_type(&assign.value);
+
+        // Check if this assignment is type-safe
+        self.check_type_assignment(&assign.target, &value_type)?;
+
+        // Record the variable's type
+        self.variable_types.insert(assign.target.clone(), value_type);
+
         // Store the variable value for later use
         self.variables
             .insert(assign.target.clone(), assign.value.clone());
@@ -51,6 +60,32 @@ impl Transpiler {
                     self.variable_objectives
                         .insert(assign.target.clone(), "temp".to_string());
                     self.scoreboard_variables.insert(assign.target.clone());
+
+                    // Warn if number exceeds scoreboard range
+                    if *n > i32::MAX as f64 || *n < i32::MIN as f64 {
+                        eprintln!(
+                            "⚠️  Warning: Value {} for variable '{}' exceeds Minecraft scoreboard range.\n\
+                            Scoreboard range: {} to {}\n\
+                            Value will be clamped to: {}",
+                            n,
+                            assign.target,
+                            i32::MIN,
+                            i32::MAX,
+                            if *n > i32::MAX as f64 { i32::MAX } else { i32::MIN }
+                        );
+                    }
+
+                    // Warn if float has fractional part
+                    if n.fract() != 0.0 {
+                        eprintln!(
+                            "⚠️  Warning: Float value {} for variable '{}' will lose precision.\n\
+                            Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                            n,
+                            assign.target,
+                            *n as i32
+                        );
+                    }
+
                     let score = *n as i32;
                     commands.push(format!(
                         "scoreboard players set {} temp {}",

@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.4.3** - Critical bug fixes | Minecraft 1.21.9+ compatible
+**✨ Version 0.5.0** - Type system and bug fixes | Minecraft 1.21.9+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.4.3 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.5.0 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -21,11 +21,12 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 
 ## ✨ Features
 
+- ✅ **Static Type System** - Immutable types with compile-time inference and validation
 - ✅ **Python-like Syntax** - Familiar, clean syntax with proper indentation
 - ✅ **Function Parameters** - Full support using Minecraft 1.20.2+ macro system
 - ✅ **Event System** - Built-in event handling for load and tick events
 - ✅ **Control Flow** - If statements, for loops (with step support), while loops with smart optimization
-- ✅ **Match/Switch Statements** - Efficient multi-way branching with literal/range/wildcard patterns
+- ✅ **Match/Switch Statements** - Efficient multi-way branching with overlap validation
 - ✅ **Boolean Operators** - `and`, `or`, `not` operators for complex conditions (e.g., `if x > 0 and y < 5 or z == 10:`)
 - ✅ **Complex Expressions** - Multi-operator expressions with proper precedence (e.g., `a + b * c`)
 - ✅ **Arithmetic Operations** - Full support for +, -, *, /, %, ^ with variable and constant operands
@@ -35,6 +36,7 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 - ✅ **Entity Selector Definitions** - Create custom selector aliases (e.g., `@Player = @a[type=player]`)
 - ✅ **File Import System** - Import functions and definitions from other `.cbl` files
 - ✅ **Module-level Variables** - Top-level assignments automatically initialized at pack load
+- ✅ **Numeric Range Warnings** - Compile-time warnings for float precision and overflow
 - ✅ **Modern CLI** - Full-featured command-line interface with watch mode and ZIP creation
 - ✅ **Project Management** - Configuration via `cobble.toml`
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
@@ -149,19 +151,30 @@ def function_name(param1, param2):
 - Use `{param}` syntax directly for macro parameters (Minecraft 1.20.2+)
 - Cobble convert it to the `$()` syntax for function parameters
 
-### Variables
+### Variables and Type System
+
+Cobble has a **static type system** where variable types are inferred from their first assignment and cannot change:
 
 ```python
 # Module-level variables (initialized automatically at pack load)
-score = 0
-player_count = 5
-max_health = 20
+score = 0           # Type: Integer
+active = True       # Type: Boolean
+player_count = 5    # Type: Integer
 
 def my_function():
     # Local variables (initialized when function is called)
-    temp = 100
-    result = temp * 2
+    temp = 100      # Type: Integer
+    result = temp * 2  # Type: Integer (arithmetic result)
+
+    # Type error: cannot change type
+    # score = True  # ERROR: cannot reassign integer to boolean
 ```
+
+**Type System Features:**
+- **Automatic type inference** - Types are inferred from first assignment
+- **Immutable types** - Variables cannot change their type
+- **Compile-time checking** - Type errors are caught before generating the data pack
+- **Expression types** - Arithmetic operations return Integer, comparisons return Boolean
 
 **Module-level variables** are automatically initialized in the `_cobble_init` function when the data pack loads.
 
@@ -325,6 +338,7 @@ Features:
 - **Literal matching**: `case 5:` - matches exactly 5
 - **Range matching**: `case 1 to 10:` - matches values from 1 to 10 (inclusive)
 - **Wildcard pattern**: `case _:` - matches anything not matched by previous cases
+- **Overlap validation**: Compiler ensures case ranges don't overlap (prevents bugs)
 - Uses efficient 4-way split algorithm for optimal branching
 
 ### Arithmetic Operations
@@ -664,6 +678,14 @@ cargo watch -x test -x "run -- check examples/"
 ## 🗺️ Roadmap
 
 ### Recently Completed
+
+#### v0.5.0 (2025-10-03)
+- [x] **Type System** - Static, immutable type system with compile-time inference
+- [x] **Type checking** - Prevents accidental type changes (e.g., overwriting score with boolean)
+- [x] **Match validation** - Compile-time detection of overlapping case ranges
+- [x] **Boolean initialization fix** - Module-level boolean variables now properly initialized
+- [x] **Numeric warnings** - Float precision and overflow warnings at compile time
+- [x] **Documentation updates** - New Type System section in language reference
 
 #### v0.4.3 (2025-10-03)
 - [x] **Critical bug fix** - Fixed execute block keyword capitalization (if/unless were incorrectly capitalized)

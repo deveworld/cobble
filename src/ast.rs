@@ -12,6 +12,27 @@ pub struct Import {
     pub items: Vec<String>, // Empty for "import module", non-empty for "from module import ..."
 }
 
+/// Type system for Cobble variables
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CobbleType {
+    Integer,  // i32 - stored in scoreboard
+    Boolean,  // bool - stored as 0/1 in scoreboard
+    String,   // String - only in function params/macros
+    Unknown,  // Type not yet inferred
+}
+
+impl CobbleType {
+    /// Get human-readable type name
+    pub fn name(&self) -> &str {
+        match self {
+            CobbleType::Integer => "integer",
+            CobbleType::Boolean => "boolean",
+            CobbleType::String => "string",
+            CobbleType::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Statement {
     Import(Import),

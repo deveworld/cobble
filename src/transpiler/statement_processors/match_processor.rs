@@ -67,6 +67,40 @@ impl Transpiler {
         // Sort cases by min value for the 4-way split algorithm
         cases.sort_by_key(|(min, _, _)| *min);
 
+        // Validate that no cases overlap (like CBScript does)
+        if !cases.is_empty() {
+            let mut prev_max = i32::MIN;
+            for (min, max, _case_idx) in &cases {
+                if *min > *max {
+                    return Err(format!(
+                        "Invalid match case range: {} to {}.\n\n\
+                        The start value must be less than or equal to the end value.",
+                        min, max
+                    ));
+                }
+
+                if *min <= prev_max {
+                    let case_range = if *min == *max {
+                        format!("{}", min)
+                    } else {
+                        format!("{} to {}", min, max)
+                    };
+
+                    return Err(format!(
+                        "Match case overlap detected: case {} overlaps with a previous case.\n\n\
+                        Previous case ended at: {}\n\
+                        Current case starts at: {}\n\n\
+                        Each case in a match statement must have non-overlapping ranges.\n\
+                        Match statements execute the FIRST matching case only.\n\n\
+                        To fix: Ensure all case ranges are mutually exclusive.",
+                        case_range, prev_max, min
+                    ));
+                }
+
+                prev_max = *max;
+            }
+        }
+
         // Generate switch tree using 4-way split algorithm
         if !cases.is_empty() {
             self.generate_switch_tree(result_var, result_obj, &cases, match_stmt)?;

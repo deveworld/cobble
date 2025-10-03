@@ -6,6 +6,15 @@ impl Transpiler {
         &mut self,
         const_assign: &ConstAssignment,
     ) -> Result<(), String> {
+        // Infer the type of the constant value
+        let value_type = self.infer_type(&const_assign.value);
+
+        // Check if this assignment is type-safe (in case const is redeclared)
+        self.check_type_assignment(&const_assign.target, &value_type)?;
+
+        // Record the variable's type
+        self.variable_types.insert(const_assign.target.clone(), value_type);
+
         // Evaluate the expression at compile time
         let value = self.evaluate_const_expr(&const_assign.value)?;
 

@@ -6,6 +6,7 @@ Cobble is a high-level, Python-inspired language that compiles to Minecraft data
 
 - [Basic Syntax](#basic-syntax)
 - [Data Types](#data-types)
+- [Type System](#type-system)
 - [Variables](#variables)
 - [Functions](#functions)
 - [Control Flow](#control-flow)
@@ -42,6 +43,76 @@ message = "Hello, world!"
 ```python
 is_active = True
 is_disabled = False
+```
+
+Booleans are stored as integers in Minecraft scoreboards (0 for False, 1 for True).
+
+## Type System
+
+Cobble has a **static, immutable type system**. Once a variable is assigned a value, its type is fixed and cannot change.
+
+### Type Inference
+
+Variable types are automatically inferred from their first assignment:
+
+```python
+x = 5        # x is type: integer
+y = True     # y is type: boolean
+name = "Bob" # name is type: string (only in function parameters)
+```
+
+### Immutable Types
+
+Once a variable has been assigned, you cannot change its type:
+
+```python
+x = 10       # x is type: integer
+x = 20       # ✓ OK - still an integer
+x = True     # ✗ ERROR - cannot reassign integer to boolean
+
+score = 5 + 3   # score is type: integer (result of arithmetic)
+score = x > 10  # ✗ ERROR - cannot reassign integer to boolean
+```
+
+**Error message:**
+```
+Type mismatch for variable 'x'.
+
+Variable was previously defined as type: integer
+Cannot reassign to type: boolean
+
+In Cobble, all variables have immutable types.
+Once a variable is assigned a value, its type cannot change.
+```
+
+### Type Safety Benefits
+
+The type system prevents common errors:
+
+1. **Prevents accidental type changes** - Can't accidentally overwrite a score with a boolean
+2. **Compile-time checking** - Type errors are caught before generating the data pack
+3. **Better code clarity** - Variable types are clear from their usage
+
+### Numeric Ranges and Precision
+
+Because Cobble compiles to Minecraft scoreboards, numeric values have limitations:
+
+**Integer Range:**
+- Minimum: `-2,147,483,648` (i32::MIN)
+- Maximum: `2,147,483,647` (i32::MAX)
+
+**Float Precision:**
+Floats are automatically converted to integers with a warning:
+
+```python
+pi = 3.14159  # ⚠️  Warning: Float will lose precision, truncated to 3
+```
+
+**Out-of-Range Values:**
+Values exceeding the scoreboard range are clamped with a warning:
+
+```python
+huge = 9999999999  # ⚠️  Warning: Value exceeds range, clamped to 2147483647
 ```
 
 ## Variables
@@ -396,6 +467,8 @@ def check_score():
 - Single-statement cases are inlined when possible
 - Multi-statement cases create separate functions
 - Generates optimal `execute if score ... matches ...` commands
+- **Case ranges must not overlap** - The compiler validates that all cases have mutually exclusive ranges
+- Only the FIRST matching case executes (similar to C switch with implicit break)
 
 **Examples:**
 
@@ -443,6 +516,42 @@ def handle_event():
         case 2:
             /say Event 2 triggered
             /playsound minecraft:block.note_block.bass master @a
+```
+
+**Match Validation:**
+
+The compiler validates that match cases don't overlap. This prevents bugs where multiple cases would execute:
+
+```python
+# ✗ ERROR - Overlapping ranges
+match score:
+    case 1 to 5:
+        /say "1-5"
+    case 3 to 7:  # ERROR: Overlaps with previous case
+        /say "3-7"
+```
+
+Error message:
+```
+Match case overlap detected: case 3 to 7 overlaps with a previous case.
+
+Previous case ended at: 5
+Current case starts at: 3
+
+Each case in a match statement must have non-overlapping ranges.
+Match statements execute the FIRST matching case only.
+
+To fix: Ensure all case ranges are mutually exclusive.
+```
+
+Correct version:
+```python
+# ✓ OK - Non-overlapping ranges
+match score:
+    case 1 to 5:
+        /say "1-5"
+    case 6 to 10:
+        /say "6-10"
 ```
 
 ## Minecraft Commands

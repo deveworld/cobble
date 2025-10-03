@@ -52,6 +52,7 @@ pub struct Transpiler {
     imported_files: HashSet<PathBuf>,             // Track imported files to prevent circular dependencies
     import_stack: Vec<PathBuf>,                   // Track current import chain for circular detection
     current_file_dir: PathBuf,                    // Current file's directory for resolving relative imports
+    variable_types: HashMap<String, crate::ast::CobbleType>, // Track type of each variable for type checking
 }
 
 impl Transpiler {
@@ -72,6 +73,7 @@ impl Transpiler {
             imported_files: HashSet::new(),
             import_stack: Vec::new(),
             current_file_dir: PathBuf::from("."),
+            variable_types: HashMap::new(),
         }
     }
 
@@ -87,6 +89,86 @@ impl Transpiler {
             self.import_stack.push(canonical_path.clone());
             self.imported_files.insert(canonical_path);
         }
+    }
+
+    /// Infer the type of an expression
+    fn infer_type(&self, expr: &Expression) -> crate::ast::CobbleType {
+        use crate::ast::CobbleType;
+
+        match expr {
+            Expression::Number(_) => CobbleType::Integer,
+            Expression::Boolean(_) => CobbleType::Boolean,
+            Expression::String(_) => CobbleType::String,
+            Expression::Identifier(name) => {
+                // Look up variable type
+                self.variable_types
+                    .get(name)
+                    .cloned()
+                    .unwrap_or(CobbleType::Unknown)
+            }
+            Expression::Binary(left, op, right) => {
+                use crate::ast::BinaryOp;
+
+                let left_type = self.infer_type(left);
+                let right_type = self.infer_type(right);
+
+                match op {
+                    // Arithmetic operations return integers
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul |
+                    BinaryOp::Div | BinaryOp::Mod | BinaryOp::Pow => CobbleType::Integer,
+
+                    // Comparison operations return booleans
+                    BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt |
+                    BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => CobbleType::Boolean,
+
+                    // Logical operations return booleans
+                    BinaryOp::And | BinaryOp::Or => CobbleType::Boolean,
+
+                    // Other operations not yet supported - return Unknown
+                    _ => CobbleType::Unknown,
+                }
+            }
+            Expression::Unary(op, _) => {
+                use crate::ast::UnaryOp;
+
+                match op {
+                    UnaryOp::Not => CobbleType::Boolean,
+                    UnaryOp::Neg | UnaryOp::Pos | UnaryOp::BitNot => CobbleType::Integer,
+                }
+            }
+            Expression::Call(_, _) => CobbleType::Unknown, // Function return types not tracked yet
+            _ => CobbleType::Unknown,
+        }
+    }
+
+    /// Check if a type assignment is valid
+    fn check_type_assignment(
+        &self,
+        var_name: &str,
+        new_type: &crate::ast::CobbleType,
+    ) -> Result<(), String> {
+        use crate::ast::CobbleType;
+
+        if let Some(existing_type) = self.variable_types.get(var_name) {
+            if existing_type != new_type && *existing_type != CobbleType::Unknown && *new_type != CobbleType::Unknown {
+                return Err(format!(
+                    "Type mismatch for variable '{}'.\n\n\
+                    Variable was previously defined as type: {}\n\
+                    Cannot reassign to type: {}\n\n\
+                    In Cobble, all variables have immutable types.\n\
+                    Once a variable is assigned a value, its type cannot change.\n\n\
+                    Solutions:\n\
+                    1. Use a different variable name for the different type\n\
+                    2. Ensure all assignments to '{}' use the same type",
+                    var_name,
+                    existing_type.name(),
+                    new_type.name(),
+                    var_name
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     pub fn set_description(&mut self, desc: String) {
@@ -127,6 +209,14 @@ impl Transpiler {
                         init_commands.push(format!(
                             "scoreboard players set {} temp {}",
                             var_name, score
+                        ));
+                    }
+                    Expression::Boolean(b) => {
+                        // Booleans stored as 0 or 1 in scoreboard
+                        let value = if *b { 1 } else { 0 };
+                        init_commands.push(format!(
+                            "scoreboard players set {} temp {}",
+                            var_name, value
                         ));
                     }
                     Expression::String(_s) => {

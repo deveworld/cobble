@@ -5,6 +5,59 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2025-10-03
+
+### Added
+- **Type System**: Implemented static, immutable type system with compile-time type checking
+  - All variables have immutable types that are inferred from their first assignment
+  - Type mismatches are caught at compile time with clear error messages
+  - Prevents accidental type changes (e.g., overwriting a score with a boolean)
+  - Types supported: Integer, Boolean, String (in function parameters only)
+  - Type inference works for expressions: arithmetic operations return Integer, comparisons/logical ops return Boolean
+- **Numeric Range Warnings**: Added compile-time warnings for numeric precision issues
+  - Float precision warning: Alerts when float values lose precision (e.g., `3.14159` → `3`)
+  - Overflow warning: Alerts when values exceed Minecraft scoreboard range (-2,147,483,648 to 2,147,483,647)
+  - Values are automatically clamped to valid range with clear warning messages
+
+### Fixed
+- **CRITICAL: Match range overlap validation**: Match statements now validate that case ranges don't overlap
+  - Prevents bugs where multiple cases would execute for the same value
+  - Compile-time error with clear message showing which cases overlap
+  - Example: `case 1 to 5:` and `case 3 to 7:` now produces an error
+  - Follows CBScript's validation approach for consistency
+- **Boolean module-level initialization**: Fixed bug where boolean variables at module level weren't initialized
+  - `active = True` now correctly generates `scoreboard players set active temp 1` in `_cobble_init`
+  - `disabled = False` now correctly generates `scoreboard players set disabled temp 0`
+  - Previously, boolean module-level variables would have undefined values
+
+### Documentation
+- Added comprehensive Type System section to `docs/language.md`
+  - Explains type inference, immutable types, and type safety benefits
+  - Documents numeric ranges and precision limitations
+  - Includes examples of type errors and warnings
+- Added Match Validation section documenting overlap detection
+  - Shows error messages and correct usage patterns
+  - Explains that only the first matching case executes
+- Updated Table of Contents with new Type System section
+
+### Technical Details
+- Added `CobbleType` enum to `src/ast.rs` with Integer, Boolean, String, and Unknown variants
+- Added `variable_types: HashMap<String, CobbleType>` to Transpiler struct
+- Implemented `infer_type()` method for expression type inference
+- Implemented `check_type_assignment()` method for type validation
+- Added type tracking to `process_assignment()` and `process_const_assignment()`
+- Added overlap validation to match processor with sorted range checking
+- Added warning output for float truncation and range overflow in assignment processor
+- Fixed boolean initialization in module-level variable processing (line 211-217 of transpiler/mod.rs)
+
+### Breaking Changes
+- Variables can no longer change types after initial assignment
+  - Code like `x = 5; x = True` will now produce a compile error
+  - This is a safety feature that catches bugs at compile time
+- Match statements with overlapping ranges will now fail compilation
+  - Previously would silently generate incorrect behavior
+  - Update match cases to use mutually exclusive ranges
+
 ## [0.4.3] - 2025-10-03
 
 ### Fixed
