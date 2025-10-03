@@ -13,7 +13,8 @@ impl Transpiler {
         self.check_type_assignment(&assign.target, &value_type)?;
 
         // Record the variable's type
-        self.variable_types.insert(assign.target.clone(), value_type);
+        self.variable_types
+            .insert(assign.target.clone(), value_type);
 
         // Store the variable value for later use
         self.variables
@@ -22,6 +23,10 @@ impl Transpiler {
         // If we're not in a function, store as module-level variable
         // These will be automatically initialized in the _cobble_init function
         if self.current_function.is_none() {
+            self.data_pack.track_objective("temp");
+            self.variable_objectives
+                .insert(assign.target.clone(), "temp".to_string());
+            self.scoreboard_variables.insert(assign.target.clone());
             self.module_level_vars
                 .insert(assign.target.clone(), assign.value.clone());
             return Ok(());
@@ -267,7 +272,9 @@ impl Transpiler {
                                 BinaryOp::Pow => {
                                     // Power operation: compile-time expansion
                                     if value < 0 {
-                                        return Err("Power exponent must be non-negative".to_string());
+                                        return Err(
+                                            "Power exponent must be non-negative".to_string()
+                                        );
                                     }
                                     if value == 0 {
                                         // x^0 = 1
@@ -315,7 +322,7 @@ impl Transpiler {
                                         ));
                                     }
                                     (*n1 / *n2) as i32
-                                },
+                                }
                                 BinaryOp::Mod => {
                                     if *n2 == 0.0 {
                                         return Err(format!(
@@ -324,15 +331,17 @@ impl Transpiler {
                                         ));
                                     }
                                     (*n1 as i32) % (*n2 as i32)
-                                },
+                                }
                                 BinaryOp::Pow => {
                                     let base = *n1 as i32;
                                     let exp = *n2 as i32;
                                     if exp < 0 {
-                                        return Err("Power exponent must be non-negative".to_string());
+                                        return Err(
+                                            "Power exponent must be non-negative".to_string()
+                                        );
                                     }
                                     base.pow(exp as u32)
-                                },
+                                }
                                 _ => 0,
                             };
                             commands.push(format!(
@@ -423,65 +432,232 @@ impl Transpiler {
                             }
                         }
                         (Expression::Identifier(var1), Expression::Identifier(var2)) => {
-                            // Handle variable op variable (e.g., z = x * y)
-                            let var1_obj = self
-                                .variable_objectives
-                                .get(var1)
-                                .unwrap_or(&"temp".to_string())
-                                .clone();
-                            let var2_obj = self
-                                .variable_objectives
-                                .get(var2)
-                                .unwrap_or(&"temp".to_string())
-                                .clone();
+                            let left_const = self.compile_time_constants.get(var1).copied();
+                            let right_const = self.compile_time_constants.get(var2).copied();
 
-                            // Optimization: Skip self-assignment if target == var1
-                            // (e.g., x = x + 1 shouldn't generate "x = x")
-                            if assign.target != *var1 || var1_obj != "temp" {
-                                // First assign var1 to target
-                                commands.push(format!(
-                                    "scoreboard players operation {} temp = {} {}",
-                                    assign.target, var1, var1_obj
-                                ));
-                            }
+                            if let Some(value) = left_const {
+                                let num = value as i32;
+                                let var_obj = self
+                                    .variable_objectives
+                                    .get(var2)
+                                    .unwrap_or(&"temp".to_string())
+                                    .clone();
 
-                            // Then apply operation with var2
-                            match op {
-                                BinaryOp::Add => {
+                                match op {
+                                    BinaryOp::Add => {
+                                        commands.push(format!(
+                                            "scoreboard players set {} temp {}",
+                                            assign.target, num
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp += {} {}",
+                                            assign.target, var2, var_obj
+                                        ));
+                                    }
+                                    BinaryOp::Sub => {
+                                        commands.push(format!(
+                                            "scoreboard players set {} temp {}",
+                                            assign.target, num
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp -= {} {}",
+                                            assign.target, var2, var_obj
+                                        ));
+                                    }
+                                    BinaryOp::Mul => {
+                                        self.data_pack.track_objective("multiplier");
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp = {} {}",
+                                            assign.target, var2, var_obj
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players set multiplier temp {}",
+                                            num
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp *= multiplier temp",
+                                            assign.target
+                                        ));
+                                    }
+                                    BinaryOp::Div => {
+                                        commands.push(format!(
+                                            "scoreboard players set {} temp {}",
+                                            assign.target, num
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp /= {} {}",
+                                            assign.target, var2, var_obj
+                                        ));
+                                    }
+                                    BinaryOp::Mod => {
+                                        commands.push(format!(
+                                            "scoreboard players set {} temp {}",
+                                            assign.target, num
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp %= {} {}",
+                                            assign.target, var2, var_obj
+                                        ));
+                                    }
+                                    BinaryOp::Pow => {
+                                        return Err("Power with variable exponent is not supported. Use constant exponents only.".to_string());
+                                    }
+                                    _ => {}
+                                }
+                            } else if let Some(value) = right_const {
+                                let num = value as i32;
+                                let var1_obj = self
+                                    .variable_objectives
+                                    .get(var1)
+                                    .unwrap_or(&"temp".to_string())
+                                    .clone();
+
+                                if assign.target != *var1 || var1_obj != "temp" {
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp += {} {}",
-                                        assign.target, var2, var2_obj
+                                        "scoreboard players operation {} temp = {} {}",
+                                        assign.target, var1, var1_obj
                                     ));
                                 }
-                                BinaryOp::Sub => {
+
+                                match op {
+                                    BinaryOp::Add => {
+                                        commands.push(format!(
+                                            "scoreboard players add {} temp {}",
+                                            assign.target, num
+                                        ));
+                                    }
+                                    BinaryOp::Sub => {
+                                        commands.push(format!(
+                                            "scoreboard players remove {} temp {}",
+                                            assign.target, num
+                                        ));
+                                    }
+                                    BinaryOp::Mul => {
+                                        self.data_pack.track_objective("multiplier");
+                                        commands.push(format!(
+                                            "scoreboard players set multiplier temp {}",
+                                            num
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp *= multiplier temp",
+                                            assign.target
+                                        ));
+                                    }
+                                    BinaryOp::Div => {
+                                        if num == 0 {
+                                            return Err(
+                                                "Division by zero in assignment".to_string()
+                                            );
+                                        }
+                                        self.data_pack.track_objective("divisor");
+                                        commands.push(format!(
+                                            "scoreboard players set divisor temp {}",
+                                            num
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp /= divisor temp",
+                                            assign.target
+                                        ));
+                                    }
+                                    BinaryOp::Mod => {
+                                        if num == 0 {
+                                            return Err("Modulo by zero in assignment".to_string());
+                                        }
+                                        self.data_pack.track_objective("modulus");
+                                        commands.push(format!(
+                                            "scoreboard players set modulus temp {}",
+                                            num
+                                        ));
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp %= modulus temp",
+                                            assign.target
+                                        ));
+                                    }
+                                    BinaryOp::Pow => {
+                                        if num < 0 {
+                                            return Err(
+                                                "Power exponent must be non-negative".to_string()
+                                            );
+                                        }
+                                        if num == 0 {
+                                            commands.push(format!(
+                                                "scoreboard players set {} temp 1",
+                                                assign.target
+                                            ));
+                                        } else if num == 1 {
+                                            // nothing to do
+                                        } else {
+                                            self.data_pack.track_objective("power_base");
+                                            commands.push(format!(
+                                                "scoreboard players operation power_base temp = {} temp",
+                                                assign.target
+                                            ));
+                                            for _ in 0..(num - 1) {
+                                                commands.push(format!(
+                                                    "scoreboard players operation {} temp *= power_base temp",
+                                                    assign.target
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                // Handle variable op variable (e.g., z = x * y)
+                                let var1_obj = self
+                                    .variable_objectives
+                                    .get(var1)
+                                    .unwrap_or(&"temp".to_string())
+                                    .clone();
+                                let var2_obj = self
+                                    .variable_objectives
+                                    .get(var2)
+                                    .unwrap_or(&"temp".to_string())
+                                    .clone();
+
+                                if assign.target != *var1 || var1_obj != "temp" {
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp -= {} {}",
-                                        assign.target, var2, var2_obj
+                                        "scoreboard players operation {} temp = {} {}",
+                                        assign.target, var1, var1_obj
                                     ));
                                 }
-                                BinaryOp::Mul => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} temp *= {} {}",
-                                        assign.target, var2, var2_obj
-                                    ));
+
+                                match op {
+                                    BinaryOp::Add => {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp += {} {}",
+                                            assign.target, var2, var2_obj
+                                        ));
+                                    }
+                                    BinaryOp::Sub => {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp -= {} {}",
+                                            assign.target, var2, var2_obj
+                                        ));
+                                    }
+                                    BinaryOp::Mul => {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp *= {} {}",
+                                            assign.target, var2, var2_obj
+                                        ));
+                                    }
+                                    BinaryOp::Div => {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp /= {} {}",
+                                            assign.target, var2, var2_obj
+                                        ));
+                                    }
+                                    BinaryOp::Mod => {
+                                        commands.push(format!(
+                                            "scoreboard players operation {} temp %= {} {}",
+                                            assign.target, var2, var2_obj
+                                        ));
+                                    }
+                                    BinaryOp::Pow => {
+                                        return Err("Power with variable exponent is not supported. Use constant exponents only.".to_string());
+                                    }
+                                    _ => {}
                                 }
-                                BinaryOp::Div => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} temp /= {} {}",
-                                        assign.target, var2, var2_obj
-                                    ));
-                                }
-                                BinaryOp::Mod => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} temp %= {} {}",
-                                        assign.target, var2, var2_obj
-                                    ));
-                                }
-                                BinaryOp::Pow => {
-                                    // Power with variable exponent is not supported at compile time
-                                    return Err("Power with variable exponent is not supported. Use constant exponents only.".to_string());
-                                }
-                                _ => {}
                             }
                         }
                         _ => {

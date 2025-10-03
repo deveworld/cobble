@@ -131,14 +131,14 @@ impl DataPack {
     pub fn write(&self) -> std::io::Result<()> {
         let data_dir = self.output_dir.join("data");
         let namespace_dir = data_dir.join(&self.namespace);
-        let functions_dir = namespace_dir.join("function");
+        let functions_dir = namespace_dir.join("functions");
         let minecraft_tags_dir = self
             .output_dir
             .join("data")
             .join("minecraft")
             .join("tags")
-            .join("function");
-        let tags_dir = namespace_dir.join("tags").join("function");
+            .join("functions");
+        let tags_dir = namespace_dir.join("tags").join("functions");
 
         fs::create_dir_all(&functions_dir)?;
         fs::create_dir_all(&tags_dir)?;
@@ -181,7 +181,7 @@ impl DataPack {
 
         // Write advancements
         if !self.advancements.is_empty() {
-            let advancements_dir = namespace_dir.join("advancement");
+            let advancements_dir = namespace_dir.join("advancements");
             fs::create_dir_all(&advancements_dir)?;
             for (name, json) in &self.advancements {
                 let file_path = advancements_dir.join(format!("{}.json", name));
@@ -191,7 +191,7 @@ impl DataPack {
 
         // Write loot tables
         if !self.loot_tables.is_empty() {
-            let loot_tables_dir = namespace_dir.join("loot_table");
+            let loot_tables_dir = namespace_dir.join("loot_tables");
             fs::create_dir_all(&loot_tables_dir)?;
             for (name, json) in &self.loot_tables {
                 let file_path = loot_tables_dir.join(format!("{}.json", name));
@@ -201,7 +201,7 @@ impl DataPack {
 
         // Write recipes
         if !self.recipes.is_empty() {
-            let recipes_dir = namespace_dir.join("recipe");
+            let recipes_dir = namespace_dir.join("recipes");
             fs::create_dir_all(&recipes_dir)?;
             for (name, json) in &self.recipes {
                 let file_path = recipes_dir.join(format!("{}.json", name));
@@ -211,7 +211,7 @@ impl DataPack {
 
         // Write predicates
         if !self.predicates.is_empty() {
-            let predicates_dir = namespace_dir.join("predicate");
+            let predicates_dir = namespace_dir.join("predicates");
             fs::create_dir_all(&predicates_dir)?;
             for (name, json) in &self.predicates {
                 let file_path = predicates_dir.join(format!("{}.json", name));
@@ -221,7 +221,7 @@ impl DataPack {
 
         // Write item modifiers
         if !self.item_modifiers.is_empty() {
-            let item_modifiers_dir = namespace_dir.join("item_modifier");
+            let item_modifiers_dir = namespace_dir.join("item_modifiers");
             fs::create_dir_all(&item_modifiers_dir)?;
             for (name, json) in &self.item_modifiers {
                 let file_path = item_modifiers_dir.join(format!("{}.json", name));

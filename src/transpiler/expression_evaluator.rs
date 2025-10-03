@@ -6,16 +6,19 @@ use std::collections::HashMap;
 pub struct ExpressionEvaluator<'a> {
     pub data_pack: &'a mut DataPack,
     pub variable_objectives: &'a HashMap<String, String>,
+    pub compile_time_constants: &'a HashMap<String, f64>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
     pub fn new(
         data_pack: &'a mut DataPack,
         variable_objectives: &'a HashMap<String, String>,
+        compile_time_constants: &'a HashMap<String, f64>,
     ) -> Self {
         Self {
             data_pack,
             variable_objectives,
+            compile_time_constants,
         }
     }
 
@@ -37,15 +40,24 @@ impl<'a> ExpressionEvaluator<'a> {
                 ));
             }
             Expression::Identifier(var) => {
-                let var_obj = self
-                    .variable_objectives
-                    .get(var)
-                    .unwrap_or(&"temp".to_string())
-                    .clone();
-                commands.push(format!(
-                    "scoreboard players operation {} temp = {} {}",
-                    target, var, var_obj
-                ));
+                if let Some(const_value) = self.compile_time_constants.get(var) {
+                    let truncated = *const_value as i32;
+                    self.data_pack.track_objective("temp");
+                    commands.push(format!(
+                        "scoreboard players set {} temp {}",
+                        target, truncated
+                    ));
+                } else {
+                    let var_obj = self
+                        .variable_objectives
+                        .get(var)
+                        .unwrap_or(&"temp".to_string())
+                        .clone();
+                    commands.push(format!(
+                        "scoreboard players operation {} temp = {} {}",
+                        target, var, var_obj
+                    ));
+                }
             }
             Expression::Binary(left, op, right) => {
                 // For nested binary expressions like (a + b) + c:
@@ -122,10 +134,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                 }
                                 if value == 0 {
                                     // x^0 = 1
-                                    commands.push(format!(
-                                        "scoreboard players set {} temp 1",
-                                        target
-                                    ));
+                                    commands
+                                        .push(format!("scoreboard players set {} temp 1", target));
                                 } else if value == 1 {
                                     // x^1 = x, no operation needed
                                 } else {
@@ -148,49 +158,134 @@ impl<'a> ExpressionEvaluator<'a> {
                         }
                     }
                     Expression::Identifier(var) => {
-                        let var_obj = self
-                            .variable_objectives
-                            .get(var)
-                            .unwrap_or(&"temp".to_string())
-                            .clone();
-                        match op {
-                            BinaryOp::Add => {
-                                commands.push(format!(
-                                    "scoreboard players operation {} temp += {} {}",
-                                    target, var, var_obj
-                                ));
+                        if let Some(const_value) = self.compile_time_constants.get(var) {
+                            let value = *const_value as i32;
+                            match op {
+                                BinaryOp::Add => {
+                                    commands.push(format!(
+                                        "scoreboard players add {} temp {}",
+                                        target, value
+                                    ));
+                                }
+                                BinaryOp::Sub => {
+                                    commands.push(format!(
+                                        "scoreboard players remove {} temp {}",
+                                        target, value
+                                    ));
+                                }
+                                BinaryOp::Mul => {
+                                    self.data_pack.track_objective("multiplier");
+                                    commands.push(format!(
+                                        "scoreboard players set multiplier temp {}",
+                                        value
+                                    ));
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp *= multiplier temp",
+                                        target
+                                    ));
+                                }
+                                BinaryOp::Div => {
+                                    if value == 0 {
+                                        return Err("Division by zero in expression".to_string());
+                                    }
+                                    self.data_pack.track_objective("divisor");
+                                    commands.push(format!(
+                                        "scoreboard players set divisor temp {}",
+                                        value
+                                    ));
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp /= divisor temp",
+                                        target
+                                    ));
+                                }
+                                BinaryOp::Mod => {
+                                    if value == 0 {
+                                        return Err("Modulo by zero in expression".to_string());
+                                    }
+                                    self.data_pack.track_objective("modulus");
+                                    commands.push(format!(
+                                        "scoreboard players set modulus temp {}",
+                                        value
+                                    ));
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp %= modulus temp",
+                                        target
+                                    ));
+                                }
+                                BinaryOp::Pow => {
+                                    if value < 0 {
+                                        return Err(
+                                            "Power exponent must be non-negative".to_string()
+                                        );
+                                    }
+                                    if value == 0 {
+                                        commands.push(format!(
+                                            "scoreboard players set {} temp 1",
+                                            target
+                                        ));
+                                    } else if value == 1 {
+                                        // x^1 = x, nothing to do (target already holds left side)
+                                    } else {
+                                        self.data_pack.track_objective("power_base");
+                                        commands.push(format!(
+                                            "scoreboard players operation power_base temp = {} temp",
+                                            target
+                                        ));
+                                        for _ in 0..(value - 1) {
+                                            commands.push(format!(
+                                                "scoreboard players operation {} temp *= power_base temp",
+                                                target
+                                            ));
+                                        }
+                                    }
+                                }
+                                _ => return Err(format!("Unsupported binary operation: {:?}", op)),
                             }
-                            BinaryOp::Sub => {
-                                commands.push(format!(
-                                    "scoreboard players operation {} temp -= {} {}",
-                                    target, var, var_obj
-                                ));
+                        } else {
+                            let var_obj = self
+                                .variable_objectives
+                                .get(var)
+                                .unwrap_or(&"temp".to_string())
+                                .clone();
+                            match op {
+                                BinaryOp::Add => {
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp += {} {}",
+                                        target, var, var_obj
+                                    ));
+                                }
+                                BinaryOp::Sub => {
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp -= {} {}",
+                                        target, var, var_obj
+                                    ));
+                                }
+                                BinaryOp::Mul => {
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp *= {} {}",
+                                        target, var, var_obj
+                                    ));
+                                }
+                                BinaryOp::Div => {
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp /= {} {}",
+                                        target, var, var_obj
+                                    ));
+                                }
+                                BinaryOp::Mod => {
+                                    commands.push(format!(
+                                        "scoreboard players operation {} temp %= {} {}",
+                                        target, var, var_obj
+                                    ));
+                                }
+                                BinaryOp::Pow => {
+                                    // Power with variable: target = target ^ var
+                                    // We need to implement iterative multiplication
+                                    // For now, this is complex and not commonly used
+                                    return Err("Power operator with variable exponent is not supported. Use constant exponents like: x ^ 2".to_string());
+                                }
+                                _ => return Err(format!("Unsupported binary operation: {:?}", op)),
                             }
-                            BinaryOp::Mul => {
-                                commands.push(format!(
-                                    "scoreboard players operation {} temp *= {} {}",
-                                    target, var, var_obj
-                                ));
-                            }
-                            BinaryOp::Div => {
-                                commands.push(format!(
-                                    "scoreboard players operation {} temp /= {} {}",
-                                    target, var, var_obj
-                                ));
-                            }
-                            BinaryOp::Mod => {
-                                commands.push(format!(
-                                    "scoreboard players operation {} temp %= {} {}",
-                                    target, var, var_obj
-                                ));
-                            }
-                            BinaryOp::Pow => {
-                                // Power with variable: target = target ^ var
-                                // We need to implement iterative multiplication
-                                // For now, this is complex and not commonly used
-                                return Err("Power operator with variable exponent is not supported. Use constant exponents like: x ^ 2".to_string());
-                            }
-                            _ => return Err(format!("Unsupported binary operation: {:?}", op)),
                         }
                     }
                     Expression::Binary(_, _, _) => {

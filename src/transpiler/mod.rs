@@ -1,8 +1,8 @@
 // Module declarations
-mod data_pack;
 mod command_processor;
-mod expression_evaluator;
 mod condition_translator;
+mod data_pack;
+mod expression_evaluator;
 mod statement_processors;
 
 // Public exports
@@ -48,10 +48,10 @@ pub struct Transpiler {
     global_variables: HashSet<String>,     // Track global variables declared in current function
     module_level_vars: HashMap<String, Expression>, // Store module-level assignments
     compile_time_constants: HashMap<String, f64>, // Store compile-time constant values
-    selector_aliases: HashMap<String, String>,    // Store selector definitions (@Name -> @a[...])
-    imported_files: HashSet<PathBuf>,             // Track imported files to prevent circular dependencies
-    import_stack: Vec<PathBuf>,                   // Track current import chain for circular detection
-    current_file_dir: PathBuf,                    // Current file's directory for resolving relative imports
+    selector_aliases: HashMap<String, String>, // Store selector definitions (@Name -> @a[...])
+    imported_files: HashSet<PathBuf>,      // Track imported files to prevent circular dependencies
+    import_stack: Vec<PathBuf>,            // Track current import chain for circular detection
+    current_file_dir: PathBuf, // Current file's directory for resolving relative imports
     variable_types: HashMap<String, crate::ast::CobbleType>, // Track type of each variable for type checking
 }
 
@@ -84,7 +84,9 @@ impl Transpiler {
 
         // Add main file to import stack and imported_files for circular import detection
         // Canonicalize if possible, otherwise use as-is
-        let canonical_path = file_path.canonicalize().unwrap_or_else(|_| file_path.clone());
+        let canonical_path = file_path
+            .canonicalize()
+            .unwrap_or_else(|_| file_path.clone());
         if !self.import_stack.contains(&canonical_path) {
             self.import_stack.push(canonical_path.clone());
             self.imported_files.insert(canonical_path);
@@ -96,6 +98,7 @@ impl Transpiler {
     fn try_eval_const(&self, expr: &Expression) -> Option<f64> {
         match expr {
             Expression::Number(n) => Some(*n),
+            Expression::Identifier(name) => self.compile_time_constants.get(name).copied(),
             Expression::Binary(left, op, right) => {
                 let left_val = self.try_eval_const(left)?;
                 let right_val = self.try_eval_const(right)?;
@@ -157,12 +160,20 @@ impl Transpiler {
 
                 match op {
                     // Arithmetic operations return integers
-                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul |
-                    BinaryOp::Div | BinaryOp::Mod | BinaryOp::Pow => CobbleType::Integer,
+                    BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Mod
+                    | BinaryOp::Pow => CobbleType::Integer,
 
                     // Comparison operations return booleans
-                    BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt |
-                    BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => CobbleType::Boolean,
+                    BinaryOp::Eq
+                    | BinaryOp::NotEq
+                    | BinaryOp::Lt
+                    | BinaryOp::LtEq
+                    | BinaryOp::Gt
+                    | BinaryOp::GtEq => CobbleType::Boolean,
 
                     // Logical operations return booleans
                     BinaryOp::And | BinaryOp::Or => CobbleType::Boolean,
@@ -193,7 +204,10 @@ impl Transpiler {
         use crate::ast::CobbleType;
 
         if let Some(existing_type) = self.variable_types.get(var_name) {
-            if existing_type != new_type && *existing_type != CobbleType::Unknown && *new_type != CobbleType::Unknown {
+            if existing_type != new_type
+                && *existing_type != CobbleType::Unknown
+                && *new_type != CobbleType::Unknown
+            {
                 return Err(format!(
                     "Type mismatch for variable '{}'.\n\n\
                     Variable was previously defined as type: {}\n\
@@ -246,22 +260,40 @@ impl Transpiler {
             let mut init_commands = Vec::new();
 
             for (var_name, value) in &self.module_level_vars {
+                if let Some(const_value) = self.try_eval_const(value) {
+                    let truncated = const_value as i32;
+
+                    if const_value > i32::MAX as f64 || const_value < i32::MIN as f64 {
+                        eprintln!(
+                            "⚠️  Warning: Module-level value {} for variable '{}' exceeds Minecraft scoreboard range.\n\
+                            Scoreboard range: {} to {}\n\
+                            Value will be clamped to: {}",
+                            const_value,
+                            var_name,
+                            i32::MIN,
+                            i32::MAX,
+                            if const_value > i32::MAX as f64 { i32::MAX } else { i32::MIN }
+                        );
+                    }
+
+                    if const_value.fract() != 0.0 {
+                        eprintln!(
+                            "⚠️  Warning: Module-level value {} for variable '{}' will lose precision.\n\
+                            Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                            const_value,
+                            var_name,
+                            truncated
+                        );
+                    }
+
+                    init_commands.push(format!(
+                        "scoreboard players set {} temp {}",
+                        var_name, truncated
+                    ));
+                    continue;
+                }
+
                 match value {
-                    Expression::Number(n) => {
-                        let score = *n as i32;
-                        init_commands.push(format!(
-                            "scoreboard players set {} temp {}",
-                            var_name, score
-                        ));
-                    }
-                    Expression::Boolean(b) => {
-                        // Booleans stored as 0 or 1 in scoreboard
-                        let value = if *b { 1 } else { 0 };
-                        init_commands.push(format!(
-                            "scoreboard players set {} temp {}",
-                            var_name, value
-                        ));
-                    }
                     Expression::String(_s) => {
                         // Strings can't be directly stored in scoreboards
                         return Err(format!(
@@ -297,7 +329,10 @@ impl Transpiler {
                     // Find the position after gamerule and all objectives
                     let setup_end = existing_init
                         .iter()
-                        .position(|cmd| !cmd.starts_with("gamerule") && !cmd.starts_with("scoreboard objectives add"))
+                        .position(|cmd| {
+                            !cmd.starts_with("gamerule")
+                                && !cmd.starts_with("scoreboard objectives add")
+                        })
                         .unwrap_or(existing_init.len());
 
                     // Insert module vars after setup commands
@@ -312,7 +347,10 @@ impl Transpiler {
                             // Find the position after gamerule and all objectives
                             let setup_end = handler_func
                                 .iter()
-                                .position(|cmd| !cmd.starts_with("gamerule") && !cmd.starts_with("scoreboard objectives add"))
+                                .position(|cmd| {
+                                    !cmd.starts_with("gamerule")
+                                        && !cmd.starts_with("scoreboard objectives add")
+                                })
                                 .unwrap_or(handler_func.len());
 
                             for (i, cmd) in init_commands.iter().enumerate() {
@@ -394,12 +432,11 @@ impl Transpiler {
         })?;
 
         // Parse the imported file
-        use crate::parser::{tokenize, token_parser};
+        use crate::parser::{token_parser, tokenize};
         use chumsky::Parser;
 
-        let tokens = tokenize(&source).map_err(|e| {
-            format!("Tokenization failed for '{}': {}", import.module, e)
-        })?;
+        let tokens = tokenize(&source)
+            .map_err(|e| format!("Tokenization failed for '{}': {}", import.module, e))?;
 
         let program = token_parser()
             .parse(&tokens)
@@ -500,6 +537,7 @@ impl Transpiler {
                     &self.variables,
                     &self.variable_objectives,
                     &self.selector_aliases,
+                    &self.compile_time_constants,
                 );
 
                 let processed_cmd = processor.process_command_string(&clean_cmd)?;
@@ -536,8 +574,7 @@ impl Transpiler {
         self.global_variables.clear();
 
         // Store function parameters
-        self.function_params
-            .insert(func.name.clone(), param_names);
+        self.function_params.insert(func.name.clone(), param_names);
 
         // Process function body
         for statement in &func.body {
@@ -565,7 +602,11 @@ impl Transpiler {
         expr: &Expression,
         target: &str,
     ) -> Result<Vec<String>, String> {
-        let mut evaluator = ExpressionEvaluator::new(&mut self.data_pack, &self.variable_objectives);
+        let mut evaluator = ExpressionEvaluator::new(
+            &mut self.data_pack,
+            &self.variable_objectives,
+            &self.compile_time_constants,
+        );
         evaluator.evaluate_expression_to_target(expr, target)
     }
 
@@ -581,7 +622,10 @@ impl Transpiler {
                         } else if func_name.contains('.') {
                             // Method call on module (e.g., stdlib.addEventListener)
                             let parts: Vec<&str> = func_name.split('.').collect();
-                            if parts.len() == 2 && parts[0] == "stdlib" && parts[1] == "addEventListener" {
+                            if parts.len() == 2
+                                && parts[0] == "stdlib"
+                                && parts[1] == "addEventListener"
+                            {
                                 self.process_add_event_listener(args)?;
                             } else {
                                 return Err(format!("Unknown module method: {}", func_name));
@@ -597,7 +641,10 @@ impl Transpiler {
                             if module_name == "stdlib" && method == "addEventListener" {
                                 self.process_add_event_listener(args)?;
                             } else {
-                                return Err(format!("Unknown module method: {}.{}", module_name, method));
+                                return Err(format!(
+                                    "Unknown module method: {}.{}",
+                                    module_name, method
+                                ));
                             }
                         } else {
                             return Err("Complex attribute access not supported".to_string());
@@ -615,7 +662,11 @@ impl Transpiler {
         Ok(())
     }
 
-    fn generate_function_call(&mut self, func_name: &str, args: &[Expression]) -> Result<(), String> {
+    fn generate_function_call(
+        &mut self,
+        func_name: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
         let mut commands = Vec::new();
 
         if let Some(param_names) = self.function_params.get(func_name) {
@@ -671,7 +722,10 @@ impl Transpiler {
                             }
                             _ => {
                                 // For complex expressions, try to evaluate as string
-                                commands.push("# Warning: Complex argument expression not fully supported".to_string());
+                                commands.push(
+                                    "# Warning: Complex argument expression not fully supported"
+                                        .to_string(),
+                                );
                             }
                         }
                     }
@@ -752,7 +806,12 @@ impl Transpiler {
                 // Check if this is a comparison operator and left is a binary expression
                 let is_comparison = matches!(
                     op,
-                    BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
+                    BinaryOp::Eq
+                        | BinaryOp::NotEq
+                        | BinaryOp::Lt
+                        | BinaryOp::LtEq
+                        | BinaryOp::Gt
+                        | BinaryOp::GtEq
                 );
 
                 if is_comparison {
@@ -769,7 +828,8 @@ impl Transpiler {
                             self.scoreboard_variables.insert(temp_var.clone());
 
                             // Evaluate the left expression into the unique temp variable
-                            let eval_commands = self.evaluate_expression_to_target(left, &temp_var)?;
+                            let eval_commands =
+                                self.evaluate_expression_to_target(left, &temp_var)?;
 
                             if let Some(ref mut commands) = self.current_function {
                                 commands.extend(eval_commands);
@@ -795,7 +855,8 @@ impl Transpiler {
                                         .insert(temp_var.clone(), "temp".to_string());
                                     self.scoreboard_variables.insert(temp_var.clone());
 
-                                    let eval_commands = self.evaluate_expression_to_target(right, &temp_var)?;
+                                    let eval_commands =
+                                        self.evaluate_expression_to_target(right, &temp_var)?;
 
                                     if let Some(ref mut commands) = self.current_function {
                                         commands.extend(eval_commands);
@@ -846,7 +907,8 @@ impl Transpiler {
     }
 
     fn translate_condition(&self, condition: &Expression) -> Result<String, String> {
-        let translator = ConditionTranslator::new(&self.variable_objectives);
+        let translator =
+            ConditionTranslator::new(&self.variable_objectives, &self.compile_time_constants);
         translator.translate(condition)
     }
 
@@ -886,7 +948,7 @@ impl Transpiler {
         }
 
         // Extract inner content
-        let inner = &or_expr[3..or_expr.len()-1];
+        let inner = &or_expr[3..or_expr.len() - 1];
         let (cond1, cond2) = self.split_or_conditions(inner)?;
 
         // Recursively flatten left side
@@ -936,7 +998,7 @@ impl Transpiler {
         // Handle both OR(...) and OR_AND(...) expressions
         if expr.starts_with("OR_AND(") {
             // Extract the two parts
-            let inner = &expr[7..expr.len()-1];
+            let inner = &expr[7..expr.len() - 1];
             let (left, right) = self.split_or_conditions(inner)?;
 
             // Process left side first (which may contain OR)
@@ -954,17 +1016,19 @@ impl Transpiler {
             };
 
             // Now combine with AND
-            let left_final = if left_processed.starts_with("if ") || left_processed.starts_with("unless ") {
-                left_processed
-            } else {
-                format!("if {}", left_processed)
-            };
+            let left_final =
+                if left_processed.starts_with("if ") || left_processed.starts_with("unless ") {
+                    left_processed
+                } else {
+                    format!("if {}", left_processed)
+                };
 
-            let right_final = if right_processed.starts_with("if ") || right_processed.starts_with("unless ") {
-                right_processed
-            } else {
-                format!("if {}", right_processed)
-            };
+            let right_final =
+                if right_processed.starts_with("if ") || right_processed.starts_with("unless ") {
+                    right_processed
+                } else {
+                    format!("if {}", right_processed)
+                };
 
             Ok(format!("{} {}", left_final, right_final))
         } else {

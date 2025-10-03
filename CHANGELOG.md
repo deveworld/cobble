@@ -5,6 +5,21 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2025-10-05
+
+### Fixed
+- **Minecraft pack layout**: Generated archives now use the official directory names (`functions/`, `tags/functions/`, `loot_tables/`, etc.), allowing worlds to load Cobble output without manual fixes.
+- **Compile-time constants**: Constant identifiers fold to literal scoreboard values across assignments, expressions, module initialisation, and command substitution, eliminating bogus fake-player references.
+- **Condition translation**: Comparisons support literals (and constants) on either side, matching Python semantics while emitting valid scoreboard checks.
+
+### Added
+- **Regression tests**: Expanded integration suite to 63 cases covering constant inlining, literal-on-left comparisons, and pack layout verification.
+
+### Technical Details
+- Updated `DataPack::write` to emit pluralised directories.
+- Threaded constant maps through the transpiler (assignments, expression evaluator, command processor, condition translator).
+- Extended condition handling utilities for literal detection and operator reversal.
+
 ## [0.5.2] - 2025-10-04
 
 ### Fixed

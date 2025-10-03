@@ -129,8 +129,8 @@ Represents a compile-time constant assignment.
 
 ```rust
 pub struct ConstAssignment {
-    pub name: String,
-    pub value: i32,
+    pub target: String,
+    pub value: Expression,
 }
 ```
 
@@ -142,7 +142,7 @@ Represents a match/switch statement.
 
 ```rust
 pub struct MatchStatement {
-    pub value: String,  // Variable to match against
+    pub value: Expression,  // Expression to match against
     pub cases: Vec<MatchCase>,
 }
 

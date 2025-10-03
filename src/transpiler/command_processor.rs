@@ -8,6 +8,7 @@ pub struct CommandProcessor<'a> {
     pub variables: &'a HashMap<String, Expression>,
     pub variable_objectives: &'a HashMap<String, String>,
     pub selector_aliases: &'a HashMap<String, String>,
+    pub compile_time_constants: &'a HashMap<String, f64>,
 }
 
 impl<'a> CommandProcessor<'a> {
@@ -17,6 +18,7 @@ impl<'a> CommandProcessor<'a> {
         variables: &'a HashMap<String, Expression>,
         variable_objectives: &'a HashMap<String, String>,
         selector_aliases: &'a HashMap<String, String>,
+        compile_time_constants: &'a HashMap<String, f64>,
     ) -> Self {
         Self {
             current_params,
@@ -24,6 +26,7 @@ impl<'a> CommandProcessor<'a> {
             variables,
             variable_objectives,
             selector_aliases,
+            compile_time_constants,
         }
     }
 
@@ -83,6 +86,11 @@ impl<'a> CommandProcessor<'a> {
                             replacements.push((i, j, replacement));
                             has_macro_vars = true;
                             i = j; // Skip past this replacement
+                        } else if let Some(const_value) = self.compile_time_constants.get(var_name)
+                        {
+                            let replacement = self.format_constant(*const_value);
+                            replacements.push((i, j, replacement));
+                            i = j;
                         } else if self.scoreboard_variables.contains(var_name) {
                             // Scoreboard variable found - collect for special handling
                             scoreboard_vars_found.push((i, j, var_name.to_string()));
@@ -101,9 +109,10 @@ impl<'a> CommandProcessor<'a> {
                                         || cmd_trimmed.contains("\"value\":")
                                         || cmd_trimmed.contains("'value':");
 
-                                    let is_safe_for_strings =
-                                        (cmd_trimmed.starts_with("tellraw ") || cmd_trimmed.starts_with("title ")) && is_json_context ||
-                                        cmd_trimmed.starts_with("data ");
+                                    let is_safe_for_strings = (cmd_trimmed.starts_with("tellraw ")
+                                        || cmd_trimmed.starts_with("title "))
+                                        && is_json_context
+                                        || cmd_trimmed.starts_with("data ");
 
                                     if !is_safe_for_strings {
                                         return Err(format!(
@@ -303,7 +312,8 @@ impl<'a> CommandProcessor<'a> {
                 }
 
                 // Add score component - use variable name as the score holder (fake player)
-                let objective = self.variable_objectives
+                let objective = self
+                    .variable_objectives
                     .get(&next_var_name)
                     .map(|s| s.as_str())
                     .unwrap_or("temp");
@@ -337,6 +347,19 @@ impl<'a> CommandProcessor<'a> {
             json_components.push("{\"text\":\"\"}".to_string());
         }
 
-        Ok(format!("{} {} [{}]", command, selector, json_components.join(",")))
+        Ok(format!(
+            "{} {} [{}]",
+            command,
+            selector,
+            json_components.join(",")
+        ))
+    }
+
+    fn format_constant(&self, value: f64) -> String {
+        if (value - value.trunc()).abs() < f64::EPSILON {
+            format!("{}", value as i64)
+        } else {
+            value.to_string()
+        }
     }
 }
