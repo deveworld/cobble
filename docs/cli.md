@@ -50,7 +50,7 @@ cobble build [SOURCE] [OPTIONS]
 - `SOURCE` - Source file or directory to compile (default: current directory)
 
 **Options:**
-- `-o, --output <DIR>` - Output directory for the data pack (default: `./datapack`)
+- `-o, --output <DIR>` - Output directory for the data pack (default: `./output`)
 - `--namespace <NAME>` - Override the namespace (default: from cobble.toml or directory name)
 - `--pack-format <NUM>` - Override pack format version
 - `--description <DESC>` - Override pack description

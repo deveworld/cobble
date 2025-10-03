@@ -5,6 +5,37 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2025-10-04
+
+### Fixed
+- **Pack format validation in init command**: Added validation to prevent integer overflow when specifying pack_format
+  - `cobble init --pack-format` now validates input is between 81 and 255
+  - Previously values >= 256 would silently wrap (e.g., 300 → 44) due to u32→u8 cast
+  - Now returns clear error message with valid range and Minecraft version requirements
+  - Prevents creation of invalid cobble.toml files
+- **Title command with scoreboard variables**: Fixed title commands to preserve action tokens (title/subtitle/actionbar)
+  - Previously `/title @a title Score: {var}` generated `title @a [{"text":"title Score: "}...]` (action in text)
+  - Now correctly generates `title @a title [{"text":"Score: "}...]` (action between selector and JSON)
+  - Applies to all title actions: title, subtitle, actionbar
+  - Commands now match official Minecraft Java Edition syntax
+  - Tellraw commands continue to work correctly
+- **Documentation accuracy**: Updated CLI documentation to reflect actual default output directory
+  - Changed `docs/cli.md` to show correct default: `./output` (was incorrectly documented as `./datapack`)
+
+### Added
+- **Regression tests for title commands**: Added 2 comprehensive tests
+  - `test_title_command_preserves_action` - Verifies action tokens preserved for title/subtitle/actionbar
+  - `test_title_all_actions_with_scoreboard_vars` - Tests all action types with scoreboard variables
+  - Total test count increased from 63 to 65 integration tests
+
+### Technical Details
+- Modified `src/commands/init.rs:39-61` to add pack_format validation with MIN/MAX constants
+- Modified `src/transpiler/command_processor.rs:236-380` to handle title vs tellraw differently
+  - Split parsing logic to extract action token from title commands
+  - Preserve action token in final command output between selector and JSON array
+- Updated default output directory documentation in `docs/cli.md:53`
+- All 65 integration tests + 7 parser tests = 72 total tests passing
+
 ## [0.5.3] - 2025-10-05
 
 ### Fixed

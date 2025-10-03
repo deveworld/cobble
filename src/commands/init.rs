@@ -37,6 +37,26 @@ pub fn init(options: InitOptions) -> Result<(), String> {
         config.project.description = desc;
     }
     if let Some(format) = options.pack_format {
+        // Validate pack_format range (same validation as build.rs)
+        const MIN_PACK_FORMAT: u32 = 81;
+        const MAX_PACK_FORMAT: u32 = 255;
+
+        if format < MIN_PACK_FORMAT {
+            return Err(format!(
+                "pack_format must be at least {} (Minecraft 1.21.7+), got {}.\n\
+                Cobble requires Minecraft 1.21.7 or newer for macro function support.\n\
+                See https://minecraft.wiki/w/Pack_format for version compatibility.",
+                MIN_PACK_FORMAT, format
+            ));
+        }
+
+        if format > MAX_PACK_FORMAT {
+            return Err(format!(
+                "pack_format must be between {} and {}, got {}",
+                MIN_PACK_FORMAT, MAX_PACK_FORMAT, format
+            ));
+        }
+
         config.project.pack_format = format as u8;
     }
 

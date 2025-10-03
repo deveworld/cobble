@@ -1570,3 +1570,90 @@ def test():
         "base^0 should set result to 1"
     );
 }
+
+// Regression test for title command action token preservation
+// Bug fix: Title commands with scoreboard variables should preserve the action token
+// (title/subtitle/actionbar) between selector and JSON text array
+#[test]
+fn test_title_command_preserves_action() {
+    let source = r#"
+score = 100
+
+def show_title():
+    /title @a title Score: {score}
+
+def show_subtitle():
+    /title @a subtitle Level: {score}
+
+def show_actionbar():
+    /title @a actionbar HP: {score}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    
+    let title_content = read_function(&output_dir, "show_title");
+    let subtitle_content = read_function(&output_dir, "show_subtitle");
+    let actionbar_content = read_function(&output_dir, "show_actionbar");
+
+    // Verify action token is preserved in correct position (after selector, before JSON array)
+    assert!(
+        title_content.contains("title @a title ["),
+        "title action should be preserved: got '{}'", title_content
+    );
+    assert!(
+        subtitle_content.contains("title @a subtitle ["),
+        "subtitle action should be preserved: got '{}'", subtitle_content
+    );
+    assert!(
+        actionbar_content.contains("title @a actionbar ["),
+        "actionbar action should be preserved: got '{}'", actionbar_content
+    );
+
+    // Verify action is NOT part of the JSON text
+    assert!(
+        !title_content.contains(r#"{"text":"title Score:"#),
+        "action should not be inside JSON text: got '{}'", title_content
+    );
+    assert!(
+        !subtitle_content.contains(r#"{"text":"subtitle Level:"#),
+        "action should not be inside JSON text: got '{}'", subtitle_content
+    );
+    assert!(
+        !actionbar_content.contains(r#"{"text":"actionbar HP:"#),
+        "action should not be inside JSON text: got '{}'", actionbar_content
+    );
+
+    // Verify scoreboard variables are still correctly converted to JSON score components
+    assert!(
+        title_content.contains(r#"{"score":{"name":"score","objective":"temp"}}"#),
+        "scoreboard variable should be converted to JSON score component"
+    );
+}
+
+// Regression test for all title command actions
+#[test]
+fn test_title_all_actions_with_scoreboard_vars() {
+    let source = r#"
+value = 42
+
+def test():
+    /title @a title Value: {value}
+    /title @a subtitle Status: {value}
+    /title @a actionbar Count: {value}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // All three actions should be preserved
+    let lines: Vec<&str> = content.lines().collect();
+    
+    let title_line = lines.iter().find(|l| l.contains("title @a title")).expect("title command not found");
+    let subtitle_line = lines.iter().find(|l| l.contains("title @a subtitle")).expect("subtitle command not found");
+    let actionbar_line = lines.iter().find(|l| l.contains("title @a actionbar")).expect("actionbar command not found");
+
+    // Verify format: title @a <action> [JSON]
+    assert!(title_line.starts_with("title @a title ["), "title format incorrect: {}", title_line);
+    assert!(subtitle_line.starts_with("title @a subtitle ["), "subtitle format incorrect: {}", subtitle_line);
+    assert!(actionbar_line.starts_with("title @a actionbar ["), "actionbar format incorrect: {}", actionbar_line);
+}

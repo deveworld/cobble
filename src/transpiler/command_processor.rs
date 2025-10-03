@@ -239,14 +239,35 @@ impl<'a> CommandProcessor<'a> {
         vars: &[(usize, usize, String)],
     ) -> Result<String, String> {
         // Parse the command to extract target selector and message
-        let parts: Vec<&str> = cmd.trim().splitn(3, ' ').collect();
-        if parts.len() < 3 {
-            return Err("Invalid tellraw/title command format".to_string());
+        // For title commands: "title <selector> <action> <message>"
+        // For tellraw commands: "tellraw <selector> <message>"
+
+        // First, split to get command type
+        let first_parts: Vec<&str> = cmd.trim().splitn(2, ' ').collect();
+        if first_parts.is_empty() {
+            return Err("Empty command".to_string());
         }
 
-        let command = parts[0];
-        let selector = parts[1];
-        let mut message = parts[2];
+        let command = first_parts[0];
+
+        // Handle title and tellraw differently due to different number of arguments
+        let (selector, action, mut message) = if command == "title" {
+            // Title: "title <selector> <action> <message>"
+            let parts: Vec<&str> = cmd.trim().splitn(4, ' ').collect();
+            if parts.len() < 4 {
+                return Err(format!(
+                    "Title command requires action (title/subtitle/actionbar). Format: /title <selector> <action> <text>"
+                ));
+            }
+            (parts[1], Some(parts[2]), parts[3])
+        } else {
+            // Tellraw: "tellraw <selector> <message>"
+            let parts: Vec<&str> = cmd.trim().splitn(3, ' ').collect();
+            if parts.len() < 3 {
+                return Err("Invalid tellraw command format".to_string());
+            }
+            (parts[1], None, parts[2])
+        };
 
         // If message is already a JSON object, extract the actual text value
         // Example: {"text":"Hello {player}"} -> "Hello {player}"
@@ -347,12 +368,23 @@ impl<'a> CommandProcessor<'a> {
             json_components.push("{\"text\":\"\"}".to_string());
         }
 
-        Ok(format!(
-            "{} {} [{}]",
-            command,
-            selector,
-            json_components.join(",")
-        ))
+        // Include action token for title commands
+        if let Some(action_token) = action {
+            Ok(format!(
+                "{} {} {} [{}]",
+                command,
+                selector,
+                action_token,
+                json_components.join(",")
+            ))
+        } else {
+            Ok(format!(
+                "{} {} [{}]",
+                command,
+                selector,
+                json_components.join(",")
+            ))
+        }
     }
 
     fn format_constant(&self, value: f64) -> String {
