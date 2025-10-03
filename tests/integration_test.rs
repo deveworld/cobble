@@ -1332,3 +1332,62 @@ def main():
     assert!(main_content.contains("function cobble:helper"));
     assert!(!main_content.contains("with storage"));
 }
+
+#[test]
+fn test_multiple_if_in_execute_block() {
+    let source = r#"
+def test():
+    as @a at @s if entity @s[tag=one] if entity @s[tag=two] if entity @s[tag=three]:
+        /say multiple conditions
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Must be all lowercase
+    assert!(content.contains("execute as @a at @s if entity @s[tag=one] if entity @s[tag=two] if entity @s[tag=three] run say multiple conditions"));
+    // Ensure no capitalized keywords (regression test for Display trait bug)
+    assert!(!content.contains(" If "), "Found uppercase 'If' in generated command");
+    assert!(!content.contains(" Unless "), "Found uppercase 'Unless' in generated command");
+    assert!(!content.contains(" Entity "), "Found uppercase 'Entity' in generated command");
+}
+
+#[test]
+fn test_if_unless_combination_in_execute() {
+    let source = r#"
+def test():
+    as @a if entity @s[tag=ready] unless entity @s[tag=done]:
+        /say execute this
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // All keywords must be lowercase
+    assert!(content.contains("if entity @s[tag=ready] unless entity @s[tag=done]"));
+    assert!(!content.contains(" If "), "Found uppercase 'If'");
+    assert!(!content.contains(" Unless "), "Found uppercase 'Unless'");
+}
+
+#[test]
+fn test_complex_execute_chain() {
+    let source = r#"
+def test():
+    as @e[type=armor_stand] at @s if entity @s[tag=marker] if entity @a[distance=..5] unless entity @s[tag=triggered]:
+        /say complex chain
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Verify all lowercase
+    let lines: Vec<&str> = content.lines().collect();
+    for line in &lines {
+        // Check that no Minecraft keywords are capitalized
+        assert!(!line.contains(" If "), "Line contains capitalized 'If': {}", line);
+        assert!(!line.contains(" Unless "), "Line contains capitalized 'Unless': {}", line);
+        assert!(!line.contains(" Entity "), "Line contains capitalized 'Entity': {}", line);
+        assert!(!line.contains(" As "), "Line contains capitalized 'As': {}", line);
+        assert!(!line.contains(" At "), "Line contains capitalized 'At': {}", line);
+    }
+}

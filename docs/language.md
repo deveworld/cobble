@@ -638,6 +638,30 @@ def calculate():
 - All operations work with both constants and variables
 - Loop variables (like `i` in `for i in range(5)`) use the correct objective (`loop_counter`)
 
+**⚠️ Division and Modulo by Zero:**
+
+Division and modulo by zero are **only checked at compile-time for constants**:
+```python
+x = 10 / 0  # ✅ Compile error: Division by zero
+```
+
+Division/modulo by a **variable** that may be zero at runtime is **not checked**:
+```python
+a = 10
+b = get_value()  # Could be 0 at runtime
+c = a / b  # ⚠️ No compile-time check - undefined behavior in Minecraft
+```
+
+Runtime division by zero behavior is **undefined** and may vary by Minecraft version. Always validate divisors:
+```python
+# ✅ Good practice: Validate before dividing
+if divisor != 0:
+    result = numerator / divisor
+else:
+    result = 0
+    /tellraw @a {"text":"Error: Division by zero","color":"red"}
+```
+
 ### Comments and Docstrings
 
 ```python
@@ -703,7 +727,7 @@ Cobble requires **Minecraft 1.21.7+** (minimum pack format 81) and defaults to *
 
 - No support for classes (yet)
 - No support for lists/arrays (yet)
-- Boolean `and` and `not` operators are supported; `or` operator not yet implemented
+- Boolean `and`, `or`, and `not` operators are all fully supported
 - Function parameters require Minecraft 1.20.2+ for macro support
 - For loops only support `range()` iterators
 - While loops compile to recursive functions (performance impact for very long loops)

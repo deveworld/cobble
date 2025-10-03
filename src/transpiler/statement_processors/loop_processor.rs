@@ -169,6 +169,15 @@ impl Transpiler {
         // This can cause server lag with large iteration counts (>100)
         // Future improvement: Add schedule command support for tick-based iteration
 
+        // Check for obvious infinite loops
+        if let Expression::Boolean(true) = &while_loop.condition {
+            eprintln!(
+                "⚠️  Warning: Infinite loop detected (while True). \n\
+                    This will run forever and freeze Minecraft!\n\
+                    Consider using a condition that can become false."
+            );
+        }
+
         // Generate a recursive function for the while loop
         let loop_func_name = format!("while_temp_{}", self.temp_counter);
         self.temp_counter += 1;

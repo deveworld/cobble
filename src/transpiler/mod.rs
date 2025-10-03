@@ -50,6 +50,7 @@ pub struct Transpiler {
     compile_time_constants: HashMap<String, f64>, // Store compile-time constant values
     selector_aliases: HashMap<String, String>,    // Store selector definitions (@Name -> @a[...])
     imported_files: HashSet<PathBuf>,             // Track imported files to prevent circular dependencies
+    import_stack: Vec<PathBuf>,                   // Track current import chain for circular detection
     current_file_dir: PathBuf,                    // Current file's directory for resolving relative imports
 }
 
@@ -69,6 +70,7 @@ impl Transpiler {
             compile_time_constants: HashMap::new(),
             selector_aliases: HashMap::new(),
             imported_files: HashSet::new(),
+            import_stack: Vec::new(),
             current_file_dir: PathBuf::from("."),
         }
     }
@@ -76,6 +78,14 @@ impl Transpiler {
     pub fn set_current_file(&mut self, file_path: &PathBuf) {
         if let Some(parent) = file_path.parent() {
             self.current_file_dir = parent.to_path_buf();
+        }
+
+        // Add main file to import stack and imported_files for circular import detection
+        // Canonicalize if possible, otherwise use as-is
+        let canonical_path = file_path.canonicalize().unwrap_or_else(|_| file_path.clone());
+        if !self.import_stack.contains(&canonical_path) {
+            self.import_stack.push(canonical_path.clone());
+            self.imported_files.insert(canonical_path);
         }
     }
 
@@ -202,13 +212,34 @@ impl Transpiler {
         // Handle file imports
         let import_path = self.current_file_dir.join(format!("{}.cbl", import.module));
 
+        // Canonicalize path for accurate comparison
+        let canonical_path = import_path.canonicalize().unwrap_or(import_path.clone());
+
         // Check if already imported
-        if self.imported_files.contains(&import_path) {
-            return Ok(()); // Already imported, skip
+        if self.imported_files.contains(&canonical_path) {
+            // Check if this creates a circular dependency
+            if self.import_stack.contains(&canonical_path) {
+                // Build the circular import chain message for warning
+                let mut chain = Vec::new();
+                for path in &self.import_stack {
+                    if let Some(name) = path.file_stem() {
+                        chain.push(name.to_string_lossy().to_string());
+                    }
+                }
+                chain.push(import.module.clone());
+
+                eprintln!(
+                    "⚠️  Warning: Circular import detected: {} → {}\n\
+                    Each file will only be processed once, but circular imports may indicate a design issue.",
+                    chain.join(" → "),
+                    chain.first().unwrap_or(&"<unknown>".to_string())
+                );
+            }
+            return Ok(()); // Already imported, skip to avoid infinite loop
         }
 
         // Check if file exists
-        if !import_path.exists() {
+        if !canonical_path.exists() && !import_path.exists() {
             return Err(format!(
                 "Cannot import '{}': file '{}' not found",
                 import.module,
@@ -216,8 +247,9 @@ impl Transpiler {
             ));
         }
 
-        // Mark as imported to prevent circular dependencies
-        self.imported_files.insert(import_path.clone());
+        // Add to import stack and mark as imported
+        self.import_stack.push(canonical_path.clone());
+        self.imported_files.insert(canonical_path.clone());
 
         // Read the file
         let source = std::fs::read_to_string(&import_path).map_err(|e| {
@@ -266,6 +298,9 @@ impl Transpiler {
 
         // Restore previous directory
         self.current_file_dir = saved_dir;
+
+        // Pop from import stack after processing
+        self.import_stack.pop();
 
         Ok(())
     }
@@ -451,6 +486,18 @@ impl Transpiler {
         let mut commands = Vec::new();
 
         if let Some(param_names) = self.function_params.get(func_name) {
+            // Validate argument count matches parameter count
+            if !param_names.is_empty() && args.len() != param_names.len() {
+                return Err(format!(
+                    "Function '{}' expects {} argument(s), but {} provided.\n\
+                    Expected parameters: ({})",
+                    func_name,
+                    param_names.len(),
+                    args.len(),
+                    param_names.join(", ")
+                ));
+            }
+
             // If function has parameters, use macro system
             if !param_names.is_empty() && !args.is_empty() {
                 // Store arguments in storage for macro substitution
@@ -459,9 +506,13 @@ impl Transpiler {
                         let param_name = &param_names[i];
                         match arg {
                             Expression::String(s) => {
-                                // Escape quotes and backslashes in the string
-                                let escaped =
-                                    s.replace('\\', "\\\\").replace('"', "\\\"");
+                                // Escape quotes, backslashes, and special characters in the string
+                                let escaped = s
+                                    .replace('\\', "\\\\")
+                                    .replace('"', "\\\"")
+                                    .replace('\n', "\\n")
+                                    .replace('\r', "\\r")
+                                    .replace('\t', "\\t");
                                 commands.push(format!(
                                     "data modify storage {}:global args.{} set value \"{}\"",
                                     self.data_pack.namespace, param_name, escaped

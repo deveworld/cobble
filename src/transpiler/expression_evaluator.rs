@@ -84,6 +84,13 @@ impl<'a> ExpressionEvaluator<'a> {
                                 ));
                             }
                             BinaryOp::Div => {
+                                // Check for division by zero at compile time
+                                if value == 0 {
+                                    return Err(format!(
+                                        "Division by zero in expression: dividing by {}",
+                                        value
+                                    ));
+                                }
                                 self.data_pack.track_objective("divisor");
                                 commands
                                     .push(format!("scoreboard players set divisor temp {}", value));
@@ -93,6 +100,13 @@ impl<'a> ExpressionEvaluator<'a> {
                                 ));
                             }
                             BinaryOp::Mod => {
+                                // Check for modulo by zero at compile time
+                                if value == 0 {
+                                    return Err(format!(
+                                        "Modulo by zero in expression: modulo by {}",
+                                        value
+                                    ));
+                                }
                                 self.data_pack.track_objective("modulus");
                                 commands
                                     .push(format!("scoreboard players set modulus temp {}", value));

@@ -138,6 +138,13 @@ impl Transpiler {
                                     ));
                                 }
                                 BinaryOp::Div => {
+                                    // Check for division by zero at compile time
+                                    if value == 0 {
+                                        return Err(format!(
+                                            "Division by zero in assignment: {} = {} / {}",
+                                            assign.target, var, value
+                                        ));
+                                    }
                                     self.data_pack.track_objective("divisor");
                                     // Optimization: Skip self-assignment if target == var
                                     if assign.target != *var || var_obj != "temp" {
@@ -156,6 +163,13 @@ impl Transpiler {
                                     ));
                                 }
                                 BinaryOp::Mod => {
+                                    // Check for modulo by zero at compile time
+                                    if value == 0 {
+                                        return Err(format!(
+                                            "Modulo by zero in assignment: {} = {} % {}",
+                                            assign.target, var, value
+                                        ));
+                                    }
                                     self.data_pack.track_objective("modulus");
                                     // Optimization: Skip self-assignment if target == var
                                     if assign.target != *var || var_obj != "temp" {
@@ -203,13 +217,29 @@ impl Transpiler {
                             }
                         }
                         (Expression::Number(n1), Expression::Number(n2)) => {
-                            // Constant expression evaluation
+                            // Constant expression evaluation with error checking
                             let result = match op {
                                 BinaryOp::Add => (*n1 + *n2) as i32,
                                 BinaryOp::Sub => (*n1 - *n2) as i32,
                                 BinaryOp::Mul => (*n1 * *n2) as i32,
-                                BinaryOp::Div => (*n1 / *n2) as i32,
-                                BinaryOp::Mod => (*n1 as i32) % (*n2 as i32),
+                                BinaryOp::Div => {
+                                    if *n2 == 0.0 {
+                                        return Err(format!(
+                                            "Division by zero in constant expression: {} / {}",
+                                            n1, n2
+                                        ));
+                                    }
+                                    (*n1 / *n2) as i32
+                                },
+                                BinaryOp::Mod => {
+                                    if *n2 == 0.0 {
+                                        return Err(format!(
+                                            "Modulo by zero in constant expression: {} % {}",
+                                            n1, n2
+                                        ));
+                                    }
+                                    (*n1 as i32) % (*n2 as i32)
+                                },
                                 BinaryOp::Pow => {
                                     let base = *n1 as i32;
                                     let exp = *n2 as i32;

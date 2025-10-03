@@ -134,8 +134,13 @@ impl<'a> CommandProcessor<'a> {
 
                                     let inside_quotes = quote_count % 2 == 1;
 
-                                    // Escape quotes and backslashes
-                                    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                                    // Escape quotes, backslashes, and special characters
+                                    let escaped = s
+                                        .replace('\\', "\\\\")
+                                        .replace('"', "\\\"")
+                                        .replace('\n', "\\n")
+                                        .replace('\r', "\\r")
+                                        .replace('\t', "\\t");
 
                                     // Only wrap in quotes if we're NOT already inside quotes
                                     if inside_quotes {
@@ -288,7 +293,12 @@ impl<'a> CommandProcessor<'a> {
                     let text_before = &remaining[..pos];
                     json_components.push(format!(
                         "{{\"text\":\"{}\"}}",
-                        text_before.replace('\\', "\\\\").replace('"', "\\\"")
+                        text_before
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\n")
+                            .replace('\r', "\\r")
+                            .replace('\t', "\\t")
                     ));
                 }
 
@@ -310,7 +320,12 @@ impl<'a> CommandProcessor<'a> {
                 if !remaining.is_empty() {
                     json_components.push(format!(
                         "{{\"text\":\"{}\"}}",
-                        remaining.replace('\\', "\\\\").replace('"', "\\\"")
+                        remaining
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\n")
+                            .replace('\r', "\\r")
+                            .replace('\t', "\\t")
                     ));
                 }
                 break;

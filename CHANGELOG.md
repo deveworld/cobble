@@ -5,6 +5,32 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2025-10-03
+
+### Fixed
+- **CRITICAL: Execute block keyword capitalization bug**: Fixed bug where Minecraft keywords in execute blocks were incorrectly capitalized
+  - Multiple `if`/`unless` conditions in execute blocks now generate lowercase keywords
+  - Before: `execute as @a if entity @s[tag=a] If entity @s[tag=b]` (invalid - crashes in Minecraft)
+  - After: `execute as @a if entity @s[tag=a] if entity @s[tag=b]` (valid ✅)
+  - Root cause: `Token::Display` trait was using debug format (`{:?}`) which outputs enum names with capital letters
+  - Fixed by adding explicit lowercase mappings for all keyword tokens
+  - This bug affected ANY execute block with multiple conditions - generated commands would fail silently in Minecraft
+
+### Added
+- **Regression tests**: Added 3 new integration tests to prevent future capitalization bugs (58 total, all passing ✅)
+  - `test_multiple_if_in_execute_block` - Validates multiple `if` conditions are lowercase
+  - `test_if_unless_combination_in_execute` - Validates `if` + `unless` combinations
+  - `test_complex_execute_chain` - Validates complex execute chains with all keywords lowercase
+- **Documentation**: Added comprehensive warning about division/modulo by zero in `docs/language.md`
+  - Explains compile-time vs runtime checking
+  - Provides best practices for safe division
+  - Notes that runtime behavior is undefined in Minecraft
+
+### Technical Details
+- Modified `src/parser/tokenizer.rs`: Added explicit lowercase Display implementations for all keyword tokens
+- Added pattern matching for: `if`, `unless`, `as`, `at`, `and`, `or`, `not`, `in`, `for`, `while`, `elif`, `else`, `def`, `return`, `pass`, `global`, `import`, `from`, `asat`, `match`, `case`, `const`, `to`, `by`
+- This ensures all keywords are always lowercase when converted to strings for command generation
+
 ## [0.4.2] - 2025-10-03
 
 ### Fixed

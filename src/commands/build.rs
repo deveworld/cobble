@@ -67,10 +67,19 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         .unwrap_or(88); // Minecraft 1.21.9+ (recommended)
 
     // Validate pack_format
-    if pack_format > 255 {
+    // Cobble requires Minecraft 1.21.7+ (pack format 81) for macro support
+    const MIN_PACK_FORMAT: u32 = 81;
+    if pack_format < MIN_PACK_FORMAT {
         return Err(format!(
-            "pack_format must be between 1 and 255, got {}",
-            pack_format
+            "pack_format must be at least {} (Minecraft 1.21.7+), got {}.\n\
+            Cobble requires Minecraft 1.21.7 or newer for macro function support.\n\
+            See https://minecraft.wiki/w/Pack_format for version compatibility.",
+            MIN_PACK_FORMAT, pack_format
+        ));
+    } else if pack_format > 255 {
+        return Err(format!(
+            "pack_format must be between {} and 255, got {}",
+            MIN_PACK_FORMAT, pack_format
         ));
     }
 
