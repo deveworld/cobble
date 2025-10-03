@@ -414,8 +414,8 @@ pub fn token_parser<'a>(
                 .map(|(selector, body)| {
                     Statement::Execute(ExecuteBlock {
                         modifiers: vec![
-                            ExecuteModifier::As(selector.clone()),
-                            ExecuteModifier::At(selector),
+                            ExecuteModifier::As(selector),
+                            ExecuteModifier::At("@s".to_string()),
                         ],
                         body,
                     })

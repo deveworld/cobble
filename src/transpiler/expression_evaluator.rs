@@ -117,10 +117,16 @@ impl<'a> ExpressionEvaluator<'a> {
                             }
                             BinaryOp::Pow => {
                                 // Compile-time expansion: x^n becomes x*x*...*x (n times)
-                                if value < 1 {
-                                    return Err("Power exponent must be at least 1".to_string());
+                                if value < 0 {
+                                    return Err("Power exponent must be non-negative".to_string());
                                 }
-                                if value == 1 {
+                                if value == 0 {
+                                    // x^0 = 1
+                                    commands.push(format!(
+                                        "scoreboard players set {} temp 1",
+                                        target
+                                    ));
+                                } else if value == 1 {
                                     // x^1 = x, no operation needed
                                 } else {
                                     // Store original value for multiplication

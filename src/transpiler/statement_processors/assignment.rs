@@ -266,27 +266,35 @@ impl Transpiler {
                                 }
                                 BinaryOp::Pow => {
                                     // Power operation: compile-time expansion
-                                    if value < 1 {
-                                        return Err("Power exponent must be at least 1".to_string());
+                                    if value < 0 {
+                                        return Err("Power exponent must be non-negative".to_string());
                                     }
-                                    // Optimization: Skip self-assignment if target == var
-                                    if assign.target != *var || var_obj != "temp" {
+                                    if value == 0 {
+                                        // x^0 = 1
                                         commands.push(format!(
-                                            "scoreboard players operation {} temp = {} {}",
-                                            assign.target, var, var_obj
-                                        ));
-                                    }
-                                    if value > 1 {
-                                        self.data_pack.track_objective("power_base");
-                                        commands.push(format!(
-                                            "scoreboard players operation power_base temp = {} temp",
+                                            "scoreboard players set {} temp 1",
                                             assign.target
                                         ));
-                                        for _ in 0..(value - 1) {
+                                    } else {
+                                        // Optimization: Skip self-assignment if target == var
+                                        if assign.target != *var || var_obj != "temp" {
                                             commands.push(format!(
-                                                "scoreboard players operation {} temp *= power_base temp",
+                                                "scoreboard players operation {} temp = {} {}",
+                                                assign.target, var, var_obj
+                                            ));
+                                        }
+                                        if value > 1 {
+                                            self.data_pack.track_objective("power_base");
+                                            commands.push(format!(
+                                                "scoreboard players operation power_base temp = {} temp",
                                                 assign.target
                                             ));
+                                            for _ in 0..(value - 1) {
+                                                commands.push(format!(
+                                                    "scoreboard players operation {} temp *= power_base temp",
+                                                    assign.target
+                                                ));
+                                            }
                                         }
                                     }
                                 }

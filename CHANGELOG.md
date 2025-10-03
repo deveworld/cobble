@@ -5,6 +5,33 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2025-10-04
+
+### Fixed
+- **asat execute block bug**: Fixed `asat` shorthand to correctly use `@s` for the `at` modifier
+  - Previously `asat @e[type=zombie]` generated `execute as @e[type=zombie] at @e[type=zombie]`
+  - Now correctly generates `execute as @e[type=zombie] at @s`
+  - This prevents commands from executing multiple times when multiple entities match the selector
+  - Aligns with expected behavior where commands execute at each entity's own position
+- **Power operator zero exponent**: Fixed power operator to correctly handle x^0
+  - x^0 now correctly evaluates to 1 (mathematical definition)
+  - Previously rejected with error "Power exponent must be at least 1"
+  - Fixed in both runtime evaluation and compile-time constant folding
+  - Updated error message to "Power exponent must be non-negative"
+
+### Added
+- **Test coverage improvements**: Added 3 new regression tests
+  - `test_asat_with_multi_entity_selector` - Verifies asat uses @s correctly
+  - `test_power_operator_zero_exponent` - Verifies x^0 = 1 in expressions
+  - `test_power_operator_assignment_zero_exponent` - Verifies x^0 = 1 in assignments
+  - Total test count increased from 59 to 62 integration tests
+
+### Technical Details
+- Modified `src/parser/combinators.rs:418` to use `@s` instead of selector in asat
+- Modified `src/transpiler/expression_evaluator.rs:120-129` to handle x^0 case
+- Modified `src/transpiler/statement_processors/assignment.rs:269-277` to handle x^0 case
+- All 62 integration tests passing + 7 parser tests = 69 total tests passing
+
 ## [0.5.1] - 2025-10-03
 
 ### Fixed

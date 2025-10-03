@@ -1411,3 +1411,64 @@ def test():
     let mult_count = content.matches("scoreboard players operation result temp *= power_base temp").count();
     assert_eq!(mult_count, 2, "Expected 2 multiplications for x^3, found {}", mult_count);
 }
+
+#[test]
+fn test_asat_with_multi_entity_selector() {
+    // Regression test for asat bug: should use @s not the selector
+    let source = r#"
+def test():
+    asat @e[type=armor_stand]:
+        /say Hello
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should use "at @s" not "at @e[type=armor_stand]"
+    assert!(content.contains("execute as @e[type=armor_stand] at @s run say Hello"),
+        "asat should generate 'at @s', not 'at @e[type=armor_stand]'");
+
+    // Make sure it doesn't use the wrong pattern
+    assert!(!content.contains("at @e[type=armor_stand]"),
+        "asat incorrectly generated 'at @e[type=armor_stand]' instead of 'at @s'");
+}
+
+#[test]
+fn test_power_operator_zero_exponent() {
+    // Test that x^0 = 1
+    let source = r#"
+def test():
+    x = 5
+    result = x ^ 0
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // x^0 should set result to 1
+    assert!(content.contains("scoreboard players set x temp 5"));
+    assert!(content.contains("scoreboard players set result temp 1"),
+        "x^0 should set result to 1, but command not found in: {}", content);
+
+    // Should NOT have any multiplication operations for x^0
+    assert!(!content.contains("power_base"), "x^0 should not use power_base");
+    assert!(!content.contains("*="), "x^0 should not have any multiplication");
+}
+
+#[test]
+fn test_power_operator_assignment_zero_exponent() {
+    // Test that x^0 = 1 works in assignment form
+    let source = r#"
+def test():
+    base = 10
+    result = base ^ 0
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // base^0 should set result to 1
+    assert!(content.contains("scoreboard players set base temp 10"));
+    assert!(content.contains("scoreboard players set result temp 1"),
+        "base^0 should set result to 1");
+}
