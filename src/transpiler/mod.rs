@@ -242,7 +242,15 @@ impl Transpiler {
             self.process_import(import)?;
         }
 
-        // Process all statements
+        // PASS 1: Register all function signatures first (to handle forward references)
+        for statement in &program.statements {
+            if let Statement::FunctionDef(func) = statement {
+                let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
+                self.function_params.insert(func.name.clone(), param_names);
+            }
+        }
+
+        // PASS 2: Process all statements (function bodies, etc.)
         for statement in &program.statements {
             self.process_statement(statement)?;
         }
@@ -461,7 +469,12 @@ impl Transpiler {
             self.current_file_dir = parent.to_path_buf();
         }
 
-        // Process imported program statements
+        // Process nested imports first
+        for import in &program.imports {
+            self.process_import(import)?;
+        }
+
+        // Then process imported program statements
         for statement in &program.statements {
             self.process_statement(statement)?;
         }
@@ -490,9 +503,6 @@ impl Transpiler {
             }
             Statement::FunctionDef(func) => {
                 self.process_function_def(func)?;
-            }
-            Statement::Class(_) => {
-                return Err("Classes are not yet supported".to_string());
             }
             Statement::Assignment(assign) => {
                 self.process_assignment(assign)?;
@@ -711,16 +721,31 @@ impl Transpiler {
                                 ));
                             }
                             Expression::Identifier(var) => {
-                                // For variables, we need to read from scoreboard
-                                let obj = self
-                                    .variable_objectives
-                                    .get(var)
-                                    .unwrap_or(&"temp".to_string())
-                                    .clone();
-                                commands.push(format!(
-                                    "execute store result storage {}:global args.{} int 1 run scoreboard players get {} {}",
-                                    self.data_pack.namespace, param_name, var, obj
-                                ));
+                                // Check if this is a selector (@...) or literal string (like item names)
+                                if var.starts_with('@') {
+                                    // Selector - store as string
+                                    commands.push(format!(
+                                        "data modify storage {}:global args.{} set value \"{}\"",
+                                        self.data_pack.namespace, param_name, var
+                                    ));
+                                } else if self.scoreboard_variables.contains(var) || self.variable_objectives.contains_key(var) {
+                                    // Scoreboard variable - read from scoreboard
+                                    let obj = self
+                                        .variable_objectives
+                                        .get(var)
+                                        .unwrap_or(&"temp".to_string())
+                                        .clone();
+                                    commands.push(format!(
+                                        "execute store result storage {}:global args.{} int 1 run scoreboard players get {} {}",
+                                        self.data_pack.namespace, param_name, var, obj
+                                    ));
+                                } else {
+                                    // Unknown identifier - treat as string literal (for items, etc.)
+                                    commands.push(format!(
+                                        "data modify storage {}:global args.{} set value \"{}\"",
+                                        self.data_pack.namespace, param_name, var
+                                    ));
+                                }
                             }
                             _ => {
                                 // For complex expressions, try to evaluate as string

@@ -164,11 +164,15 @@ impl<'a> ConditionTranslator<'a> {
                 }
             }
             Expression::Boolean(b) => {
-                // Boolean literals
+                // Boolean literals - use a condition that always evaluates correctly
+                // regardless of execution context
                 if *b {
-                    Ok("entity @s".to_string())
+                    // True: use a condition that always succeeds
+                    // Using a dummy scoreboard check that's always true
+                    Ok("score #true_const __internal__ matches 1..".to_string())
                 } else {
-                    Ok("unless entity @s".to_string())
+                    // False: use a condition that always fails
+                    Ok("score #false_const __internal__ matches 1..".to_string())
                 }
             }
             _ => Err(format!(
@@ -275,10 +279,11 @@ impl<'a> ConditionTranslator<'a> {
             _ => return Err("Unsupported operator for literal comparison".to_string()),
         };
 
+        // Use internal scoreboard constants for compile-time boolean results
         if result {
-            Ok("entity @s".to_string())
+            Ok("score #true_const __internal__ matches 1..".to_string())
         } else {
-            Ok("unless entity @s".to_string())
+            Ok("score #false_const __internal__ matches 1..".to_string())
         }
     }
 }

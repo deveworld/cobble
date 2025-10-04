@@ -37,7 +37,6 @@ impl CobbleType {
 pub enum Statement {
     Import(Import),
     FunctionDef(FunctionDef),
-    Class(ClassDef),
     Assignment(Assignment),
     ConstAssignment(ConstAssignment), // const NAME = value
     Expression(Expression),
@@ -65,13 +64,6 @@ pub struct FunctionDef {
 pub struct Parameter {
     pub name: String,
     pub default: Option<Expression>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClassDef {
-    pub name: String,
-    pub bases: Vec<String>,
-    pub body: Vec<Statement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,10 +159,6 @@ pub enum Expression {
     Identifier(String),
     Attribute(Box<Expression>, String), // e.g., stdlib.event.TICK
 
-    // Collections
-    List(Vec<Expression>),
-    Dict(Vec<(Expression, Expression)>),
-
     // Operations
     Binary(Box<Expression>, BinaryOp, Box<Expression>),
     Unary(UnaryOp, Box<Expression>),
@@ -180,9 +168,6 @@ pub enum Expression {
 
     // Subscript
     Subscript(Box<Expression>, Box<Expression>),
-
-    // Lambda
-    Lambda(Vec<String>, Box<Expression>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

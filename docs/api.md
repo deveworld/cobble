@@ -92,7 +92,7 @@ Represents different types of statements.
 
 ```rust
 pub enum Statement {
-    MinecraftCommand(String),
+    Import(Import),
     FunctionDef(FunctionDef),
     Assignment(Assignment),
     ConstAssignment(ConstAssignment),  // v0.3.0
@@ -103,8 +103,9 @@ pub enum Statement {
     Match(MatchStatement),  // v0.3.0
     Return(Option<Expression>),
     Pass,
-    Import(Import),
-    Class(ClassDef),
+    MinecraftCommand(String),
+    Global(Vec<String>),
+    Execute(ExecuteBlock),
     SelectorDef(SelectorDef),  // v0.4.0
 }
 ```
@@ -200,9 +201,10 @@ pub enum Expression {
     None,
     Identifier(String),
     Binary(Box<Expression>, BinaryOp, Box<Expression>),
+    Unary(UnaryOp, Box<Expression>),
     Call(Box<Expression>, Vec<Expression>),
     Attribute(Box<Expression>, String),
-    List(Vec<Expression>),
+    Subscript(Box<Expression>, Box<Expression>),
 }
 ```
 

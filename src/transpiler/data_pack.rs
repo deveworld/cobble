@@ -80,6 +80,11 @@ impl DataPack {
                     }
                 }
 
+                // Initialize Boolean literal constants
+                setup_commands.push("scoreboard objectives add __internal__ dummy".to_string());
+                setup_commands.push("scoreboard players set #true_const __internal__ 1".to_string());
+                setup_commands.push("scoreboard players set #false_const __internal__ 0".to_string());
+
                 // Prepend setup commands to existing commands
                 if !setup_commands.is_empty() {
                     setup_commands.extend(commands.clone());
@@ -97,6 +102,11 @@ impl DataPack {
             for objective in &self.used_objectives {
                 commands.push(format!("scoreboard objectives add {} dummy", objective));
             }
+
+            // Initialize Boolean literal constants
+            commands.push("scoreboard objectives add __internal__ dummy".to_string());
+            commands.push("scoreboard players set #true_const __internal__ 1".to_string());
+            commands.push("scoreboard players set #false_const __internal__ 0".to_string());
 
             self.functions.insert("_cobble_init".to_string(), commands);
             self.stdlib

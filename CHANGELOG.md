@@ -5,6 +5,42 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2025-10-05
+
+### Fixed
+- **CRITICAL: Nested import processing**: Fixed bug where deeply nested imports (A→B→C) would fail to compile
+  - Previously, only `program.statements` were processed during import, but parser separates imports into `program.imports`
+  - Now processes both `program.imports` and `program.statements` in correct order
+  - Enables proper multi-level import chains (e.g., main.cbl imports utils.cbl which imports helpers.cbl)
+  - Modified `src/transpiler/mod.rs:464-472` to add nested import loop before statement processing
+- **CRITICAL: Selector and item parameters**: Fixed bug where all identifiers were treated as scoreboard variables
+  - Selectors (e.g., `@a`, `@s`) and item names (e.g., `diamond`, `emerald`) are now correctly stored as string literals
+  - Previously `give_item(@a, diamond)` generated invalid `scoreboard players get @a temp` command
+  - Now correctly generates `data modify storage namespace:global args.selector set value "@a"`
+  - Implements three-way detection: selectors (starts with @), scoreboard variables (in tracking), or string literals
+  - Modified `src/transpiler/mod.rs:718-744` to add selector/item detection logic
+- **CRITICAL: Forward reference macro calls**: Fixed bug where functions calling functions defined later would fail
+  - Previously `function_params` HashMap was only populated when `process_function_def` ran
+  - Functions defined before their callees wouldn't include "with storage" syntax
+  - Now implements two-pass compilation: first pass registers all function signatures, second pass processes bodies
+  - Modified `src/transpiler/mod.rs:245-256` to add two-pass compilation loop
+  - Enables proper forward references where caller is defined before callee
+- **CRITICAL: Boolean literal evaluation**: Fixed bug where True/False literals failed in contexts without @s executor
+  - Previously used `entity @s` which fails in load/tick functions (no execution context)
+  - Now uses internal scoreboard constants: `#true_const __internal__ = 1`, `#false_const __internal__ = 0`
+  - `if True:` generates `execute if score #true_const __internal__ matches 1..` (always succeeds)
+  - `if False:` generates `execute if score #false_const __internal__ matches 1..` (always fails)
+  - Modified `src/transpiler/condition_translator.rs:166-177` for Boolean expression handling
+  - Modified `src/transpiler/data_pack.rs:84-86,107-109` to initialize constants in load function
+
+### Technical Details
+- All 65 integration tests + 7 parser tests = 72 total tests passing
+- Comprehensive verification with nested imports (A→B→C chains)
+- Selector/item parameter tests with @a, @s, diamond, emerald
+- Forward reference tests with caller defined before callee
+- Boolean literal tests in load functions (no @s context)
+- No regression in existing functionality
+
 ## [0.5.7] - 2025-10-05
 
 ### Fixed
