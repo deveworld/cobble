@@ -139,17 +139,19 @@ impl Transpiler {
                 }
             }
         } else {
-            // Generic for loop comment
-            for_commands.push(format!("# FOR loop: {} in ...", for_loop.target));
-            let saved_function = self.current_function.take();
-            for stmt in &for_loop.body {
-                self.current_function = Some(Vec::new());
-                self.process_statement(stmt)?;
-                if let Some(body_cmds) = self.current_function.take() {
-                    for_commands.extend(body_cmds);
-                }
-            }
-            self.current_function = saved_function;
+            // Unsupported iterator type - provide clear error message
+            return Err(format!(
+                "For loops only support range() iterator.\n\
+                 Syntax: for {} in range(N):\n\
+                 \n\
+                 Examples:\n\
+                 - for i in range(10):       # Loop 10 times (0..9)\n\
+                 - for i in range(10) by 2:  # Count by 2s\n\
+                 - for i in range(10) by -1: # Count backwards\n\
+                 \n\
+                 Iterating over lists/arrays is not yet supported.",
+                for_loop.target
+            ));
         }
 
         if let Some(ref mut commands) = self.current_function {

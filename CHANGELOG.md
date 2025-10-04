@@ -5,6 +5,64 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2025-10-04
+
+### Fixed
+- **CRITICAL: Inline comment handling in commands**: Fixed inline comments to be properly removed from Minecraft commands
+  - Minecraft only supports comments at the beginning of lines, not inline
+  - Previously `/say Hello # comment` would output invalid `say Hello # comment`
+  - Now correctly outputs `say Hello` with comment stripped
+  - Improved to respect strings: `/say "Text with # in string"` now preserves the # inside strings
+  - Prevents command execution failures in Minecraft
+  - Modified `src/parser/tokenizer.rs` with `find_comment_position()` function for smart comment detection
+- **CRITICAL: Unsupported condition expressions**: Fixed silent failures when using unsupported expressions in conditions
+  - Previously unsupported expressions (like function calls) would silently evaluate to `true`
+  - Now raises clear compile-time errors with helpful messages
+  - Error message lists all supported condition types (comparisons, boolean vars, literals, logical operators)
+  - Modified `src/transpiler/condition_translator.rs:166-183`
+- **CRITICAL: For loop validation**: Added proper error handling for non-range() iterators
+  - Previously `for i in items:` would silently emit only a comment and execute body once
+  - Now raises clear error with usage examples
+  - Error message explains only `range()` is supported and provides syntax examples
+  - Modified `src/transpiler/statement_processors/loop_processor.rs:141-155`
+
+### Added
+- **Execute modifiers**: Implemented 6 missing execute command modifiers
+  - `positioned <coords>` - Sets execution position
+  - `rotated <rotation>` - Sets execution rotation
+  - `in <dimension>` - Changes execution dimension
+  - `anchored <anchor>` - Sets anchor point (eyes/feet)
+  - `align <axes>` - Aligns position to block coordinates
+  - `store (result|success) ...` - Stores command output
+  - All modifiers generate valid Minecraft Java Edition syntax
+  - Modified `src/parser/combinators.rs:390-429`
+  - Transpiler already supported these in AST and execute processor
+- **Unary arithmetic operators**: Implemented unary plus and minus operators
+  - Supports `-x` (negation of variable)
+  - Supports `+x` (unary plus, no-op)
+  - Supports `-(expr)` (negation of expression)
+  - Works with complex expressions: `-x * 2`, `-(a + b)`
+  - Generates correct Minecraft scoreboard commands using multiplication by -1
+  - Modified parser in `src/parser/combinators.rs:54-64`
+  - Added evaluation in `src/transpiler/expression_evaluator.rs:345-376`
+  - Added assignment handling in `src/transpiler/statement_processors/assignment.rs:79-92`
+
+### Documentation
+- **Fixed variable name error**: Corrected example in `docs/language.md:429`
+  - Example used `{count}` but variable was named `counter`
+  - Now correctly uses `{counter}`
+- **Updated GitHub links**: Fixed placeholder URLs in `docs/cli.md:402-403`
+  - Changed from `github.com/user/cobble` to `github.com/deveworld/cobble`
+  - Users can now access actual repository and issue tracker
+
+### Technical Details
+- All 72 tests passing (65 integration + 7 parser tests)
+- All 16 example files compile successfully
+- All generated Minecraft commands validated against wiki specifications
+- No regression in existing functionality
+- Smart comment detection respects string literals and escape sequences
+- Unary operators integrate with full expression evaluator for complex nested expressions
+
 ## [0.5.4] - 2025-10-04
 
 ### Fixed

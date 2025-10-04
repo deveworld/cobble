@@ -163,7 +163,23 @@ impl<'a> ConditionTranslator<'a> {
                     _ => Err("Unsupported unary operator in condition".to_string()),
                 }
             }
-            _ => Ok("entity @s".to_string()),
+            Expression::Boolean(b) => {
+                // Boolean literals
+                if *b {
+                    Ok("entity @s".to_string())
+                } else {
+                    Ok("unless entity @s".to_string())
+                }
+            }
+            _ => Err(format!(
+                "Unsupported condition expression. Conditions must be:\n\
+                 - Comparisons (x > y, x == 5, etc.)\n\
+                 - Boolean variables (x)\n\
+                 - Boolean literals (True, False)\n\
+                 - Logical operators (and, or, not)\n\
+                 Got: {:?}",
+                condition
+            )),
         }
     }
 

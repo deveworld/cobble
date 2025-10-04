@@ -399,6 +399,6 @@ cobble check src/
 
 ## Getting Help
 
-- GitHub Issues: https://github.com/user/cobble/issues
-- Documentation: https://github.com/user/cobble/docs
+- GitHub Issues: https://github.com/deveworld/cobble/issues
+- Documentation: https://github.com/deveworld/cobble/tree/main/docs
 - Minecraft Wiki: https://minecraft.wiki/w/Data_pack

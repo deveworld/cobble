@@ -131,6 +131,42 @@ impl std::fmt::Display for Token {
     }
 }
 
+/// Find the position of a comment (#) that's not inside a string
+/// Returns None if no comment found, Some(position) otherwise
+fn find_comment_position(text: &str) -> Option<usize> {
+    let mut in_string = false;
+    let mut string_char = ' ';
+    let mut escaped = false;
+
+    for (i, ch) in text.chars().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if ch == '\\' && in_string {
+            escaped = true;
+            continue;
+        }
+
+        if (ch == '"' || ch == '\'') {
+            if !in_string {
+                in_string = true;
+                string_char = ch;
+            } else if ch == string_char {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if ch == '#' && !in_string {
+            return Some(i);
+        }
+    }
+
+    None
+}
+
 /// Manual tokenizer that handles indentation
 pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
     let mut tokens = Vec::new();
@@ -194,7 +230,19 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                     // Minecraft command only if followed immediately by a letter (no space)
                     if next_ch.is_alphabetic() {
                         // Minecraft command - consume rest of line
-                        let cmd: String = chars.collect();
+                        let mut cmd: String = chars.collect();
+
+                        // Strip inline comments (# character and everything after)
+                        // Minecraft only supports comments at the beginning of lines
+                        // We need to respect strings in the command to avoid removing # inside strings
+                        let comment_pos = find_comment_position(&cmd);
+                        if let Some(pos) = comment_pos {
+                            cmd.truncate(pos);
+                        }
+
+                        // Trim trailing whitespace after comment removal
+                        cmd = cmd.trim_end().to_string();
+
                         tokens.push(Token::MinecraftCommand(cmd));
                         break;
                     } else {

@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expression};
+use crate::ast::{BinaryOp, Expression, UnaryOp};
 use crate::transpiler::data_pack::DataPack;
 use std::collections::HashMap;
 
@@ -339,6 +339,38 @@ impl<'a> ExpressionEvaluator<'a> {
                     }
                     _ => {
                         return Err("Unsupported expression type in binary operation".to_string());
+                    }
+                }
+            }
+            Expression::Unary(op, expr) => {
+                match op {
+                    UnaryOp::Neg => {
+                        // Unary negation: -expr
+                        // Evaluate the expression first, then multiply by -1
+                        let expr_commands = self.evaluate_expression_to_target(expr, target)?;
+                        commands.extend(expr_commands);
+
+                        // Multiply by -1
+                        self.data_pack.track_objective("multiplier");
+                        commands.push(format!("scoreboard players set multiplier temp -1"));
+                        commands.push(format!(
+                            "scoreboard players operation {} temp *= multiplier temp",
+                            target
+                        ));
+                    }
+                    UnaryOp::Pos => {
+                        // Unary plus: +expr (no-op, just evaluate the expression)
+                        let expr_commands = self.evaluate_expression_to_target(expr, target)?;
+                        commands.extend(expr_commands);
+                    }
+                    UnaryOp::Not => {
+                        return Err(
+                            "Logical NOT operator cannot be used in arithmetic expressions"
+                                .to_string(),
+                        );
+                    }
+                    _ => {
+                        return Err(format!("Unsupported unary operator: {:?}", op));
                     }
                 }
             }

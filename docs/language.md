@@ -426,7 +426,7 @@ For loops are compiled into recursive functions with automatic loop counters.
 def count_down():
     counter = 10
     while counter > 0:
-        /say @a Count: {count}
+        /say @a Count: {counter}
         counter = counter - 1
 ```
 

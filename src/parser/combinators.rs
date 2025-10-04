@@ -52,12 +52,23 @@ pub fn token_parser<'a>(
                 });
 
             // Binary operations with proper precedence
+            // Unary +/- (high precedence, but lower than call, higher than power)
+            let unary = choice((
+                just(&Token::Minus).to(UnaryOp::Neg),
+                just(&Token::Plus).to(UnaryOp::Pos),
+            ))
+            .repeated()
+            .foldr(call.clone(), |op, expr| {
+                Expression::Unary(op, Box::new(expr))
+            })
+            .or(call.clone());
+
             // Highest precedence: ^ (power) - right-associative
             // Power operator is right-associative: 2^3^2 = 2^(3^2) = 512
             // We parse left-to-right but fold right-to-left for right-associativity
-            let power = call
+            let power = unary
                 .clone()
-                .then(just(&Token::Caret).to(BinaryOp::Pow).then(call.clone()).repeated().collect::<Vec<_>>())
+                .then(just(&Token::Caret).to(BinaryOp::Pow).then(unary.clone()).repeated().collect::<Vec<_>>())
                 .map(|(first, rest)| {
                     if rest.is_empty() {
                         first
@@ -391,6 +402,30 @@ pub fn token_parser<'a>(
             just(&Token::Unless)
                 .ignore_then(exec_condition)
                 .map(ExecuteModifier::UnlessRaw),
+            // positioned <coords>
+            select_ref! { Token::Ident(s) if s == "positioned" => s.clone() }
+                .ignore_then(exec_condition)
+                .map(ExecuteModifier::Positioned),
+            // rotated <rotation>
+            select_ref! { Token::Ident(s) if s == "rotated" => s.clone() }
+                .ignore_then(exec_condition)
+                .map(ExecuteModifier::Rotated),
+            // in <dimension>
+            just(&Token::In)
+                .ignore_then(exec_condition)
+                .map(ExecuteModifier::In),
+            // anchored <eyes|feet>
+            select_ref! { Token::Ident(s) if s == "anchored" => s.clone() }
+                .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+                .map(ExecuteModifier::Anchored),
+            // align <axes>
+            select_ref! { Token::Ident(s) if s == "align" => s.clone() }
+                .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+                .map(ExecuteModifier::Align),
+            // store result/success ...
+            select_ref! { Token::Ident(s) if s == "store" => s.clone() }
+                .ignore_then(exec_condition)
+                .map(ExecuteModifier::Store),
         ));
 
         // Execute block (as/at/asat)

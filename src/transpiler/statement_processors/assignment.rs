@@ -76,12 +76,19 @@ impl Transpiler {
 
         // Check if we need to use the complex expression evaluator
         // Do this before borrowing to avoid borrow checker issues
-        let needs_complex_eval = if let Expression::Binary(left, _, right) = &assign.value {
-            // Check if either side is a binary expression (nested)
-            matches!(**left, Expression::Binary(_, _, _))
-                || matches!(**right, Expression::Binary(_, _, _))
-        } else {
-            false
+        let needs_complex_eval = match &assign.value {
+            Expression::Binary(left, _, right) => {
+                // Check if either side is a binary expression (nested) or unary expression
+                matches!(**left, Expression::Binary(_, _, _))
+                    || matches!(**right, Expression::Binary(_, _, _))
+                    || matches!(**left, Expression::Unary(_, _))
+                    || matches!(**right, Expression::Unary(_, _))
+            }
+            Expression::Unary(_, _) => {
+                // All unary expressions need the complex evaluator
+                true
+            }
+            _ => false,
         };
 
         if needs_complex_eval {
