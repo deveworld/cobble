@@ -13,7 +13,23 @@ Cobble consists of several modules that work together to compile high-level code
 
 ## Module: Parser
 
-### `parser.rs`
+The parser module is organized into several files:
+
+### `parser/mod.rs`
+
+Public API for the parser module. Exports the main `parse` function and re-exports components from submodules.
+
+### `parser/tokenizer.rs`
+
+Manual tokenizer that handles indentation with INDENT/DEDENT tokens and distinguishes `/` division from `/` command prefix.
+
+**Key Features:**
+- Tracks indentation levels to generate INDENT/DEDENT tokens
+- Handles string literals with proper escaping
+- Distinguishes between division operator (`a / b`) and command prefix (`/say`)
+- Processes inline comments (starting with `#`)
+
+### `parser/combinators.rs`
 
 The main parser built with chumsky combinator library that handles Python-style indented syntax.
 
@@ -43,7 +59,6 @@ let program = parse(source)
 
 **Implementation Details:**
 - Uses chumsky 0.11 parser combinator library
-- Manual tokenizer handles indentation with INDENT/DEDENT tokens and distinguishes `/` division from `/` command prefix
 - Supports all Cobble syntax including execute blocks, global keyword, and complex expressions
 - **Operator precedence**: Four-level precedence for expressions (pow > mul/div/mod > add/sub > comparisons)
 - **Multi-operator expressions**: Chains operations using `.foldl().repeated()` pattern
@@ -205,9 +220,11 @@ pub enum BinaryOp {
 
 ## Module: Transpiler
 
-### `transpiler.rs`
+The transpiler module is organized into several files:
 
-Converts AST into Minecraft data pack format.
+### `transpiler/mod.rs`
+
+Main transpiler that converts AST into Minecraft data pack format.
 
 #### Struct: `Transpiler`
 
@@ -229,6 +246,56 @@ pub struct Transpiler {
     function_params: HashMap<String, Vec<String>>,  // Tracks parameter names for each function
 }
 ```
+
+### `transpiler/command_processor.rs`
+
+Processes Minecraft command strings with variable substitution.
+
+**Key Features:**
+- Substitutes function parameters (macro variables)
+- Converts scoreboard variables in JSON text components
+- Handles selector alias replacement
+- Escapes strings properly for Minecraft commands
+
+### `transpiler/expression_evaluator.rs`
+
+Evaluates complex expressions into scoreboard operations.
+
+**Key Features:**
+- Converts arithmetic expressions to scoreboard operations
+- Handles power operator with compile-time expansion
+- Generates temporary variables for intermediate results
+- Optimizes self-assignment operations
+
+### `transpiler/condition_translator.rs`
+
+Translates Python-style conditions to Minecraft execute conditions.
+
+**Key Features:**
+- Converts comparison operators to scoreboard matches
+- Handles boolean AND/OR/NOT operators
+- Supports literal comparisons on both sides
+- Generates OR logic using temporary variables
+
+### `transpiler/data_pack.rs`
+
+Manages data pack structure and file generation.
+
+**Key Features:**
+- Tracks objectives and functions
+- Generates pack.mcmeta with correct format
+- Creates function tag files (load/tick)
+- Handles standard library event listeners
+
+### `transpiler/statement_processors/`
+
+Individual processors for each statement type:
+- `assignment.rs` - Variable assignments with type checking
+- `if_processor.rs` - If/elif/else statements with function extraction
+- `loop_processor.rs` - For and while loops
+- `match_processor.rs` - Match/switch statements with 4-way split
+- `execute_processor.rs` - Execute block modifiers
+- `selector_processor.rs` - Selector definitions
 
 **Recent Enhancements:**
 - **v0.4.0**:

@@ -5,6 +5,32 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2025-10-05
+
+### Fixed
+- **CRITICAL: Function variable type isolation**: Fixed type system bug where variable types leaked between functions
+  - Previously, if `func1()` assigned `x = True` (boolean), then `func2()` would fail when trying `x = 10` (integer)
+  - Each function now has its own isolated variable type scope
+  - Modified `src/transpiler/mod.rs:567,595` to backup and restore `variable_types` HashMap
+  - This allows different functions to use the same variable names with different types
+- **Compiler warning**: Removed unnecessary parentheses in tokenizer condition check
+  - Modified `src/parser/tokenizer.rs:152` to eliminate compiler warning
+  - Changed `if (ch == '"' || ch == '\'')` to `if ch == '"' || ch == '\''`
+
+### Improved
+- **Division by zero detection**: Enhanced compile-time constant division by zero warnings
+  - Added warnings when dividing by variables that have constant value of 0
+  - Modified `src/transpiler/statement_processors/assignment.rs:651-684`
+  - Helps catch potential undefined behavior in Minecraft
+  - Note: Runtime division by zero detection remains intentionally minimal to avoid code bloat
+
+### Documentation
+- **API documentation accuracy**: Updated module structure documentation to reflect actual codebase organization
+  - Updated `docs/api.md` to document split of `parser.rs` into `parser/mod.rs`, `parser/tokenizer.rs`, `parser/combinators.rs`
+  - Updated `docs/api.md` to document split of `transpiler.rs` into `transpiler/mod.rs` and submodules
+  - Added detailed descriptions of transpiler submodules: `command_processor.rs`, `expression_evaluator.rs`, `condition_translator.rs`, `data_pack.rs`, `statement_processors/`
+  - Documentation now accurately reflects the modular architecture of the codebase
+
 ## [0.5.5] - 2025-10-04
 
 ### Fixed

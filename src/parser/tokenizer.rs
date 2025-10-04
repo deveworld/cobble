@@ -149,7 +149,7 @@ fn find_comment_position(text: &str) -> Option<usize> {
             continue;
         }
 
-        if (ch == '"' || ch == '\'') {
+        if ch == '"' || ch == '\'' {
             if !in_string {
                 in_string = true;
                 string_char = ch;

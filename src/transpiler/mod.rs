@@ -564,6 +564,7 @@ impl Transpiler {
         let previous_context = self.current_context.clone();
         let previous_globals = self.global_variables.clone();
         let previous_variables = self.variables.clone();
+        let previous_variable_types = self.variable_types.clone();
 
         // Extract parameter names from Parameter structs
         let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
@@ -591,6 +592,7 @@ impl Transpiler {
         self.current_context = previous_context;
         self.global_variables = previous_globals;
         self.variables = previous_variables;
+        self.variable_types = previous_variable_types;
 
         Ok(())
     }

@@ -649,12 +649,34 @@ impl Transpiler {
                                         ));
                                     }
                                     BinaryOp::Div => {
+                                        // Check if var2 is a compile-time constant with value 0
+                                        if let Some(const_val) = self.compile_time_constants.get(var2) {
+                                            if *const_val == 0.0 {
+                                                eprintln!(
+                                                    "⚠️  Warning: Division by variable '{}' which has constant value 0.\n\
+                                                    This will cause undefined behavior in Minecraft (typically returns 0).\n\
+                                                    Consider checking the divisor before division.",
+                                                    var2
+                                                );
+                                            }
+                                        }
                                         commands.push(format!(
                                             "scoreboard players operation {} temp /= {} {}",
                                             assign.target, var2, var2_obj
                                         ));
                                     }
                                     BinaryOp::Mod => {
+                                        // Check if var2 is a compile-time constant with value 0
+                                        if let Some(const_val) = self.compile_time_constants.get(var2) {
+                                            if *const_val == 0.0 {
+                                                eprintln!(
+                                                    "⚠️  Warning: Modulo by variable '{}' which has constant value 0.\n\
+                                                    This will cause undefined behavior in Minecraft (typically returns 0).\n\
+                                                    Consider checking the divisor before modulo operation.",
+                                                    var2
+                                                );
+                                            }
+                                        }
                                         commands.push(format!(
                                             "scoreboard players operation {} temp %= {} {}",
                                             assign.target, var2, var2_obj
