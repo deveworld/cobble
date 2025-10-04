@@ -53,15 +53,16 @@ pub fn token_parser<'a>(
 
             // Binary operations with proper precedence
             // Unary +/- (high precedence, but lower than call, higher than power)
-            let unary = choice((
-                just(&Token::Minus).to(UnaryOp::Neg),
-                just(&Token::Plus).to(UnaryOp::Pos),
-            ))
-            .repeated()
-            .foldr(call.clone(), |op, expr| {
-                Expression::Unary(op, Box::new(expr))
-            })
-            .or(call.clone());
+            // Allow unary operators before any atom/call/parenthesized expression
+            let unary = recursive(|unary_rec| {
+                choice((
+                    just(&Token::Minus).to(UnaryOp::Neg),
+                    just(&Token::Plus).to(UnaryOp::Pos),
+                ))
+                .then(unary_rec.clone())
+                .map(|(op, expr)| Expression::Unary(op, Box::new(expr)))
+                .or(call.clone())
+            });
 
             // Highest precedence: ^ (power) - right-associative
             // Power operator is right-associative: 2^3^2 = 2^(3^2) = 512
@@ -428,7 +429,7 @@ pub fn token_parser<'a>(
                 .map(ExecuteModifier::Store),
         ));
 
-        // Execute block (as/at/asat)
+        // Execute block - support all execute modifiers
         let execute_block = choice((
             // asat @s: -> as @s at @s:
             just(&Token::Asat)
@@ -455,7 +456,7 @@ pub fn token_parser<'a>(
                         body,
                     })
                 }),
-            // as @a at @s:
+            // Any execute modifier(s) followed by colon - supports positioned, in, etc. as first modifier
             execute_modifier
                 .then(
                     execute_modifier

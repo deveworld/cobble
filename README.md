@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.5.5** - Critical bug fixes and new features: inline comments, unary operators, execute modifiers | Minecraft 1.21.9+ compatible
+**✨ Version 0.5.6** - Critical bug fixes: execute modifiers, unary operators, macro parameters, if conditions, for loops | Minecraft 1.21.9+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.5.5 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.5.6 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -678,6 +678,19 @@ cargo watch -x test -x "run -- check examples/"
 ## 🗺️ Roadmap
 
 ### Recently Completed
+
+#### v0.5.6 (2025-10-04)
+- [x] **Execute modifiers fix** - All execute modifiers (positioned, in, rotated, etc.) now work as first modifier
+- [x] **Unary operators** - Negation (-x) and positive (+x) operators now work correctly
+- [x] **Macro parameters in /say** - Function parameters can be used in /say commands (e.g., `/say Count: {counter}`)
+- [x] **For loop macro support** - Loop variables work in /say commands (e.g., `/say Number {i}`)
+- [x] **If condition fixes** - Boolean literals (True/False) now generate correct execute conditions
+- [x] **For loop error handling** - Clear error messages for unsupported variable ranges instead of silent failure
+
+#### v0.5.5 (2025-10-03)
+- [x] **Inline comments** - Support for # comments on same line as code
+- [x] **Execute modifier improvements** - Initial support for various execute modifiers
+- [x] **Parser enhancements** - Better error recovery and reporting
 
 #### v0.5.0 (2025-10-03)
 - [x] **Type System** - Static, immutable type system with compile-time inference

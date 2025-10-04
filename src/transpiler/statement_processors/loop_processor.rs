@@ -12,8 +12,34 @@ impl Transpiler {
         if let Expression::Call(func, args) = &for_loop.iter {
             if let Expression::Identifier(name) = &**func {
                 if name == "range" && args.len() == 1 {
-                    if let Expression::Number(n) = &args[0] {
-                        let count = *n as i32;
+                    // Check if the argument is a literal number
+                    let count = match &args[0] {
+                        Expression::Number(n) => *n as i32,
+                        Expression::Identifier(var_name) => {
+                            return Err(format!(
+                                "For loops with range() only accept literal numbers, not variables.\n\
+                                 \n\
+                                 Got: for {} in range({})\n\
+                                 \n\
+                                 Solution: Use a literal number instead:\n\
+                                 - for {} in range(10):  # Correct\n\
+                                 \n\
+                                 Note: Dynamic loop ranges are not supported because Minecraft data packs\n\
+                                 require the loop count to be known at compile time.",
+                                for_loop.target, var_name, for_loop.target
+                            ));
+                        }
+                        _ => {
+                            return Err(format!(
+                                "For loops with range() only accept literal numbers.\n\
+                                 Got: range({:?})\n\
+                                 \n\
+                                 Solution: Use a literal number:\n\
+                                 - for {} in range(10):  # Correct",
+                                args[0], for_loop.target
+                            ));
+                        }
+                    };
 
                         // Determine step value (default 1, or from for_loop.step)
                         let step = if let Some(ref step_expr) = for_loop.step {
@@ -135,8 +161,25 @@ impl Transpiler {
                             "function {}:{}",
                             self.data_pack.namespace, loop_func_name
                         ));
-                    }
+                } else {
+                    return Err(format!(
+                        "For loops with range() must have exactly one argument.\n\
+                         Got: range() with {} arguments\n\
+                         \n\
+                         Solution: Use range(N) where N is a literal number:\n\
+                         - for {} in range(10):",
+                        args.len(), for_loop.target
+                    ));
                 }
+            } else {
+                return Err(format!(
+                    "For loops only support range() iterator, not {}.\n\
+                     \n\
+                     Solution: Use range(N) where N is a literal number:\n\
+                     - for {} in range(10):",
+                    if let Expression::Identifier(n) = &**func { n } else { "unknown" },
+                    for_loop.target
+                ));
             }
         } else {
             // Unsupported iterator type - provide clear error message

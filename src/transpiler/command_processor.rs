@@ -215,7 +215,22 @@ impl<'a> CommandProcessor<'a> {
             return self.convert_to_tellraw_json(cmd, vars);
         }
 
-        // For other commands (say, etc.), provide helpful error
+        // Check if this command is using macro parameters (starts with $ or contains $(var))
+        // Macro parameters are allowed in any command, including say
+        let is_macro_command = trimmed.starts_with('$') || {
+            // Check if all variables are macro parameters (not scoreboard variables)
+            vars.iter().all(|(_, _, name)| {
+                self.current_params.contains(name)
+            })
+        };
+
+        if is_macro_command {
+            // This is a macro command - allow it to pass through
+            // The variables will be replaced with $(var) syntax
+            return Ok(cmd.to_string());
+        }
+
+        // For other commands (say, etc.) with scoreboard variables, provide helpful error
         let var_names: Vec<_> = vars.iter().map(|(_, _, name)| name.as_str()).collect();
         Err(format!(
             "Cannot interpolate scoreboard variable{} {} in '{}' command.\n\
