@@ -109,19 +109,43 @@ impl Transpiler {
                         // Create loop control function
                         let mut loop_commands = vec![];
 
+                        // Condition depends on step direction
+                        let condition = if step > 0 {
+                            // For positive step: continue while i < count
+                            format!("..{}", count - 1)
+                        } else {
+                            // For negative step: continue while i >= 0
+                            "0..".to_string()
+                        };
+
+                        // Create a wrapper function that stores variable and calls body
+                        let wrapper_func_name = format!("loop_wrapper_{}", self.temp_counter - 1);
+                        let mut wrapper_commands = vec![];
+
                         // Store loop variable value into storage for macro function
-                        loop_commands.push(format!(
+                        wrapper_commands.push(format!(
                             "execute store result storage {}:global args.{} int 1 run scoreboard players get {} loop_counter",
                             self.data_pack.namespace, for_loop.target, for_loop.target
                         ));
 
                         // Call the macro body function with the loop variable
-                        loop_commands.push(format!(
+                        wrapper_commands.push(format!(
                             "function {}:{} with storage {}:global args",
                             self.data_pack.namespace, body_func_name, self.data_pack.namespace
                         ));
 
-                        // THEN add increment/decrement and recursive call
+                        self.data_pack.add_function(wrapper_func_name.clone(), wrapper_commands);
+
+                        // Check condition BEFORE executing body (to prevent zero-length loops from executing)
+                        loop_commands.push(format!(
+                            "execute if score {} loop_counter matches {} run function {}:{}",
+                            for_loop.target,
+                            condition,
+                            self.data_pack.namespace,
+                            wrapper_func_name
+                        ));
+
+                        // THEN add increment/decrement
                         if step > 0 {
                             loop_commands.push(format!(
                                 "scoreboard players add {} loop_counter {}",
@@ -135,15 +159,7 @@ impl Transpiler {
                             ));
                         }
 
-                        // Condition depends on step direction
-                        let condition = if step > 0 {
-                            // For positive step: continue while i < count
-                            format!("..{}", count - 1)
-                        } else {
-                            // For negative step: continue while i >= 0
-                            "0..".to_string()
-                        };
-
+                        // Recursive call (check condition again after increment)
                         loop_commands.push(format!(
                             "execute if score {} loop_counter matches {} run function {}:{}",
                             for_loop.target,

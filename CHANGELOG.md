@@ -5,6 +5,44 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2025-10-05
+
+### Fixed
+- **CRITICAL: Zero-length loop execution**: Fixed bug where `range(0)` loops would execute once instead of zero times
+  - Previously used do-while structure that always executed body at least once
+  - Now uses while structure with condition check BEFORE body execution
+  - Changed loop generation to check condition first: `execute if score i loop_counter matches ..-1 run function ...`
+  - For `range(0)`, condition `..-1` never matches (i starts at 0), so body never executes
+  - Modified `src/transpiler/statement_processors/loop_processor.rs:109-170` to implement while-style loops
+  - Created separate loop_wrapper functions to store variables and call body with proper macro parameters
+- **CRITICAL: Boolean and Expression parameters**: Fixed bug where boolean and expression parameters were not stored to NBT storage
+  - Function parameters that are booleans (True/False) or expressions (x+y) were not being stored, leaving macro variables undefined
+  - Boolean parameters now stored as 1/0: `data modify storage namespace:global args.param set value 1`
+  - Expression parameters evaluated to temp variables then stored: `execute store result storage ... run scoreboard players get _arg_temp_0 temp`
+  - Modified `src/transpiler/mod.rs:684-813` to handle Expression::Boolean, Expression::Binary, Expression::Unary
+  - Function macros now receive correct values for all parameter types
+- **CRITICAL: JSON array handling**: Fixed bug where JSON arrays had their styling completely destroyed when variables were present
+  - Previously rejected all JSON (both arrays and objects) with variables
+  - Now preserves JSON arrays without variables as-is: `tellraw @a [{"text":"Success"},{"text":"!"}]`
+  - JSON objects with variables correctly extract text and create macro-compatible format
+  - Modified `src/transpiler/command_processor.rs:287-347` to detect and preserve JSON arrays
+  - Only JSON arrays with variables are rejected (with helpful error message suggesting score component syntax)
+- **CRITICAL: temp objective tracking**: Fixed bug where OR conditions used `temp` objective without tracking it
+  - OR conditions generate `scoreboard players set or_result temp 0` but `temp` objective wasn't being created
+  - Would cause "Unknown scoreboard objective 'temp'" error in Minecraft
+  - Modified `src/transpiler/mod.rs:999-1027` to call `track_objective("temp")` in handle_or_condition
+  - Init function now includes `scoreboard objectives add temp dummy` when OR conditions are used
+
+### Technical Details
+- All 72 integration tests + parser tests passing (65 integration + 7 parser)
+- Comprehensive verification with real Minecraft command generation
+- Zero-length loops: `range(0)` generates condition check that never passes
+- Boolean parameters: True→1, False→0 in NBT storage
+- Expression parameters: Evaluated to temp scoreboard then stored to NBT
+- JSON arrays: Preserved without modification when no variables present
+- temp objective: Created in _cobble_init.mcfunction for OR conditions
+- No regression in existing functionality
+
 ## [0.5.8] - 2025-10-05
 
 ### Fixed
