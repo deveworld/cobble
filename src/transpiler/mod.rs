@@ -883,6 +883,11 @@ impl Transpiler {
     }
 
     fn preprocess_condition(&mut self, condition: &Expression) -> Result<Expression, String> {
+        // Check if condition contains Boolean literals and track __internal__ objective
+        if self.contains_boolean_literal(condition) {
+            self.data_pack.track_objective("__internal__");
+        }
+
         // Check if the condition has a complex expression on the left side of a comparison
         // For example: (x % 3) == 1 or (x ^ 2) > 10
         match condition {
@@ -987,6 +992,18 @@ impl Transpiler {
                 // Simple expressions (Identifier, Number, etc.) don't need preprocessing
                 Ok(condition.clone())
             }
+        }
+    }
+
+    /// Check if an expression contains any Boolean literals (True or False)
+    fn contains_boolean_literal(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Boolean(_) => true,
+            Expression::Binary(left, _, right) => {
+                self.contains_boolean_literal(left) || self.contains_boolean_literal(right)
+            }
+            Expression::Unary(_, inner) => self.contains_boolean_literal(inner),
+            _ => false,
         }
     }
 

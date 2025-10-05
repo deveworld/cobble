@@ -62,6 +62,10 @@ impl Transpiler {
                         // Track loop_counter objective
                         self.data_pack.track_objective("loop_counter");
 
+                        // Save previous state of loop variable (if it exists)
+                        let saved_var_objective = self.variable_objectives.get(&for_loop.target).cloned();
+                        let was_scoreboard_var = self.scoreboard_variables.contains(&for_loop.target);
+
                         // Track this variable's objective AND mark as scoreboard variable
                         self.variable_objectives
                             .insert(for_loop.target.clone(), "loop_counter".to_string());
@@ -87,6 +91,7 @@ impl Transpiler {
                         // Process loop body as a macro function with loop variable as parameter
                         let old_function = self.current_function.take();
                         let saved_context = self.current_context.clone();
+                        let saved_variable_types = self.variable_types.clone();
 
                         // Set up function context with loop variable as a parameter
                         self.current_context = crate::transpiler::FunctionContext::with_params(vec![for_loop.target.clone()]);
@@ -105,6 +110,17 @@ impl Transpiler {
 
                         self.current_function = old_function;
                         self.current_context = saved_context;
+                        self.variable_types = saved_variable_types;
+
+                        // Restore previous state of loop variable
+                        if let Some(obj) = saved_var_objective {
+                            self.variable_objectives.insert(for_loop.target.clone(), obj);
+                        } else {
+                            self.variable_objectives.remove(&for_loop.target);
+                        }
+                        if !was_scoreboard_var {
+                            self.scoreboard_variables.remove(&for_loop.target);
+                        }
 
                         // Create loop control function
                         let mut loop_commands = vec![];

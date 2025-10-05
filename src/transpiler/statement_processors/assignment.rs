@@ -174,6 +174,13 @@ impl Transpiler {
                     match (&**left, &**right) {
                         (Expression::Identifier(var), Expression::Number(n)) => {
                             // Handle variable op number (e.g., score = x + 5)
+                            if n.fract() != 0.0 {
+                                eprintln!(
+                                    "⚠️  Warning: Float value {} in binary operation will lose precision.\n\
+                                    Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                                    n, *n as i32
+                                );
+                            }
                             let value = *n as i32;
                             let var_obj = self
                                 .variable_objectives
@@ -317,10 +324,10 @@ impl Transpiler {
                         }
                         (Expression::Number(n1), Expression::Number(n2)) => {
                             // Constant expression evaluation with error checking
-                            let result = match op {
-                                BinaryOp::Add => (*n1 + *n2) as i32,
-                                BinaryOp::Sub => (*n1 - *n2) as i32,
-                                BinaryOp::Mul => (*n1 * *n2) as i32,
+                            let result_f64 = match op {
+                                BinaryOp::Add => *n1 + *n2,
+                                BinaryOp::Sub => *n1 - *n2,
+                                BinaryOp::Mul => *n1 * *n2,
                                 BinaryOp::Div => {
                                     if *n2 == 0.0 {
                                         return Err(format!(
@@ -328,7 +335,7 @@ impl Transpiler {
                                             n1, n2
                                         ));
                                     }
-                                    (*n1 / *n2) as i32
+                                    *n1 / *n2
                                 }
                                 BinaryOp::Mod => {
                                     if *n2 == 0.0 {
@@ -337,7 +344,7 @@ impl Transpiler {
                                             n1, n2
                                         ));
                                     }
-                                    (*n1 as i32) % (*n2 as i32)
+                                    (*n1 as i32 % *n2 as i32) as f64
                                 }
                                 BinaryOp::Pow => {
                                     let base = *n1 as i32;
@@ -347,10 +354,20 @@ impl Transpiler {
                                             "Power exponent must be non-negative".to_string()
                                         );
                                     }
-                                    base.pow(exp as u32)
+                                    base.pow(exp as u32) as f64
                                 }
-                                _ => 0,
+                                _ => 0.0,
                             };
+
+                            let result = result_f64 as i32;
+                            if result_f64.fract() != 0.0 {
+                                eprintln!(
+                                    "⚠️  Warning: Constant expression result {} will lose precision.\n\
+                                    Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                                    result_f64, result
+                                );
+                            }
+
                             commands.push(format!(
                                 "scoreboard players set {} temp {}",
                                 assign.target, result
@@ -361,6 +378,13 @@ impl Transpiler {
                             self.data_pack.track_objective("temp");
                             // Mark target as scoreboard-backed
                             self.scoreboard_variables.insert(assign.target.clone());
+                            if n.fract() != 0.0 {
+                                eprintln!(
+                                    "⚠️  Warning: Float value {} in binary operation will lose precision.\n\
+                                    Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                                    n, *n as i32
+                                );
+                            }
                             let value = *n as i32;
                             let var_obj = self
                                 .variable_objectives

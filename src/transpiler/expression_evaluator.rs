@@ -34,6 +34,13 @@ impl<'a> ExpressionEvaluator<'a> {
 
         match expr {
             Expression::Number(n) => {
+                if n.fract() != 0.0 {
+                    eprintln!(
+                        "⚠️  Warning: Float value {} will lose precision.\n\
+                        Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                        n, *n as i32
+                    );
+                }
                 commands.push(format!(
                     "scoreboard players set {} temp {}",
                     target, *n as i32
@@ -70,6 +77,13 @@ impl<'a> ExpressionEvaluator<'a> {
                 // Now apply the operation with the right side
                 match &**right {
                     Expression::Number(n) => {
+                        if n.fract() != 0.0 {
+                            eprintln!(
+                                "⚠️  Warning: Float value {} in expression will lose precision.\n\
+                                Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                                n, *n as i32
+                            );
+                        }
                         let value = *n as i32;
                         match op {
                             BinaryOp::Add => {

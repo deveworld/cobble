@@ -80,10 +80,17 @@ impl DataPack {
                     }
                 }
 
-                // Initialize Boolean literal constants
-                setup_commands.push("scoreboard objectives add __internal__ dummy".to_string());
-                setup_commands.push("scoreboard players set #true_const __internal__ 1".to_string());
-                setup_commands.push("scoreboard players set #false_const __internal__ 0".to_string());
+                // Initialize Boolean literal constants if __internal__ objective is used
+                if self.used_objectives.contains("__internal__") {
+                    let internal_init_1 = "scoreboard players set #true_const __internal__ 1".to_string();
+                    let internal_init_2 = "scoreboard players set #false_const __internal__ 0".to_string();
+                    if !commands.contains(&internal_init_1) {
+                        setup_commands.push(internal_init_1);
+                    }
+                    if !commands.contains(&internal_init_2) {
+                        setup_commands.push(internal_init_2);
+                    }
+                }
 
                 // Prepend setup commands to existing commands
                 if !setup_commands.is_empty() {
@@ -103,10 +110,11 @@ impl DataPack {
                 commands.push(format!("scoreboard objectives add {} dummy", objective));
             }
 
-            // Initialize Boolean literal constants
-            commands.push("scoreboard objectives add __internal__ dummy".to_string());
-            commands.push("scoreboard players set #true_const __internal__ 1".to_string());
-            commands.push("scoreboard players set #false_const __internal__ 0".to_string());
+            // Initialize Boolean literal constants if __internal__ objective is used
+            if self.used_objectives.contains("__internal__") {
+                commands.push("scoreboard players set #true_const __internal__ 1".to_string());
+                commands.push("scoreboard players set #false_const __internal__ 0".to_string());
+            }
 
             self.functions.insert("_cobble_init".to_string(), commands);
             self.stdlib

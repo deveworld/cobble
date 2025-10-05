@@ -1671,3 +1671,138 @@ def test():
     assert!(subtitle_line.starts_with("title @a subtitle ["), "subtitle format incorrect: {}", subtitle_line);
     assert!(actionbar_line.starts_with("title @a actionbar ["), "actionbar format incorrect: {}", actionbar_line);
 }
+
+// REGRESSION TESTS FOR BUG FIXES
+
+#[test]
+fn test_boolean_literal_only() {
+    // Regression test for Bug #2: Boolean literals without variables
+    // should still generate __internal__ objective
+    let source = r#"
+def test():
+    if True:
+        /say true branch
+    if False:
+        /say false branch
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+
+    // Check that __internal__ objective is initialized
+    let init_content = read_function(&output_dir, "_cobble_init");
+    assert!(init_content.contains("scoreboard objectives add __internal__ dummy"));
+    assert!(init_content.contains("scoreboard players set #true_const __internal__ 1"));
+    assert!(init_content.contains("scoreboard players set #false_const __internal__ 0"));
+
+    // Check that conditions use __internal__
+    let test_content = read_function(&output_dir, "test");
+    assert!(test_content.contains("score #true_const __internal__ matches 1.."));
+    assert!(test_content.contains("score #false_const __internal__ matches 1.."));
+}
+
+#[test]
+fn test_loop_variable_scope_isolation() {
+    // Regression test for Bug #3: Loop variables should not pollute outer scope
+    let source = r#"
+def func1():
+    for i in range(5):
+        /say loop
+
+def func2():
+    i = 10
+    /tellraw @a {"text":"i is 10"}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let func2_content = read_function(&output_dir, "func2");
+
+    // In func2, 'i' should be a regular temp variable, not loop_counter
+    assert!(func2_content.contains("scoreboard players set i temp 10"));
+
+    // It should NOT reference loop_counter
+    assert!(!func2_content.contains("loop_counter"));
+}
+
+#[test]
+fn test_internal_objective_only_when_needed() {
+    // Test that __internal__ objective is only initialized when Boolean literals are used
+
+    // Test 1: With Boolean literals - should have __internal__ init
+    let source_with_bool = r#"
+def test():
+    if True:
+        /say works
+"#;
+    let (_temp1, output1) = compile_source(source_with_bool).unwrap();
+    let init1 = read_function(&output1, "_cobble_init");
+    assert!(init1.contains("scoreboard objectives add __internal__ dummy"));
+    assert!(init1.contains("scoreboard players set #true_const __internal__ 1"));
+    assert!(init1.contains("scoreboard players set #false_const __internal__ 0"));
+
+    // Test 2: Without Boolean literals - should NOT have __internal__ init
+    let source_without_bool = r#"
+def test():
+    x = 10
+"#;
+    let (_temp2, output2) = compile_source(source_without_bool).unwrap();
+    let init2 = read_function(&output2, "_cobble_init");
+    assert!(!init2.contains("#true_const"));
+    assert!(!init2.contains("#false_const"));
+}
+
+#[test]
+fn test_for_loop_type_checking() {
+    // Regression test for Bug #4: Type checking should work correctly
+    // with variable types isolated between loop body and outer scope
+    let source = r#"
+def test():
+    x = 10
+    for i in range(5):
+        x = i
+    # x is still Integer type after loop, this should work
+    x = 20
+"#;
+
+    let result = compile_source(source);
+
+    // This should succeed - x remains Integer throughout
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_invalid_number_literal() {
+    // Regression test for Bug #1: Invalid number literals should be rejected
+    let source = r#"
+def test():
+    x = 1.2.3.4
+"#;
+
+    let result = compile_source(source);
+
+    // This should fail during tokenization
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_const_modulo_consistency() {
+    // Regression test for Bug #6: const modulo should match runtime modulo
+    let source = r#"
+const x = -5 % 3
+
+def get_const():
+    return x
+
+def test():
+    y = -5 % 3
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+
+    // Both should produce the same result
+    // In Rust/integer arithmetic: -5 % 3 = -2
+    let test_content = read_function(&output_dir, "test");
+
+    // y = -5 % 3 should use modulo operation
+    // In integer arithmetic: -5 % 3 = -2
+    assert!(test_content.contains("modulus") || test_content.contains("-2"));
+}

@@ -283,6 +283,10 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                         break;
                     }
                 }
+                // Validate that the number can be parsed
+                if num.parse::<f64>().is_err() {
+                    return Err(format!("Invalid number literal: '{}' at line {}", num, line));
+                }
                 tokens.push(Token::Number(num));
             }
             'a'..='z' | 'A'..='Z' | '_' => {
@@ -490,6 +494,10 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                             } else {
                                 break;
                             }
+                        }
+                        // Validate that the number can be parsed
+                        if num.parse::<f64>().is_err() {
+                            return Err(format!("Invalid number literal: '{}' at line {}", num, line));
                         }
                         tokens.push(Token::Number(num));
                     } else {

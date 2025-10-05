@@ -62,7 +62,14 @@ impl Transpiler {
                             Ok(left_val / right_val)
                         }
                     }
-                    BinaryOp::Mod => Ok(left_val % right_val),
+                    BinaryOp::Mod => {
+                        if right_val == 0.0 {
+                            Err("Modulo by zero in const expression".to_string())
+                        } else {
+                            // Use integer modulo for consistency with runtime behavior
+                            Ok(((left_val as i32) % (right_val as i32)) as f64)
+                        }
+                    }
                     BinaryOp::Pow => Ok(left_val.powf(right_val)),
                     _ => Err(format!("Operator {:?} not supported in const expressions", op)),
                 }
