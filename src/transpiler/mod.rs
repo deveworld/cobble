@@ -681,7 +681,7 @@ impl Transpiler {
     ) -> Result<(), String> {
         let mut commands = Vec::new();
 
-        if let Some(param_names) = self.function_params.get(func_name) {
+        if let Some(param_names) = self.function_params.get(func_name).cloned() {
             // Validate argument count matches parameter count
             if !param_names.is_empty() && args.len() != param_names.len() {
                 return Err(format!(
@@ -739,6 +739,20 @@ impl Transpiler {
                                         "execute store result storage {}:global args.{} int 1 run scoreboard players get {} {}",
                                         self.data_pack.namespace, param_name, var, obj
                                     ));
+                                } else if let Some(_const_val) = self.variables.get(var) {
+                                    // Constant variable - try to get compile-time constant value
+                                    if let Some(&val) = self.compile_time_constants.get(var) {
+                                        commands.push(format!(
+                                            "data modify storage {}:global args.{} set value {}",
+                                            self.data_pack.namespace, param_name, val
+                                        ));
+                                    } else {
+                                        // Const variable but not a simple constant - treat as identifier string
+                                        commands.push(format!(
+                                            "data modify storage {}:global args.{} set value \"{}\"",
+                                            self.data_pack.namespace, param_name, var
+                                        ));
+                                    }
                                 } else {
                                     // Unknown identifier - treat as string literal (for items, etc.)
                                     commands.push(format!(
@@ -747,12 +761,55 @@ impl Transpiler {
                                     ));
                                 }
                             }
+                            Expression::Boolean(b) => {
+                                // Boolean literal - store as 1 (true) or 0 (false)
+                                let value = if *b { 1 } else { 0 };
+                                commands.push(format!(
+                                    "data modify storage {}:global args.{} set value {}",
+                                    self.data_pack.namespace, param_name, value
+                                ));
+                            }
+                            Expression::Binary(_, _, _) | Expression::Unary(_, _) => {
+                                // Arithmetic expression - evaluate to a temporary variable and store
+                                let temp_var = format!("_arg_temp_{}", i);
+
+                                // Track the temp variable
+                                self.data_pack.track_objective("temp");
+                                self.variable_objectives.insert(temp_var.clone(), "temp".to_string());
+                                self.scoreboard_variables.insert(temp_var.clone());
+
+                                // Evaluate the expression into the temp variable
+                                let assignment = Assignment {
+                                    target: temp_var.clone(),
+                                    value: arg.clone(),
+                                };
+                                self.process_assignment(&assignment)?;
+
+                                // Now store the temp variable value into storage
+                                commands.push(format!(
+                                    "execute store result storage {}:global args.{} int 1 run scoreboard players get {} temp",
+                                    self.data_pack.namespace, param_name, temp_var
+                                ));
+                            }
                             _ => {
-                                // For complex expressions, try to evaluate as string
-                                commands.push(
-                                    "# Warning: Complex argument expression not fully supported"
-                                        .to_string(),
-                                );
+                                // For other complex expressions (Call, etc.)
+                                return Err(format!(
+                                    "Function parameter does not support this expression type.\n\
+                                     \n\
+                                     Parameter '{}' received: {:?}\n\
+                                     \n\
+                                     Supported parameter types:\n\
+                                     - Literal numbers: func(42)\n\
+                                     - Literal strings: func(\"text\")\n\
+                                     - Boolean values: func(True), func(False)\n\
+                                     - Variables: func(my_var)\n\
+                                     - Arithmetic expressions: func(x + 10)\n\
+                                     \n\
+                                     Not supported:\n\
+                                     - Function calls as parameters: func(other_func())\n\
+                                     - Complex expressions with function calls",
+                                    param_name, arg
+                                ));
                             }
                         }
                     }
@@ -942,6 +999,9 @@ impl Transpiler {
     fn handle_or_condition(&mut self, or_expr: &str) -> Result<String, String> {
         // Flatten all OR conditions into a single list
         let conditions = self.flatten_or_conditions(or_expr)?;
+
+        // Track the temp objective for or_result
+        self.data_pack.track_objective("temp");
 
         // Generate commands for OR logic
         if let Some(ref mut commands) = self.current_function {

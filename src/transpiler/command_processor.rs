@@ -266,7 +266,7 @@ impl<'a> CommandProcessor<'a> {
         let command = first_parts[0];
 
         // Handle title and tellraw differently due to different number of arguments
-        let (selector, action, mut message) = if command == "title" {
+        let (selector, action, message) = if command == "title" {
             // Title: "title <selector> <action> <message>"
             let parts: Vec<&str> = cmd.trim().splitn(4, ' ').collect();
             if parts.len() < 4 {
@@ -284,9 +284,45 @@ impl<'a> CommandProcessor<'a> {
             (parts[1], None, parts[2])
         };
 
-        // If message is already a JSON object, extract the actual text value
+        // Check if message is a JSON array
+        let message_trimmed = message.trim();
+        if message_trimmed.starts_with('[') {
+            // Message is a JSON array
+            if !vars.is_empty() {
+                // Variables in JSON arrays are not supported
+                return Err(format!(
+                    "Cannot use variables inside JSON array text components.\n\
+                     \n\
+                     You wrote: {}\n\
+                     \n\
+                     Variables like {{{}}} cannot be automatically inserted into existing JSON arrays.\n\
+                     \n\
+                     Solution: Use Minecraft's score component syntax directly:\n\
+                     /tellraw @a [{{\"text\":\"Score: \"}},{{\"score\":{{\"name\":\"{}\",\"objective\":\"temp\"}}}}]\n\
+                     \n\
+                     Or use a simple JSON object (not array) and let Cobble handle it:\n\
+                     /tellraw @a {{\"text\":\"Score: {{{}}}\"}}\n\
+                     \n\
+                     This will automatically generate proper JSON with score components.",
+                    cmd,
+                    vars[0].2,
+                    vars[0].2,
+                    vars[0].2
+                ));
+            } else {
+                // No variables - return JSON array as-is
+                if let Some(action_token) = action {
+                    return Ok(format!("{} {} {} {}", command, selector, action_token, message));
+                } else {
+                    return Ok(format!("{} {} {}", command, selector, message));
+                }
+            }
+        }
+
+        // If message is a JSON object, extract the text value
         // Example: {"text":"Hello {player}"} -> "Hello {player}"
-        if message.trim().starts_with('{') {
+        let mut message = message;
+        if message_trimmed.starts_with('{') {
             // Try to extract text value from JSON
             if let Some(text_start) = message.find("\"text\":") {
                 let after_text = &message[text_start + 7..].trim_start();
