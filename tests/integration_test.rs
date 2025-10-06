@@ -1806,3 +1806,126 @@ def test():
     // In integer arithmetic: -5 % 3 = -2
     assert!(test_content.contains("modulus") || test_content.contains("-2"));
 }
+
+#[test]
+fn test_nested_loops_no_infinite_loop() {
+    // Regression test for nested loop wrapper naming bug
+    // Bug: wrapper functions had duplicate names causing infinite loops
+    let source = r#"
+def test():
+    for i in range(2):
+        for j in range(2):
+            result = i + j
+            /say done
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+
+    // Check that we have TWO distinct wrapper functions, not one
+    let wrapper_files: Vec<_> = std::fs::read_dir(output_dir.join("data/cobble/functions"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("loop_wrapper_")
+        })
+        .collect();
+
+    assert_eq!(
+        wrapper_files.len(),
+        2,
+        "Should have exactly 2 wrapper functions for nested loops, found {}",
+        wrapper_files.len()
+    );
+
+    // Verify outer loop calls the correct (outer) wrapper
+    let loop_temp_0 = read_function(&output_dir, "loop_temp_0");
+    assert!(
+        loop_temp_0.contains("loop_wrapper_3") || loop_temp_0.contains("loop_wrapper_"),
+        "Outer loop should call a wrapper function"
+    );
+
+    // Verify inner loop calls a different wrapper
+    let loop_temp_1 = read_function(&output_dir, "loop_temp_1");
+    assert!(
+        loop_temp_1.contains("loop_wrapper_2") || loop_temp_1.contains("loop_wrapper_"),
+        "Inner loop should call a wrapper function"
+    );
+
+    // Most importantly: verify the two wrappers are DIFFERENT
+    let outer_wrapper_call = loop_temp_0
+        .lines()
+        .find(|l| l.contains("loop_wrapper_"))
+        .unwrap();
+    let inner_wrapper_call = loop_temp_1
+        .lines()
+        .find(|l| l.contains("loop_wrapper_"))
+        .unwrap();
+
+    assert_ne!(
+        outer_wrapper_call, inner_wrapper_call,
+        "Outer and inner loops must call DIFFERENT wrapper functions to avoid infinite loop"
+    );
+}
+
+#[test]
+fn test_nested_loops_with_arithmetic() {
+    // Test that nested loop variables work correctly in arithmetic expressions
+    let source = r#"
+def test():
+    for i in range(2):
+        for j in range(2):
+            result = i + j
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let loop_body_1 = read_function(&output_dir, "loop_body_1");
+
+    // Both i and j should be accessible from loop_counter
+    assert!(
+        loop_body_1.contains("i loop_counter"),
+        "Inner loop body should access outer loop variable i from loop_counter"
+    );
+    assert!(
+        loop_body_1.contains("j loop_counter"),
+        "Inner loop body should access inner loop variable j from loop_counter"
+    );
+
+    // Should perform the addition
+    assert!(
+        loop_body_1.contains("result temp =") && loop_body_1.contains("+="),
+        "Should perform addition: result = i + j"
+    );
+}
+
+#[test]
+fn test_triple_nested_loops() {
+    // Test that triple nested loops work correctly
+    let source = r#"
+def test():
+    for i in range(2):
+        for j in range(2):
+            for k in range(2):
+                /say Triple loop works
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+
+    // Should have 3 wrapper functions
+    let wrapper_files: Vec<_> = std::fs::read_dir(output_dir.join("data/cobble/functions"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("loop_wrapper_")
+        })
+        .collect();
+
+    assert_eq!(
+        wrapper_files.len(),
+        3,
+        "Should have exactly 3 wrapper functions for triple nested loops"
+    );
+}
