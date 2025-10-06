@@ -5,6 +5,33 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.11] - 2025-10-06
+
+### Fixed
+- **CRITICAL: Nested for loops causing infinite loops**: Fixed wrapper function name collision in nested loops
+  - Nested for loops generated wrapper functions with duplicate names, causing infinite loop execution and Minecraft server freezes
+  - Inner loop's wrapper would overwrite outer loop's wrapper in HashMap, resulting in incorrect function calls
+  - Changed wrapper function naming to use separate temp_counter increment for each loop level
+  - Modified `src/transpiler/statement_processors/loop_processor.rs:137-141` to ensure unique wrapper IDs
+  - Each nested loop level now has its own unique wrapper function (e.g., `loop_wrapper_2`, `loop_wrapper_3`)
+  - Nested loops now execute correctly without infinite recursion
+
+### Added
+- **Regression tests**: Added 3 comprehensive tests for nested loop functionality
+  - `test_nested_loops_no_infinite_loop` - Verifies wrapper functions are unique and no infinite loop occurs
+  - `test_nested_loops_with_arithmetic` - Verifies nested loop variables work correctly in arithmetic expressions
+  - `test_triple_nested_loops` - Verifies support for triple (and deeper) nested loops
+  - Total test count increased from 71 to 74 integration tests
+
+### Technical Details
+- All 74 integration tests passing (100% pass rate)
+- Verified correct execution flow for 2-level and 3-level nested loops
+- Generated datapacks tested to ensure no infinite loops occur
+- Wrapper functions now uniquely named across all nesting levels
+- Loop control functions (loop_temp_N) call correct wrapper functions
+- No regression in existing loop functionality (single loops, while loops)
+- Minecraft execution verified: loops terminate correctly with expected iteration counts
+
 ## [0.5.10] - 2025-10-05
 
 ### Fixed

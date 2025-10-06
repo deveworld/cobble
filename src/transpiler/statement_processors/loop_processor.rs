@@ -135,7 +135,10 @@ impl Transpiler {
                         };
 
                         // Create a wrapper function that stores variable and calls body
-                        let wrapper_func_name = format!("loop_wrapper_{}", self.temp_counter - 1);
+                        // Use a separate counter increment to ensure unique wrapper names in nested loops
+                        let wrapper_id = self.temp_counter;
+                        self.temp_counter += 1;
+                        let wrapper_func_name = format!("loop_wrapper_{}", wrapper_id);
                         let mut wrapper_commands = vec![];
 
                         // Store loop variable value into storage for macro function
