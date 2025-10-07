@@ -5,6 +5,42 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.12] - 2025-10-07
+
+### Fixed
+- **CRITICAL: Negative-step range() initialization**: Fixed incorrect start value calculation for negative step loops
+  - Previously used `count + step` formula which generated wrong start values (e.g., `range(10) by -3` started at 7 instead of 9)
+  - Now correctly uses `count - 1` for all negative steps, ensuring proper iteration counts
+  - Modified `src/transpiler/statement_processors/loop_processor.rs:79` to fix start value calculation
+  - All negative step loops now iterate the correct number of times with correct starting values
+- **CRITICAL: Macro $ prefix detection**: Fixed missing `$` line prefix for functions using `$(param)` syntax directly
+  - Functions with pre-existing `$(param)` syntax in commands weren't detected as macros
+  - Only `{param}` → `$(param)` conversions were setting the macro flag
+  - Added detection for existing `$()` syntax before parameter scanning
+  - Modified `src/transpiler/command_processor.rs:48-50` to check for `$()` in command strings
+  - All macro functions now correctly generate `$command $(param)` format with proper line prefix
+- **CRITICAL: Stale files cleanup**: Fixed stale function files persisting across rebuilds
+  - Deleted or renamed functions remained in output directory from previous builds
+  - Now removes entire functions directory before regenerating files
+  - Modified `src/transpiler/data_pack.rs:161-165` to clean functions directory on each build
+  - Ensures output directory only contains current functions, preventing confusion
+
+### Added
+- **Regression tests**: Added 5 comprehensive tests for negative steps and macro syntax
+  - `test_for_loop_negative_step_minus_two` - Verifies range(10) by -2 starts at 9
+  - `test_for_loop_negative_step_minus_three` - Verifies range(10) by -3 starts at 9
+  - `test_for_loop_negative_step_minus_five` - Verifies range(20) by -5 starts at 19
+  - `test_macro_dollar_syntax_direct` - Verifies $(param) syntax gets $ prefix
+  - `test_macro_mixed_syntax` - Verifies mixed {param} and $(param) syntax works
+  - Total test count increased from 74 to 79 integration tests
+
+### Technical Details
+- All 79 integration tests passing (100% pass rate)
+- Verified correct Minecraft command generation for all negative step scenarios
+- Macro functions now work correctly with both `{param}` and `$(param)` input syntax
+- Build process now ensures clean output with no stale files
+- No regression in existing functionality (positive steps, nested loops, all other features)
+
 ## [0.5.11] - 2025-10-06
 
 ### Fixed
