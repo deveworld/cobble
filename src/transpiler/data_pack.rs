@@ -158,6 +158,12 @@ impl DataPack {
             .join("functions");
         let tags_dir = namespace_dir.join("tags").join("functions");
 
+        // Clean functions directory to remove stale .mcfunction files
+        // This prevents deleted or renamed functions from persisting in the datapack
+        if functions_dir.exists() {
+            fs::remove_dir_all(&functions_dir)?;
+        }
+
         fs::create_dir_all(&functions_dir)?;
         fs::create_dir_all(&tags_dir)?;
 

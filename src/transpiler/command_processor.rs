@@ -44,6 +44,11 @@ impl<'a> CommandProcessor<'a> {
         let mut replacements = Vec::new();
         let mut scoreboard_vars_found = Vec::new();
 
+        // First pass: detect if command already contains $() macro syntax
+        if result.contains("$(") {
+            has_macro_vars = true;
+        }
+
         let chars: Vec<char> = result.chars().collect();
         let mut i = 0;
 

@@ -75,8 +75,9 @@ impl Transpiler {
                         let start_value = if step > 0 {
                             0
                         } else {
-                            // For negative step, start at count + step (e.g., count - 1 for step = -1)
-                            count + step
+                            // For negative step, always start at count - 1
+                            // This ensures we iterate from (n-1) down to 0 regardless of step magnitude
+                            count - 1
                         };
 
                         for_commands.push(format!(
