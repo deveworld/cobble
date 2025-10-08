@@ -5,6 +5,34 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.14] - 2025-10-08
+
+### Fixed
+- **CRITICAL: Decimal pack format serialization**
+  - Fixed `PackFormat::Decimal` to serialize as JSON number (float) instead of JSON string
+  - Previously `--pack-format 88.0` generated `"pack_format": "88.0"` (string) which Minecraft rejects
+  - Now correctly generates `"pack_format": 88.0` (number) which Minecraft accepts
+  - Modified `src/pack_format.rs:82-87` to use `serialize_f64()` instead of `serialize_str()`
+  - Updated regression test `tests/integration_test.rs:2008` to verify JSON number format
+  - Decimal formats now work correctly: 88.0, 88.1, 90.0 all serialize as JSON numbers
+  - Integer formats still work perfectly: 18 serializes as JSON integer
+
+### Changed
+- **MAJOR: Documentation minimum version corrections**
+  - Corrected minimum Minecraft version requirement from 1.21.7+ to 1.20.2+
+  - Updated `docs/language.md:829` to reflect correct minimum version (pack format 18)
+  - Updated `docs/cli.md:379` to reflect correct minimum version requirements
+  - Added clarification about decimal pack format support (Minecraft 1.21.9+)
+  - Updated `docs/api.md:366-383` with complete DataPack struct definition
+  - Added missing fields in API documentation: advancements, loot_tables, recipes, predicates, item_modifiers, used_objectives
+  - Updated pack_format field type from u8 to PackFormat enum in documentation
+
+### Verified
+- All 110 tests passing (7 unit + 86 integration + 12 regression + 5 negative steps)
+- All generated commands validated against Minecraft specifications
+- Pack format serialization verified for both integer and decimal formats
+- No existing features broken by the fixes
+
 ## [0.5.13] - 2025-10-08
 
 ### Fixed
