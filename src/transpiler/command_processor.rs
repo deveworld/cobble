@@ -54,7 +54,32 @@ impl<'a> CommandProcessor<'a> {
 
         while i < chars.len() {
             if chars[i] == '{' {
-                // Find the matching closing brace by tracking nesting level
+                // Check for double brace escape sequence {{var}}
+                if i + 1 < chars.len() && chars[i + 1] == '{' {
+                    // This is an escaped brace sequence {{...}}
+                    // Find the matching closing double braces
+                    let mut j = i + 2;
+                    let mut content = String::new();
+
+                    while j < chars.len() {
+                        if j + 1 < chars.len() && chars[j] == '}' && chars[j + 1] == '}' {
+                            // Found closing double braces
+                            replacements.push((i, j + 2, format!("{{{}}}", content)));
+                            i = j + 2;
+                            break;
+                        }
+                        content.push(chars[j]);
+                        j += 1;
+                    }
+
+                    // If no closing double braces found, treat as regular brace
+                    if j >= chars.len() {
+                        i += 1;
+                    }
+                    continue;
+                }
+
+                // Regular single brace - find the matching closing brace by tracking nesting level
                 let mut depth = 1;
                 let mut j = i + 1;
                 let mut var_content = String::new();
@@ -200,9 +225,52 @@ impl<'a> CommandProcessor<'a> {
         }
 
         // Replace selector aliases (@Name -> @a[...])
+        // Only replace outside of string literals to avoid breaking JSON text
         for (alias_name, selector) in self.selector_aliases {
             let pattern = format!("@{}", alias_name);
-            result = result.replace(&pattern, selector);
+
+            // Find all occurrences of the pattern
+            let mut new_result = String::new();
+            let mut last_end = 0;
+
+            while let Some(pos) = result[last_end..].find(&pattern) {
+                let abs_pos = last_end + pos;
+
+                // Check if this occurrence is inside a string literal
+                // Count quotes before this position to determine if we're in a string
+                let before = &result[..abs_pos];
+                let mut in_string = false;
+                let mut escape_next = false;
+
+                for ch in before.chars() {
+                    if escape_next {
+                        escape_next = false;
+                        continue;
+                    }
+                    if ch == '\\' {
+                        escape_next = true;
+                        continue;
+                    }
+                    if ch == '"' {
+                        in_string = !in_string;
+                    }
+                }
+
+                // Only replace if not in a string
+                if !in_string {
+                    new_result.push_str(&result[last_end..abs_pos]);
+                    new_result.push_str(selector);
+                    last_end = abs_pos + pattern.len();
+                } else {
+                    // Keep the original @Name in strings
+                    new_result.push_str(&result[last_end..abs_pos + pattern.len()]);
+                    last_end = abs_pos + pattern.len();
+                }
+            }
+
+            // Add remaining part
+            new_result.push_str(&result[last_end..]);
+            result = new_result;
         }
 
         Ok(result)
