@@ -3,16 +3,16 @@
 > A modern, Python-like language for creating Minecraft Data Packs
 
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](https://www.rust-lang.org)
-[![Minecraft](https://img.shields.io/badge/minecraft-1.21.9+-green.svg)](https://minecraft.net)
-[![Pack Format](https://img.shields.io/badge/pack%20format-88-blue.svg)](https://minecraft.wiki/w/Data_pack)
+[![Minecraft](https://img.shields.io/badge/minecraft-1.20.2+-green.svg)](https://minecraft.net)
+[![Pack Format](https://img.shields.io/badge/pack%20format-18-blue.svg)](https://minecraft.wiki/w/Data_pack)
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.5.12** - Critical bug fixes for negative-step loops, macro prefix detection, and stale file cleanup | Minecraft 1.21.9+ compatible
+**✨ Version 0.5.13** - Critical bug fixes: context-aware tokenization, decimal pack format support, division by zero errors, power exponent limits, and boundary condition handling | Minecraft 1.20.2+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.5.12 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.5.13 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -42,7 +42,7 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
 - ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
 - ✅ **Nested If Optimization** - Automatically splits complex control flow
-- ✅ **Comprehensive Tests** - 79 integration tests with output verification
+- ✅ **Comprehensive Tests** - 98 tests with output verification (7 unit + 86 integration + 5 negative steps)
 - ✅ **Modern Parser** - Built with chumsky combinator library for reliability
 - ✅ **Beautiful Errors** - Clear error messages powered by ariadne
 
@@ -445,7 +445,7 @@ cobble init --name my-project   # Create new directory named 'my-project'
 **Options:**
 - `--name <NAME>` - Project name (creates a new directory if specified)
 - `--description <DESCRIPTION>` - Project description
-- `--pack-format <FORMAT>` - Pack format version (default: 88)
+- `--pack-format <FORMAT>` - Pack format version (default: 18)
 
 ### `cobble build [input] [options]`
 
@@ -503,7 +503,7 @@ entry_points = []      # Main files to compile
 
 | Minecraft Version | Pack Format |
 |------------------|-------------|
-| 1.21.9+         | 88.0 (default) |
+| 1.21.9+         | 88.0        |
 | 1.21.7 - 1.21.8 | 81          |
 | 1.21.6          | 80          |
 | 1.21.5          | 71          |
@@ -512,10 +512,10 @@ entry_points = []      # Main files to compile
 | 1.21 - 1.21.1   | 48          |
 | 1.20.5 - 1.20.6 | 41          |
 | 1.20.3 - 1.20.4 | 26          |
-| 1.20.2          | 18          |
+| 1.20.2          | 18 (default) |
 | 1.20 - 1.20.1   | 15          |
 
-**Note**: Cobble requires Minecraft 1.21.7+ (minimum pack format 81) and defaults to pack format 88 for Minecraft 1.21.9+ to support the latest features and improvements. Starting from Minecraft 1.21.9, pack format includes minor versions (e.g., 88.0).
+**Note**: Cobble requires Minecraft 1.20.2+ (minimum pack format 18) for function macro support and defaults to pack format 18 for maximum compatibility. Starting from Minecraft 1.21.9, pack format includes minor versions (e.g., 88.0).
 
 ## 📁 Project Structure
 

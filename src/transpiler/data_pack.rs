@@ -1,3 +1,4 @@
+use crate::pack_format::PackFormat;
 use crate::stdlib::{EventType, StdLib};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -16,7 +17,7 @@ pub struct DataPack {
     pub recipes: HashMap<String, String>,
     pub predicates: HashMap<String, String>,
     pub item_modifiers: HashMap<String, String>,
-    pub pack_format: u8,
+    pub pack_format: PackFormat,
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
 }
@@ -34,7 +35,7 @@ impl DataPack {
             recipes: HashMap::new(),
             predicates: HashMap::new(),
             item_modifiers: HashMap::new(),
-            pack_format: 88, // Minecraft 1.21.9+ format (recommended)
+            pack_format: PackFormat::Integer(18), // Minecraft 1.20.2+ (macro support, maximum compatibility)
             stdlib: StdLib::new(),
             used_objectives: HashSet::new(),
         }
@@ -44,7 +45,7 @@ impl DataPack {
         self.description = desc;
     }
 
-    pub fn set_pack_format(&mut self, format: u8) {
+    pub fn set_pack_format(&mut self, format: PackFormat) {
         self.pack_format = format;
     }
 

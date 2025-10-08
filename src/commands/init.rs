@@ -5,7 +5,7 @@ use std::path::PathBuf;
 pub struct InitOptions {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub pack_format: Option<u32>,
+    pub pack_format: Option<String>,
 }
 
 pub fn init(options: InitOptions) -> Result<(), String> {
@@ -36,28 +36,21 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     if let Some(desc) = options.description {
         config.project.description = desc;
     }
-    if let Some(format) = options.pack_format {
-        // Validate pack_format range (same validation as build.rs)
-        const MIN_PACK_FORMAT: u32 = 81;
-        const MAX_PACK_FORMAT: u32 = 255;
+    if let Some(format_str) = options.pack_format {
+        use crate::pack_format::PackFormat;
+        let pack_fmt = PackFormat::from_str(&format_str)?;
+        const MIN_PACK_FORMAT: u8 = 18;
 
-        if format < MIN_PACK_FORMAT {
+        if pack_fmt.major() < MIN_PACK_FORMAT {
             return Err(format!(
-                "pack_format must be at least {} (Minecraft 1.21.7+), got {}.\n\
-                Cobble requires Minecraft 1.21.7 or newer for macro function support.\n\
+                "pack_format must be at least {} (Minecraft 1.20.2+), got {}.\n\
+                Cobble requires Minecraft 1.20.2 or newer for macro function support.\n\
                 See https://minecraft.wiki/w/Pack_format for version compatibility.",
-                MIN_PACK_FORMAT, format
+                MIN_PACK_FORMAT, pack_fmt
             ));
         }
 
-        if format > MAX_PACK_FORMAT {
-            return Err(format!(
-                "pack_format must be between {} and {}, got {}",
-                MIN_PACK_FORMAT, MAX_PACK_FORMAT, format
-            ));
-        }
-
-        config.project.pack_format = format as u8;
+        config.project.pack_format = pack_fmt.major();
     }
 
     let config_path = project_dir.join("cobble.toml");

@@ -1929,3 +1929,243 @@ def test():
         "Should have exactly 3 wrapper functions for triple nested loops"
     );
 }
+
+// ============================================================================
+// REGRESSION TESTS FOR BUG FIXES
+// ============================================================================
+
+#[test]
+fn test_regression_minus_operator_context_aware() {
+    // Regression test for BUG #1: Context-aware tokenization for minus operator
+    // Previously: 10-5 was tokenized as [10, -5] instead of [10, -, 5]
+    let source = r#"
+def test():
+    a = 10-5
+    b = (5-3)*2
+    c = -10+5
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // 10-5 should compile-time evaluate to 5
+    assert!(content.contains("scoreboard players set a temp 5"));
+    // (5-3)*2 should compile-time evaluate to 4
+    assert!(content.contains("scoreboard players set b temp 4"));
+    // -10+5 should compile-time evaluate to -5
+    assert!(content.contains("scoreboard players set c temp -5"));
+}
+
+#[test]
+fn test_regression_power_operator_context_aware() {
+    // Regression test for BUG #1: Context-aware tokenization for power operator
+    // Previously: 2^3 was incorrectly tokenized (^ treated as coordinate marker)
+    let source = r#"
+def test():
+    a = 2^3
+    b = (2+3)^2
+    c = 10^2
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // 2^3 should compile-time evaluate to 8
+    assert!(content.contains("scoreboard players set a temp 8"));
+    // (2+3)^2 should compile-time evaluate to 25
+    assert!(content.contains("scoreboard players set b temp 25"));
+    // 10^2 should compile-time evaluate to 100
+    assert!(content.contains("scoreboard players set c temp 100"));
+}
+
+#[test]
+fn test_regression_decimal_pack_format() {
+    // Regression test for BUG #2: Decimal pack format support
+    // Previously: pack_format was u8, now supports decimals like "88.0"
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("test.cbl");
+    let output_dir = temp_dir.path().join("output");
+
+    fs::write(&input_file, "def test():\n    x = 1").unwrap();
+
+    // Build with decimal pack format
+    let result = cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: Some("88.0".to_string()),
+        description: None,
+        verbose: false,
+        zip: false,
+    });
+
+    assert!(result.is_ok());
+
+    // Check pack.mcmeta contains decimal format
+    let pack_meta = fs::read_to_string(output_dir.join("pack.mcmeta")).unwrap();
+    assert!(pack_meta.contains(r#""pack_format": "88.0""#));
+}
+
+#[test]
+fn test_regression_division_by_zero_error() {
+    // Regression test for BUG #3: Division by zero should error, not warn
+    // Previously: Division by zero only warned, now it errors
+    let source = r#"
+def test():
+    const divisor = 0
+    result = 10 / divisor
+"#;
+
+    let result = compile_source(source);
+
+    // Should fail with division by zero error
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("Division by zero"));
+}
+
+#[test]
+fn test_regression_modulo_by_zero_error() {
+    // Regression test for BUG #3: Modulo by zero should error, not warn
+    let source = r#"
+def test():
+    const divisor = 0
+    result = 10 % divisor
+"#;
+
+    let result = compile_source(source);
+
+    // Should fail with modulo by zero error
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("Modulo by zero"));
+}
+
+#[test]
+fn test_regression_power_exponent_limit() {
+    // Regression test for BUG #4: Power exponent should be limited
+    // Previously: base^500 generated 499 multiplication commands
+    let source = r#"
+def test():
+    base = 2
+    result = base ^ 500
+"#;
+
+    let result = compile_source(source);
+
+    // Should fail with "Power exponent too large" error
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("Power exponent too large"));
+    assert!(err.contains("500 > 100"));
+}
+
+#[test]
+fn test_regression_power_exponent_within_limit() {
+    // Verify that power exponents within the limit (<=100) still work
+    let source = r#"
+def test():
+    base = 2
+    result = base ^ 10
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should generate multiplication commands
+    assert!(content.contains("power_base"));
+    assert!(content.contains("*="));
+}
+
+#[test]
+fn test_regression_boundary_condition_gt_max() {
+    // Regression test for BUG #5: x > i32::MAX should be always false
+    // Previously: Used saturating_add which caused incorrect condition
+    let source = r#"
+def test():
+    max_val = 2147483647
+    if max_val > 2147483647:
+        x = 1
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should generate an always-false condition
+    // Uses "matches 0 unless matches 0" pattern
+    assert!(content.contains("if score max_val temp matches 0 unless score max_val temp matches 0"));
+}
+
+#[test]
+fn test_regression_boundary_condition_lt_min() {
+    // Regression test for BUG #5: x < i32::MIN should be always false
+    let source = r#"
+def test():
+    min_val = -2147483648
+    if min_val < -2147483648:
+        x = 1
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should generate an always-false condition
+    assert!(content.contains("if score min_val temp matches 0 unless score min_val temp matches 0"));
+}
+
+#[test]
+fn test_regression_boundary_condition_gte_max() {
+    // Regression test for BUG #5: x >= i32::MAX should work correctly
+    let source = r#"
+def test():
+    max_val = 2147483647
+    if max_val >= 2147483647:
+        x = 1
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should generate correct condition (matches 2147483647..)
+    assert!(content.contains("if score max_val temp matches 2147483647.."));
+}
+
+#[test]
+fn test_regression_boundary_condition_lte_min() {
+    // Regression test for BUG #5: x <= i32::MIN should work correctly
+    let source = r#"
+def test():
+    min_val = -2147483648
+    if min_val <= -2147483648:
+        x = 1
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Should generate correct condition (matches ..-2147483648)
+    assert!(content.contains("if score min_val temp matches ..-2147483648"));
+}
+
+#[test]
+fn test_regression_normal_comparisons_still_work() {
+    // Ensure normal comparisons (not at boundaries) still work correctly
+    let source = r#"
+def test():
+    a = 10
+    if a > 5:
+        b = 1
+    if a < 20:
+        c = 1
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // a > 5 should be "matches 6.."
+    assert!(content.contains("if score a temp matches 6.."));
+    // a < 20 should be "matches ..19"
+    assert!(content.contains("if score a temp matches ..19"));
+}

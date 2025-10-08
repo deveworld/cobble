@@ -24,9 +24,9 @@ enum Commands {
         #[arg(long)]
         description: Option<String>,
 
-        /// Set the pack format version (default: 88 for Minecraft 1.21.9+)
+        /// Set the pack format version (default: 88, supports decimal like 88.0)
         #[arg(long)]
-        pack_format: Option<u32>,
+        pack_format: Option<String>,
     },
 
     /// Build the data pack
@@ -42,9 +42,9 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
 
-        /// Override pack format version
+        /// Override pack format version (supports decimal like 88.0)
         #[arg(long)]
-        pack_format: Option<u32>,
+        pack_format: Option<String>,
 
         /// Override pack description
         #[arg(long)]
@@ -72,9 +72,9 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
 
-        /// Pack format version
+        /// Pack format version (supports decimal like 88.0)
         #[arg(long)]
-        pack_format: Option<u32>,
+        pack_format: Option<String>,
 
         /// Data pack description
         #[arg(long)]

@@ -26,7 +26,7 @@ cobble init [OPTIONS]
 **Options:**
 - `--name <NAME>` - Set the project name (default: current directory name)
 - `--description <DESC>` - Set the project description
-- `--pack-format <NUM>` - Set the pack format version (default: 88 for Minecraft 1.21.9)
+- `--pack-format <NUM>` - Set the pack format version (default: 18 for Minecraft 1.20.2+, supports decimal like 88.0)
 
 **Example:**
 ```bash
@@ -52,7 +52,7 @@ cobble build [SOURCE] [OPTIONS]
 **Options:**
 - `-o, --output <DIR>` - Output directory for the data pack (default: `./output`)
 - `--namespace <NAME>` - Override the namespace (default: from cobble.toml or directory name)
-- `--pack-format <NUM>` - Override pack format version
+- `--pack-format <NUM>` - Override pack format version (supports decimal like 88.0 for Minecraft 1.21.9+)
 - `--description <DESC>` - Override pack description
 - `-v, --verbose` - Show verbose output
 - `--zip` - Create a ZIP archive of the data pack
@@ -76,6 +76,9 @@ cobble build --zip
 
 # Build with all options
 cobble build src/ -o output/ --namespace mypack --pack-format 88 --zip --verbose
+
+# Build with decimal pack format (Minecraft 1.21.9+)
+cobble build --pack-format 88.0
 ```
 
 ### `cobble check`
@@ -173,10 +176,10 @@ entry_points = []
 | 1.21 - 1.21.1     | 48          |
 | 1.20.5 - 1.20.6   | 41          |
 | 1.20.3 - 1.20.4   | 26          |
-| 1.20.2            | 18          |
+| 1.20.2            | 18 (default) |
 | 1.20 - 1.20.1     | 15          |
 
-Cobble requires Minecraft 1.21.7+ (minimum pack format 81) and defaults to pack format 88 (Minecraft 1.21.9+) for best compatibility with modern features like macros.
+Cobble requires Minecraft 1.20.2+ (minimum pack format 18) for function macro support and defaults to pack format 18 for maximum compatibility across Minecraft versions.
 
 **Note**: Starting from Minecraft 1.21.9, pack format includes minor versions (e.g., 88.0). Cobble uses integer pack format internally, which is compatible with both formats.
 

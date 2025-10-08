@@ -241,19 +241,39 @@ impl<'a> ConditionTranslator<'a> {
         Ok(match op {
             Eq => format!("score {} {} matches {}", var_name, objective, value),
             NotEq => format!("unless score {} {} matches {}", var_name, objective, value),
-            Gt => format!(
-                "score {} {} matches {}..",
-                var_name,
-                objective,
-                value.saturating_add(1)
-            ),
+            Gt => {
+                // Handle boundary case: x > i32::MAX is always false
+                if value == i32::MAX {
+                    // Use a condition that's always false: check if score matches a value AND doesn't match it
+                    return Ok(format!(
+                        "score {} {} matches 0 unless score {} {} matches 0",
+                        var_name, objective, var_name, objective
+                    ));
+                }
+                format!(
+                    "score {} {} matches {}..",
+                    var_name,
+                    objective,
+                    value + 1  // Safe because we checked value != i32::MAX
+                )
+            }
             GtEq => format!("score {} {} matches {}..", var_name, objective, value),
-            Lt => format!(
-                "score {} {} matches ..{}",
-                var_name,
-                objective,
-                value.saturating_sub(1)
-            ),
+            Lt => {
+                // Handle boundary case: x < i32::MIN is always false
+                if value == i32::MIN {
+                    // Use a condition that's always false
+                    return Ok(format!(
+                        "score {} {} matches 0 unless score {} {} matches 0",
+                        var_name, objective, var_name, objective
+                    ));
+                }
+                format!(
+                    "score {} {} matches ..{}",
+                    var_name,
+                    objective,
+                    value - 1  // Safe because we checked value != i32::MIN
+                )
+            }
             LtEq => format!("score {} {} matches ..{}", var_name, objective, value),
             _ => {
                 return Err("Unsupported operator for literal comparison".to_string());

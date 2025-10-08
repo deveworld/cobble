@@ -232,7 +232,7 @@ impl Transpiler {
         self.data_pack.set_description(desc);
     }
 
-    pub fn set_pack_format(&mut self, format: u8) {
+    pub fn set_pack_format(&mut self, format: crate::pack_format::PackFormat) {
         self.data_pack.set_pack_format(format);
     }
 
