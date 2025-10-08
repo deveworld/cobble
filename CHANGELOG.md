@@ -5,6 +5,35 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.15] - 2025-01-08
+
+### Fixed
+- **Import Stack Management**: Fixed false circular dependency warnings when building multiple files in a directory
+  - Cleared import stack at the start of each file's transpilation to prevent cross-file contamination
+  - Modified `src/transpiler/mod.rs:242` to add `self.import_stack.clear()` at transpile start
+  - Real circular dependencies are still properly detected and warned about
+  - Fixes issue where building directories would show false "main → main" circular import warnings
+
+- **Selector Alias Replacement**: Fixed selector aliases being incorrectly replaced inside JSON strings and NBT data
+  - Selector aliases (e.g., `@Boss = @e[type=zombie,tag=boss]`) are now only replaced in command contexts
+  - Preserved literal `@Boss` text in JSON components like `{"text":"The @Boss is here"}`
+  - Modified `src/transpiler/command_processor.rs:202-249` to check if replacement occurs inside quotes
+  - Prevents text corruption in tellraw messages and NBT display names
+
+- **Double Brace Escaping**: Implemented proper `{{variable}}` escape sequence handling
+  - Double braces `{{var}}` now correctly output literal `{var}` text as documented
+  - Single braces `{var}` continue to work as macro parameters with `$(var)` substitution
+  - Modified `src/transpiler/command_processor.rs:57-80` to detect and handle double brace patterns
+  - Enables literal player names: `{{Steve}}` → `{Steve}` and other literal brace content
+  - Fixes documented feature from `docs/cli.md:358` that was not working
+
+### Verified
+- All 91 tests passing (7 unit + 86 integration + 5 negative steps)
+- Double brace escaping works correctly: `{{player}}` → `{player}` literal
+- Selector aliases preserved in JSON text but replaced in commands
+- No false circular dependency warnings when building directories
+- All generated Minecraft commands validated for 1.20.2+ compatibility
+
 ## [0.5.14] - 2025-10-08
 
 ### Fixed

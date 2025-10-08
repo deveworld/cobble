@@ -237,6 +237,10 @@ impl Transpiler {
     }
 
     pub fn transpile(&mut self, program: &Program) -> Result<(), String> {
+        // Clear import stack for each file's transpilation to prevent false circular dependency warnings
+        // when building multiple files in a directory
+        self.import_stack.clear();
+
         // Process imports
         for import in &program.imports {
             self.process_import(import)?;
