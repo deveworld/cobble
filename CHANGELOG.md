@@ -5,6 +5,25 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.16] - 2025-01-09
+
+### Fixed
+- **Tokenizer Range Syntax**: Fixed parsing of Minecraft range syntax (`1..`, `..5`, `1..5`)
+  - Previously failed to parse `matches 1..` with "Invalid number literal" error
+  - Tokenizer now correctly identifies `..` as range operator, not part of decimal number
+  - Modified `src/parser/tokenizer.rs:326-336, 557-567` to check for double dots before consuming as decimal
+
+- **Circular Import Detection**: Fixed circular import detection being disabled by `import_stack.clear()`
+  - Previously circular imports were silently ignored (e.g., a.cbl → b.cbl → a.cbl)
+  - Now correctly maintains import stack to detect and warn about circular dependencies
+  - Modified `src/transpiler/mod.rs:242-247` to preserve main file in import stack
+
+- **Execute Block Python Expressions**: Added translation of Python expressions in execute blocks
+  - Previously `as @a if x > 5:` generated invalid `execute as @a if x > 5` command
+  - Now detects and translates Python expressions to Minecraft conditions
+  - Added helper functions in `src/transpiler/mod.rs:1157-1266` for expression detection
+  - Modified `src/transpiler/statement_processors/execute_processor.rs:73-111` for smart translation
+
 ## [0.5.15] - 2025-01-08
 
 ### Fixed

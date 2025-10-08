@@ -320,7 +320,19 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                 // Number
                 let mut num = String::new();
                 while let Some(&ch) = chars.peek() {
-                    if ch.is_ascii_digit() || ch == '.' {
+                    if ch.is_ascii_digit() {
+                        num.push(chars.next().unwrap());
+                    } else if ch == '.' {
+                        // Check if this is a range operator (..)
+                        let mut temp_chars = chars.clone();
+                        temp_chars.next(); // skip first dot
+                        if let Some(&next_ch) = temp_chars.peek() {
+                            if next_ch == '.' {
+                                // This is "..", stop parsing number
+                                break;
+                            }
+                        }
+                        // Single dot, part of decimal number
                         num.push(chars.next().unwrap());
                     } else {
                         break;
@@ -539,7 +551,19 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                     if next_ch.is_ascii_digit() && !should_be_binary_minus(tokens) {
                         let mut num = String::from("-");
                         while let Some(&ch) = chars.peek() {
-                            if ch.is_ascii_digit() || ch == '.' {
+                            if ch.is_ascii_digit() {
+                                num.push(chars.next().unwrap());
+                            } else if ch == '.' {
+                                // Check if this is a range operator (..)
+                                let mut temp_chars = chars.clone();
+                                temp_chars.next(); // skip first dot
+                                if let Some(&next_ch) = temp_chars.peek() {
+                                    if next_ch == '.' {
+                                        // This is "..", stop parsing number
+                                        break;
+                                    }
+                                }
+                                // Single dot, part of decimal number
                                 num.push(chars.next().unwrap());
                             } else {
                                 break;

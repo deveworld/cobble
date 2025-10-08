@@ -19,6 +19,7 @@ def tick():
 def on_death():
     """Handle player death"""
     # Respawn players and deduct coins
+    # Note: Raw Minecraft syntax in execute blocks
     as @a at @s if score @s deaths matches 1..:
         /tellraw @s {"text":"You died! -10 coins", "color":"red"}
         /scoreboard players remove @s coins 10
