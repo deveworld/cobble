@@ -35,7 +35,7 @@ fn default_version() -> String {
 }
 
 fn default_pack_format() -> u8 {
-    88 // Minecraft 1.21.9+ format (recommended)
+    18 // Minecraft 1.20.2+ (macro support, maximum compatibility)
 }
 
 fn default_source() -> String {
@@ -54,24 +54,26 @@ impl CobbleConfig {
             .map_err(|e| format!("Failed to parse config file: {}", e))?;
 
         // Validate pack_format
-        if config.project.pack_format < 81 {
+        if config.project.pack_format < 18 {
             return Err(format!(
-                "Invalid pack_format: {}. Must be >= 81 (Minecraft 1.21.7+).\n\
+                "Invalid pack_format: {}. Must be >= 18 (Minecraft 1.20.2+).\n\
                  \n\
-                 Current Minecraft versions:\n\
+                 Cobble requires Minecraft 1.20.2+ for function macro support.\n\
+                 Recommended pack_format values:\n\
+                 - 1.20.2: pack_format = 18 (maximum compatibility)\n\
                  - 1.21.7-1.21.8: pack_format = 81\n\
-                 - 1.21.9+: pack_format = 88 (recommended)\n\
+                 - 1.21.9+: pack_format = 88\n\
                  \n\
                  Update your cobble.toml:\n\
                  [project]\n\
-                 pack_format = 88",
+                 pack_format = 18",
                 config.project.pack_format
             ));
         }
 
         if config.project.pack_format > 100 {
             eprintln!(
-                "Warning: pack_format {} is unusually high. Current latest is 88.",
+                "Warning: pack_format {} is unusually high. Current latest is 88 (1.21.9).",
                 config.project.pack_format
             );
         }

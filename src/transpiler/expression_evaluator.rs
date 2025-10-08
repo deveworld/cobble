@@ -146,6 +146,17 @@ impl<'a> ExpressionEvaluator<'a> {
                                 if value < 0 {
                                     return Err("Power exponent must be non-negative".to_string());
                                 }
+                                // Limit maximum exponent to prevent excessive command generation
+                                const MAX_POWER_EXPONENT: i32 = 100;
+                                if value > MAX_POWER_EXPONENT {
+                                    return Err(format!(
+                                        "Power exponent too large: {} > {}.\n\
+                                        \n\
+                                        Large exponents generate {} multiplication commands, which is excessive.\n\
+                                        Solution: Use a smaller exponent or implement iterative multiplication in a loop.",
+                                        value, MAX_POWER_EXPONENT, value - 1
+                                    ));
+                                }
                                 if value == 0 {
                                     // x^0 = 1
                                     commands

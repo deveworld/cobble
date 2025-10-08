@@ -213,6 +213,49 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
     Ok(tokens)
 }
 
+/// Check if the minus sign should be treated as a binary operator
+/// based on the previous token context
+fn should_be_binary_minus(tokens: &[Token]) -> bool {
+    // If previous token is one of these, minus is a binary operator:
+    // Number, Ident, RParen, RBracket, True_, False_, None_
+    if let Some(last_token) = tokens.last() {
+        matches!(
+            last_token,
+            Token::Number(_)
+                | Token::Ident(_)
+                | Token::RParen
+                | Token::RBracket
+                | Token::True_
+                | Token::False_
+                | Token::None_
+        )
+    } else {
+        // At start of line or after operators/keywords, it's unary
+        false
+    }
+}
+
+/// Check if the caret should be treated as a power operator
+/// based on the previous token context
+fn should_be_power_operator(tokens: &[Token]) -> bool {
+    // Similar to should_be_binary_minus - if previous token can be an operand,
+    // then ^ is the power operator, not a coordinate marker
+    if let Some(last_token) = tokens.last() {
+        matches!(
+            last_token,
+            Token::Number(_)
+                | Token::Ident(_)
+                | Token::RParen
+                | Token::RBracket
+                | Token::True_
+                | Token::False_
+                | Token::None_
+        )
+    } else {
+        false
+    }
+}
+
 /// Tokenize a single line
 fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
     let mut chars = line.chars().peekable();
@@ -392,10 +435,14 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
             }
             '^' => {
                 chars.next();
-                // Check if it's a coordinate (^number) or power operator (^)
-                if let Some(&ch) = chars.peek() {
+                // Context-aware: check if it's a coordinate (^number) or power operator (^)
+                // If previous token suggests binary operator context, it's power operator
+                if should_be_power_operator(tokens) {
+                    // It's a power operator
+                    tokens.push(Token::Caret);
+                } else if let Some(&ch) = chars.peek() {
                     if ch.is_ascii_digit() || ch == '.' || ch == '-' {
-                        // It's a coordinate marker
+                        // It's a coordinate marker (in execute commands)
                         let mut coord = String::from("^");
                         while let Some(&ch) = chars.peek() {
                             if ch.is_ascii_digit() || ch == '.' || ch == '-' {
@@ -484,9 +531,12 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
             }
             '-' => {
                 chars.next();
-                // Could be a negative number or minus operator
+                // Context-aware parsing: check if this should be binary minus or unary negative
                 if let Some(&next_ch) = chars.peek() {
-                    if next_ch.is_ascii_digit() {
+                    // Only treat as negative number if:
+                    // 1. Next char is a digit
+                    // 2. Previous token suggests unary context (not a binary operator context)
+                    if next_ch.is_ascii_digit() && !should_be_binary_minus(tokens) {
                         let mut num = String::from("-");
                         while let Some(&ch) = chars.peek() {
                             if ch.is_ascii_digit() || ch == '.' {
@@ -501,6 +551,7 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                         }
                         tokens.push(Token::Number(num));
                     } else {
+                        // Binary minus operator
                         tokens.push(Token::Minus);
                     }
                 } else {

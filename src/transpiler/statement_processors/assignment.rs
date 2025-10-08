@@ -290,6 +290,21 @@ impl Transpiler {
                                             "Power exponent must be non-negative".to_string()
                                         );
                                     }
+                                    // Limit maximum exponent to prevent excessive command generation
+                                    const MAX_POWER_EXPONENT: i32 = 100;
+                                    if value > MAX_POWER_EXPONENT {
+                                        return Err(format!(
+                                            "Power exponent too large: {} > {}.\n\
+                                            \n\
+                                            Large exponents generate {} multiplication commands, which is excessive.\n\
+                                            Solution: Use a smaller exponent or implement iterative multiplication:\n\
+                                            \n\
+                                            result = 1\n\
+                                            for i in range({}):\n\
+                                                result = result * base",
+                                            value, MAX_POWER_EXPONENT, value - 1, value
+                                        ));
+                                    }
                                     if value == 0 {
                                         // x^0 = 1
                                         commands.push(format!(
@@ -433,6 +448,21 @@ impl Transpiler {
                                 }
                                 BinaryOp::Div => {
                                     // score = value / var (not commonly used, but implemented)
+                                    // Check if var is a compile-time constant with value 0
+                                    if let Some(const_val) = self.compile_time_constants.get(var) {
+                                        if *const_val == 0.0 {
+                                            return Err(format!(
+                                                "Division by zero: Variable '{}' has constant value 0.\n\
+                                                \n\
+                                                Division by zero causes undefined behavior in Minecraft.\n\
+                                                Solution: Check the divisor before division:\n\
+                                                \n\
+                                                if {} != 0:\n\
+                                                    {} = {} / {}",
+                                                var, var, assign.target, value, var
+                                            ));
+                                        }
+                                    }
                                     self.data_pack.track_objective("divisor");
                                     commands.push(format!(
                                         "scoreboard players set {} temp {}",
@@ -445,6 +475,21 @@ impl Transpiler {
                                 }
                                 BinaryOp::Mod => {
                                     // score = value % var
+                                    // Check if var is a compile-time constant with value 0
+                                    if let Some(const_val) = self.compile_time_constants.get(var) {
+                                        if *const_val == 0.0 {
+                                            return Err(format!(
+                                                "Modulo by zero: Variable '{}' has constant value 0.\n\
+                                                \n\
+                                                Modulo by zero causes undefined behavior in Minecraft.\n\
+                                                Solution: Check the divisor before modulo:\n\
+                                                \n\
+                                                if {} != 0:\n\
+                                                    {} = {} % {}",
+                                                var, var, assign.target, value, var
+                                            ));
+                                        }
+                                    }
                                     self.data_pack.track_objective("modulus");
                                     commands.push(format!(
                                         "scoreboard players set {} temp {}",
@@ -676,12 +721,16 @@ impl Transpiler {
                                         // Check if var2 is a compile-time constant with value 0
                                         if let Some(const_val) = self.compile_time_constants.get(var2) {
                                             if *const_val == 0.0 {
-                                                eprintln!(
-                                                    "⚠️  Warning: Division by variable '{}' which has constant value 0.\n\
-                                                    This will cause undefined behavior in Minecraft (typically returns 0).\n\
-                                                    Consider checking the divisor before division.",
-                                                    var2
-                                                );
+                                                return Err(format!(
+                                                    "Division by zero: Variable '{}' has constant value 0.\n\
+                                                    \n\
+                                                    Division by zero causes undefined behavior in Minecraft.\n\
+                                                    Solution: Check the divisor before division:\n\
+                                                    \n\
+                                                    if {} != 0:\n\
+                                                        {} = {} / {}",
+                                                    var2, var2, assign.target, assign.target, var2
+                                                ));
                                             }
                                         }
                                         commands.push(format!(
@@ -693,12 +742,16 @@ impl Transpiler {
                                         // Check if var2 is a compile-time constant with value 0
                                         if let Some(const_val) = self.compile_time_constants.get(var2) {
                                             if *const_val == 0.0 {
-                                                eprintln!(
-                                                    "⚠️  Warning: Modulo by variable '{}' which has constant value 0.\n\
-                                                    This will cause undefined behavior in Minecraft (typically returns 0).\n\
-                                                    Consider checking the divisor before modulo operation.",
-                                                    var2
-                                                );
+                                                return Err(format!(
+                                                    "Modulo by zero: Variable '{}' has constant value 0.\n\
+                                                    \n\
+                                                    Modulo by zero causes undefined behavior in Minecraft.\n\
+                                                    Solution: Check the divisor before modulo:\n\
+                                                    \n\
+                                                    if {} != 0:\n\
+                                                        {} = {} % {}",
+                                                    var2, var2, assign.target, assign.target, var2
+                                                ));
                                             }
                                         }
                                         commands.push(format!(

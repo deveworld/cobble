@@ -9,7 +9,7 @@ pub fn watch(
     input: Option<PathBuf>,
     output: Option<PathBuf>,
     namespace: Option<String>,
-    pack_format: Option<u32>,
+    pack_format: Option<String>,
     description: Option<String>,
     verbose: bool,
     zip: bool,
@@ -49,7 +49,7 @@ pub fn watch(
         input: Some(watch_path.clone()),
         output: output.clone(),
         namespace: namespace.clone(),
-        pack_format,
+        pack_format: pack_format.clone(),
         description: description.clone(),
         verbose,
         zip,
@@ -79,14 +79,26 @@ pub fn watch(
     loop {
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(event) => {
-                // Check if the event is relevant (file modification or creation)
+                // Check if the event is relevant
+                // Rebuild on: create, modify, delete, or rename of Cobble files or config
                 let should_rebuild = match event.kind {
-                    EventKind::Modify(_) | EventKind::Create(_) => {
-                        // Check if it's a Cobble file
+                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
                         event.paths.iter().any(|p| {
-                            p.extension()
+                            // Rebuild if it's a Cobble file
+                            if p.extension()
                                 .map(|ext| ext == "cbl" || ext == "cobble")
                                 .unwrap_or(false)
+                            {
+                                return true;
+                            }
+                            // Rebuild if cobble.toml changed
+                            if p.file_name()
+                                .map(|name| name == "cobble.toml")
+                                .unwrap_or(false)
+                            {
+                                return true;
+                            }
+                            false
                         })
                     }
                     _ => false,
@@ -108,7 +120,7 @@ pub fn watch(
                         input: Some(watch_path.clone()),
                         output: output.clone(),
                         namespace: namespace.clone(),
-                        pack_format,
+                        pack_format: pack_format.clone(),
                         description: description.clone(),
                         verbose,
                         zip,

@@ -224,7 +224,7 @@ def greet():
     /tellraw @a {"text":"Hello!", "color":"green"}
 ```
 
-### Functions with Parameters (Minecraft 1.21.7+)
+### Functions with Parameters (Minecraft 1.20.2+)
 
 Cobble supports function parameters using Minecraft's macro system:
 
@@ -235,7 +235,7 @@ def give_reward(player, amount):
     /tellraw {player} {"text":"You received diamonds!", "color":"gold"}
 ```
 
-**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. This is Minecraft's macro syntax (1.20.2+).
+**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. This is Minecraft's macro syntax, available since 1.20.2 (pack format 18).
 
 ### Calling Functions
 
