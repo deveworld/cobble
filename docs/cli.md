@@ -373,10 +373,11 @@ give {player} diamond 1
 ```bash
 cobble build --pack-format 48  # For Minecraft 1.21-1.21.1
 cobble build --pack-format 81  # For Minecraft 1.21.7-1.21.8
-cobble build --pack-format 88  # For Minecraft 1.21.9+ (recommended)
+cobble build --pack-format 88  # For Minecraft 1.21.9+
+cobble build --pack-format 88.0  # For Minecraft 1.21.9+ (decimal format)
 ```
 
-Note: Cobble requires Minecraft 1.21.7+ (pack format 81 or higher)
+Note: Cobble requires Minecraft 1.20.2+ (pack format 18 or higher) for macro function support
 
 ### Issue: Functions not found
 

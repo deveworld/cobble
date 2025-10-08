@@ -37,12 +37,15 @@ impl PackFormat {
         }
     }
 
-    /// Convert to JSON value (integer or decimal string)
+    /// Convert to JSON value (integer or decimal number)
     pub fn to_json_value(&self) -> serde_json::Value {
         match self {
             PackFormat::Integer(v) => serde_json::Value::Number((*v).into()),
             PackFormat::Decimal(major, minor) => {
-                serde_json::Value::String(format!("{}.{}", major, minor))
+                // Return as JSON number (float), not string
+                let value_str = format!("{}.{}", major, minor);
+                let value: f64 = value_str.parse().unwrap();
+                serde_json::json!(value)
             }
         }
     }
@@ -80,7 +83,11 @@ impl Serialize for PackFormat {
         match self {
             PackFormat::Integer(v) => serializer.serialize_u8(*v),
             PackFormat::Decimal(major, minor) => {
-                serializer.serialize_str(&format!("{}.{}", major, minor))
+                // Serialize as JSON number (float), not string
+                // Example: Decimal(88, 0) → 88.0 (number), not "88.0" (string)
+                let value_str = format!("{}.{}", major, minor);
+                let value: f64 = value_str.parse().unwrap();
+                serializer.serialize_f64(value)
             }
         }
     }

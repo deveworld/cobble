@@ -2003,9 +2003,9 @@ fn test_regression_decimal_pack_format() {
 
     assert!(result.is_ok());
 
-    // Check pack.mcmeta contains decimal format
+    // Check pack.mcmeta contains decimal format as JSON number, not string
     let pack_meta = fs::read_to_string(output_dir.join("pack.mcmeta")).unwrap();
-    assert!(pack_meta.contains(r#""pack_format": "88.0""#));
+    assert!(pack_meta.contains(r#""pack_format": 88.0"#));
 }
 
 #[test]

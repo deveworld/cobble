@@ -369,10 +369,18 @@ pub struct DataPack {
     pub output_dir: PathBuf,
     pub functions: HashMap<String, Vec<String>>,
     pub tags: HashMap<String, Vec<String>>,
-    pub pack_format: u8,
+    pub advancements: HashMap<String, String>,
+    pub loot_tables: HashMap<String, String>,
+    pub recipes: HashMap<String, String>,
+    pub predicates: HashMap<String, String>,
+    pub item_modifiers: HashMap<String, String>,
+    pub pack_format: PackFormat,  // Supports both integer (18) and decimal (88.0) formats
     pub stdlib: StdLib,
+    pub used_objectives: HashSet<String>,
 }
 ```
+
+**Note**: `pack_format` uses the `PackFormat` enum which supports both integer formats (e.g., 18, 48, 88) and decimal formats (e.g., 88.0, 88.1) introduced in Minecraft 1.21.9+. The decimal format is serialized as a JSON number (float), not a string.
 
 #### Methods
 

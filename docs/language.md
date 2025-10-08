@@ -826,11 +826,12 @@ stdlib.addEventListener(event.TICK, game_loop)
 
 ## Minecraft Version Compatibility
 
-Cobble requires **Minecraft 1.21.7+** (minimum pack format 81) and defaults to **Minecraft 1.21.9** (pack format 88). Key features:
+Cobble requires **Minecraft 1.20.2+** (minimum pack format 18) and defaults to pack format 18 for maximum compatibility. Key features:
 
 - **Macros**: Function parameters use the macro system introduced in 1.20.2+
 - **Modern commands**: Uses latest command syntax
 - **Data packs**: Full data pack specification support
+- **Decimal pack formats**: Supports decimal formats (e.g., 88.0) introduced in Minecraft 1.21.9+
 
 ## Limitations
 
