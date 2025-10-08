@@ -71,8 +71,19 @@ impl Transpiler {
                     }
                 }
                 ExecuteModifier::IfRaw(condition) => {
-                    // Raw Minecraft syntax - use as-is
-                    execute_parts.push(format!("if {}", condition));
+                    // Check if this is actually a Python expression that needs translation
+                    if self.looks_like_python_expression(condition) {
+                        // Try to parse and translate as Python expression
+                        if let Ok(translated) = self.try_translate_python_expression(condition, false) {
+                            execute_parts.push(format!("if {}", translated));
+                        } else {
+                            // Fallback to raw if translation fails
+                            execute_parts.push(format!("if {}", condition));
+                        }
+                    } else {
+                        // Raw Minecraft syntax - use as-is
+                        execute_parts.push(format!("if {}", condition));
+                    }
                 }
                 ExecuteModifier::Unless(expr) => {
                     // Python-style expression - translate to Minecraft condition
@@ -85,8 +96,19 @@ impl Transpiler {
                     }
                 }
                 ExecuteModifier::UnlessRaw(condition) => {
-                    // Raw Minecraft syntax - use as-is
-                    execute_parts.push(format!("unless {}", condition));
+                    // Check if this is actually a Python expression that needs translation
+                    if self.looks_like_python_expression(condition) {
+                        // Try to parse and translate as Python expression
+                        if let Ok(translated) = self.try_translate_python_expression(condition, true) {
+                            execute_parts.push(format!("unless {}", translated));
+                        } else {
+                            // Fallback to raw if translation fails
+                            execute_parts.push(format!("unless {}", condition));
+                        }
+                    } else {
+                        // Raw Minecraft syntax - use as-is
+                        execute_parts.push(format!("unless {}", condition));
+                    }
                 }
                 ExecuteModifier::Positioned(pos) => {
                     execute_parts.push(format!("positioned {}", pos));

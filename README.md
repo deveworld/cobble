@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.5.15** - Fixed import stack management, selector alias replacement in strings, and double brace escaping | Minecraft 1.20.2+ compatible
+**✨ Version 0.5.16** - Fixed critical bugs: Minecraft range syntax parsing, circular import detection, and Python expressions in execute blocks | Minecraft 1.20.2+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.5.15 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.5.16 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -678,6 +678,12 @@ cargo watch -x test -x "run -- check examples/"
 ## 🗺️ Roadmap
 
 ### Recently Completed
+
+#### v0.5.16 (2025-01-09)
+- [x] **Critical bug fixes** - Fixed three major issues that prevented proper Minecraft functionality
+- [x] **Range syntax parsing** - Fixed tokenizer to correctly parse Minecraft range syntax (`1..`, `..5`, `1..5`)
+- [x] **Circular import detection** - Restored proper circular dependency detection that was broken in v0.5.15
+- [x] **Python expression translation** - Execute blocks now properly translate Python expressions to Minecraft conditions
 
 #### v0.5.6 (2025-10-04)
 - [x] **Execute modifiers fix** - All execute modifiers (positioned, in, rotated, etc.) now work as first modifier

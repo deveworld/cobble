@@ -368,22 +368,40 @@ pub fn token_parser<'a>(
             .at_least(1)
             .collect::<Vec<Token>>()
             .map(|tokens| {
-                // Convert tokens to string, but be smart about spacing (avoid ". .")
+                // Convert tokens to string, but be smart about spacing
                 let mut result = String::new();
-                let mut prev_was_dot = false;
+                let mut prev_token: Option<&Token> = None;
+
                 for (i, token) in tokens.iter().enumerate() {
                     let token_str = format!("{}", token);
-                    let is_dot = matches!(token, Token::Dot);
 
-                    // Add space before token unless:
-                    // - It's the first token
-                    // - Previous token was a dot
-                    // - Current token is a dot
-                    if i > 0 && !prev_was_dot && !is_dot {
+                    // Determine if we need a space before this token
+                    let need_space = if i == 0 {
+                        false
+                    } else if let Some(prev) = prev_token {
+                        match (prev, token) {
+                            // No space between dots (for "..")
+                            (Token::Dot, Token::Dot) => false,
+                            // No space after dot if followed by number (for "..10")
+                            (Token::Dot, Token::Number(_)) => false,
+                            // Space after dot for other cases like "1.. if"
+                            (Token::Dot, _) => true,
+                            // No space before dots
+                            (_, Token::Dot) => false,
+                            // No space between minus and number when it's a negative number
+                            (Token::Minus, Token::Number(_)) => false,
+                            // Default: add space
+                            _ => true,
+                        }
+                    } else {
+                        true
+                    };
+
+                    if need_space {
                         result.push(' ');
                     }
                     result.push_str(&token_str);
-                    prev_was_dot = is_dot;
+                    prev_token = Some(token);
                 }
                 result
             });
@@ -395,13 +413,13 @@ pub fn token_parser<'a>(
             just(&Token::At)
                 .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
                 .map(ExecuteModifier::At),
-            // if/unless in execute blocks: ALWAYS use raw Minecraft syntax
-            // Python boolean expressions are only supported in regular if statements
+            // if/unless in execute blocks:
+            // For now, keep as raw and let transpiler determine if it's Python expression
             just(&Token::If)
-                .ignore_then(exec_condition)
+                .ignore_then(exec_condition.clone())
                 .map(ExecuteModifier::IfRaw),
             just(&Token::Unless)
-                .ignore_then(exec_condition)
+                .ignore_then(exec_condition.clone())
                 .map(ExecuteModifier::UnlessRaw),
             // positioned <coords>
             select_ref! { Token::Ident(s) if s == "positioned" => s.clone() }

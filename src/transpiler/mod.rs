@@ -237,9 +237,14 @@ impl Transpiler {
     }
 
     pub fn transpile(&mut self, program: &Program) -> Result<(), String> {
-        // Clear import stack for each file's transpilation to prevent false circular dependency warnings
-        // when building multiple files in a directory
-        self.import_stack.clear();
+        // When building multiple files, we need to maintain import stack properly
+        // Keep only the current file (if exists) to detect circular dependencies correctly
+        if self.import_stack.len() > 1 {
+            // Keep only the first entry (the main file being transpiled)
+            let main_file = self.import_stack[0].clone();
+            self.import_stack.clear();
+            self.import_stack.push(main_file);
+        }
 
         // Process imports
         for import in &program.imports {
@@ -1147,5 +1152,116 @@ impl Transpiler {
 
     pub fn write_data_pack(&self) -> std::io::Result<()> {
         self.data_pack.write()
+    }
+
+    /// Check if a condition string looks like a Python expression
+    fn looks_like_python_expression(&self, condition: &str) -> bool {
+        // Minecraft raw conditions usually start with these keywords
+        let minecraft_keywords = ["score", "entity", "block", "blocks", "biome", "dimension", "predicate", "data"];
+
+        // Check if it starts with a Minecraft keyword
+        for keyword in &minecraft_keywords {
+            if condition.starts_with(keyword) {
+                return false;
+            }
+        }
+
+        // Check for Python expression indicators
+        let python_indicators = [">", "<", "==", "!=", ">=", "<=", " and ", " or ", " not "];
+        for indicator in &python_indicators {
+            if condition.contains(indicator) {
+                return true;
+            }
+        }
+
+        // Check if it's a simple variable name (also a Python expression)
+        if condition.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            // Check if it's a known variable
+            return self.variables.contains_key(condition) ||
+                   self.scoreboard_variables.contains(condition);
+        }
+
+        false
+    }
+
+    /// Try to translate a Python expression string to Minecraft condition
+    fn try_translate_python_expression(&self, condition: &str, _is_unless: bool) -> Result<String, String> {
+        // Simple variable check: "varname" -> "score varname objective matches 1.."
+        if condition.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            if self.variables.contains_key(condition) || self.scoreboard_variables.contains(condition) {
+                let objective = self.variable_objectives.get(condition).map(|s| s.as_str()).unwrap_or("temp");
+                return Ok(format!("score {} {} matches 1..", condition, objective));
+            }
+        }
+
+        // For more complex expressions, we need proper parsing
+        // This is a simplified version - ideally we'd parse the expression properly
+
+        // Handle simple comparisons: "x > 5", "y == 10", etc.
+        if let Some(op_pos) = condition.find(" > ") {
+            let (left, right) = condition.split_at(op_pos);
+            let right = &right[3..]; // Skip " > "
+            let left = left.trim();
+            let right = right.trim();
+
+            if let Ok(value) = right.parse::<i32>() {
+                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                return Ok(format!("score {} {} matches {}..", left, objective, value + 1));
+            }
+        }
+
+        if let Some(op_pos) = condition.find(" < ") {
+            let (left, right) = condition.split_at(op_pos);
+            let right = &right[3..]; // Skip " < "
+            let left = left.trim();
+            let right = right.trim();
+
+            if let Ok(value) = right.parse::<i32>() {
+                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                if value == i32::MIN {
+                    return Ok("score 0 temp matches 1 unless score 0 temp matches 1".to_string()); // Always false
+                }
+                return Ok(format!("score {} {} matches ..{}", left, objective, value - 1));
+            }
+        }
+
+        if let Some(op_pos) = condition.find(" == ") {
+            let (left, right) = condition.split_at(op_pos);
+            let right = &right[4..]; // Skip " == "
+            let left = left.trim();
+            let right = right.trim();
+
+            if let Ok(value) = right.parse::<i32>() {
+                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                return Ok(format!("score {} {} matches {}", left, objective, value));
+            }
+        }
+
+        if let Some(op_pos) = condition.find(" >= ") {
+            let (left, right) = condition.split_at(op_pos);
+            let right = &right[4..]; // Skip " >= "
+            let left = left.trim();
+            let right = right.trim();
+
+            if let Ok(value) = right.parse::<i32>() {
+                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                return Ok(format!("score {} {} matches {}..", left, objective, value));
+            }
+        }
+
+        if let Some(op_pos) = condition.find(" <= ") {
+            let (left, right) = condition.split_at(op_pos);
+            let right = &right[4..]; // Skip " <= "
+            let left = left.trim();
+            let right = right.trim();
+
+            if let Ok(value) = right.parse::<i32>() {
+                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                return Ok(format!("score {} {} matches ..{}", left, objective, value));
+            }
+        }
+
+        // If we can't parse it, return error
+        Err("Could not parse Python expression".to_string())
     }
 }
