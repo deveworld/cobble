@@ -65,7 +65,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     let pack_format = if let Some(ref pack_fmt_str) = options.pack_format {
         PackFormat::from_str(pack_fmt_str)?
     } else if let Some(ref cfg) = config {
-        PackFormat::Integer(cfg.project.pack_format)
+        PackFormat::from_str(&cfg.project.pack_format)?
     } else {
         PackFormat::Integer(18) // Minecraft 1.20.2+ (macro support, maximum compatibility)
     };

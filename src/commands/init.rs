@@ -50,7 +50,7 @@ pub fn init(options: InitOptions) -> Result<(), String> {
             ));
         }
 
-        config.project.pack_format = pack_fmt.major();
+        config.project.pack_format = format_str;
     }
 
     let config_path = project_dir.join("cobble.toml");

@@ -339,7 +339,7 @@ impl<'a> CommandProcessor<'a> {
         let command = first_parts[0];
 
         // Handle title and tellraw differently due to different number of arguments
-        let (selector, action, message) = if command == "title" {
+        let (selector, action, mut message) = if command == "title" {
             // Title: "title <selector> <action> <message>"
             let parts: Vec<&str> = cmd.trim().splitn(4, ' ').collect();
             if parts.len() < 4 {
@@ -392,16 +392,95 @@ impl<'a> CommandProcessor<'a> {
             }
         }
 
-        // If message is a JSON object, extract the text value
-        // Example: {"text":"Hello {player}"} -> "Hello {player}"
-        let mut message = message;
+        // If message is a JSON object, we need to handle it specially to preserve styling
+        // Example: {"text":"Hello {player}","color":"gold","bold":true}
         if message_trimmed.starts_with('{') {
-            // Try to extract text value from JSON
+            // Try to parse as JSON to preserve styling
+            if let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(message_trimmed) {
+                if let Some(text_value) = json_obj.get("text").and_then(|v| v.as_str()) {
+                    // Check if text contains variables
+                    let has_vars = vars.iter().any(|(_, _, name)| {
+                        text_value.contains(&format!("{{{}}}", name))
+                    });
+
+                    if has_vars {
+                        // Split the text field and create an array with preserved styling
+                        let mut json_components = Vec::new();
+                        let mut remaining = text_value;
+
+                        while !remaining.is_empty() {
+                            let mut next_var_pos = None;
+                            let mut next_var_name = String::new();
+
+                            for (_, _, var_name) in vars {
+                                let pattern = format!("{{{}}}", var_name);
+                                if let Some(pos) = remaining.find(&pattern) {
+                                    if next_var_pos.is_none() || pos < next_var_pos.unwrap() {
+                                        next_var_pos = Some(pos);
+                                        next_var_name = var_name.clone();
+                                    }
+                                }
+                            }
+
+                            if let Some(pos) = next_var_pos {
+                                // Add text before variable with original styling
+                                if pos > 0 {
+                                    let mut text_component = json_obj.clone();
+                                    text_component["text"] = serde_json::Value::String(remaining[..pos].to_string());
+                                    json_components.push(text_component);
+                                }
+
+                                // Add score component
+                                let objective = self
+                                    .variable_objectives
+                                    .get(&next_var_name)
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("temp");
+                                let score_component = serde_json::json!({
+                                    "score": {
+                                        "name": next_var_name,
+                                        "objective": objective
+                                    }
+                                });
+                                json_components.push(score_component);
+
+                                // Move past this variable
+                                let pattern = format!("{{{}}}", next_var_name);
+                                remaining = &remaining[pos + pattern.len()..];
+                            } else {
+                                // No more variables, add remaining text with original styling
+                                if !remaining.is_empty() {
+                                    let mut text_component = json_obj.clone();
+                                    text_component["text"] = serde_json::Value::String(remaining.to_string());
+                                    json_components.push(text_component);
+                                }
+                                break;
+                            }
+                        }
+
+                        // Build the final command with the JSON array
+                        let json_array = serde_json::Value::Array(json_components);
+                        let json_string = serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
+
+                        if let Some(action_token) = action {
+                            return Ok(format!("{} {} {} {}", command, selector, action_token, json_string));
+                        } else {
+                            return Ok(format!("{} {} {}", command, selector, json_string));
+                        }
+                    }
+                    // If no variables in text, return as-is
+                    if let Some(action_token) = action {
+                        return Ok(format!("{} {} {} {}", command, selector, action_token, message));
+                    } else {
+                        return Ok(format!("{} {} {}", command, selector, message));
+                    }
+                }
+            }
+
+            // If JSON parsing failed or no text field, extract text the old way as fallback
             if let Some(text_start) = message.find("\"text\":") {
                 let after_text = &message[text_start + 7..].trim_start();
-                // Find the string value after "text":
                 if after_text.starts_with('"') {
-                    // Find the closing quote (not escaped)
                     let mut end_pos = 1;
                     let chars: Vec<char> = after_text.chars().collect();
                     let mut prev_backslash = false;
@@ -419,7 +498,7 @@ impl<'a> CommandProcessor<'a> {
             }
         }
 
-        // Build JSON array by replacing {var} with score components
+        // Build JSON array by replacing {var} with score components (for non-JSON messages)
         let mut json_components = Vec::new();
         let mut remaining = message;
 

@@ -24,7 +24,7 @@ enum Commands {
         #[arg(long)]
         description: Option<String>,
 
-        /// Set the pack format version (default: 88, supports decimal like 88.0)
+        /// Set the pack format version (default: 18, supports decimal like 88.0)
         #[arg(long)]
         pack_format: Option<String>,
     },
@@ -42,7 +42,7 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
 
-        /// Override pack format version (supports decimal like 88.0)
+        /// Override pack format version (default: 18, supports decimal like 88.0)
         #[arg(long)]
         pack_format: Option<String>,
 

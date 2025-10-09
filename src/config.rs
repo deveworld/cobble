@@ -17,7 +17,7 @@ pub struct ProjectConfig {
     #[serde(default = "default_version")]
     pub version: String,
     #[serde(default = "default_pack_format")]
-    pub pack_format: u8,
+    pub pack_format: String,  // Changed from u8 to String to support decimal formats
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -34,8 +34,8 @@ fn default_version() -> String {
     "1.0.0".to_string()
 }
 
-fn default_pack_format() -> u8 {
-    18 // Minecraft 1.20.2+ (macro support, maximum compatibility)
+fn default_pack_format() -> String {
+    "18".to_string() // Minecraft 1.20.2+ (macro support, maximum compatibility)
 }
 
 fn default_source() -> String {
@@ -54,7 +54,10 @@ impl CobbleConfig {
             .map_err(|e| format!("Failed to parse config file: {}", e))?;
 
         // Validate pack_format
-        if config.project.pack_format < 18 {
+        let pack_format = crate::pack_format::PackFormat::from_str(&config.project.pack_format)
+            .map_err(|e| format!("Invalid pack_format '{}': {}", config.project.pack_format, e))?;
+
+        if pack_format.major() < 18 {
             return Err(format!(
                 "Invalid pack_format: {}. Must be >= 18 (Minecraft 1.20.2+).\n\
                  \n\
@@ -62,7 +65,7 @@ impl CobbleConfig {
                  Recommended pack_format values:\n\
                  - 1.20.2: pack_format = 18 (maximum compatibility)\n\
                  - 1.21.7-1.21.8: pack_format = 81\n\
-                 - 1.21.9+: pack_format = 88\n\
+                 - 1.21.9+: pack_format = 88 or 88.0\n\
                  \n\
                  Update your cobble.toml:\n\
                  [project]\n\
@@ -71,9 +74,20 @@ impl CobbleConfig {
             ));
         }
 
-        if config.project.pack_format > 100 {
+        // Warn about decimal pack_format compatibility
+        if let crate::pack_format::PackFormat::Decimal(major, minor) = pack_format {
             eprintln!(
-                "Warning: pack_format {} is unusually high. Current latest is 88 (1.21.9).",
+                "⚠️  Warning: Using decimal pack_format {}.{}\n\
+                 Decimal pack formats were introduced in Minecraft 1.21.9.\n\
+                 This pack may not work in earlier Minecraft versions.\n\
+                 For maximum compatibility, use an integer pack_format.",
+                major, minor
+            );
+        }
+
+        if pack_format.major() > 100 {
+            eprintln!(
+                "⚠️  Warning: pack_format {} is unusually high. Current latest is 88 (1.21.9).",
                 config.project.pack_format
             );
         }

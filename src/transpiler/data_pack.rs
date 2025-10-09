@@ -165,6 +165,14 @@ impl DataPack {
             fs::remove_dir_all(&functions_dir)?;
         }
 
+        // Clean tag directories to remove stale tag files
+        if tags_dir.exists() {
+            fs::remove_dir_all(&tags_dir)?;
+        }
+        if minecraft_tags_dir.exists() {
+            fs::remove_dir_all(&minecraft_tags_dir)?;
+        }
+
         fs::create_dir_all(&functions_dir)?;
         fs::create_dir_all(&tags_dir)?;
 

@@ -32,8 +32,8 @@ impl<'a> ConditionTranslator<'a> {
                         // The if_processor will handle expanding nested ORs
                         if left_cond.contains("OR(") || right_cond.contains("OR(") {
                             // Return combined OR expression for if_processor to handle
-                            // Format: OR_AND(left, right) to indicate AND with nested OR
-                            return Ok(format!("OR_AND({}, {})", left_cond, right_cond));
+                            // Format: OR_AND(left;right) to indicate AND with nested OR - use semicolon
+                            return Ok(format!("OR_AND({};{})", left_cond, right_cond));
                         }
 
                         // Add "if" prefix if not present (for chaining)
@@ -59,8 +59,8 @@ impl<'a> ConditionTranslator<'a> {
                         let left_cond = self.translate(left)?;
                         let right_cond = self.translate(right)?;
 
-                        // Return special format: OR(cond1, cond2)
-                        Ok(format!("OR({}, {})", left_cond, right_cond))
+                        // Return special format: OR(cond1;cond2) - use semicolon as separator
+                        Ok(format!("OR({};{})", left_cond, right_cond))
                     }
                     // Comparison operators
                     _ => {

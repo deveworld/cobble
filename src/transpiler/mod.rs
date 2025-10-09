@@ -128,7 +128,14 @@ impl Transpiler {
                         if exp < 0 {
                             None
                         } else {
-                            Some(base.pow(exp as u32) as f64)
+                            // Use checked_pow to detect overflow
+                            match base.checked_pow(exp as u32) {
+                                Some(result) => Some(result as f64),
+                                None => {
+                                    eprintln!("Warning: Power operation {}^{} would overflow i32, clamping to i32::MAX", base, exp);
+                                    Some(i32::MAX as f64)
+                                }
+                            }
                         }
                     }
                     _ => None,
@@ -237,13 +244,16 @@ impl Transpiler {
     }
 
     pub fn transpile(&mut self, program: &Program) -> Result<(), String> {
-        // When building multiple files, we need to maintain import stack properly
-        // Keep only the current file (if exists) to detect circular dependencies correctly
+        // When building multiple files, clear the import stack for each new file
+        // The current file should already be in the stack from set_current_file()
+        // We only keep the current file to properly detect circular imports within its imports
         if self.import_stack.len() > 1 {
-            // Keep only the first entry (the main file being transpiled)
-            let main_file = self.import_stack[0].clone();
-            self.import_stack.clear();
-            self.import_stack.push(main_file);
+            // Keep only the last entry (the current file being transpiled)
+            if let Some(current_file) = self.import_stack.last() {
+                let current = current_file.clone();
+                self.import_stack.clear();
+                self.import_stack.push(current);
+            }
         }
 
         // Process imports
@@ -1060,45 +1070,73 @@ impl Transpiler {
             return Ok(vec![or_expr.to_string()]);
         }
 
-        // Extract inner content
-        let inner = &or_expr[3..or_expr.len() - 1];
-        let (cond1, cond2) = self.split_or_conditions(inner)?;
+        // Extract inner content - be careful with the closing parenthesis
+        let end_pos = or_expr.rfind(')').ok_or("Missing closing parenthesis in OR expression")?;
+        let inner = &or_expr[3..end_pos];
 
-        // Recursively flatten left side
-        if cond1.starts_with("OR(") {
-            conditions.extend(self.flatten_or_conditions(cond1)?);
-        } else {
-            conditions.push(cond1.to_string());
+
+        // Split by semicolon, but only at the top level (not inside nested parentheses)
+        let mut parts = Vec::new();
+        let mut current_part = String::new();
+        let mut depth = 0;
+
+        for ch in inner.chars() {
+            match ch {
+                '(' => {
+                    depth += 1;
+                    current_part.push(ch);
+                }
+                ')' => {
+                    depth -= 1;
+                    current_part.push(ch);
+                }
+                ';' if depth == 0 => {
+                    // Top-level semicolon - this is a separator
+                    if !current_part.is_empty() {
+                        parts.push(current_part.trim().to_string());
+                        current_part.clear();
+                    }
+                }
+                _ => current_part.push(ch),
+            }
+        }
+        // Don't forget the last part
+        if !current_part.is_empty() {
+            parts.push(current_part.trim().to_string());
         }
 
-        // Recursively flatten right side
-        if cond2.starts_with("OR(") {
-            conditions.extend(self.flatten_or_conditions(cond2)?);
-        } else {
-            conditions.push(cond2.to_string());
+        for part in parts {
+            if !part.is_empty() {
+                // Check if this part is itself an OR expression
+                if part.starts_with("OR(") {
+                    conditions.extend(self.flatten_or_conditions(&part)?);
+                } else {
+                    conditions.push(part);
+                }
+            }
         }
 
         Ok(conditions)
     }
 
     fn split_or_conditions<'a>(&self, inner: &'a str) -> Result<(&'a str, &'a str), String> {
-        // Find the comma that separates cond1 and cond2
+        // Find the semicolon that separates cond1 and cond2
         // Need to handle nested parentheses
         let mut depth = 0;
-        let mut comma_pos = None;
+        let mut semicolon_pos = None;
         for (i, ch) in inner.chars().enumerate() {
             match ch {
                 '(' => depth += 1,
                 ')' => depth -= 1,
-                ',' if depth == 0 => {
-                    comma_pos = Some(i);
+                ';' if depth == 0 => {
+                    semicolon_pos = Some(i);
                     break;
                 }
                 _ => {}
             }
         }
 
-        if let Some(pos) = comma_pos {
+        if let Some(pos) = semicolon_pos {
             let cond1 = inner[..pos].trim();
             let cond2 = inner[pos + 1..].trim();
             Ok((cond1, cond2))
@@ -1154,6 +1192,13 @@ impl Transpiler {
         self.data_pack.write()
     }
 
+    /// Get a unique ID for temporary variables
+    fn get_unique_id(&mut self) -> u32 {
+        let id = self.temp_counter;
+        self.temp_counter += 1;
+        id
+    }
+
     /// Check if a condition string looks like a Python expression
     fn looks_like_python_expression(&self, condition: &str) -> bool {
         // Minecraft raw conditions usually start with these keywords
@@ -1186,6 +1231,87 @@ impl Transpiler {
 
     /// Try to translate a Python expression string to Minecraft condition
     fn try_translate_python_expression(&self, condition: &str, _is_unless: bool) -> Result<String, String> {
+        // First check if this contains AND or OR operators
+        if condition.contains(" and ") || condition.contains(" or ") {
+            // Complex expression with logical operators
+            // We need to parse this properly, but for now we can handle simple cases
+
+            // Handle AND conditions specially
+            if condition.contains(" and ") {
+                let parts: Vec<&str> = condition.split(" and ").collect();
+                let mut translated_parts = Vec::new();
+
+                for part in parts {
+                    // Trim the part but preserve the basic structure
+                    let part = part.trim();
+
+                    // Add proper spacing before range operators if missing
+                    let fixed_part = if part.contains("matches..") {
+                        part.replace("matches..", "matches ..")
+                    } else {
+                        part.to_string()
+                    };
+
+                    // Check if this part already has "score" keyword (raw Minecraft condition)
+                    if fixed_part.starts_with("score ") {
+                        // This is already a Minecraft condition, just add "if" prefix
+                        translated_parts.push(format!("if {}", fixed_part));
+                    } else {
+                        // Try to translate as Python expression
+                        if let Ok(translated) = self.try_translate_python_expression(&fixed_part, false) {
+                            // The translated part should already be in the form "score x temp matches ..."
+                            // We just need to add "if " prefix
+                            if translated.starts_with("score ") {
+                                translated_parts.push(format!("if {}", translated));
+                            } else if translated.starts_with("if ") || translated.starts_with("unless ") {
+                                translated_parts.push(translated);
+                            } else {
+                                translated_parts.push(format!("if {}", translated));
+                            }
+                        } else {
+                            return Err(format!("Failed to translate condition part: {}", fixed_part));
+                        }
+                    }
+                }
+
+                // Join with spaces to create chained conditions
+                return Ok(translated_parts.join(" "));
+            }
+
+            // OR conditions - return a special marker
+            // We'll expand this into multiple conditions later
+            // For now, translate each part and return OR(part1, part2)
+            if condition.contains(" or ") {
+                let parts: Vec<&str> = condition.split(" or ").collect();
+                let mut translated_parts = Vec::new();
+
+                for part in parts {
+                    let part = part.trim();
+                    // Recursively translate each part
+                    if let Ok(translated) = self.try_translate_python_expression(part, false) {
+                        // Remove any "if" or "unless" prefix that might have been added
+                        let clean_translated = if translated.starts_with("if ") {
+                            &translated[3..]
+                        } else if translated.starts_with("unless ") {
+                            &translated[7..]
+                        } else {
+                            &translated
+                        };
+                        translated_parts.push(clean_translated.to_string());
+                    } else {
+                        // Try simple translation
+                        translated_parts.push(part.to_string());
+                    }
+                }
+
+                // Return OR marker - use semicolon as separator to avoid confusion with commas in conditions
+                return Ok(format!("OR({})", translated_parts.join(";")));
+            }
+
+            // AND conditions handling remains the same
+            return Err("Complex logical expressions not supported".to_string());
+        }
+
         // Simple variable check: "varname" -> "score varname objective matches 1.."
         if condition.chars().all(|c| c.is_alphanumeric() || c == '_') {
             if self.variables.contains_key(condition) || self.scoreboard_variables.contains(condition) {
@@ -1204,10 +1330,25 @@ impl Transpiler {
             let left = left.trim();
             let right = right.trim();
 
-            if let Ok(value) = right.parse::<i32>() {
-                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
-                return Ok(format!("score {} {} matches {}..", left, objective, value + 1));
-            }
+            // Check if right side is a macro parameter {param}
+            let right_value = if right.starts_with('{') && right.ends_with('}') {
+                // This is a macro parameter, keep as-is with ..
+                format!("{}..", right)
+            } else if let Ok(value) = right.parse::<i32>() {
+                format!("{}..", value + 1)
+            } else {
+                return Err("Cannot parse right side of comparison".to_string());
+            };
+
+            // Check if left side is a macro parameter {param}
+            let left_var = left.to_string();
+            let objective = if left.starts_with('{') && left.ends_with('}') {
+                "temp".to_string() // Use temp for macro params
+            } else {
+                self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp").to_string()
+            };
+
+            return Ok(format!("score {} {} matches {}", left_var, objective, right_value));
         }
 
         if let Some(op_pos) = condition.find(" < ") {
@@ -1243,10 +1384,24 @@ impl Transpiler {
             let left = left.trim();
             let right = right.trim();
 
-            if let Ok(value) = right.parse::<i32>() {
-                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
-                return Ok(format!("score {} {} matches {}..", left, objective, value));
-            }
+            // Check if right side is a macro parameter {param}
+            let right_value = if right.starts_with('{') && right.ends_with('}') {
+                // This is a macro parameter, keep as-is with ..
+                format!("{}..", right)
+            } else if let Ok(value) = right.parse::<i32>() {
+                format!("{}..", value)
+            } else {
+                return Err("Cannot parse right side of comparison".to_string());
+            };
+
+            let left_var = left.to_string();
+            let objective = if left.starts_with('{') && left.ends_with('}') {
+                "temp".to_string()
+            } else {
+                self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp").to_string()
+            };
+
+            return Ok(format!("score {} {} matches {}", left_var, objective, right_value));
         }
 
         if let Some(op_pos) = condition.find(" <= ") {
@@ -1258,6 +1413,19 @@ impl Transpiler {
             if let Ok(value) = right.parse::<i32>() {
                 let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
                 return Ok(format!("score {} {} matches ..{}", left, objective, value));
+            }
+        }
+
+        if let Some(op_pos) = condition.find(" != ") {
+            let (left, right) = condition.split_at(op_pos);
+            let right = &right[4..]; // Skip " != "
+            let left = left.trim();
+            let right = right.trim();
+
+            if let Ok(value) = right.parse::<i32>() {
+                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                // != translates to "unless ... matches"
+                return Ok(format!("unless score {} {} matches {}", left, objective, value));
             }
         }
 

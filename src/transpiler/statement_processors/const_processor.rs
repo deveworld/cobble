@@ -27,6 +27,15 @@ impl Transpiler {
             Expression::Number(value),
         );
 
+        // If we're at module level, also register for scoreboard initialization
+        if self.current_function.is_none() {
+            self.variable_objectives
+                .insert(const_assign.target.clone(), "temp".to_string());
+            self.scoreboard_variables.insert(const_assign.target.clone());
+            self.module_level_vars
+                .insert(const_assign.target.clone(), Expression::Number(value));
+        }
+
         Ok(())
     }
 

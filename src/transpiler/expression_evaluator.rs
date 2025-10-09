@@ -292,12 +292,26 @@ impl<'a> ExpressionEvaluator<'a> {
                                     ));
                                 }
                                 BinaryOp::Div => {
+                                    // Add runtime warning for potential division by zero
+                                    eprintln!(
+                                        "⚠️  Warning: Runtime division by variable '{}' at line.\n\
+                                        If '{}' is 0 at runtime, Minecraft will silently return 0.\n\
+                                        Consider adding a check: if {} != 0",
+                                        var, var, var
+                                    );
                                     commands.push(format!(
                                         "scoreboard players operation {} temp /= {} {}",
                                         target, var, var_obj
                                     ));
                                 }
                                 BinaryOp::Mod => {
+                                    // Add runtime warning for potential modulo by zero
+                                    eprintln!(
+                                        "⚠️  Warning: Runtime modulo by variable '{}' at line.\n\
+                                        If '{}' is 0 at runtime, Minecraft will silently return 0.\n\
+                                        Consider adding a check: if {} != 0",
+                                        var, var, var
+                                    );
                                     commands.push(format!(
                                         "scoreboard players operation {} temp %= {} {}",
                                         target, var, var_obj
@@ -342,12 +356,24 @@ impl<'a> ExpressionEvaluator<'a> {
                                 ));
                             }
                             BinaryOp::Div => {
+                                // Add runtime warning for potential division by zero with complex expression
+                                eprintln!(
+                                    "⚠️  Warning: Runtime division by expression result.\n\
+                                    If the expression evaluates to 0 at runtime, Minecraft will silently return 0.\n\
+                                    Consider validating the divisor before division."
+                                );
                                 commands.push(format!(
                                     "scoreboard players operation {} temp /= expr_temp temp",
                                     target
                                 ));
                             }
                             BinaryOp::Mod => {
+                                // Add runtime warning for potential modulo by zero with complex expression
+                                eprintln!(
+                                    "⚠️  Warning: Runtime modulo by expression result.\n\
+                                    If the expression evaluates to 0 at runtime, Minecraft will silently return 0.\n\
+                                    Consider validating the divisor before modulo."
+                                );
                                 commands.push(format!(
                                     "scoreboard players operation {} temp %= expr_temp temp",
                                     target
