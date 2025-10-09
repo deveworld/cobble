@@ -347,16 +347,31 @@ impl Transpiler {
                     commands.push(format!("scoreboard players set {} temp 0", unless_var));
 
                     // Set to 1 if ALL conditions are true (the AND check)
-                    // We need to build the full AND condition check
+                    // Split the AND conditions and add "if" prefix to each
+                    let and_conditions: Vec<String> = and_str.split(" and ")
+                        .map(|cond| {
+                            let cond = cond.trim();
+                            // Fix spacing for range operators
+                            let fixed_cond = if cond.contains("matches..") {
+                                cond.replace("matches..", "matches ..")
+                            } else {
+                                cond.to_string()
+                            };
+                            format!("if {}", fixed_cond)
+                        })
+                        .collect();
+
+                    let and_check = and_conditions.join(" ");
+
                     let check_cmd = if modifiers_prefix.is_empty() {
-                        format!("execute {} run scoreboard players set {} temp 1", and_str, unless_var)
+                        format!("execute {} run scoreboard players set {} temp 1", and_check, unless_var)
                     } else {
                         let prefix = if modifiers_prefix.starts_with("execute ") {
                             &modifiers_prefix[8..]
                         } else {
                             &modifiers_prefix
                         };
-                        format!("execute {} {} run scoreboard players set {} temp 1", prefix, and_str, unless_var)
+                        format!("execute {} {} run scoreboard players set {} temp 1", prefix, and_check, unless_var)
                     };
 
                     if has_macro_params {

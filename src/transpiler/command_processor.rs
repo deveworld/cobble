@@ -210,8 +210,16 @@ impl<'a> CommandProcessor<'a> {
         }
 
         // Apply replacements in reverse order to maintain indices
-        for (start_idx, end_idx, replacement) in replacements.into_iter().rev() {
-            result.replace_range(start_idx..end_idx, &replacement);
+        // Convert char indices to byte indices for UTF-8 safety
+        for (char_start, char_end, replacement) in replacements.into_iter().rev() {
+            // Convert character indices to byte indices
+            let byte_start = result.char_indices().nth(char_start).map(|(i, _)| i).unwrap_or(0);
+            let byte_end = if char_end < chars.len() {
+                result.char_indices().nth(char_end).map(|(i, _)| i).unwrap_or(result.len())
+            } else {
+                result.len()
+            };
+            result.replace_range(byte_start..byte_end, &replacement);
         }
 
         // Handle scoreboard variables - special processing for tellraw/title/say
