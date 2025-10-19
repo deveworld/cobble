@@ -544,9 +544,30 @@ impl Transpiler {
             Statement::Match(match_stmt) => {
                 self.process_match(match_stmt)?;
             }
-            Statement::Return(_) => {
-                // Return statements in minecraft functions don't have a direct equivalent
-                // We could potentially use function return values in future versions
+            Statement::Return(expr) => {
+                // Return statements are not supported in Minecraft functions
+                // Minecraft functions execute all commands sequentially and cannot return early
+                let expr_info = if let Some(e) = expr {
+                    format!("\nAttempted to return: {:?}", e)
+                } else {
+                    String::new()
+                };
+
+                return Err(format!(
+                    "Return statements are not supported.{}\n\n\
+                    Minecraft functions cannot return early or return values.\n\
+                    All commands in a function execute sequentially until the end.\n\n\
+                    Solutions:\n\
+                    1. Remove the return statement and restructure your code\n\
+                    2. Use if/else blocks to conditionally execute code:\n\
+                       if condition:\n\
+                           # code to run\n\
+                       # rest of function only runs if condition is false\n\
+                    3. Use separate functions to organize logic\n\n\
+                    Note: This is a limitation of Minecraft's function system,\n\
+                    not a Cobble compiler issue.",
+                    expr_info
+                ));
             }
             Statement::Pass => {
                 // Pass is a no-op

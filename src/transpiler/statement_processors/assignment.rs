@@ -108,6 +108,13 @@ impl Transpiler {
         // If it's a score assignment, generate scoreboard command
         if let Some(ref mut commands) = self.current_function {
             match &assign.value {
+                Expression::String(_) | Expression::Boolean(_) => {
+                    // String and Boolean values are stored in self.variables (line 20-21)
+                    // but don't generate scoreboard commands
+                    // They are used only for command substitution in tellraw/title commands
+                    // The CommandProcessor will replace {var} with the actual value
+                    return Ok(());
+                }
                 Expression::Number(n) => {
                     // Direct number assignment
                     self.data_pack.track_objective("temp");
@@ -775,8 +782,108 @@ impl Transpiler {
                         }
                     }
                 }
+                Expression::Call(func, _args) => {
+                    // Function calls in assignments are not supported
+                    let func_name = match &**func {
+                        Expression::Identifier(name) => name.clone(),
+                        Expression::Attribute(obj, method) => {
+                            if let Expression::Identifier(module) = &**obj {
+                                format!("{}.{}", module, method)
+                            } else {
+                                "unknown".to_string()
+                            }
+                        }
+                        _ => "unknown".to_string(),
+                    };
+
+                    return Err(format!(
+                        "Cannot assign function call result to variable.\n\n\
+                        Attempted: {} = {}()\n\n\
+                        Minecraft functions don't return values that can be assigned to variables.\n\n\
+                        Solutions:\n\
+                        1. Call the function separately (not in an assignment):\n\
+                           {}()\n\
+                           # Then use scoreboard operations to track state\n\n\
+                        2. If you need to track state, use scoreboard variables:\n\
+                           # In the called function:\n\
+                           def {}():\n\
+                               result = 42  # This sets a scoreboard value\n\
+                           \n\
+                           # In the caller:\n\
+                           {}()\n\
+                           # Now 'result' variable can be used\n\n\
+                        3. Pass the target variable name as a parameter (for Minecraft 1.20.2+):\n\
+                           def set_value(target_var):\n\
+                               /scoreboard players set {{target_var}} temp 42\n\
+                           \n\
+                           set_value(\"my_var\")",
+                        assign.target, func_name, func_name, func_name, func_name
+                    ));
+                }
+                Expression::Attribute(obj, attr) => {
+                    // Attribute access in assignments (e.g., obj.field)
+                    let obj_name = match &**obj {
+                        Expression::Identifier(name) => name.clone(),
+                        _ => "object".to_string(),
+                    };
+
+                    return Err(format!(
+                        "Cannot assign attribute access result to variable.\n\n\
+                        Attempted: {} = {}.{}\n\n\
+                        Attribute access is not supported in assignments.\n\n\
+                        Solutions:\n\
+                        1. For stdlib constants (like event.LOAD), use them directly in function calls:\n\
+                           stdlib.addEventListener(event.LOAD, my_function)\n\n\
+                        2. For other attribute access, Cobble doesn't support object-oriented features yet.",
+                        assign.target, obj_name, attr
+                    ));
+                }
+                Expression::Subscript(_array, _index) => {
+                    // Array/subscript access (e.g., arr[0])
+                    return Err(format!(
+                        "Cannot assign subscript/array access result to variable.\n\n\
+                        Attempted: {} = array[index]\n\n\
+                        Arrays and subscript operations are not supported yet.\n\n\
+                        Note: This is a planned feature for future versions of Cobble.\n\
+                        For now, use separate scoreboard variables for each value.",
+                        assign.target
+                    ));
+                }
+                Expression::None => {
+                    // None value
+                    return Err(format!(
+                        "Cannot assign None/null to variable '{}'.\n\n\
+                        Minecraft scoreboards require numeric values.\n\n\
+                        Solutions:\n\
+                        1. Use 0 to represent 'no value':\n\
+                           {} = 0\n\n\
+                        2. Use -1 to represent 'unset':\n\
+                           {} = -1\n\n\
+                        3. Check for a specific value before using:\n\
+                           if {} != -1:\n\
+                               # value is set",
+                        assign.target, assign.target, assign.target, assign.target
+                    ));
+                }
                 _ => {
-                    // Other expression types not supported in simple assignments
+                    // Catch-all for any other unsupported expression types
+                    return Err(format!(
+                        "Unsupported expression type in assignment to variable '{}'.\n\n\
+                        Expression type: {:?}\n\n\
+                        Supported assignment types:\n\
+                        - Numbers: x = 10\n\
+                        - Variables: x = y\n\
+                        - Arithmetic: x = y + z * 2\n\
+                        - Unary operations: x = -y\n\
+                        - Strings (in commands only): message = \"text\" (use in tellraw)\n\
+                        - Booleans (in commands only): flag = True (use in tellraw)\n\n\
+                        Not supported in assignments:\n\
+                        - Function calls: x = func() (call separately)\n\
+                        - Attribute access: x = obj.field\n\
+                        - Subscripts: x = arr[0]\n\
+                        - None/null values",
+                        assign.target, assign.value
+                    ));
                 }
             }
         }

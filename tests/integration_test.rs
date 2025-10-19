@@ -1789,11 +1789,9 @@ fn test_const_modulo_consistency() {
     let source = r#"
 const x = -5 % 3
 
-def get_const():
-    return x
-
 def test():
     y = -5 % 3
+    # Both x and y should have the same value (-2)
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -2265,4 +2263,140 @@ stdlib.addEventListener(event.LOAD, on_load)
     // Check that load.json was created
     let load_tag = output_dir.join("data/minecraft/tags/functions/load.json");
     assert!(load_tag.exists(), "Load tag should be created");
+}
+
+// ============================================================================
+// REGRESSION TESTS FOR v0.5.17 BUG FIXES
+// ============================================================================
+
+#[test]
+fn test_return_statement_error() {
+    // Regression test: Return statements should now error instead of being no-op
+    // Bug: Return statements were silently ignored, allowing code after return to execute
+    let source = r#"
+def test():
+    x = 1
+    /say Before return
+    return x
+    /say After return should not execute
+"#;
+
+    let result = compile_source(source);
+
+    // Should fail with return not supported error
+    assert!(result.is_err(), "Return statement should cause an error");
+    let error = result.unwrap_err();
+    assert!(error.contains("Return statements are not supported"),
+            "Error should mention return statements are not supported");
+    assert!(error.contains("Minecraft functions cannot return early"),
+            "Error should explain Minecraft limitation");
+}
+
+#[test]
+fn test_return_no_value_error() {
+    // Test that bare return (no value) also errors
+    let source = r#"
+def test():
+    /say Hello
+    return
+    /say Unreachable
+"#;
+
+    let result = compile_source(source);
+    assert!(result.is_err(), "Return statement (no value) should cause an error");
+    let error = result.unwrap_err();
+    assert!(error.contains("Return statements are not supported"));
+}
+
+#[test]
+fn test_function_call_assignment_error() {
+    // Regression test: Function call results cannot be assigned to variables
+    // Bug: x = func() silently failed, x was never assigned
+    let source = r#"
+def helper():
+    /say Helper called
+
+def test():
+    x = helper()
+    /say Done
+"#;
+
+    let result = compile_source(source);
+
+    // Should fail with function call assignment error
+    assert!(result.is_err(), "Function call assignment should cause an error");
+    let error = result.unwrap_err();
+    assert!(error.contains("Cannot assign function call result"),
+            "Error should mention function call assignment issue: {}", error);
+    assert!(error.contains("Minecraft functions don't return values"),
+            "Error should explain limitation: {}", error);
+}
+
+#[test]
+fn test_attribute_assignment_error() {
+    // Test that attribute access in assignments errors properly
+    let source = r#"
+def test():
+    x = obj.field
+"#;
+
+    let result = compile_source(source);
+    assert!(result.is_err(), "Attribute access assignment should cause an error");
+    let error = result.unwrap_err();
+    assert!(error.contains("Cannot assign attribute access"),
+            "Error should mention attribute access: {}", error);
+}
+
+#[test]
+fn test_subscript_assignment_error() {
+    // Test that subscript/array syntax is not supported (parse error)
+    // Note: Subscript syntax is not yet implemented in the parser
+    let source = r#"
+def test():
+    x = arr[0]
+"#;
+
+    let result = compile_source(source);
+    assert!(result.is_err(), "Subscript syntax should cause an error");
+    // Parser error expected since subscript is not implemented yet
+    let error = result.unwrap_err();
+    assert!(error.contains("Parse failed") || error.contains("found '['"),
+            "Should get parse error for subscript syntax: {}", error);
+}
+
+#[test]
+fn test_string_assignment_still_works() {
+    // Regression test: String assignments should still work (used in command substitution)
+    let source = r#"
+def test():
+    message = "Hello World"
+    /tellraw @a {"text":"{message}"}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // String should be substituted in the command
+    assert!(content.contains("tellraw @a {\"text\":\"Hello World\"}"),
+            "String should be substituted correctly");
+}
+
+#[test]
+fn test_boolean_assignment_still_works() {
+    // Regression test: Boolean assignments should still work (used in command substitution)
+    let source = r#"
+def test():
+    enabled = True
+    disabled = False
+    /tellraw @a {"text":"Enabled: {enabled}, Disabled: {disabled}"}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // Booleans should be substituted as "true" and "false"
+    assert!(content.contains("Enabled: true"),
+            "Boolean true should be substituted");
+    assert!(content.contains("Disabled: false"),
+            "Boolean false should be substituted");
 }
