@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.5.16** - Fixed critical bugs: Minecraft range syntax parsing, circular import detection, and Python expressions in execute blocks | Minecraft 1.20.2+ compatible
+**✨ Version 0.5.17** - Fixed critical bugs: Return statement silent failures, function call assignment errors, and enhanced error handling for unsupported expressions | Minecraft 1.20.2+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.5.16 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.5.17 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -42,7 +42,7 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
 - ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
 - ✅ **Nested If Optimization** - Automatically splits complex control flow
-- ✅ **Comprehensive Tests** - 98 tests with output verification (7 unit + 86 integration + 5 negative steps)
+- ✅ **Comprehensive Tests** - 102 tests with output verification (7 unit + 95 integration tests)
 - ✅ **Modern Parser** - Built with chumsky combinator library for reliability
 - ✅ **Beautiful Errors** - Clear error messages powered by ariadne
 
@@ -678,6 +678,12 @@ cargo watch -x test -x "run -- check examples/"
 ## 🗺️ Roadmap
 
 ### Recently Completed
+
+#### v0.5.17 (2025-01-19)
+- [x] **Return statement error handling** - Return statements now produce clear compile-time errors instead of being silently ignored
+- [x] **Function call assignment validation** - Assignments like `x = helper()` now error with helpful messages explaining Minecraft limitations
+- [x] **Enhanced expression errors** - Attribute, subscript, and None assignments now have explicit error handling
+- [x] **Comprehensive regression tests** - Added 7 new tests to prevent these bugs from reoccurring (102 total tests)
 
 #### v0.5.16 (2025-01-09)
 - [x] **Critical bug fixes** - Fixed three major issues that prevented proper Minecraft functionality

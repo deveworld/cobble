@@ -5,6 +5,52 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.17] - 2025-01-19
+
+### Fixed
+- **CRITICAL: Return statement silent failure**: Fixed return statements being silently ignored as no-op
+  - Return statements now produce clear compile-time errors explaining Minecraft limitations
+  - Error message provides helpful solutions and restructuring suggestions
+  - Previously `return x` would be completely ignored, causing logic errors
+  - Modified `src/transpiler/mod.rs:547-571` to return error instead of no-op comment
+
+- **CRITICAL: Function call assignment silent failure**: Fixed function call results being assigned to variables without error
+  - Assignments like `x = helper()` now produce clear compile-time errors
+  - Minecraft functions cannot return values, so this assignment was silently failing
+  - Error message explains limitation and suggests alternatives (global variables, direct execution)
+  - Modified `src/transpiler/statement_processors/assignment.rs:778-814` to detect and reject function calls
+
+- **Enhanced error handling**: Added explicit errors for unsupported assignment expressions
+  - Attribute access assignments (`x = obj.attr`) now error with clear message
+  - Subscript assignments (`x = arr[0]`) now error explaining arrays aren't supported yet
+  - None/null assignments (`x = None`) now error explaining scoreboard requires numbers
+  - Modified `src/transpiler/statement_processors/assignment.rs:816-859` for comprehensive coverage
+
+### Verified
+- All 102 tests passing (7 unit + 95 integration tests)
+- String and Boolean variable functionality preserved and working correctly
+- Function-level String/Boolean variables work in tellraw/title commands
+- All generated Minecraft commands validated for 1.20.2+ compatibility
+- No regressions in existing features
+
+### Added
+- **Regression tests**: Added 7 comprehensive tests to prevent future bugs
+  - `test_return_statement_error` - Verifies return with value errors correctly
+  - `test_return_no_value_error` - Verifies bare return errors correctly
+  - `test_function_call_assignment_error` - Verifies function call assignment errors
+  - `test_attribute_assignment_error` - Verifies attribute access assignment errors
+  - `test_subscript_assignment_error` - Verifies array access assignment errors
+  - `test_string_assignment_still_works` - Ensures String variables still work in functions
+  - `test_boolean_assignment_still_works` - Ensures Boolean variables still work in functions
+
+### Technical Details
+- Return statements now return `Err()` with detailed error message and solutions
+- Function call detection checks `Expression::Call` and extracts function name for error message
+- Attribute/Subscript/None expressions now have explicit error handling with helpful messages
+- String/Boolean assignments preserved via early return before error checks (lines 111-117)
+- All error messages provide context, explanation, and suggested solutions
+- Test count increased from 95 to 102 integration tests (100% pass rate)
+
 ## [0.5.16] - 2025-01-09
 
 ### Fixed
