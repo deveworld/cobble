@@ -54,7 +54,7 @@ impl CobbleConfig {
             .map_err(|e| format!("Failed to parse config file: {}", e))?;
 
         // Validate pack_format
-        let pack_format = crate::pack_format::PackFormat::from_str(&config.project.pack_format)
+        let pack_format = crate::pack_format::PackFormat::parse_format(&config.project.pack_format)
             .map_err(|e| format!("Invalid pack_format '{}': {}", config.project.pack_format, e))?;
 
         if pack_format.major() < 18 {

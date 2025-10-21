@@ -99,7 +99,6 @@ impl<'a> ExpressionEvaluator<'a> {
                                 ));
                             }
                             BinaryOp::Mul => {
-                                self.data_pack.track_objective("multiplier");
                                 commands.push(format!(
                                     "scoreboard players set multiplier temp {}",
                                     value
@@ -117,7 +116,6 @@ impl<'a> ExpressionEvaluator<'a> {
                                         value
                                     ));
                                 }
-                                self.data_pack.track_objective("divisor");
                                 commands
                                     .push(format!("scoreboard players set divisor temp {}", value));
                                 commands.push(format!(
@@ -133,7 +131,6 @@ impl<'a> ExpressionEvaluator<'a> {
                                         value
                                     ));
                                 }
-                                self.data_pack.track_objective("modulus");
                                 commands
                                     .push(format!("scoreboard players set modulus temp {}", value));
                                 commands.push(format!(
@@ -165,7 +162,6 @@ impl<'a> ExpressionEvaluator<'a> {
                                     // x^1 = x, no operation needed
                                 } else {
                                     // Store original value for multiplication
-                                    self.data_pack.track_objective("power_base");
                                     commands.push(format!(
                                         "scoreboard players operation power_base temp = {} temp",
                                         target
@@ -199,7 +195,6 @@ impl<'a> ExpressionEvaluator<'a> {
                                     ));
                                 }
                                 BinaryOp::Mul => {
-                                    self.data_pack.track_objective("multiplier");
                                     commands.push(format!(
                                         "scoreboard players set multiplier temp {}",
                                         value
@@ -213,7 +208,6 @@ impl<'a> ExpressionEvaluator<'a> {
                                     if value == 0 {
                                         return Err("Division by zero in expression".to_string());
                                     }
-                                    self.data_pack.track_objective("divisor");
                                     commands.push(format!(
                                         "scoreboard players set divisor temp {}",
                                         value
@@ -227,7 +221,6 @@ impl<'a> ExpressionEvaluator<'a> {
                                     if value == 0 {
                                         return Err("Modulo by zero in expression".to_string());
                                     }
-                                    self.data_pack.track_objective("modulus");
                                     commands.push(format!(
                                         "scoreboard players set modulus temp {}",
                                         value
@@ -251,7 +244,6 @@ impl<'a> ExpressionEvaluator<'a> {
                                     } else if value == 1 {
                                         // x^1 = x, nothing to do (target already holds left side)
                                     } else {
-                                        self.data_pack.track_objective("power_base");
                                         commands.push(format!(
                                             "scoreboard players operation power_base temp = {} temp",
                                             target
@@ -330,7 +322,6 @@ impl<'a> ExpressionEvaluator<'a> {
                     Expression::Binary(_, _, _) => {
                         // Right side is also a binary expression - need to evaluate it first
                         // Use a temporary variable for the right side
-                        self.data_pack.track_objective("expr_temp");
                         let right_commands =
                             self.evaluate_expression_to_target(right, "expr_temp")?;
                         commands.extend(right_commands);
@@ -403,7 +394,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
                         // Multiply by -1
                         self.data_pack.track_objective("multiplier");
-                        commands.push(format!("scoreboard players set multiplier temp -1"));
+                        commands.push("scoreboard players set multiplier temp -1".to_string());
                         commands.push(format!(
                             "scoreboard players operation {} temp *= multiplier temp",
                             target

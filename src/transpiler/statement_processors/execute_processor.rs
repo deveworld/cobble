@@ -166,7 +166,7 @@ impl Transpiler {
                     if condition.starts_with("OR(") {
                         // unless (A or B) = unless A and unless B (De Morgan's law)
                         // We can chain unless conditions in Minecraft
-                        let or_conditions = self.flatten_or_conditions(&condition)?;
+                        let or_conditions = Transpiler::flatten_or_conditions(&condition)?;
                         for cond in or_conditions {
                             // Add each condition as "unless"
                             if cond.starts_with("unless ") {
@@ -202,7 +202,7 @@ impl Transpiler {
                             // Check if it's an OR condition marker
                             if translated.starts_with("OR(") {
                                 // unless (A or B) = unless A and unless B (De Morgan's law)
-                                let or_conditions = self.flatten_or_conditions(&translated)?;
+                                let or_conditions = Transpiler::flatten_or_conditions(&translated)?;
                                 for cond in or_conditions {
                                     if cond.starts_with("unless ") {
                                         execute_parts.push(cond);
@@ -329,8 +329,8 @@ impl Transpiler {
             let mut other_modifiers = Vec::new();
 
             for part in &execute_parts {
-                if part.starts_with("UNLESS_AND:") {
-                    unless_and_str = Some(&part[11..]); // Skip "UNLESS_AND:"
+                if let Some(stripped) = part.strip_prefix("UNLESS_AND:") {
+                    unless_and_str = Some(stripped);
                 } else {
                     other_modifiers.push(part.clone());
                 }
@@ -366,11 +366,7 @@ impl Transpiler {
                     let check_cmd = if modifiers_prefix.is_empty() {
                         format!("execute {} run scoreboard players set {} temp 1", and_check, unless_var)
                     } else {
-                        let prefix = if modifiers_prefix.starts_with("execute ") {
-                            &modifiers_prefix[8..]
-                        } else {
-                            &modifiers_prefix
-                        };
+                        let prefix = modifiers_prefix.strip_prefix("execute ").unwrap_or(&modifiers_prefix);
                         format!("execute {} {} run scoreboard players set {} temp 1", prefix, and_check, unless_var)
                     };
 
@@ -433,8 +429,8 @@ impl Transpiler {
             let mut other_modifiers = Vec::new();
 
             for part in &execute_parts {
-                if part.starts_with("OR_CONDITION:") {
-                    or_condition_str = Some(&part[13..]); // Skip "OR_CONDITION:"
+                if let Some(stripped) = part.strip_prefix("OR_CONDITION:") {
+                    or_condition_str = Some(stripped);
                 } else {
                     other_modifiers.push(part.clone());
                 }
@@ -442,7 +438,7 @@ impl Transpiler {
 
             if let Some(or_str) = or_condition_str {
                 // Process OR condition
-                let or_conditions = self.flatten_or_conditions(or_str)?;
+                let or_conditions = Transpiler::flatten_or_conditions(or_str)?;
                 let modifiers_prefix = other_modifiers.join(" ");
 
                 // Generate a unique temp variable for this OR result
@@ -466,11 +462,7 @@ impl Transpiler {
                             format!("execute {} run scoreboard players set {} temp 1", cond_prefix, or_var)
                         } else {
                             // Check if modifiers_prefix already starts with "execute"
-                            let prefix = if modifiers_prefix.starts_with("execute ") {
-                                &modifiers_prefix[8..] // Skip "execute "
-                            } else {
-                                &modifiers_prefix
-                            };
+                            let prefix = modifiers_prefix.strip_prefix("execute ").unwrap_or(&modifiers_prefix);
                             format!("execute {} {} run scoreboard players set {} temp 1", prefix, cond_prefix, or_var)
                         };
 

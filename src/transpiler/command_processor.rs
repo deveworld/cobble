@@ -291,9 +291,15 @@ impl<'a> CommandProcessor<'a> {
     ) -> Result<String, String> {
         let trimmed = cmd.trim();
 
-        // Check if it's a tellraw or title command - we can auto-convert these
+        // Check if it's a tellraw, title, or say command - we can auto-convert these
         if trimmed.starts_with("tellraw ") || trimmed.starts_with("title ") {
             return self.convert_to_tellraw_json(cmd, vars);
+        }
+        
+        if let Some(say_message) = trimmed.strip_prefix("say ") {
+            // Auto-convert /say to /tellraw @a
+            let tellraw_cmd = format!("tellraw @a {}", say_message.trim());
+            return self.convert_to_tellraw_json(&tellraw_cmd, vars);
         }
 
         // Check if this command is using macro parameters (starts with $ or contains $(var))
@@ -311,17 +317,15 @@ impl<'a> CommandProcessor<'a> {
             return Ok(cmd.to_string());
         }
 
-        // For other commands (say, etc.) with scoreboard variables, provide helpful error
+        // For other commands with scoreboard variables, provide helpful error
         let var_names: Vec<_> = vars.iter().map(|(_, _, name)| name.as_str()).collect();
         Err(format!(
             "Cannot interpolate scoreboard variable{} {} in '{}' command.\n\
-            Scoreboard variables cannot be displayed in simple text commands.\n\n\
-            Solutions:\n\
-            1. Use 'tellraw' instead of 'say' to display scores:\n\
-               /tellraw @a [{{\"text\":\"Value: \"}},{{\"score\":{{\"name\":\"*\",\"objective\":\"temp\"}}}}]\n\
-            2. Use a function parameter:\n\
+            Scoreboard variables cannot be displayed in this command.\n\n\
+            Note: /say and /tellraw commands are automatically converted to display scores.\n\
+            For other commands, use function parameters:\n\
                def show_value(val):\n\
-                   /say Value: {{val}}\n\
+                   /command {{val}}\n\
                show_value(your_variable)",
             if var_names.len() > 1 { "s" } else { "" },
             var_names.join(", "),
@@ -351,9 +355,9 @@ impl<'a> CommandProcessor<'a> {
             // Title: "title <selector> <action> <message>"
             let parts: Vec<&str> = cmd.trim().splitn(4, ' ').collect();
             if parts.len() < 4 {
-                return Err(format!(
-                    "Title command requires action (title/subtitle/actionbar). Format: /title <selector> <action> <text>"
-                ));
+                return Err(
+                    "Title command requires action (title/subtitle/actionbar). Format: /title <selector> <action> <text>".to_string()
+                );
             }
             (parts[1], Some(parts[2]), parts[3])
         } else {

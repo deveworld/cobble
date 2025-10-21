@@ -38,7 +38,7 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     }
     if let Some(format_str) = options.pack_format {
         use crate::pack_format::PackFormat;
-        let pack_fmt = PackFormat::from_str(&format_str)?;
+        let pack_fmt = PackFormat::parse_format(&format_str)?;
         const MIN_PACK_FORMAT: u8 = 18;
 
         if pack_fmt.major() < MIN_PACK_FORMAT {

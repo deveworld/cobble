@@ -14,7 +14,7 @@ use command_processor::CommandProcessor;
 use condition_translator::ConditionTranslator;
 use expression_evaluator::ExpressionEvaluator;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Context for tracking function parameters and scope
 #[derive(Clone)]
@@ -77,7 +77,7 @@ impl Transpiler {
         }
     }
 
-    pub fn set_current_file(&mut self, file_path: &PathBuf) {
+    pub fn set_current_file(&mut self, file_path: &Path) {
         if let Some(parent) = file_path.parent() {
             self.current_file_dir = parent.to_path_buf();
         }
@@ -86,7 +86,7 @@ impl Transpiler {
         // Canonicalize if possible, otherwise use as-is
         let canonical_path = file_path
             .canonicalize()
-            .unwrap_or_else(|_| file_path.clone());
+            .unwrap_or_else(|_| file_path.to_path_buf());
         if !self.import_stack.contains(&canonical_path) {
             self.import_stack.push(canonical_path.clone());
             self.imported_files.insert(canonical_path);
@@ -924,7 +924,7 @@ impl Transpiler {
 
     fn preprocess_condition(&mut self, condition: &Expression) -> Result<Expression, String> {
         // Check if condition contains Boolean literals and track __internal__ objective
-        if self.contains_boolean_literal(condition) {
+        if Self::contains_boolean_literal(condition) {
             self.data_pack.track_objective("__internal__");
         }
 
@@ -1036,13 +1036,13 @@ impl Transpiler {
     }
 
     /// Check if an expression contains any Boolean literals (True or False)
-    fn contains_boolean_literal(&self, expr: &Expression) -> bool {
+    fn contains_boolean_literal(expr: &Expression) -> bool {
         match expr {
             Expression::Boolean(_) => true,
             Expression::Binary(left, _, right) => {
-                self.contains_boolean_literal(left) || self.contains_boolean_literal(right)
+                Self::contains_boolean_literal(left) || Self::contains_boolean_literal(right)
             }
-            Expression::Unary(_, inner) => self.contains_boolean_literal(inner),
+            Expression::Unary(_, inner) => Self::contains_boolean_literal(inner),
             _ => false,
         }
     }
@@ -1055,7 +1055,7 @@ impl Transpiler {
 
     fn handle_or_condition(&mut self, or_expr: &str) -> Result<String, String> {
         // Flatten all OR conditions into a single list
-        let conditions = self.flatten_or_conditions(or_expr)?;
+        let conditions = Self::flatten_or_conditions(or_expr)?;
 
         // Track the temp objective for or_result
         self.data_pack.track_objective("temp");
@@ -1083,7 +1083,7 @@ impl Transpiler {
         Ok("score or_result temp matches 1".to_string())
     }
 
-    fn flatten_or_conditions(&self, or_expr: &str) -> Result<Vec<String>, String> {
+    fn flatten_or_conditions(or_expr: &str) -> Result<Vec<String>, String> {
         let mut conditions = Vec::new();
 
         if !or_expr.starts_with("OR(") {
@@ -1130,7 +1130,7 @@ impl Transpiler {
             if !part.is_empty() {
                 // Check if this part is itself an OR expression
                 if part.starts_with("OR(") {
-                    conditions.extend(self.flatten_or_conditions(&part)?);
+                    conditions.extend(Self::flatten_or_conditions(&part)?);
                 } else {
                     conditions.push(part);
                 }
@@ -1311,13 +1311,9 @@ impl Transpiler {
                     // Recursively translate each part
                     if let Ok(translated) = self.try_translate_python_expression(part, false) {
                         // Remove any "if" or "unless" prefix that might have been added
-                        let clean_translated = if translated.starts_with("if ") {
-                            &translated[3..]
-                        } else if translated.starts_with("unless ") {
-                            &translated[7..]
-                        } else {
-                            &translated
-                        };
+                        let clean_translated = translated.strip_prefix("if ")
+                            .or_else(|| translated.strip_prefix("unless "))
+                            .unwrap_or(&translated);
                         translated_parts.push(clean_translated.to_string());
                     } else {
                         // Try simple translation
@@ -1334,11 +1330,11 @@ impl Transpiler {
         }
 
         // Simple variable check: "varname" -> "score varname objective matches 1.."
-        if condition.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            if self.variables.contains_key(condition) || self.scoreboard_variables.contains(condition) {
-                let objective = self.variable_objectives.get(condition).map(|s| s.as_str()).unwrap_or("temp");
-                return Ok(format!("score {} {} matches 1..", condition, objective));
-            }
+        if condition.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && (self.variables.contains_key(condition) || self.scoreboard_variables.contains(condition))
+        {
+            let objective = self.variable_objectives.get(condition).map(|s| s.as_str()).unwrap_or("temp");
+            return Ok(format!("score {} {} matches 1..", condition, objective));
         }
 
         // For more complex expressions, we need proper parsing

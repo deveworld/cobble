@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.5.17** - Fixed critical bugs: Return statement silent failures, function call assignment errors, and enhanced error handling for unsupported expressions | Minecraft 1.20.2+ compatible
+**✨ Version 0.5.18** - Performance improvements and enhanced /say command: Removed unnecessary scoreboard objectives, automatic tellraw conversion for /say with scoreboard variables | Minecraft 1.20.2+ compatible
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.5.17 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.5.18 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 - **GitHub Issues**: https://github.com/deveworld/cobble/issues
@@ -678,6 +678,11 @@ cargo watch -x test -x "run -- check examples/"
 ## 🗺️ Roadmap
 
 ### Recently Completed
+
+#### v0.5.18 (2025-10-21)
+- [x] **Performance optimization** - Removed unnecessary scoreboard objectives (multiplier, divisor, modulus, power_base, expr_temp) - now uses only temp objective with fake players
+- [x] **Enhanced /say command** - Scoreboard variables in /say commands are automatically converted to tellraw with proper score display components
+- [x] **Cleaner datapacks** - Generated packs now have fewer objectives in the objectives list, reducing clutter
 
 #### v0.5.17 (2025-01-19)
 - [x] **Return statement error handling** - Return statements now produce clear compile-time errors instead of being silently ignored

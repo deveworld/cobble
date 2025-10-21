@@ -18,7 +18,7 @@ impl PackFormat {
     }
 
     /// Create from a string like "88" or "88.0"
-    pub fn from_str(s: &str) -> Result<Self, String> {
+    pub fn parse_format(s: &str) -> Result<Self, String> {
         if let Some(dot_pos) = s.find('.') {
             // Decimal format
             let major = s[..dot_pos]

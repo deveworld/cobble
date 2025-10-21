@@ -5,6 +5,39 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.18] - 2025-10-21
+
+### Changed
+- **Performance optimization**: Removed unnecessary scoreboard objectives creation
+  - Previously created 5 unnecessary objectives: `multiplier`, `divisor`, `modulus`, `power_base`, `expr_temp`
+  - Now uses fake players within the `temp` objective instead (e.g., `multiplier temp`, `divisor temp`)
+  - Reduces clutter in `/scoreboard objectives list` command
+  - No functional changes - arithmetic operations work identically
+  - Modified `src/transpiler/expression_evaluator.rs` (6 locations)
+  - Modified `src/transpiler/statement_processors/assignment.rs` (11 locations)
+
+- **Enhanced /say command**: Automatic conversion to tellraw with scoreboard variables
+  - `/say Value is {x}` now automatically converts to `tellraw @a` with score component
+  - Scoreboard variables are displayed correctly using JSON text components
+  - Works with simple and complex expressions: `/say Result: {(x + y) * z}`
+  - Plain /say without variables remains unchanged: `/say Hello world`
+  - Macro parameters in /say still work as before (for loop variables, function parameters)
+  - Modified `src/transpiler/command_processor.rs:287-335`
+
+### Fixed
+- **Critical bug**: Complex expression assignments not tracked as scoreboard variables
+  - Variables from complex expressions like `result = (x + y) * z` were not added to scoreboard_variables
+  - This caused `/say {result}` to fail with "Cannot interpolate" error instead of auto-converting
+  - Now all complex expression results are properly tracked and can be used in /say
+  - Modified `src/transpiler/statement_processors/assignment.rs:99`
+
+### Technical Details
+- Fake players (`multiplier`, `divisor`, `modulus`, `power_base`, `expr_temp`) are player names in the `temp` objective
+- Commands like `scoreboard players set multiplier temp 5` work without a dedicated `multiplier` objective
+- The /say to tellraw conversion uses the same JSON generation logic as existing tellraw/title commands
+- Complex expressions now properly register variables in `scoreboard_variables` HashSet
+- All 109 tests passing - no regressions introduced
+
 ## [0.5.17] - 2025-01-19
 
 ### Fixed

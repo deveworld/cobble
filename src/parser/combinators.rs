@@ -416,10 +416,10 @@ pub fn token_parser<'a>(
             // if/unless in execute blocks:
             // For now, keep as raw and let transpiler determine if it's Python expression
             just(&Token::If)
-                .ignore_then(exec_condition.clone())
+                .ignore_then(exec_condition)
                 .map(ExecuteModifier::IfRaw),
             just(&Token::Unless)
-                .ignore_then(exec_condition.clone())
+                .ignore_then(exec_condition)
                 .map(ExecuteModifier::UnlessRaw),
             // positioned <coords>
             select_ref! { Token::Ident(s) if s == "positioned" => s.clone() }

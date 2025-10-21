@@ -96,6 +96,7 @@ impl Transpiler {
             self.data_pack.track_objective("temp");
             self.variable_objectives
                 .insert(assign.target.clone(), "temp".to_string());
+            self.scoreboard_variables.insert(assign.target.clone());
             let expr_commands =
                 self.evaluate_expression_to_target(&assign.value, &assign.target)?;
 
@@ -223,7 +224,6 @@ impl Transpiler {
                                     ));
                                 }
                                 BinaryOp::Mul => {
-                                    self.data_pack.track_objective("multiplier");
                                     // Optimization: Skip self-assignment if target == var
                                     if assign.target != *var || var_obj != "temp" {
                                         commands.push(format!(
@@ -248,7 +248,6 @@ impl Transpiler {
                                             assign.target, var, value
                                         ));
                                     }
-                                    self.data_pack.track_objective("divisor");
                                     // Optimization: Skip self-assignment if target == var
                                     if assign.target != *var || var_obj != "temp" {
                                         commands.push(format!(
@@ -273,7 +272,6 @@ impl Transpiler {
                                             assign.target, var, value
                                         ));
                                     }
-                                    self.data_pack.track_objective("modulus");
                                     // Optimization: Skip self-assignment if target == var
                                     if assign.target != *var || var_obj != "temp" {
                                         commands.push(format!(
@@ -327,7 +325,6 @@ impl Transpiler {
                                             ));
                                         }
                                         if value > 1 {
-                                            self.data_pack.track_objective("power_base");
                                             commands.push(format!(
                                                 "scoreboard players operation power_base temp = {} temp",
                                                 assign.target
@@ -439,7 +436,6 @@ impl Transpiler {
                                 }
                                 BinaryOp::Mul => {
                                     // score = value * var → score = var, score *= value
-                                    self.data_pack.track_objective("multiplier");
                                     commands.push(format!(
                                         "scoreboard players operation {} temp = {} {}",
                                         assign.target, var, var_obj
@@ -470,7 +466,6 @@ impl Transpiler {
                                             ));
                                         }
                                     }
-                                    self.data_pack.track_objective("divisor");
                                     commands.push(format!(
                                         "scoreboard players set {} temp {}",
                                         assign.target, value
@@ -497,7 +492,6 @@ impl Transpiler {
                                             ));
                                         }
                                     }
-                                    self.data_pack.track_objective("modulus");
                                     commands.push(format!(
                                         "scoreboard players set {} temp {}",
                                         assign.target, value
@@ -548,7 +542,6 @@ impl Transpiler {
                                         ));
                                     }
                                     BinaryOp::Mul => {
-                                        self.data_pack.track_objective("multiplier");
                                         commands.push(format!(
                                             "scoreboard players operation {} temp = {} {}",
                                             assign.target, var2, var_obj
@@ -616,7 +609,6 @@ impl Transpiler {
                                         ));
                                     }
                                     BinaryOp::Mul => {
-                                        self.data_pack.track_objective("multiplier");
                                         commands.push(format!(
                                             "scoreboard players set multiplier temp {}",
                                             num
@@ -632,7 +624,6 @@ impl Transpiler {
                                                 "Division by zero in assignment".to_string()
                                             );
                                         }
-                                        self.data_pack.track_objective("divisor");
                                         commands.push(format!(
                                             "scoreboard players set divisor temp {}",
                                             num
@@ -646,7 +637,6 @@ impl Transpiler {
                                         if num == 0 {
                                             return Err("Modulo by zero in assignment".to_string());
                                         }
-                                        self.data_pack.track_objective("modulus");
                                         commands.push(format!(
                                             "scoreboard players set modulus temp {}",
                                             num
@@ -670,7 +660,6 @@ impl Transpiler {
                                         } else if num == 1 {
                                             // nothing to do
                                         } else {
-                                            self.data_pack.track_objective("power_base");
                                             commands.push(format!(
                                                 "scoreboard players operation power_base temp = {} temp",
                                                 assign.target
