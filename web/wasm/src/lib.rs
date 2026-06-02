@@ -386,3 +386,76 @@ fn sanitize_namespace(namespace: &str) -> String {
 fn to_diag(error: serde_json::Error) -> Vec<String> {
     vec![format!("Serialization error: {error}")]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file<'a>(response: &'a CompileResponse, path: &str) -> &'a CompileFile {
+        response
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .unwrap_or_else(|| panic!("missing generated file {path}"))
+    }
+
+    #[test]
+    fn compile_manifest_reports_root_cobble_version() {
+        let response = compile("def load():\n    /say web\n", "web_test", "Web test").unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_str(&file(&response, ".cobble/build_manifest.json").content).unwrap();
+
+        assert_eq!(manifest["cobble_version"], env!("COBBLE_LANG_VERSION"));
+        assert_eq!(manifest["minecraft_version"], "26.1.2");
+        assert_eq!(manifest["pack_format_text"], "101.1");
+        assert_eq!(manifest["namespace"], "web_test");
+    }
+
+    #[test]
+    fn compile_merges_duplicate_function_tag_paths() {
+        let response = compile(
+            r#"
+import stdlib
+from stdlib import event
+
+datapack.function_tag("minecraft:load", ["web_test:extra_load"])
+
+def load():
+    /say load
+
+def extra_load():
+    /say extra
+
+stdlib.addEventListener(event.LOAD, load)
+"#,
+            "web_test",
+            "Web test",
+        )
+        .unwrap();
+
+        let load_tag_files: Vec<_> = response
+            .files
+            .iter()
+            .filter(|file| file.path == "data/minecraft/tags/function/load.json")
+            .collect();
+        assert_eq!(load_tag_files.len(), 1);
+
+        let tag: serde_json::Value = serde_json::from_str(&load_tag_files[0].content).unwrap();
+        assert_eq!(
+            tag["values"],
+            serde_json::json!(["web_test:load", "web_test:extra_load"])
+        );
+    }
+
+    #[test]
+    fn compile_returns_structured_parse_diagnostics() {
+        let diagnostics = match compile("def broken(:\n", "web_test", "Web test") {
+            Ok(_) => panic!("invalid source should fail"),
+            Err(diagnostics) => diagnostics,
+        };
+
+        assert!(!diagnostics.is_empty());
+        assert!(diagnostics[0].contains("Parse error:"));
+    }
+}

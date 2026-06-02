@@ -143,6 +143,7 @@ pub struct DataPack {
     pub predicates: HashMap<String, String>,
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
+    pub json_resource_origins: HashMap<String, SourceLocation>,
     pub pack_format: PackFormat,
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
@@ -166,6 +167,7 @@ impl DataPack {
             predicates: HashMap::new(),
             item_modifiers: HashMap::new(),
             json_resources: HashMap::new(),
+            json_resource_origins: HashMap::new(),
             pack_format: SUPPORTED_PACK_FORMAT,
             stdlib: StdLib::new(),
             used_objectives: HashSet::new(),
@@ -486,14 +488,42 @@ impl DataPack {
         relative_path: String,
         json: String,
     ) -> Result<(), String> {
+        self.add_json_resource_in_namespace_with_source(namespace, relative_path, json, None)
+    }
+
+    pub fn add_json_resource_in_namespace_with_source(
+        &mut self,
+        namespace: String,
+        relative_path: String,
+        json: String,
+        source: Option<SourceLocation>,
+    ) -> Result<(), String> {
         let key = Self::json_resource_key(&namespace, &relative_path);
-        if self.json_resources.contains_key(&key) {
-            return Err(format!(
-                "Duplicate data pack resource '{}:{}'",
-                namespace, relative_path
-            ));
+        if let Some(existing_json) = self.json_resources.get(&key) {
+            let duplicate_kind =
+                Self::json_resource_duplicate_kind(&relative_path, existing_json, &json);
+            let mut message = format!(
+                "Duplicate data pack resource '{}:{}' ({})",
+                namespace, relative_path, duplicate_kind
+            );
+            if let Some(first_source) = self.json_resource_origins.get(&key) {
+                message.push_str(&format!(
+                    "\n  first declaration: {}",
+                    self.format_source_location(first_source)
+                ));
+            }
+            if let Some(second_source) = source.as_ref() {
+                message.push_str(&format!(
+                    "\n  second declaration: {}",
+                    self.format_source_location(second_source)
+                ));
+            }
+            return Err(message);
         }
-        self.json_resources.insert(key, json);
+        self.json_resources.insert(key.clone(), json);
+        if let Some(source) = source {
+            self.json_resource_origins.insert(key, source);
+        }
         Ok(())
     }
 
@@ -717,6 +747,30 @@ impl DataPack {
             source.file = stable_relative_path(&source.file, root);
         }
         source
+    }
+
+    fn format_source_location(&self, source: &SourceLocation) -> String {
+        let source = self.normalize_source_location(source.clone());
+        format!(
+            "{}:{}:{}",
+            source.file.display(),
+            source.line,
+            source.column
+        )
+    }
+
+    fn json_resource_duplicate_kind(
+        relative_path: &str,
+        existing_json: &str,
+        new_json: &str,
+    ) -> &'static str {
+        if existing_json == new_json {
+            "exact duplicate"
+        } else if relative_path.starts_with("tags/") {
+            "invalid duplicate tag declaration"
+        } else {
+            "invalid overwrite"
+        }
     }
 
     fn generated_resource_entries(&self) -> Vec<BuildManifestResourceEntry> {

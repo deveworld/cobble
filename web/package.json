@@ -8,8 +8,14 @@
     "build": "npm run build:wasm && next build --webpack",
     "build:github": "NEXT_PUBLIC_BASE_PATH=/cobble npm run build",
     "start": "next start",
+    "test:e2e": "npm run build:github && npm run test:e2e:run",
+    "test:e2e:run": "playwright test",
+    "test:links": "node scripts/check-links.mjs",
+    "test:web": "npm run test:wasm && npm run test:zip && npm run lint && npm run build:github && npm run test:e2e:run && npm run test:links",
+    "test:zip": "node --experimental-default-type=module --test lib/datapackZip.test.mts",
+    "test:wasm": "cargo test --manifest-path wasm/Cargo.toml --locked",
     "typecheck": "tsc --noEmit",
-    "lint": "npm run typecheck"
+    "lint": "npm run build:wasm && npm run typecheck"
   },
   "dependencies": {
     "lucide-react": "^1.17.0",
@@ -21,6 +27,7 @@
     "postcss": "^8.5.15"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

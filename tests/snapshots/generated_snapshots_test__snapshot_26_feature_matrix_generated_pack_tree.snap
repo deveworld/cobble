@@ -1,0 +1,2885 @@
+---
+source: tests/generated_snapshots_test.rs
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "cobble_version": "<cobble-version>",
+  "description": "Cobble 26.1.2 feature matrix fixture",
+  "generated": {
+    "advancements": 0,
+    "commands": 282,
+    "custom_function_tags": 1,
+    "function_tags": 3,
+    "functions": 19,
+    "item_modifiers": 0,
+    "json_function_tags": 2,
+    "json_resources": 5,
+    "loot_tables": 0,
+    "predicates": 2,
+    "recipes": 0,
+    "source_map_entries": 282,
+    "stdlib_function_tags": 2,
+    "total_json_resources": 5
+  },
+  "generated_namespaces": [
+    "cobble_26_feature_matrix",
+    "minecraft",
+    "other_matrix"
+  ],
+  "input": {
+    "compiled_files": [
+      "src/main.cbl"
+    ],
+    "entry_points": [
+      "main.cbl"
+    ],
+    "source": "src"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "cobble_26_feature_matrix",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "resources": [
+    {
+      "kind": "dialog",
+      "namespace": "cobble_26_feature_matrix",
+      "path": "notice"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "cobble_26_feature_matrix",
+      "path": "utility"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "load"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "tick"
+    },
+    {
+      "kind": "predicate",
+      "namespace": "cobble_26_feature_matrix",
+      "path": "always_true"
+    },
+    {
+      "kind": "predicate",
+      "namespace": "other_matrix",
+      "path": "checks/always_true"
+    }
+  ],
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "cobble_26_feature_matrix",
+  "minecraft",
+  "other_matrix"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard players set #math_result math 0",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard players operation #sqrt_high math = #math_input math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 3,
+      "command": "scoreboard players set #sqrt_low math 0",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 4,
+      "command": "scoreboard players set #sqrt_limit math 46340",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 5,
+      "command": "scoreboard players set #sqrt_two math 2",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 6,
+      "command": "execute if score #sqrt_high math matches ..-1 run scoreboard players set #sqrt_high math 0",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 7,
+      "command": "execute if score #sqrt_high math > #sqrt_limit math run scoreboard players operation #sqrt_high math = #sqrt_limit math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 8,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 9,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 10,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 11,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 12,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 13,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 14,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 15,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 16,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 17,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 18,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 19,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 20,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 21,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 22,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 23,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 24,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 25,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 26,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 27,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 28,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 29,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 30,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 31,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 32,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 33,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 34,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 35,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 36,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 37,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 38,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 39,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 40,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 41,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 42,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 43,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 44,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 45,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 46,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 47,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 48,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 49,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 50,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 51,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 52,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 53,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 54,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 55,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 56,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 57,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 58,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 59,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 60,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 61,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 62,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 63,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 64,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 65,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 66,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 67,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 68,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 69,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 70,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 71,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 72,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 73,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 74,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 75,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 76,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 77,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 78,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 79,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 80,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 81,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 82,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 83,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 84,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 85,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 86,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 87,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 88,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 89,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 90,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 91,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 92,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 93,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 94,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 95,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 96,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 97,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 98,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 99,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 100,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 101,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 102,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 103,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 104,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 105,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 106,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 107,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 108,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 109,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 110,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 111,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 112,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 113,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 114,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 115,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 116,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 117,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 118,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 119,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 120,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 121,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 122,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 123,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 124,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 125,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 126,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 127,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 128,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 129,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 130,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 131,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 132,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 133,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 134,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 135,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 136,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 137,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 138,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 139,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 140,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 141,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 142,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 143,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 144,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 145,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 146,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 147,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 148,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 149,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 150,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 151,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 152,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 153,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 154,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 155,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 156,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 157,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 158,
+      "command": "scoreboard players operation #sqrt_mid math = #sqrt_low math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 159,
+      "command": "scoreboard players operation #sqrt_mid math += #sqrt_high math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 160,
+      "command": "scoreboard players operation #sqrt_mid math /= #sqrt_two math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 161,
+      "command": "scoreboard players operation #sqrt_square math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 162,
+      "command": "scoreboard players operation #sqrt_square math *= #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 163,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 164,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 165,
+      "command": "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 166,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction",
+      "generated_line": 167,
+      "command": "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1",
+      "source": null,
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/admin_audit.mcfunction",
+      "generated_line": 1,
+      "command": "$tag $(player) add matrix_admin",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 110,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/admin_audit.mcfunction",
+      "generated_line": 2,
+      "command": "$effect give $(player) minecraft:glowing 5 0 true",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 111,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/admin_audit.mcfunction",
+      "generated_line": 3,
+      "command": "$playsound minecraft:block.note_block.pling master $(player) ~ ~ ~ 1 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 112,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/admin_audit.mcfunction",
+      "generated_line": 4,
+      "command": "schedule function cobble_26_feature_matrix:tick 20t replace",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 113,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/admin_audit.mcfunction",
+      "generated_line": 5,
+      "command": "return run say audit complete",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 114,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/announce.mcfunction",
+      "generated_line": 1,
+      "command": "$tellraw @a {\"text\":\"$(message)\",\"color\":\"light_purple\"}",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/give_kit.mcfunction",
+      "generated_line": 1,
+      "command": "$give $(player) minecraft:$(item) $(count)",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 20,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/give_kit.mcfunction",
+      "generated_line": 2,
+      "command": "$title $(player) actionbar {\"text\":\"Kit count: $(count)\"}",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 21,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 1,
+      "command": "gamerule max_command_sequence_length 1000000000",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard objectives add loop_counter dummy",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 3,
+      "command": "scoreboard objectives add math dummy",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 4,
+      "command": "scoreboard objectives add temp dummy",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 5,
+      "command": "scoreboard players set score temp 7",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 9,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 6,
+      "command": "scoreboard players set energy temp 5",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 10,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 7,
+      "command": "scoreboard players set stage temp 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 11,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 8,
+      "command": "scoreboard players set enabled temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 12,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 9,
+      "command": "data modify storage cobble_26_feature_matrix:global vars.status set value \"boot\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 13,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 10,
+      "command": "function cobble_26_feature_matrix:setup_scoreboards",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 35,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 11,
+      "command": "data modify storage cobble_26_feature_matrix:global args.message set value \"Feature matrix online\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 36,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 12,
+      "command": "function cobble_26_feature_matrix:announce with storage cobble_26_feature_matrix:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 36,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 13,
+      "command": "data modify storage cobble_26_feature_matrix:global args.player set value \"@a\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 14,
+      "command": "data modify storage cobble_26_feature_matrix:global args.item set value \"diamond\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 15,
+      "command": "data modify storage cobble_26_feature_matrix:global args.count set value 2",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 16,
+      "command": "function cobble_26_feature_matrix:give_kit with storage cobble_26_feature_matrix:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 17,
+      "command": "tellraw @a {\"bold\":true,\"color\":\"aqua\",\"text\":\"Feature matrix loaded\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 38,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 18,
+      "command": "title @a title {\"text\":\"Matrix score\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 39,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 19,
+      "command": "scoreboard players set matrix_ready temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 40,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 20,
+      "command": "execute store result score matrix_roll temp run random value 1..6",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 41,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 21,
+      "command": "scoreboard players set matrix_timer temp 20",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 42,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 22,
+      "command": "data modify storage cobble_26_feature_matrix:global status set value {state:\"loaded\",enabled:1b}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 43,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 23,
+      "command": "data modify storage cobble_26_feature_matrix:global events append value \"loaded\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 44,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 24,
+      "command": "execute store result score matrix_state_count temp run data get storage cobble_26_feature_matrix:global events 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 45,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 25,
+      "command": "schedule function cobble_26_feature_matrix:tick 20t replace",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 46,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 26,
+      "command": "tag @a add matrix_loader",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 47,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 27,
+      "command": "scoreboard players set #math_input math 100",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 48,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 28,
+      "command": "function cobble_26_feature_matrix:_cobble_math_sqrt",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 48,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 29,
+      "command": "scoreboard players operation root temp = #math_result math",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 48,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 30,
+      "command": "datapack list enabled",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 31,
+      "command": "random roll 1..6",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 50,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 32,
+      "command": "dialog clear @a",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 51,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 33,
+      "command": "waypoint list",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 52,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 34,
+      "command": "stopwatch create cobble:matrix",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 53,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 35,
+      "command": "stopwatch query cobble:matrix 20.0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 54,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
+      "generated_line": 36,
+      "command": "version",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 55,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_body_11.mcfunction",
+      "generated_line": 1,
+      "command": "$say reverse loop $(n)",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 100,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_body_9.mcfunction",
+      "generated_line": 1,
+      "command": "$tellraw @a {\"text\":\"even loop $(i)\",\"color\":\"green\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 97,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_11.mcfunction",
+      "generated_line": 1,
+      "command": "execute if score n loop_counter matches 0.. run function cobble_26_feature_matrix:loop_wrapper_12",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_11.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard players remove n loop_counter 3",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_11.mcfunction",
+      "generated_line": 3,
+      "command": "execute if score n loop_counter matches 0.. run function cobble_26_feature_matrix:loop_temp_11",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_9.mcfunction",
+      "generated_line": 1,
+      "command": "execute if score i loop_counter matches ..5 run function cobble_26_feature_matrix:loop_wrapper_10",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 96,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_9.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard players add i loop_counter 2",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 96,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_9.mcfunction",
+      "generated_line": 3,
+      "command": "execute if score i loop_counter matches ..5 run function cobble_26_feature_matrix:loop_temp_9",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 96,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_wrapper_10.mcfunction",
+      "generated_line": 1,
+      "command": "execute store result storage cobble_26_feature_matrix:global args.i int 1 run scoreboard players get i loop_counter",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 96,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_wrapper_10.mcfunction",
+      "generated_line": 2,
+      "command": "function cobble_26_feature_matrix:loop_body_9 with storage cobble_26_feature_matrix:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 96,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_wrapper_12.mcfunction",
+      "generated_line": 1,
+      "command": "execute store result storage cobble_26_feature_matrix:global args.n int 1 run scoreboard players get n loop_counter",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/loop_wrapper_12.mcfunction",
+      "generated_line": 2,
+      "command": "function cobble_26_feature_matrix:loop_body_11 with storage cobble_26_feature_matrix:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/marker_scan.mcfunction",
+      "generated_line": 1,
+      "command": "execute as @e[type=armor_stand,tag=matrix_marker,distance=..16] run data merge entity @s {Glowing:1b}",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 25,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/marker_scan.mcfunction",
+      "generated_line": 2,
+      "command": "execute as @a[tag=admin] run tellraw @s {\"text\":\"Marker scan complete\",\"color\":\"green\"}",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 27,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/match_case_0_4.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard players set stage temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 83,
+        "column": 13
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/match_case_0_4.mcfunction",
+      "generated_line": 2,
+      "command": "say stage zero",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 84,
+        "column": 13
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/match_case_1_5.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard players set stage temp 2",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 86,
+        "column": 13
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/match_case_1_5.mcfunction",
+      "generated_line": 2,
+      "command": "say stage middle",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 87,
+        "column": 13
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/match_default_6.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard players set stage temp 4",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 89,
+        "column": 13
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/match_default_6.mcfunction",
+      "generated_line": 2,
+      "command": "say stage fallback",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 90,
+        "column": 13
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard objectives add matrix dummy {\"text\":\"Matrix\"}",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 5,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard objectives add matrix_energy dummy {\"text\":\"Energy\"}",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 6,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 3,
+      "command": "scoreboard objectives setdisplay sidebar matrix",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 7,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 4,
+      "command": "team add matrix {\"text\":\"Matrix\"}",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 8,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 5,
+      "command": "team modify matrix color aqua",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 9,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 6,
+      "command": "bossbar add cobble_26_feature_matrix:matrix {\"text\":\"Feature Matrix\"}",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 10,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 7,
+      "command": "bossbar set cobble_26_feature_matrix:matrix max 100",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 11,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 8,
+      "command": "bossbar set cobble_26_feature_matrix:matrix value 25",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 12,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 9,
+      "command": "bossbar set cobble_26_feature_matrix:matrix color blue",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 13,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction",
+      "generated_line": 10,
+      "command": "bossbar set cobble_26_feature_matrix:matrix players @a",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 14,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard players add score temp 3",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 64,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard players operation doubled temp = score temp",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 65,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 3,
+      "command": "scoreboard players set #multiplier temp 2",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 65,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 4,
+      "command": "scoreboard players operation doubled temp *= #multiplier temp",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 65,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 5,
+      "command": "scoreboard players operation combined temp = doubled temp",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 66,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 6,
+      "command": "scoreboard players add combined temp 5",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 66,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 7,
+      "command": "scoreboard players operation remainder temp = combined temp",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 67,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 8,
+      "command": "scoreboard players set #modulus temp 4",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 67,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 9,
+      "command": "scoreboard players operation remainder temp %= #modulus temp",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 67,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 10,
+      "command": "scoreboard players set power temp 27",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 68,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 11,
+      "command": "data modify storage cobble_26_feature_matrix:global vars.status set value \"running\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 69,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 12,
+      "command": "execute if score matrix_timer temp matches 1.. run scoreboard players remove matrix_timer temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 71,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 13,
+      "command": "scoreboard players set matrix_timer_done temp 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 72,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 14,
+      "command": "execute if score matrix_timer temp matches ..0 run scoreboard players set matrix_timer_done temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 72,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 15,
+      "command": "scoreboard players set if_branch_0 temp 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 74,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 16,
+      "command": "execute if score score temp matches 21.. unless score energy temp matches 0 run scoreboard players set if_branch_0 temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 74,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 17,
+      "command": "execute if score score temp matches 21.. unless score energy temp matches 0 run tellraw @a[gamemode=!spectator] {\"text\":\"High score \",\"color\":\"gold\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 75,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 18,
+      "command": "scoreboard players set or_temp_1 temp 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 74,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 19,
+      "command": "execute if score score temp matches 10 run scoreboard players set or_temp_1 temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 74,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 20,
+      "command": "execute if score energy temp matches 0 run scoreboard players set or_temp_1 temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 74,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 21,
+      "command": "scoreboard players set elif_taken_2 temp 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 74,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 22,
+      "command": "execute unless score if_branch_0 temp matches 1 if score or_temp_1 temp matches 1 run scoreboard players set elif_taken_2 temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 74,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 23,
+      "command": "execute if score elif_taken_2 temp matches 1 run scoreboard players set if_branch_0 temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 74,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 24,
+      "command": "execute if score elif_taken_2 temp matches 1 run tellraw @a[gamemode=!spectator] {\"text\":\"Threshold reached\",\"color\":\"yellow\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 77,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 25,
+      "command": "execute unless score if_branch_0 temp matches 1 run tellraw @a[gamemode=!spectator] {\"text\":\"Matrix warming\",\"color\":\"gray\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 79,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 26,
+      "command": "scoreboard players operation match_temp_3 temp = remainder temp",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 81,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 27,
+      "command": "execute if score match_temp_3 temp matches 0 run function cobble_26_feature_matrix:match_case_0_4",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 81,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 28,
+      "command": "execute if score match_temp_3 temp matches 1..2 run function cobble_26_feature_matrix:match_case_1_5",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 81,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 29,
+      "command": "execute unless score match_temp_3 temp matches 0..0 unless score match_temp_3 temp matches 1..2 run function cobble_26_feature_matrix:match_default_6",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 81,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 30,
+      "command": "function cobble_26_feature_matrix:while_temp_7",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 92,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 31,
+      "command": "scoreboard players set i loop_counter 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 96,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 32,
+      "command": "function cobble_26_feature_matrix:loop_temp_9",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 96,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 33,
+      "command": "scoreboard players set n loop_counter 7",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 34,
+      "command": "function cobble_26_feature_matrix:loop_temp_11",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 35,
+      "command": "execute as @a[gamemode=!spectator] at @s if entity @s[distance=..32] run particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 3",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 103,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 36,
+      "command": "execute positioned ~ ~2 ~ rotated ~ 0 run particle minecraft:flame ~ ~ ~ 0 0 0 0 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 105,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 37,
+      "command": "tellraw @a [{\"color\":\"blue\",\"text\":\"Status: \"},{\"nbt\":\"vars.status\",\"storage\":\"cobble_26_feature_matrix:global\"}]",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 106,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/while_body_8.mcfunction",
+      "generated_line": 1,
+      "command": "tellraw @a [{\"text\":\"draining \"},{\"score\":{\"name\":\"energy\",\"objective\":\"temp\"}}]",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 93,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/while_body_8.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard players remove energy temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 94,
+        "column": 9
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/while_temp_7.mcfunction",
+      "generated_line": 1,
+      "command": "execute if score energy temp matches 1.. run function cobble_26_feature_matrix:while_body_8",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 92,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/while_temp_7.mcfunction",
+      "generated_line": 2,
+      "command": "execute if score energy temp matches 1.. run function cobble_26_feature_matrix:while_temp_7",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 92,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    }
+  ]
+}
+
+===== data/cobble_26_feature_matrix/dialog/notice.json =====
+{
+  "title": {
+    "text": "Feature Matrix"
+  },
+  "type": "minecraft:notice"
+}
+
+===== data/cobble_26_feature_matrix/function/_cobble_math_sqrt.mcfunction =====
+scoreboard players set #math_result math 0
+scoreboard players operation #sqrt_high math = #math_input math
+scoreboard players set #sqrt_low math 0
+scoreboard players set #sqrt_limit math 46340
+scoreboard players set #sqrt_two math 2
+execute if score #sqrt_high math matches ..-1 run scoreboard players set #sqrt_high math 0
+execute if score #sqrt_high math > #sqrt_limit math run scoreboard players operation #sqrt_high math = #sqrt_limit math
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+scoreboard players operation #sqrt_mid math = #sqrt_low math
+scoreboard players operation #sqrt_mid math += #sqrt_high math
+scoreboard players operation #sqrt_mid math /= #sqrt_two math
+scoreboard players operation #sqrt_square math = #sqrt_mid math
+scoreboard players operation #sqrt_square math *= #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math
+execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1
+execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math
+execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1
+
+===== data/cobble_26_feature_matrix/function/admin_audit.mcfunction =====
+$tag $(player) add matrix_admin
+$effect give $(player) minecraft:glowing 5 0 true
+$playsound minecraft:block.note_block.pling master $(player) ~ ~ ~ 1 1
+schedule function cobble_26_feature_matrix:tick 20t replace
+return run say audit complete
+
+===== data/cobble_26_feature_matrix/function/announce.mcfunction =====
+$tellraw @a {"text":"$(message)","color":"light_purple"}
+
+===== data/cobble_26_feature_matrix/function/give_kit.mcfunction =====
+$give $(player) minecraft:$(item) $(count)
+$title $(player) actionbar {"text":"Kit count: $(count)"}
+
+===== data/cobble_26_feature_matrix/function/load.mcfunction =====
+gamerule max_command_sequence_length 1000000000
+scoreboard objectives add loop_counter dummy
+scoreboard objectives add math dummy
+scoreboard objectives add temp dummy
+scoreboard players set score temp 7
+scoreboard players set energy temp 5
+scoreboard players set stage temp 0
+scoreboard players set enabled temp 1
+data modify storage cobble_26_feature_matrix:global vars.status set value "boot"
+function cobble_26_feature_matrix:setup_scoreboards
+data modify storage cobble_26_feature_matrix:global args.message set value "Feature matrix online"
+function cobble_26_feature_matrix:announce with storage cobble_26_feature_matrix:global args
+data modify storage cobble_26_feature_matrix:global args.player set value "@a"
+data modify storage cobble_26_feature_matrix:global args.item set value "diamond"
+data modify storage cobble_26_feature_matrix:global args.count set value 2
+function cobble_26_feature_matrix:give_kit with storage cobble_26_feature_matrix:global args
+tellraw @a {"bold":true,"color":"aqua","text":"Feature matrix loaded"}
+title @a title {"text":"Matrix score"}
+scoreboard players set matrix_ready temp 1
+execute store result score matrix_roll temp run random value 1..6
+scoreboard players set matrix_timer temp 20
+data modify storage cobble_26_feature_matrix:global status set value {state:"loaded",enabled:1b}
+data modify storage cobble_26_feature_matrix:global events append value "loaded"
+execute store result score matrix_state_count temp run data get storage cobble_26_feature_matrix:global events 1
+schedule function cobble_26_feature_matrix:tick 20t replace
+tag @a add matrix_loader
+scoreboard players set #math_input math 100
+function cobble_26_feature_matrix:_cobble_math_sqrt
+scoreboard players operation root temp = #math_result math
+datapack list enabled
+random roll 1..6
+dialog clear @a
+waypoint list
+stopwatch create cobble:matrix
+stopwatch query cobble:matrix 20.0
+version
+
+===== data/cobble_26_feature_matrix/function/loop_body_11.mcfunction =====
+$say reverse loop $(n)
+
+===== data/cobble_26_feature_matrix/function/loop_body_9.mcfunction =====
+$tellraw @a {"text":"even loop $(i)","color":"green"}
+
+===== data/cobble_26_feature_matrix/function/loop_temp_11.mcfunction =====
+execute if score n loop_counter matches 0.. run function cobble_26_feature_matrix:loop_wrapper_12
+scoreboard players remove n loop_counter 3
+execute if score n loop_counter matches 0.. run function cobble_26_feature_matrix:loop_temp_11
+
+===== data/cobble_26_feature_matrix/function/loop_temp_9.mcfunction =====
+execute if score i loop_counter matches ..5 run function cobble_26_feature_matrix:loop_wrapper_10
+scoreboard players add i loop_counter 2
+execute if score i loop_counter matches ..5 run function cobble_26_feature_matrix:loop_temp_9
+
+===== data/cobble_26_feature_matrix/function/loop_wrapper_10.mcfunction =====
+execute store result storage cobble_26_feature_matrix:global args.i int 1 run scoreboard players get i loop_counter
+function cobble_26_feature_matrix:loop_body_9 with storage cobble_26_feature_matrix:global args
+
+===== data/cobble_26_feature_matrix/function/loop_wrapper_12.mcfunction =====
+execute store result storage cobble_26_feature_matrix:global args.n int 1 run scoreboard players get n loop_counter
+function cobble_26_feature_matrix:loop_body_11 with storage cobble_26_feature_matrix:global args
+
+===== data/cobble_26_feature_matrix/function/marker_scan.mcfunction =====
+execute as @e[type=armor_stand,tag=matrix_marker,distance=..16] run data merge entity @s {Glowing:1b}
+execute as @a[tag=admin] run tellraw @s {"text":"Marker scan complete","color":"green"}
+
+===== data/cobble_26_feature_matrix/function/match_case_0_4.mcfunction =====
+scoreboard players set stage temp 1
+say stage zero
+
+===== data/cobble_26_feature_matrix/function/match_case_1_5.mcfunction =====
+scoreboard players set stage temp 2
+say stage middle
+
+===== data/cobble_26_feature_matrix/function/match_default_6.mcfunction =====
+scoreboard players set stage temp 4
+say stage fallback
+
+===== data/cobble_26_feature_matrix/function/setup_scoreboards.mcfunction =====
+scoreboard objectives add matrix dummy {"text":"Matrix"}
+scoreboard objectives add matrix_energy dummy {"text":"Energy"}
+scoreboard objectives setdisplay sidebar matrix
+team add matrix {"text":"Matrix"}
+team modify matrix color aqua
+bossbar add cobble_26_feature_matrix:matrix {"text":"Feature Matrix"}
+bossbar set cobble_26_feature_matrix:matrix max 100
+bossbar set cobble_26_feature_matrix:matrix value 25
+bossbar set cobble_26_feature_matrix:matrix color blue
+bossbar set cobble_26_feature_matrix:matrix players @a
+
+===== data/cobble_26_feature_matrix/function/tick.mcfunction =====
+scoreboard players add score temp 3
+scoreboard players operation doubled temp = score temp
+scoreboard players set #multiplier temp 2
+scoreboard players operation doubled temp *= #multiplier temp
+scoreboard players operation combined temp = doubled temp
+scoreboard players add combined temp 5
+scoreboard players operation remainder temp = combined temp
+scoreboard players set #modulus temp 4
+scoreboard players operation remainder temp %= #modulus temp
+scoreboard players set power temp 27
+data modify storage cobble_26_feature_matrix:global vars.status set value "running"
+execute if score matrix_timer temp matches 1.. run scoreboard players remove matrix_timer temp 1
+scoreboard players set matrix_timer_done temp 0
+execute if score matrix_timer temp matches ..0 run scoreboard players set matrix_timer_done temp 1
+scoreboard players set if_branch_0 temp 0
+execute if score score temp matches 21.. unless score energy temp matches 0 run scoreboard players set if_branch_0 temp 1
+execute if score score temp matches 21.. unless score energy temp matches 0 run tellraw @a[gamemode=!spectator] {"text":"High score ","color":"gold"}
+scoreboard players set or_temp_1 temp 0
+execute if score score temp matches 10 run scoreboard players set or_temp_1 temp 1
+execute if score energy temp matches 0 run scoreboard players set or_temp_1 temp 1
+scoreboard players set elif_taken_2 temp 0
+execute unless score if_branch_0 temp matches 1 if score or_temp_1 temp matches 1 run scoreboard players set elif_taken_2 temp 1
+execute if score elif_taken_2 temp matches 1 run scoreboard players set if_branch_0 temp 1
+execute if score elif_taken_2 temp matches 1 run tellraw @a[gamemode=!spectator] {"text":"Threshold reached","color":"yellow"}
+execute unless score if_branch_0 temp matches 1 run tellraw @a[gamemode=!spectator] {"text":"Matrix warming","color":"gray"}
+scoreboard players operation match_temp_3 temp = remainder temp
+execute if score match_temp_3 temp matches 0 run function cobble_26_feature_matrix:match_case_0_4
+execute if score match_temp_3 temp matches 1..2 run function cobble_26_feature_matrix:match_case_1_5
+execute unless score match_temp_3 temp matches 0..0 unless score match_temp_3 temp matches 1..2 run function cobble_26_feature_matrix:match_default_6
+function cobble_26_feature_matrix:while_temp_7
+scoreboard players set i loop_counter 0
+function cobble_26_feature_matrix:loop_temp_9
+scoreboard players set n loop_counter 7
+function cobble_26_feature_matrix:loop_temp_11
+execute as @a[gamemode=!spectator] at @s if entity @s[distance=..32] run particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 3
+execute positioned ~ ~2 ~ rotated ~ 0 run particle minecraft:flame ~ ~ ~ 0 0 0 0 1
+tellraw @a [{"color":"blue","text":"Status: "},{"nbt":"vars.status","storage":"cobble_26_feature_matrix:global"}]
+
+===== data/cobble_26_feature_matrix/function/while_body_8.mcfunction =====
+tellraw @a [{"text":"draining "},{"score":{"name":"energy","objective":"temp"}}]
+scoreboard players remove energy temp 1
+
+===== data/cobble_26_feature_matrix/function/while_temp_7.mcfunction =====
+execute if score energy temp matches 1.. run function cobble_26_feature_matrix:while_body_8
+execute if score energy temp matches 1.. run function cobble_26_feature_matrix:while_temp_7
+
+===== data/cobble_26_feature_matrix/predicate/always_true.json =====
+{
+  "chance": 1,
+  "condition": "minecraft:random_chance"
+}
+
+===== data/cobble_26_feature_matrix/tags/function/utility.json =====
+{
+  "values": [
+    "cobble_26_feature_matrix:load"
+  ]
+}
+
+===== data/minecraft/tags/function/load.json =====
+{
+  "values": [
+    "cobble_26_feature_matrix:load"
+  ]
+}
+
+===== data/minecraft/tags/function/tick.json =====
+{
+  "values": [
+    "cobble_26_feature_matrix:tick"
+  ]
+}
+
+===== data/other_matrix/predicate/checks/always_true.json =====
+{
+  "chance": 1,
+  "condition": "minecraft:random_chance"
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Cobble 26.1.2 feature matrix fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

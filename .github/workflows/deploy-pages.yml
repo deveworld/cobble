@@ -10,6 +10,13 @@ on:
       - Cargo.toml
       - src/**
       - web/**
+  pull_request:
+    paths:
+      - .github/workflows/deploy-pages.yml
+      - Cargo.lock
+      - Cargo.toml
+      - src/**
+      - web/**
   workflow_dispatch:
 
 permissions:
@@ -21,7 +28,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('web-pr-{0}', github.ref) || 'pages' }}
   cancel-in-progress: false
 
 jobs:
@@ -49,18 +56,40 @@ jobs:
         working-directory: web
         run: npm ci
 
+      - name: Install browser dependencies
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
       - name: Typecheck
         working-directory: web
         run: npm run lint
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
+      - name: Test WebAssembly compiler
+        working-directory: web
+        run: npm run test:wasm
+
+      - name: Test data pack ZIP helper
+        working-directory: web
+        run: npm run test:zip
 
       - name: Build GitHub Pages site
         working-directory: web
         run: npm run build:github
 
+      - name: Test browser compiler
+        working-directory: web
+        run: npm run test:e2e:run
+
+      - name: Check documentation and web links
+        working-directory: web
+        run: npm run test:links
+
+      - name: Configure Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
       - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web/out
@@ -68,6 +97,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

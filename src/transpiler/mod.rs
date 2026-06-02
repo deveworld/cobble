@@ -2496,10 +2496,11 @@ impl Transpiler {
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode tag JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
-        self.data_pack.add_json_resource_in_namespace(
+        self.data_pack.add_json_resource_in_namespace_with_source(
             namespace,
             format!("tags/{}/{}", tag_type, name),
             content,
+            self.current_statement_source.clone(),
         )
     }
 
@@ -2523,10 +2524,11 @@ impl Transpiler {
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode resource JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
-        self.data_pack.add_json_resource_in_namespace(
+        self.data_pack.add_json_resource_in_namespace_with_source(
             namespace,
             format!("{}/{}", resource_type, name),
             content,
+            self.current_statement_source.clone(),
         )
     }
 

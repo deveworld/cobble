@@ -677,4 +677,40 @@ mod tests {
 
         assert!(error.contains("Command tree SHA-1 mismatch"));
     }
+
+    #[test]
+    fn run_validation_accepts_custom_command_tree_without_supported_fingerprint() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_dir = temp_dir.path().join("pack");
+        let commands_json = temp_dir.path().join("custom_commands.json");
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(&commands_json, r#"{"type":"root","children":{}}"#).unwrap();
+
+        let report = run_validation(&input_dir, &commands_json).unwrap();
+
+        assert_eq!(report.files_checked, 0);
+        assert!(report.errors.is_empty());
+        assert!(report.source_map_errors.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_ready_made_commands_json_accepts_local_fixture_url() {
+        if Command::new("curl").arg("--version").output().is_err() {
+            eprintln!("Skipping commands.json download fixture test: curl not available");
+            return;
+        }
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let fixture = temp_dir.path().join("fixture_commands.json");
+        let commands_json = temp_dir.path().join("commands.json");
+        let fixture_content = r#"{"type":"root","children":{}}"#;
+        fs::write(&fixture, fixture_content).unwrap();
+
+        download_ready_made_commands_json(&format!("file://{}", fixture.display()), &commands_json)
+            .unwrap();
+
+        assert_eq!(fs::read_to_string(commands_json).unwrap(), fixture_content);
+        assert!(!temp_dir.path().join("commands.json.part").exists());
+    }
 }

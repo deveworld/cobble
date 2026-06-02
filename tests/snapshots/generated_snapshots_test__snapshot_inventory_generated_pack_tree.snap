@@ -1,0 +1,503 @@
+---
+source: tests/generated_snapshots_test.rs
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "cobble_version": "<cobble-version>",
+  "description": "Snapshot fixture",
+  "generated": {
+    "advancements": 0,
+    "commands": 35,
+    "custom_function_tags": 0,
+    "function_tags": 0,
+    "functions": 6,
+    "item_modifiers": 0,
+    "json_function_tags": 0,
+    "json_resources": 0,
+    "loot_tables": 0,
+    "predicates": 0,
+    "recipes": 0,
+    "source_map_entries": 35,
+    "stdlib_function_tags": 0,
+    "total_json_resources": 0
+  },
+  "generated_namespaces": [
+    "inventory_snapshot",
+    "minecraft"
+  ],
+  "input": {
+    "compiled_files": [
+      "main.cbl"
+    ],
+    "entry_points": [],
+    "source": "main.cbl"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "inventory_snapshot",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "resources": [],
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "inventory_snapshot",
+  "minecraft"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/inventory_snapshot/function/check_inventory.mcfunction",
+      "generated_line": 1,
+      "command": "$execute if entity $(player)[nbt={Inventory:[{id:\"minecraft:diamond\"}]}] run tellraw $(player) {\"text\":\"You have diamonds!\",\"color\":\"aqua\"}",
+      "source": {
+        "file": "main.cbl",
+        "line": 50,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/check_inventory.mcfunction",
+      "generated_line": 2,
+      "command": "$execute store result score $(player) empty_slots run data get entity $(player) Inventory",
+      "source": {
+        "file": "main.cbl",
+        "line": 53,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/check_inventory.mcfunction",
+      "generated_line": 3,
+      "command": "$tellraw $(player) [{\"text\":\"Inventory slots used: \",\"color\":\"gray\"},{\"score\":{\"name\":\"$(player)\",\"objective\":\"empty_slots\"},\"color\":\"white\"}]",
+      "source": {
+        "file": "main.cbl",
+        "line": 54,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/create_custom_item.mcfunction",
+      "generated_line": 1,
+      "command": "execute as @s at @s run give @s minecraft:diamond_sword[minecraft:custom_name='{\"text\":\"Excalibur\",\"color\":\"gold\",\"bold\":true,\"italic\":false}',minecraft:lore=['{\"text\":\"A legendary blade\",\"color\":\"gray\",\"italic\":true}','{\"text\":\"Forged by ancient smiths\",\"color\":\"gray\",\"italic\":true}'],minecraft:enchantments={levels:{\"minecraft:sharpness\":5,\"minecraft:unbreaking\":3,\"minecraft:mending\":1,\"minecraft:looting\":3}},minecraft:unbreakable={}]",
+      "source": {
+        "file": "main.cbl",
+        "line": 36,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/create_potion_set.mcfunction",
+      "generated_line": 1,
+      "command": "execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:\"minecraft:strong_healing\"}] 3",
+      "source": {
+        "file": "main.cbl",
+        "line": 41,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/create_potion_set.mcfunction",
+      "generated_line": 2,
+      "command": "execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:\"minecraft:strong_strength\"}] 2",
+      "source": {
+        "file": "main.cbl",
+        "line": 42,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/create_potion_set.mcfunction",
+      "generated_line": 3,
+      "command": "execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:\"minecraft:swiftness\"}] 2",
+      "source": {
+        "file": "main.cbl",
+        "line": 43,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/create_potion_set.mcfunction",
+      "generated_line": 4,
+      "command": "execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:\"minecraft:fire_resistance\"}] 1",
+      "source": {
+        "file": "main.cbl",
+        "line": 44,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/create_potion_set.mcfunction",
+      "generated_line": 5,
+      "command": "execute as @s at @s run give @s minecraft:splash_potion[minecraft:potion_contents={potion:\"minecraft:strong_harming\"}] 3",
+      "source": {
+        "file": "main.cbl",
+        "line": 45,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/create_shop.mcfunction",
+      "generated_line": 1,
+      "command": "execute as @s at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{profession:\"minecraft:librarian\",level:5,type:\"minecraft:plains\"},CustomName:'{\"text\":\"Shop Keeper\",\"color\":\"gold\"}',PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}",
+      "source": {
+        "file": "main.cbl",
+        "line": 7,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 1,
+      "command": "$clear $(player)",
+      "source": {
+        "file": "main.cbl",
+        "line": 12,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 2,
+      "command": "$item replace entity $(player) armor.head with minecraft:iron_helmet",
+      "source": {
+        "file": "main.cbl",
+        "line": 15,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 3,
+      "command": "$item replace entity $(player) armor.chest with minecraft:iron_chestplate",
+      "source": {
+        "file": "main.cbl",
+        "line": 16,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 4,
+      "command": "$item replace entity $(player) armor.legs with minecraft:iron_leggings",
+      "source": {
+        "file": "main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 5,
+      "command": "$item replace entity $(player) armor.feet with minecraft:iron_boots",
+      "source": {
+        "file": "main.cbl",
+        "line": 18,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 6,
+      "command": "$give $(player) minecraft:iron_sword[minecraft:custom_name='{\"text\":\"Starter Sword\",\"color\":\"gray\"}']",
+      "source": {
+        "file": "main.cbl",
+        "line": 21,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 7,
+      "command": "$give $(player) minecraft:iron_pickaxe[minecraft:enchantments={levels:{\"minecraft:efficiency\":2}}]",
+      "source": {
+        "file": "main.cbl",
+        "line": 22,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 8,
+      "command": "$give $(player) minecraft:iron_axe",
+      "source": {
+        "file": "main.cbl",
+        "line": 23,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 9,
+      "command": "$give $(player) minecraft:iron_shovel",
+      "source": {
+        "file": "main.cbl",
+        "line": 24,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 10,
+      "command": "$give $(player) minecraft:bread 32",
+      "source": {
+        "file": "main.cbl",
+        "line": 27,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 11,
+      "command": "$give $(player) minecraft:torch 64",
+      "source": {
+        "file": "main.cbl",
+        "line": 28,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 12,
+      "command": "$give $(player) minecraft:cobblestone 64",
+      "source": {
+        "file": "main.cbl",
+        "line": 29,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
+      "generated_line": 13,
+      "command": "$tellraw $(player) {\"text\":\"Starter kit received!\",\"color\":\"green\"}",
+      "source": {
+        "file": "main.cbl",
+        "line": 31,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 1,
+      "command": "execute as @s at @s run setblock ~ ~ ~ minecraft:chest{CustomName:'{\"text\":\"Storage\",\"color\":\"dark_green\"}'}",
+      "source": {
+        "file": "main.cbl",
+        "line": 59,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 2,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.0 with minecraft:iron_ingot 64",
+      "source": {
+        "file": "main.cbl",
+        "line": 62,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 3,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.1 with minecraft:gold_ingot 32",
+      "source": {
+        "file": "main.cbl",
+        "line": 63,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 4,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.2 with minecraft:diamond 16",
+      "source": {
+        "file": "main.cbl",
+        "line": 64,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 5,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.3 with minecraft:emerald 8",
+      "source": {
+        "file": "main.cbl",
+        "line": 65,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 6,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.9 with minecraft:iron_pickaxe",
+      "source": {
+        "file": "main.cbl",
+        "line": 68,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 7,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.10 with minecraft:iron_axe",
+      "source": {
+        "file": "main.cbl",
+        "line": 69,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 8,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.11 with minecraft:iron_shovel",
+      "source": {
+        "file": "main.cbl",
+        "line": 70,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 9,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.12 with minecraft:iron_hoe",
+      "source": {
+        "file": "main.cbl",
+        "line": 71,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 10,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.18 with minecraft:bread 64",
+      "source": {
+        "file": "main.cbl",
+        "line": 74,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 11,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.19 with minecraft:cooked_beef 64",
+      "source": {
+        "file": "main.cbl",
+        "line": 75,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/inventory_snapshot/function/organize_chest.mcfunction",
+      "generated_line": 12,
+      "command": "execute as @s at @s run item replace block ~ ~ ~ container.20 with minecraft:golden_apple 3",
+      "source": {
+        "file": "main.cbl",
+        "line": 76,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    }
+  ]
+}
+
+===== data/inventory_snapshot/function/check_inventory.mcfunction =====
+$execute if entity $(player)[nbt={Inventory:[{id:"minecraft:diamond"}]}] run tellraw $(player) {"text":"You have diamonds!","color":"aqua"}
+$execute store result score $(player) empty_slots run data get entity $(player) Inventory
+$tellraw $(player) [{"text":"Inventory slots used: ","color":"gray"},{"score":{"name":"$(player)","objective":"empty_slots"},"color":"white"}]
+
+===== data/inventory_snapshot/function/create_custom_item.mcfunction =====
+execute as @s at @s run give @s minecraft:diamond_sword[minecraft:custom_name='{"text":"Excalibur","color":"gold","bold":true,"italic":false}',minecraft:lore=['{"text":"A legendary blade","color":"gray","italic":true}','{"text":"Forged by ancient smiths","color":"gray","italic":true}'],minecraft:enchantments={levels:{"minecraft:sharpness":5,"minecraft:unbreaking":3,"minecraft:mending":1,"minecraft:looting":3}},minecraft:unbreakable={}]
+
+===== data/inventory_snapshot/function/create_potion_set.mcfunction =====
+execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:strong_healing"}] 3
+execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:strong_strength"}] 2
+execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:swiftness"}] 2
+execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:fire_resistance"}] 1
+execute as @s at @s run give @s minecraft:splash_potion[minecraft:potion_contents={potion:"minecraft:strong_harming"}] 3
+
+===== data/inventory_snapshot/function/create_shop.mcfunction =====
+execute as @s at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{profession:"minecraft:librarian",level:5,type:"minecraft:plains"},CustomName:'{"text":"Shop Keeper","color":"gold"}',PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}
+
+===== data/inventory_snapshot/function/give_starter_kit.mcfunction =====
+$clear $(player)
+$item replace entity $(player) armor.head with minecraft:iron_helmet
+$item replace entity $(player) armor.chest with minecraft:iron_chestplate
+$item replace entity $(player) armor.legs with minecraft:iron_leggings
+$item replace entity $(player) armor.feet with minecraft:iron_boots
+$give $(player) minecraft:iron_sword[minecraft:custom_name='{"text":"Starter Sword","color":"gray"}']
+$give $(player) minecraft:iron_pickaxe[minecraft:enchantments={levels:{"minecraft:efficiency":2}}]
+$give $(player) minecraft:iron_axe
+$give $(player) minecraft:iron_shovel
+$give $(player) minecraft:bread 32
+$give $(player) minecraft:torch 64
+$give $(player) minecraft:cobblestone 64
+$tellraw $(player) {"text":"Starter kit received!","color":"green"}
+
+===== data/inventory_snapshot/function/organize_chest.mcfunction =====
+execute as @s at @s run setblock ~ ~ ~ minecraft:chest{CustomName:'{"text":"Storage","color":"dark_green"}'}
+execute as @s at @s run item replace block ~ ~ ~ container.0 with minecraft:iron_ingot 64
+execute as @s at @s run item replace block ~ ~ ~ container.1 with minecraft:gold_ingot 32
+execute as @s at @s run item replace block ~ ~ ~ container.2 with minecraft:diamond 16
+execute as @s at @s run item replace block ~ ~ ~ container.3 with minecraft:emerald 8
+execute as @s at @s run item replace block ~ ~ ~ container.9 with minecraft:iron_pickaxe
+execute as @s at @s run item replace block ~ ~ ~ container.10 with minecraft:iron_axe
+execute as @s at @s run item replace block ~ ~ ~ container.11 with minecraft:iron_shovel
+execute as @s at @s run item replace block ~ ~ ~ container.12 with minecraft:iron_hoe
+execute as @s at @s run item replace block ~ ~ ~ container.18 with minecraft:bread 64
+execute as @s at @s run item replace block ~ ~ ~ container.19 with minecraft:cooked_beef 64
+execute as @s at @s run item replace block ~ ~ ~ container.20 with minecraft:golden_apple 3
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Snapshot fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

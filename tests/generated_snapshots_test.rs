@@ -26,12 +26,42 @@ impl Drop for CurrentDirGuard {
     }
 }
 
-fn build_project_fixture(project: &str) -> (TempDir, PathBuf) {
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn commands_json_fixture(temp_dir: &Path, validate: bool) -> PathBuf {
+    let commands_json = temp_dir.join("commands-fixture.json");
+    if validate {
+        fs::write(
+            &commands_json,
+            r#"{
+                "type": "root",
+                "children": {
+                    "say": {
+                        "type": "literal",
+                        "children": {
+                            "message": {
+                                "type": "argument",
+                                "parser": "minecraft:message",
+                                "executable": true
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+    }
+    commands_json
+}
+
+fn build_project_fixture(project: &str, validate: bool) -> (TempDir, PathBuf) {
     let _lock = CWD_LOCK.lock().unwrap();
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let project_dir = repo_root.join(project);
+    let project_dir = repo_root().join(project);
     let temp_dir = TempDir::new().unwrap();
     let output_dir = temp_dir.path().join("output");
+    let commands_json = commands_json_fixture(temp_dir.path(), validate);
 
     let _guard = CurrentDirGuard::push(&project_dir);
     cobble::commands::build::build(cobble::commands::build::BuildOptions {
@@ -43,19 +73,20 @@ fn build_project_fixture(project: &str) -> (TempDir, PathBuf) {
         verbose: false,
         quiet: true,
         zip: false,
-        validate: false,
+        validate,
         dry_run: false,
-        commands_json: repo_root.join("data/commands.json"),
+        commands_json,
     })
     .unwrap();
 
     (temp_dir, output_dir)
 }
 
-fn build_source_fixture(source: &str, namespace: &str) -> (TempDir, PathBuf) {
+fn build_source_fixture(source: &str, namespace: &str, validate: bool) -> (TempDir, PathBuf) {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.cbl");
     let output_dir = temp_dir.path().join("output");
+    let commands_json = commands_json_fixture(temp_dir.path(), validate);
     fs::write(&input_file, source).unwrap();
 
     cobble::commands::build::build(cobble::commands::build::BuildOptions {
@@ -67,13 +98,17 @@ fn build_source_fixture(source: &str, namespace: &str) -> (TempDir, PathBuf) {
         verbose: false,
         quiet: true,
         zip: false,
-        validate: false,
+        validate,
         dry_run: false,
-        commands_json: PathBuf::from("data/commands.json"),
+        commands_json,
     })
     .unwrap();
 
     (temp_dir, output_dir)
+}
+
+fn normalized_file_snapshot(output_dir: &Path, relative_path: &str) -> String {
+    normalized_file_content(relative_path, &output_dir.join(relative_path))
 }
 
 fn datapack_tree_snapshot(output_dir: &Path) -> String {
@@ -110,6 +145,14 @@ fn normalized_file_content(relative_path: &str, file: &Path) -> String {
     if relative_path == ".cobble/build_manifest.json" {
         let mut value: Value = serde_json::from_str(&content).unwrap();
         value["cobble_version"] = Value::String("<cobble-version>".to_string());
+        if let Some(validation) = value.get_mut("validation").and_then(Value::as_object_mut) {
+            if validation.contains_key("commands_json") {
+                validation.insert(
+                    "commands_json".to_string(),
+                    Value::String("<commands-json>".to_string()),
+                );
+            }
+        }
         return serde_json::to_string_pretty(&value).unwrap();
     }
 
@@ -118,10 +161,71 @@ fn normalized_file_content(relative_path: &str, file: &Path) -> String {
 
 #[test]
 fn snapshot_26_smoke_generated_pack_tree() {
-    let (_temp, output_dir) = build_project_fixture("examples/26_smoke");
+    let (_temp, output_dir) = build_project_fixture("examples/26_smoke", false);
     insta::assert_snapshot!(
         "snapshot_26_smoke_generated_pack_tree",
         datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
+fn snapshot_26_feature_matrix_generated_pack_tree() {
+    let (_temp, output_dir) = build_project_fixture("examples/26_feature_matrix", false);
+    insta::assert_snapshot!(
+        "snapshot_26_feature_matrix_generated_pack_tree",
+        datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
+fn snapshot_inventory_generated_pack_tree() {
+    let (_temp, output_dir) = build_source_fixture(
+        &fs::read_to_string(repo_root().join("examples/inventory.cbl")).unwrap(),
+        "inventory_snapshot",
+        false,
+    );
+    insta::assert_snapshot!(
+        "snapshot_inventory_generated_pack_tree",
+        datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
+fn snapshot_resource_only_generated_pack_tree() {
+    let (_temp, output_dir) = build_source_fixture(
+        r#"
+datapack.block_tag("mineable/test", ["minecraft:stone", "minecraft:deepslate"])
+datapack.item_tag("rewards", ["minecraft:diamond"])
+datapack.entity_type_tag("targets", ["minecraft:zombie"])
+datapack.advancement("root", {"criteria": {"tick": {"trigger": "minecraft:tick"}}})
+datapack.loot_table("empty", {"type": "minecraft:empty"})
+datapack.recipe("stonecutting/test", {
+    "type": "minecraft:stonecutting",
+    "ingredient": "minecraft:stone",
+    "result": {"id": "minecraft:stone"}
+})
+datapack.item_modifier("set_name", {"function": "minecraft:set_name", "name": {"text": "Test"}})
+datapack.dialog("notice", {"type": "minecraft:notice", "title": {"text": "Notice"}})
+"#,
+        "resource_only",
+        false,
+    );
+    insta::assert_snapshot!(
+        "snapshot_resource_only_generated_pack_tree",
+        datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
+fn snapshot_validated_manifest_metadata() {
+    let (_temp, output_dir) = build_source_fixture(
+        "def main():\n    /say validated\n",
+        "validated_snapshot",
+        true,
+    );
+    insta::assert_snapshot!(
+        "snapshot_validated_manifest_metadata",
+        normalized_file_snapshot(&output_dir, ".cobble/build_manifest.json")
     );
 }
 
@@ -147,6 +251,7 @@ def extra_load():
 stdlib.addEventListener(event.LOAD, load)
 "#,
         "snapshot_merge",
+        false,
     );
 
     insta::assert_snapshot!(

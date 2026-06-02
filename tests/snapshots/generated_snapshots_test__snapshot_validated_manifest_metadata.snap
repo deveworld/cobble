@@ -1,0 +1,51 @@
+---
+source: tests/generated_snapshots_test.rs
+expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json\")"
+---
+{
+  "cobble_version": "<cobble-version>",
+  "description": "Snapshot fixture",
+  "generated": {
+    "advancements": 0,
+    "commands": 1,
+    "custom_function_tags": 0,
+    "function_tags": 0,
+    "functions": 1,
+    "item_modifiers": 0,
+    "json_function_tags": 0,
+    "json_resources": 0,
+    "loot_tables": 0,
+    "predicates": 0,
+    "recipes": 0,
+    "source_map_entries": 1,
+    "stdlib_function_tags": 0,
+    "total_json_resources": 0
+  },
+  "generated_namespaces": [
+    "minecraft",
+    "validated_snapshot"
+  ],
+  "input": {
+    "compiled_files": [
+      "main.cbl"
+    ],
+    "entry_points": [],
+    "source": "main.cbl"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "validated_snapshot",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "resources": [],
+  "validation": {
+    "commands_checked": 1,
+    "commands_json": "<commands-json>",
+    "commands_skipped": 0,
+    "enabled": true,
+    "errors": 0,
+    "files_checked": 1,
+    "macro_commands_checked": 0,
+    "source_map_errors": 0
+  },
+  "version": 1
+}

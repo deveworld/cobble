@@ -7,14 +7,14 @@
 [![Pack Format](https://img.shields.io/badge/pack%20format-101.1-blue.svg)](https://minecraft.wiki/w/Data_pack)
 [![Web Demo](https://img.shields.io/badge/web%20demo-live-7bd66f.svg)](https://deveworld.github.io/cobble/)
 
-![Cobble web demo preview](web/public/cobble-workshop.jpg)
+![Cobble web demo preview](https://raw.githubusercontent.com/deveworld/cobble/main/web/public/cobble-workshop.jpg)
 
 Cobble transpiles `.cbl` source into Minecraft Java Edition data packs. It lets
 you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Development version 0.6.3-a0** targets Minecraft Java Edition 26.1.2 and
+**Development version 0.6.3-a1** targets Minecraft Java Edition 26.1.2 and
 pack format 101.1. The latest stable release is 0.6.2.
 
 ## Website And Web Demo
@@ -155,8 +155,10 @@ npm run dev
 - [Language Reference](docs/language.md)
 - [CLI Documentation](docs/cli.md)
 - [API Reference](docs/api.md)
+- [QA Checklist](docs/qa.md)
+- [0.6.3 Devlog Outline](docs/devlog-0.6.3.md)
 - [Examples](examples/)
-- [Web Demo Source](web/)
+- [Web Demo Source](https://github.com/deveworld/cobble/tree/main/web/)
 - [Roadmap](PLAN.md)
 
 ## Support

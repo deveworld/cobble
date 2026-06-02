@@ -233,6 +233,87 @@ datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.
 
     assert!(error.contains("Duplicate data pack resource"));
     assert!(error.contains("predicate/same"));
+    assert!(error.contains("invalid overwrite"));
+    assert!(error.contains("first declaration: main.cbl:2:1"));
+    assert!(error.contains("second declaration: main.cbl:3:1"));
+}
+
+#[test]
+fn duplicate_identical_datapack_resource_ids_report_exact_duplicate() {
+    let error = compile_source(
+        r#"
+datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
+datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("Duplicate data pack resource"));
+    assert!(error.contains("predicate/same"));
+    assert!(error.contains("exact duplicate"));
+    assert!(error.contains("first declaration: main.cbl:2:1"));
+    assert!(error.contains("second declaration: main.cbl:3:1"));
+}
+
+#[test]
+fn duplicate_datapack_tags_report_tag_declaration_conflict() {
+    let error = compile_source(
+        r#"
+datapack.function_tag("minecraft:load", ["resources:setup"])
+datapack.function_tag("minecraft:load", ["resources:other"])
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("Duplicate data pack resource"));
+    assert!(error.contains("minecraft:tags/function/load"));
+    assert!(error.contains("invalid duplicate tag declaration"));
+    assert!(error.contains("first declaration: main.cbl:2:1"));
+    assert!(error.contains("second declaration: main.cbl:3:1"));
+}
+
+#[test]
+fn duplicate_datapack_resources_across_imports_fail() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let source_dir = temp_dir.path().join("src");
+    let output_dir = temp_dir.path().join("output");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        r#"
+import extra
+datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
+"#,
+    )
+    .unwrap();
+    fs::write(
+        source_dir.join("extra.cbl"),
+        r#"
+datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.25})
+"#,
+    )
+    .unwrap();
+
+    let error = cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir.join("main.cbl")),
+        output: Some(output_dir),
+        namespace: Some("resources".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: false,
+        zip: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap_err();
+
+    assert!(error.contains("Duplicate data pack resource"));
+    assert!(error.contains("predicate/same"));
+    assert!(error.contains("invalid overwrite"));
+    assert!(error.contains("first declaration: extra.cbl:2:1"));
+    assert!(error.contains("second declaration: main.cbl:3:1"));
 }
 
 #[test]

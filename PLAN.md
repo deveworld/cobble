@@ -4,7 +4,7 @@
 
 - Planning date: 2026-06-02
 - Current stable release: `0.6.2`
-- Active development version: `0.6.3-a0`
+- Active development version: `0.6.3-a1`
 - Current Minecraft target: Java Edition `26.1.2`
 - Current data pack format: `101.1`
 - Package name: `cobble-lang`
@@ -127,7 +127,8 @@ surface.
   - environment URL override with a fixture server when practical
 - Improve duplicate-resource diagnostics:
   - show both declaration locations when source spans are available
-  - distinguish overwrite, merge, and invalid duplicate cases
+  - distinguish exact duplicate, invalid overwrite, and invalid tag duplicate
+    cases
   - keep function-tag merging deterministic
 - Add web WASM E2E coverage:
   - compile default sample
@@ -149,6 +150,10 @@ surface.
 - `cargo package --locked` passes before publishing.
 - If web build inputs changed, `npm run lint` and `npm run build:github` pass
   in `web/`.
+- If web compiler, ZIP, routes, or docs changed, `npm run test:wasm`,
+  `npm run test:zip`, `npm run test:e2e`, and `npm run test:links` pass in
+  `web/`.
+- Rust tests and package dry-run are wired into GitHub Actions.
 - Any skipped real-server QA is recorded in release notes.
 
 #### Non-Goals
@@ -281,6 +286,7 @@ Tasks:
   - valid merge,
   - exact duplicate,
   - invalid overwrite,
+  - invalid duplicate tag declaration,
   - same path from different source declarations.
 - Add source-span propagation where currently missing.
 - Show both declaration locations when available.
@@ -390,8 +396,12 @@ Required if web build inputs changed:
 
 ```bash
 cd web
+npm run test:wasm
+npm run test:zip
 npm run lint
 npm run build:github
+npm run test:e2e:run
+npm run test:links
 ```
 
 Required after publishing to crates.io:
@@ -674,14 +684,19 @@ cargo run --locked -- build examples/26_smoke --dry-run --validate
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
 cargo package --locked
+cargo publish --dry-run --locked
 ```
 
 If web build inputs changed:
 
 ```bash
 cd web
+npm run test:wasm
+npm run test:zip
 npm run lint
 npm run build:github
+npm run test:e2e:run
+npm run test:links
 ```
 
 Optional real-server smoke:
@@ -708,9 +723,12 @@ These decisions should be made deliberately before implementation starts.
 
 ## Current Priority Order
 
-1. Finish 0.6.3 stabilization planning and snapshot-test design.
-2. Start 0.7.0 language-spec cleanup.
-3. Keep the website and `/try` demo aligned with the CLI.
-4. Expand real-world examples before adding large new syntax.
-5. Defer plugin/package-manager work until the language and metadata contracts
+1. Finish 0.6.3 stabilization fixes and run the final clean-tree release gate.
+2. Prepare final 0.6.3 release notes, version bump, crate publish, and GitHub
+   release only after the gate is clean.
+3. Keep the website and `/try` demo aligned with the CLI through PR-gated web
+   checks.
+4. Start 0.7.0 language-spec cleanup after 0.6.3 ships.
+5. Expand real-world examples before adding large new syntax.
+6. Defer plugin/package-manager work until the language and metadata contracts
    are stable.

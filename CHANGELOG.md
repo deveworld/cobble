@@ -5,15 +5,35 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.3-a0] - 2026-06-02
+## [0.6.3-a1] - 2026-06-03
 
 ### Added
 - Generated data pack snapshot regression tests for representative fixture output trees.
 - CLI regression tests for `build --dry-run`, invalid `--dry-run --zip` usage, and `inspect --json` metadata output.
+- Broader snapshot coverage for the 26.1.2 feature matrix, inventory example, resource-only output, and validated build metadata.
+- CLI regression coverage for `doctor`, `build --dry-run --validate`, human `inspect`, malformed manifests, and source-mapped validation diagnostics.
+- Regression coverage for custom command-tree paths and duplicate data pack resources across imports.
+- Local fixture coverage for ready-made `commands.json` download handling without live Mojang network access.
+- Regression coverage for duplicate data pack resource diagnostics, including exact duplicates, invalid overwrites, tag declaration conflicts, and imported declarations.
+- Web WASM parity tests for build-manifest versioning, duplicate function-tag path merging, and structured parse diagnostics.
+- Web data pack ZIP helper tests that verify only `pack.mcmeta` and `data/**` files are included in downloadable archives.
+- A repeatable QA checklist for snapshot updates, Rust release gates, web release gates, and optional Minecraft server smoke testing.
+- Browser E2E coverage for `/try` that loads the WebAssembly compiler, checks generated output, and verifies downloadable data pack ZIP contents.
+- GitHub Actions CI for Rust formatting, tests, clippy, package dry-run, and publish dry-run.
+- Documentation/web link checks and a 0.6.3 devlog outline for release preparation.
 
 ### Changed
-- Promoted active development version to `0.6.3-a0` while keeping 0.6.2 as the latest stable release.
+- Promoted active development version to `0.6.3-a1` while keeping 0.6.2 as the latest stable release.
 - Wrote legacy typed JSON resources in sorted path order to make generated output deterministic for snapshot testing.
+- Web demo deployment now runs the WASM compiler parity tests before building the GitHub Pages artifact.
+- Web demo deployment checks now also run on pull requests that change the Rust compiler, WASM wrapper, or `web/` sources, while deployment remains limited to `main` pushes.
+- Web demo ZIP creation now lives in a tested helper shared by the `/try` page and Node-based ZIP regression tests.
+- The parser dependency is pinned to exact `chumsky` `0.11.1` in both CLI and WASM manifests to keep compiler behavior aligned.
+- crates.io packaging now excludes GitHub workflow and web demo sources so the CLI crate tarball only includes the Rust package, docs, examples, scripts, and tests.
+
+### Fixed
+- `cobble inspect` now reports `Validation: not recorded` when build manifests contain a null validation section.
+- Duplicate generated data pack resources now report the conflict kind plus first and second declaration locations when source spans are available.
 
 ## [0.6.2] - 2026-06-02
 

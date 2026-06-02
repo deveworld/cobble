@@ -1,0 +1,166 @@
+---
+source: tests/generated_snapshots_test.rs
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "cobble_version": "<cobble-version>",
+  "description": "Snapshot fixture",
+  "generated": {
+    "advancements": 1,
+    "commands": 0,
+    "custom_function_tags": 0,
+    "function_tags": 0,
+    "functions": 0,
+    "item_modifiers": 1,
+    "json_function_tags": 0,
+    "json_resources": 8,
+    "loot_tables": 1,
+    "predicates": 0,
+    "recipes": 1,
+    "source_map_entries": 0,
+    "stdlib_function_tags": 0,
+    "total_json_resources": 8
+  },
+  "generated_namespaces": [
+    "minecraft",
+    "resource_only"
+  ],
+  "input": {
+    "compiled_files": [
+      "main.cbl"
+    ],
+    "entry_points": [],
+    "source": "main.cbl"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "resource_only",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "resources": [
+    {
+      "kind": "advancement",
+      "namespace": "resource_only",
+      "path": "root"
+    },
+    {
+      "kind": "block_tag",
+      "namespace": "resource_only",
+      "path": "mineable/test"
+    },
+    {
+      "kind": "dialog",
+      "namespace": "resource_only",
+      "path": "notice"
+    },
+    {
+      "kind": "entity_type_tag",
+      "namespace": "resource_only",
+      "path": "targets"
+    },
+    {
+      "kind": "item_modifier",
+      "namespace": "resource_only",
+      "path": "set_name"
+    },
+    {
+      "kind": "item_tag",
+      "namespace": "resource_only",
+      "path": "rewards"
+    },
+    {
+      "kind": "loot_table",
+      "namespace": "resource_only",
+      "path": "empty"
+    },
+    {
+      "kind": "recipe",
+      "namespace": "resource_only",
+      "path": "stonecutting/test"
+    }
+  ],
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "minecraft",
+  "resource_only"
+]
+
+===== data/resource_only/advancement/root.json =====
+{
+  "criteria": {
+    "tick": {
+      "trigger": "minecraft:tick"
+    }
+  }
+}
+
+===== data/resource_only/dialog/notice.json =====
+{
+  "title": {
+    "text": "Notice"
+  },
+  "type": "minecraft:notice"
+}
+
+===== data/resource_only/item_modifier/set_name.json =====
+{
+  "function": "minecraft:set_name",
+  "name": {
+    "text": "Test"
+  }
+}
+
+===== data/resource_only/loot_table/empty.json =====
+{
+  "type": "minecraft:empty"
+}
+
+===== data/resource_only/recipe/stonecutting/test.json =====
+{
+  "ingredient": "minecraft:stone",
+  "result": {
+    "id": "minecraft:stone"
+  },
+  "type": "minecraft:stonecutting"
+}
+
+===== data/resource_only/tags/block/mineable/test.json =====
+{
+  "values": [
+    "minecraft:stone",
+    "minecraft:deepslate"
+  ]
+}
+
+===== data/resource_only/tags/entity_type/targets.json =====
+{
+  "values": [
+    "minecraft:zombie"
+  ]
+}
+
+===== data/resource_only/tags/item/rewards.json =====
+{
+  "values": [
+    "minecraft:diamond"
+  ]
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Snapshot fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

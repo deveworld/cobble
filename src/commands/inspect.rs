@@ -111,7 +111,7 @@ fn print_inspection(input: &Path, summary: &InspectionSummary) {
         None => println!("  Source map entries: none"),
     }
 
-    if let Some(validation) = manifest.get("validation") {
+    if let Some(validation) = manifest.get("validation").filter(|value| !value.is_null()) {
         println!("Validation:");
         print_usize(validation, &["commands_checked"], "  Commands checked");
         print_usize(validation, &["errors"], "  Command errors");
