@@ -19,7 +19,11 @@ impl CommandNode {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read commands.json: {}", e))?;
-        let mut root: Self = serde_json::from_str(&content)
+        Self::from_json_str(&content)
+    }
+
+    pub fn from_json_str(content: &str) -> Result<Self, String> {
+        let mut root: Self = serde_json::from_str(content)
             .map_err(|e| format!("Failed to parse commands.json: {}", e))?;
         root.fixup_root_redirects();
         Ok(root)

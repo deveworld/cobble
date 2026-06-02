@@ -16,7 +16,12 @@ status = "boot"
 @Markers = @e[type=armor_stand,tag=matrix_marker]
 
 datapack.function_tag("utility", ["cobble_26_feature_matrix:load"])
+datapack.function_tag("minecraft:load", ["cobble_26_feature_matrix:load"])
 datapack.predicate("always_true", {
+    "condition": "minecraft:random_chance",
+    "chance": 1
+})
+datapack.predicate("other_matrix:checks/always_true", {
     "condition": "minecraft:random_chance",
     "chance": 1
 })
@@ -36,6 +41,10 @@ def load():
     random.int("matrix_roll", 1, 6)
     timer.set("matrix_timer", 20)
     storage.set("status", {"state":"loaded","enabled":True})
+    storage.append("events", "loaded")
+    storage.read_score("matrix_state_count", "events", 1)
+    schedule.once("tick", "20t", "replace")
+    entity.tag_add("@a", "matrix_loader")
     root = math.sqrt(100)
     /datapack list enabled
     /random roll 1..6

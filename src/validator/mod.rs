@@ -15,10 +15,17 @@ pub struct ValidationError {
     pub position: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandValidationError {
+    pub message: String,
+    pub position: usize,
+}
+
 #[derive(Debug)]
 pub struct ValidationReport {
     pub files_checked: usize,
     pub commands_checked: usize,
+    pub macro_commands_checked: usize,
     pub commands_skipped: usize,
     pub errors: Vec<(PathBuf, ValidationError)>,
     pub source_map_errors: Vec<String>,
@@ -34,17 +41,36 @@ impl CommandValidator {
         Ok(Self { root })
     }
 
+    pub fn from_json_str(content: &str) -> Result<Self, String> {
+        let root = CommandNode::from_json_str(content)?;
+        Ok(Self { root })
+    }
+
     /// Validate a single command string.
     /// Returns Ok(()) if the command is valid, Err with a message otherwise.
     pub fn validate_command(&self, command: &str) -> Result<(), String> {
+        self.validate_command_detailed(command)
+            .map_err(|error| error.message)
+    }
+
+    /// Validate a single command string and retain the best-known error cursor.
+    pub fn validate_command_detailed(&self, command: &str) -> Result<(), CommandValidationError> {
         let trimmed = command.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             return Ok(()); // comment or empty
         }
 
+        let macro_offset = usize::from(trimmed.starts_with('$'));
+        if macro_offset == 1 {
+            Self::validate_macro_placeholders(trimmed)?;
+        }
         let command = trimmed.strip_prefix('$').unwrap_or(trimmed);
         let mut reader = StringReader::new(command);
         self.walk_node(&self.root, &mut reader, 0)
+            .map_err(|mut error| {
+                error.position += macro_offset;
+                error
+            })
     }
 
     /// Validate an entire .mcfunction file.
@@ -57,12 +83,12 @@ impl CommandValidator {
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            if let Err(msg) = self.validate_command(trimmed) {
+            if let Err(error) = self.validate_command_detailed(trimmed) {
                 errors.push(ValidationError {
                     line_number: line_num,
                     command: trimmed.to_string(),
-                    message: msg,
-                    position: 0,
+                    message: error.message,
+                    position: error.position,
                 });
             }
         }
@@ -74,6 +100,7 @@ impl CommandValidator {
         let mut report = ValidationReport {
             files_checked: 0,
             commands_checked: 0,
+            macro_commands_checked: 0,
             commands_skipped: 0,
             errors: Vec::new(),
             source_map_errors: Vec::new(),
@@ -85,7 +112,7 @@ impl CommandValidator {
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if path.is_file() {
+            if entry.file_type().is_file() {
                 if let Some(ext) = path.extension() {
                     if ext == "mcfunction" {
                         report.files_checked += 1;
@@ -96,14 +123,17 @@ impl CommandValidator {
                                     continue;
                                 }
                                 report.commands_checked += 1;
-                                if let Err(msg) = self.validate_command(trimmed) {
+                                if trimmed.starts_with('$') {
+                                    report.macro_commands_checked += 1;
+                                }
+                                if let Err(error) = self.validate_command_detailed(trimmed) {
                                     report.errors.push((
                                         path.to_path_buf(),
                                         ValidationError {
                                             line_number: i + 1,
                                             command: trimmed.to_string(),
-                                            message: msg,
-                                            position: 0,
+                                            message: error.message,
+                                            position: error.position,
                                         },
                                     ));
                                 }
@@ -124,22 +154,28 @@ impl CommandValidator {
         node: &CommandNode,
         reader: &mut StringReader,
         depth: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), CommandValidationError> {
         reader.skip_whitespace();
 
         if !reader.can_read() {
             if node.executable {
                 return Ok(());
             }
-            return Err("Incomplete command".to_string());
+            return Err(CommandValidationError {
+                message: "Incomplete command".to_string(),
+                position: reader.cursor(),
+            });
         }
 
         // Safety: prevent infinite recursion from redirect loops
         if depth > 100 {
-            return Err("Command too deeply nested (possible redirect loop)".to_string());
+            return Err(CommandValidationError {
+                message: "Command too deeply nested (possible redirect loop)".to_string(),
+                position: reader.cursor(),
+            });
         }
 
-        let mut best_error: Option<String> = None;
+        let mut best_error: Option<CommandValidationError> = None;
         let mut best_error_pos: usize = 0;
 
         // Try literal children first (they have priority over arguments)
@@ -161,11 +197,11 @@ impl CommandValidator {
 
                     match self.walk_node(target, reader, depth + 1) {
                         Ok(()) => return Ok(()),
-                        Err(e) => {
-                            let pos = reader.cursor();
+                        Err(error) => {
+                            let pos = error.position;
                             if pos > best_error_pos {
                                 best_error_pos = pos;
-                                best_error = Some(e);
+                                best_error = Some(error);
                             }
                             reader.set_cursor(saved);
                         }
@@ -194,11 +230,11 @@ impl CommandValidator {
 
                         match self.walk_node(target, reader, depth + 1) {
                             Ok(()) => return Ok(()),
-                            Err(e) => {
-                                let pos = reader.cursor();
+                            Err(error) => {
+                                let pos = error.position;
                                 if pos > best_error_pos {
                                     best_error_pos = pos;
-                                    best_error = Some(e);
+                                    best_error = Some(error);
                                 }
                                 reader.set_cursor(saved);
                             }
@@ -210,12 +246,15 @@ impl CommandValidator {
 
         Err(best_error.unwrap_or_else(|| {
             let remaining = reader.remaining();
-            let preview_len = remaining.len().min(40);
-            format!(
-                "Unknown or invalid argument at position {}: '{}'",
-                reader.cursor(),
-                &remaining[..preview_len]
-            )
+            let preview = remaining.chars().take(40).collect::<String>();
+            CommandValidationError {
+                message: format!(
+                    "Unknown or invalid argument at position {}: '{}'",
+                    reader.cursor(),
+                    preview
+                ),
+                position: reader.cursor(),
+            }
         }))
     }
 
@@ -224,11 +263,41 @@ impl CommandValidator {
         reader.skip_whitespace();
         !reader.can_read()
     }
+
+    fn validate_macro_placeholders(command: &str) -> Result<(), CommandValidationError> {
+        let chars = command.chars().collect::<Vec<_>>();
+        let mut index = 0;
+        while index + 1 < chars.len() {
+            if chars[index] == '$' && chars[index + 1] == '(' {
+                let start = index;
+                index += 2;
+                let name_start = index;
+                while index < chars.len() && chars[index] != ')' {
+                    index += 1;
+                }
+                if index >= chars.len() {
+                    return Err(CommandValidationError {
+                        message: format!("Unclosed macro placeholder at position {}", start),
+                        position: start,
+                    });
+                }
+                if index == name_start {
+                    return Err(CommandValidationError {
+                        message: format!("Empty macro placeholder at position {}", start),
+                        position: start,
+                    });
+                }
+            }
+            index += 1;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn get_validator() -> Option<CommandValidator> {
         let commands_json = Path::new("data/commands.json");
@@ -237,6 +306,132 @@ mod tests {
             return None;
         }
         Some(CommandValidator::from_file(commands_json).unwrap())
+    }
+
+    fn fixture_validator() -> CommandValidator {
+        CommandValidator::from_json_str(
+            r#"{
+                "type": "root",
+                "children": {
+                    "say": {
+                        "type": "literal",
+                        "children": {
+                            "message": {
+                                "type": "argument",
+                                "parser": "minecraft:message",
+                                "executable": true
+                            }
+                        }
+                    },
+                    "tellraw": {
+                        "type": "literal",
+                        "children": {
+                            "targets": {
+                                "type": "argument",
+                                "parser": "minecraft:entity",
+                                "children": {
+                                    "message": {
+                                        "type": "argument",
+                                        "parser": "minecraft:component",
+                                        "executable": true
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "execute": {
+                        "type": "literal",
+                        "children": {
+                            "run": {
+                                "type": "literal",
+                                "redirect": []
+                            }
+                        }
+                    },
+                    "return": {
+                        "type": "literal",
+                        "children": {
+                            "run": {
+                                "type": "literal",
+                                "redirect": []
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn fixture_validator_reports_error_positions() {
+        let validator = fixture_validator();
+
+        let error = validator
+            .validate_command_detailed("titel @a actionbar bad")
+            .unwrap_err();
+
+        assert_eq!(error.position, 0);
+        assert!(error.message.contains("Unknown or invalid argument"));
+    }
+
+    #[test]
+    fn fixture_validator_handles_redirects_and_macro_prefixes() {
+        let validator = fixture_validator();
+
+        assert!(validator.validate_command("execute run say ok").is_ok());
+        assert!(validator.validate_command("return run say ok").is_ok());
+        assert!(validator
+            .validate_command(r#"$tellraw $(player) {"text":"ok"}"#)
+            .is_ok());
+    }
+
+    #[test]
+    fn fixture_validator_rejects_malformed_macro_placeholders() {
+        let validator = fixture_validator();
+
+        for command in [
+            "$say $(message",
+            "$say $()",
+            r#"$tellraw $(player) {"text":"$(bad"}"#,
+        ] {
+            let error = validator.validate_command_detailed(command).unwrap_err();
+            assert!(
+                error.message.contains("macro placeholder"),
+                "unexpected error for {command}: {:?}",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_validator_allows_literal_macro_syntax_in_non_macro_commands() {
+        let validator = fixture_validator();
+
+        assert!(validator
+            .validate_command(r#"tellraw @a {"text":"$(price"}"#)
+            .is_ok());
+    }
+
+    #[test]
+    fn datapack_validation_counts_checked_macro_commands() {
+        let validator = fixture_validator();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let function_dir = temp_dir.path().join("data/test/function");
+        fs::create_dir_all(&function_dir).unwrap();
+        fs::write(
+            function_dir.join("macro.mcfunction"),
+            "$tellraw $(player) {\"text\":\"ok\"}\n# comment\nsay done\n",
+        )
+        .unwrap();
+
+        let report = validator.validate_datapack(temp_dir.path());
+
+        assert_eq!(report.files_checked, 1);
+        assert_eq!(report.commands_checked, 2);
+        assert_eq!(report.macro_commands_checked, 1);
+        assert_eq!(report.commands_skipped, 0);
+        assert!(report.errors.is_empty());
     }
 
     #[test]

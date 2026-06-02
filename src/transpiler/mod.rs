@@ -1208,19 +1208,39 @@ impl Transpiler {
 
         match &**func {
             Expression::Attribute(obj, _) => {
+                let Some(module_path) = Self::expression_path(obj) else {
+                    return false;
+                };
+                let root = module_path.split('.').next().unwrap_or_default();
                 matches!(
-                    &**obj,
-                    Expression::Identifier(module)
-                        if matches!(
-                            module.as_str(),
-                            "math" | "text" | "score" | "random" | "timer" | "storage" | "datapack"
-                        )
+                    root,
+                    "math"
+                        | "text"
+                        | "score"
+                        | "random"
+                        | "timer"
+                        | "storage"
+                        | "schedule"
+                        | "bossbar"
+                        | "team"
+                        | "entity"
+                        | "datapack"
                 )
             }
             Expression::Identifier(name) => {
                 name == "addEventListener" || name == "stdlib.addEventListener"
             }
             _ => false,
+        }
+    }
+
+    fn expression_path(expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::Identifier(name) => Some(name.clone()),
+            Expression::Attribute(obj, attr) => {
+                Some(format!("{}.{}", Self::expression_path(obj)?, attr))
+            }
+            _ => None,
         }
     }
 
@@ -1563,7 +1583,7 @@ impl Transpiler {
                     }
                     Expression::Attribute(obj, method) => {
                         // Handle attribute access like stdlib.addEventListener
-                        if let Expression::Identifier(module_name) = &**obj {
+                        if let Some(module_name) = Self::expression_path(obj) {
                             if module_name == "stdlib" && method == "addEventListener" {
                                 self.process_add_event_listener(args)?;
                             } else if module_name == "math" {
@@ -1572,12 +1592,22 @@ impl Transpiler {
                                 self.process_text_intrinsic(method, args)?;
                             } else if module_name == "score" {
                                 self.process_score_intrinsic(method, args)?;
+                            } else if module_name == "score.objective" {
+                                self.process_score_objective_intrinsic(method, args)?;
                             } else if module_name == "random" {
                                 self.process_random_intrinsic(method, args)?;
                             } else if module_name == "timer" {
                                 self.process_timer_intrinsic(method, args)?;
                             } else if module_name == "storage" {
                                 self.process_storage_intrinsic(method, args)?;
+                            } else if module_name == "schedule" {
+                                self.process_schedule_intrinsic(method, args)?;
+                            } else if module_name == "bossbar" {
+                                self.process_bossbar_intrinsic(method, args)?;
+                            } else if module_name == "team" {
+                                self.process_team_intrinsic(method, args)?;
+                            } else if module_name == "entity" {
+                                self.process_entity_intrinsic(method, args)?;
                             } else if module_name == "datapack" {
                                 self.process_datapack_intrinsic(method, args)?;
                             } else {
@@ -1640,6 +1670,21 @@ impl Transpiler {
                 .map(|value| *value as i32)
                 .ok_or_else(|| format!("{} must be a literal integer or const", label)),
             _ => Err(format!("{} must be a literal integer or const", label)),
+        }
+    }
+
+    fn expr_to_bool(&self, expr: &Expression, label: &str) -> Result<bool, String> {
+        match expr {
+            Expression::Boolean(value) => Ok(*value),
+            _ => Err(format!("{} must be a literal boolean", label)),
+        }
+    }
+
+    fn qualify_namespaced_id(&self, value: &str) -> String {
+        if value.contains(':') {
+            value.to_string()
+        } else {
+            format!("{}:{}", self.data_pack.namespace, value)
         }
     }
 
@@ -1756,6 +1801,57 @@ impl Transpiler {
                 )
             }
             _ => return Err(format!("Unknown score function: score.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_score_objective_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        let command = match method {
+            "add" => {
+                if !(2..=3).contains(&args.len()) {
+                    return Err("score.objective.add() takes 2 or 3 arguments".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "objective name")?;
+                let criteria = self.expr_to_plain_arg(&args[1], "objective criteria")?;
+                if args.len() == 3 {
+                    let display = self.expr_to_text_component(&args[2])?;
+                    format!(
+                        "scoreboard objectives add {} {} {}",
+                        name, criteria, display
+                    )
+                } else {
+                    format!("scoreboard objectives add {} {}", name, criteria)
+                }
+            }
+            "remove" => {
+                if args.len() != 1 {
+                    return Err("score.objective.remove() takes 1 argument".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "objective name")?;
+                format!("scoreboard objectives remove {}", name)
+            }
+            "display" => {
+                if !(1..=2).contains(&args.len()) {
+                    return Err("score.objective.display() takes 1 or 2 arguments".to_string());
+                }
+                let slot = self.expr_to_plain_arg(&args[0], "scoreboard display slot")?;
+                if args.len() == 2 {
+                    let name = self.expr_to_plain_arg(&args[1], "objective name")?;
+                    format!("scoreboard objectives setdisplay {} {}", slot, name)
+                } else {
+                    format!("scoreboard objectives setdisplay {}", slot)
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "Unknown score objective function: score.objective.{}",
+                    method
+                ))
+            }
         };
         self.push_current_command(command)
     }
@@ -1891,7 +1987,360 @@ impl Transpiler {
                     self.data_pack.namespace, dst, self.data_pack.namespace, src
                 )
             }
+            "append" | "prepend" => {
+                if args.len() != 2 {
+                    return Err(format!("storage.{}() takes 2 arguments", method));
+                }
+                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
+                let value = self.serialize_to_snbt(&args[1])?;
+                format!(
+                    "data modify storage {}:global {} {} value {}",
+                    self.data_pack.namespace, path, method, value
+                )
+            }
+            "insert" => {
+                if args.len() != 3 {
+                    return Err("storage.insert() takes 3 arguments".to_string());
+                }
+                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
+                let index = self.expr_to_i32(&args[1], "storage insert index")?;
+                let value = self.serialize_to_snbt(&args[2])?;
+                format!(
+                    "data modify storage {}:global {} insert {} value {}",
+                    self.data_pack.namespace, path, index, value
+                )
+            }
+            "get" => {
+                if args.len() != 1 {
+                    return Err("storage.get() takes 1 argument".to_string());
+                }
+                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
+                format!(
+                    "data get storage {}:global {}",
+                    self.data_pack.namespace, path
+                )
+            }
+            "read_score" => {
+                if !(2..=3).contains(&args.len()) {
+                    return Err("storage.read_score() takes 2 or 3 arguments".to_string());
+                }
+                self.data_pack.track_objective("temp");
+                let score = self.expr_to_plain_arg(&args[0], "target score")?;
+                let path = self.expr_to_plain_arg(&args[1], "storage path")?;
+                let scale = if args.len() == 3 {
+                    self.expr_to_plain_arg(&args[2], "data get scale")?
+                } else {
+                    "1".to_string()
+                };
+                format!(
+                    "execute store result score {} temp run data get storage {}:global {} {}",
+                    score, self.data_pack.namespace, path, scale
+                )
+            }
+            "copy_from" => {
+                if args.len() != 4 {
+                    return Err("storage.copy_from() takes 4 arguments".to_string());
+                }
+                let dst = self.expr_to_plain_arg(&args[0], "destination storage path")?;
+                let source_type = self.expr_to_plain_arg(&args[1], "source type")?;
+                let source_id = self.expr_to_plain_arg(&args[2], "source id")?;
+                let source_path = self.expr_to_plain_arg(&args[3], "source path")?;
+                if !matches!(source_type.as_str(), "entity" | "block" | "storage") {
+                    return Err(
+                        "storage.copy_from() source type must be entity, block, or storage"
+                            .to_string(),
+                    );
+                }
+                format!(
+                    "data modify storage {}:global {} set from {} {} {}",
+                    self.data_pack.namespace, dst, source_type, source_id, source_path
+                )
+            }
             _ => return Err(format!("Unknown storage function: storage.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_schedule_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        let command = match method {
+            "once" => {
+                if !(2..=3).contains(&args.len()) {
+                    return Err("schedule.once() takes 2 or 3 arguments".to_string());
+                }
+                let function = self.expr_to_plain_arg(&args[0], "scheduled function")?;
+                let delay = self.expr_to_plain_arg(&args[1], "schedule delay")?;
+                let function = self.qualify_namespaced_id(&function);
+                if args.len() == 3 {
+                    let mode = self.expr_to_plain_arg(&args[2], "schedule mode")?;
+                    if !matches!(mode.as_str(), "append" | "replace") {
+                        return Err("schedule.once() mode must be append or replace".to_string());
+                    }
+                    format!("schedule function {} {} {}", function, delay, mode)
+                } else {
+                    format!("schedule function {} {}", function, delay)
+                }
+            }
+            "clear" => {
+                if args.len() != 1 {
+                    return Err("schedule.clear() takes 1 argument".to_string());
+                }
+                let function = self.expr_to_plain_arg(&args[0], "scheduled function")?;
+                format!("schedule clear {}", self.qualify_namespaced_id(&function))
+            }
+            _ => return Err(format!("Unknown schedule function: schedule.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_bossbar_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        let command = match method {
+            "add" => {
+                if args.len() != 2 {
+                    return Err("bossbar.add() takes 2 arguments".to_string());
+                }
+                let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
+                let name = self.expr_to_text_component(&args[1])?;
+                format!("bossbar add {} {}", self.qualify_namespaced_id(&id), name)
+            }
+            "remove" => {
+                if args.len() != 1 {
+                    return Err("bossbar.remove() takes 1 argument".to_string());
+                }
+                let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
+                format!("bossbar remove {}", self.qualify_namespaced_id(&id))
+            }
+            "set_value" | "set_max" => {
+                if args.len() != 2 {
+                    return Err(format!("bossbar.{}() takes 2 arguments", method));
+                }
+                let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
+                let value = self.expr_to_i32(&args[1], "bossbar value")?;
+                let property = method.strip_prefix("set_").unwrap();
+                format!(
+                    "bossbar set {} {} {}",
+                    self.qualify_namespaced_id(&id),
+                    property,
+                    value
+                )
+            }
+            "set_name" => {
+                if args.len() != 2 {
+                    return Err("bossbar.set_name() takes 2 arguments".to_string());
+                }
+                let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
+                let name = self.expr_to_text_component(&args[1])?;
+                format!(
+                    "bossbar set {} name {}",
+                    self.qualify_namespaced_id(&id),
+                    name
+                )
+            }
+            "set_color" | "set_style" => {
+                if args.len() != 2 {
+                    return Err(format!("bossbar.{}() takes 2 arguments", method));
+                }
+                let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
+                let value = self.expr_to_plain_arg(&args[1], "bossbar property value")?;
+                let property = method.strip_prefix("set_").unwrap();
+                match method {
+                    "set_color" if !Self::is_valid_bossbar_color(&value) => {
+                        return Err(format!("Invalid bossbar color: {}", value));
+                    }
+                    "set_style" if !Self::is_valid_bossbar_style(&value) => {
+                        return Err(format!("Invalid bossbar style: {}", value));
+                    }
+                    _ => {}
+                }
+                format!(
+                    "bossbar set {} {} {}",
+                    self.qualify_namespaced_id(&id),
+                    property,
+                    value
+                )
+            }
+            "set_visible" => {
+                if args.len() != 2 {
+                    return Err("bossbar.set_visible() takes 2 arguments".to_string());
+                }
+                let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
+                let visible = self.expr_to_bool(&args[1], "bossbar visibility")?;
+                format!(
+                    "bossbar set {} visible {}",
+                    self.qualify_namespaced_id(&id),
+                    visible
+                )
+            }
+            "set_players" => {
+                if args.len() != 2 {
+                    return Err("bossbar.set_players() takes 2 arguments".to_string());
+                }
+                let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
+                let players = self.expr_to_plain_arg(&args[1], "bossbar players")?;
+                format!(
+                    "bossbar set {} players {}",
+                    self.qualify_namespaced_id(&id),
+                    players
+                )
+            }
+            _ => return Err(format!("Unknown bossbar function: bossbar.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn is_valid_bossbar_color(value: &str) -> bool {
+        matches!(
+            value,
+            "pink" | "blue" | "red" | "green" | "yellow" | "purple" | "white"
+        )
+    }
+
+    fn is_valid_bossbar_style(value: &str) -> bool {
+        matches!(
+            value,
+            "progress" | "notched_6" | "notched_10" | "notched_12" | "notched_20"
+        )
+    }
+
+    fn process_team_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+        let command = match method {
+            "add" => {
+                if !(1..=2).contains(&args.len()) {
+                    return Err("team.add() takes 1 or 2 arguments".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "team name")?;
+                if args.len() == 2 {
+                    let display = self.expr_to_text_component(&args[1])?;
+                    format!("team add {} {}", name, display)
+                } else {
+                    format!("team add {}", name)
+                }
+            }
+            "remove" => {
+                if args.len() != 1 {
+                    return Err("team.remove() takes 1 argument".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "team name")?;
+                format!("team remove {}", name)
+            }
+            "join" => {
+                if !(1..=2).contains(&args.len()) {
+                    return Err("team.join() takes 1 or 2 arguments".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "team name")?;
+                if args.len() == 2 {
+                    let members = self.expr_to_plain_arg(&args[1], "team members")?;
+                    format!("team join {} {}", name, members)
+                } else {
+                    format!("team join {}", name)
+                }
+            }
+            "leave" => {
+                if args.len() != 1 {
+                    return Err("team.leave() takes 1 argument".to_string());
+                }
+                let members = self.expr_to_plain_arg(&args[0], "team members")?;
+                format!("team leave {}", members)
+            }
+            "modify" => {
+                if args.len() != 3 {
+                    return Err("team.modify() takes 3 arguments".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "team name")?;
+                let option = self.expr_to_plain_arg(&args[1], "team option")?;
+                let value = match option.as_str() {
+                    "prefix" | "suffix" | "displayName" => self.expr_to_text_component(&args[2])?,
+                    _ => self.expr_to_plain_arg(&args[2], "team option value")?,
+                };
+                format!("team modify {} {} {}", name, option, value)
+            }
+            _ => return Err(format!("Unknown team function: team.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_entity_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        let command = match method {
+            "tag_add" | "tag_remove" => {
+                if args.len() != 2 {
+                    return Err(format!("entity.{}() takes 2 arguments", method));
+                }
+                let target = self.expr_to_plain_arg(&args[0], "entity target")?;
+                let tag = self.expr_to_plain_arg(&args[1], "entity tag")?;
+                let action = method.strip_prefix("tag_").unwrap();
+                format!("tag {} {} {}", target, action, tag)
+            }
+            "effect_give" => {
+                if !(2..=5).contains(&args.len()) {
+                    return Err("entity.effect_give() takes 2 to 5 arguments".to_string());
+                }
+                let target = self.expr_to_plain_arg(&args[0], "effect target")?;
+                let effect = self.expr_to_plain_arg(&args[1], "effect id")?;
+                let mut command = format!("effect give {} {}", target, effect);
+                if args.len() >= 3 {
+                    command.push(' ');
+                    command.push_str(&self.expr_to_plain_arg(&args[2], "effect duration")?);
+                }
+                if args.len() >= 4 {
+                    command.push(' ');
+                    command.push_str(&self.expr_to_i32(&args[3], "effect amplifier")?.to_string());
+                }
+                if args.len() == 5 {
+                    command.push(' ');
+                    command.push_str(
+                        &self
+                            .expr_to_bool(&args[4], "effect hide particles")?
+                            .to_string(),
+                    );
+                }
+                command
+            }
+            "effect_clear" => {
+                if !(1..=2).contains(&args.len()) {
+                    return Err("entity.effect_clear() takes 1 or 2 arguments".to_string());
+                }
+                let target = self.expr_to_plain_arg(&args[0], "effect target")?;
+                if args.len() == 2 {
+                    let effect = self.expr_to_plain_arg(&args[1], "effect id")?;
+                    format!("effect clear {} {}", target, effect)
+                } else {
+                    format!("effect clear {}", target)
+                }
+            }
+            "attribute_get" => {
+                if !(2..=3).contains(&args.len()) {
+                    return Err("entity.attribute_get() takes 2 or 3 arguments".to_string());
+                }
+                let target = self.expr_to_plain_arg(&args[0], "attribute target")?;
+                let attribute = self.expr_to_plain_arg(&args[1], "attribute id")?;
+                if args.len() == 3 {
+                    let scale = self.expr_to_plain_arg(&args[2], "attribute scale")?;
+                    format!("attribute {} {} get {}", target, attribute, scale)
+                } else {
+                    format!("attribute {} {} get", target, attribute)
+                }
+            }
+            "attribute_base_set" => {
+                if args.len() != 3 {
+                    return Err("entity.attribute_base_set() takes 3 arguments".to_string());
+                }
+                let target = self.expr_to_plain_arg(&args[0], "attribute target")?;
+                let attribute = self.expr_to_plain_arg(&args[1], "attribute id")?;
+                let value = self.expr_to_plain_arg(&args[2], "attribute value")?;
+                format!("attribute {} {} base set {}", target, attribute, value)
+            }
+            _ => return Err(format!("Unknown entity function: entity.{}", method)),
         };
         self.push_current_command(command)
     }
@@ -1925,7 +2374,7 @@ impl Transpiler {
             return Err(format!("datapack.{}_tag() takes 2 arguments", tag_type));
         }
 
-        let name = self.expr_to_resource_name(&args[0], "tag name")?;
+        let (namespace, name) = self.expr_to_resource_id(&args[0], "tag name")?;
         let values = self.expr_to_json_value(&args[1])?;
         if !values.is_array() {
             return Err("Tag values must be an array".to_string());
@@ -1934,8 +2383,12 @@ impl Transpiler {
         let json = serde_json::json!({ "values": values });
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode tag JSON: {}", e))?;
-        self.data_pack
-            .add_json_resource(format!("tags/{}/{}", tag_type, name), content)
+        let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
+        self.data_pack.add_json_resource_in_namespace(
+            namespace,
+            format!("tags/{}/{}", tag_type, name),
+            content,
+        )
     }
 
     fn add_datapack_json_resource(
@@ -1947,20 +2400,63 @@ impl Transpiler {
             return Err(format!("datapack.{}() takes 2 arguments", resource_type));
         }
 
-        let name = self.expr_to_resource_name(&args[0], "resource name")?;
+        let (namespace, name) = self.expr_to_resource_id(&args[0], "resource name")?;
         let json = self.expr_to_json_value(&args[1])?;
+        if !json.is_object() {
+            return Err(format!(
+                "datapack.{}() JSON value must be an object",
+                resource_type
+            ));
+        }
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode resource JSON: {}", e))?;
-        self.data_pack
-            .add_json_resource(format!("{}/{}", resource_type, name), content)
+        let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
+        self.data_pack.add_json_resource_in_namespace(
+            namespace,
+            format!("{}/{}", resource_type, name),
+            content,
+        )
     }
 
-    fn expr_to_resource_name(&self, expr: &Expression, label: &str) -> Result<String, String> {
-        let name = self.expr_to_plain_arg(expr, label)?;
-        let has_invalid_segment = name
+    fn expr_to_resource_id(
+        &self,
+        expr: &Expression,
+        label: &str,
+    ) -> Result<(Option<String>, String), String> {
+        let id = self.expr_to_plain_arg(expr, label)?;
+        let (namespace, path) = if let Some((namespace, path)) = id.split_once(':') {
+            if path.contains(':') {
+                return Err(format!(
+                    "Invalid {} '{}': resource IDs may contain at most one ':' separator",
+                    label, id
+                ));
+            }
+            (Some(namespace.to_string()), path.to_string())
+        } else {
+            (None, id.clone())
+        };
+
+        if let Some(namespace) = &namespace {
+            let invalid_namespace = namespace.is_empty()
+                || namespace.chars().any(|c| {
+                    !(c.is_ascii_lowercase()
+                        || c.is_ascii_digit()
+                        || c == '_'
+                        || c == '-'
+                        || c == '.')
+                });
+            if invalid_namespace {
+                return Err(format!(
+                    "Invalid {} '{}': use lowercase namespace:path resource IDs",
+                    label, id
+                ));
+            }
+        }
+
+        let has_invalid_segment = path
             .split('/')
             .any(|segment| segment.is_empty() || segment == "." || segment == "..");
-        let has_invalid_char = name.chars().any(|c| {
+        let has_invalid_char = path.chars().any(|c| {
             !(c.is_ascii_lowercase()
                 || c.is_ascii_digit()
                 || c == '_'
@@ -1968,13 +2464,13 @@ impl Transpiler {
                 || c == '.'
                 || c == '/')
         });
-        if name.is_empty() || name.contains('\\') || has_invalid_segment || has_invalid_char {
+        if path.is_empty() || path.contains('\\') || has_invalid_segment || has_invalid_char {
             return Err(format!(
-                "Invalid {} '{}': use lowercase resource paths with letters, digits, '/', '_', '-', or '.', and no empty, '.', or '..' segments",
-                label, name
+                "Invalid {} '{}': use lowercase resource paths or namespace:path IDs with letters, digits, '/', '_', '-', or '.', and no empty, '.', or '..' segments",
+                label, id
             ));
         }
-        Ok(name)
+        Ok((namespace, path))
     }
 
     fn process_math_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {

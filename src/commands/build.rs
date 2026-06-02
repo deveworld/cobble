@@ -80,16 +80,16 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         SUPPORTED_PACK_FORMAT
     };
 
-    // Validate pack_format
-    // Cobble v0.6.0 targets Minecraft Java Edition 26.1.2 (pack format 101.1).
+    // Validate pack_format against this release's single supported Minecraft target.
     if !pack_format.is_supported() {
         return Err(format!(
             "pack_format must be {} (Minecraft Java Edition {}), got {}.\n\
-            Cobble v0.6.0 exclusively supports Minecraft Java Edition {}.\n\
+            Cobble v{} exclusively supports Minecraft Java Edition {}.\n\
             See https://minecraft.wiki/w/Pack_format for version compatibility.",
             SUPPORTED_PACK_FORMAT,
             SUPPORTED_MINECRAFT_VERSION,
             pack_format,
+            env!("CARGO_PKG_VERSION"),
             SUPPORTED_MINECRAFT_VERSION
         ));
     }
@@ -183,7 +183,15 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
 
     if options.validate {
         println!("Validating generated commands...");
-        let report = run_validation(&build_output_dir, &options.commands_json)?;
+        let report = match run_validation(&build_output_dir, &options.commands_json) {
+            Ok(report) => report,
+            Err(error) => {
+                if build_output_dir != final_output_dir {
+                    let _ = fs::remove_dir_all(&build_output_dir);
+                }
+                return Err(error);
+            }
+        };
         print_validation_report(&report, &options.commands_json, &build_output_dir);
         if !report.errors.is_empty() || !report.source_map_errors.is_empty() {
             if build_output_dir != final_output_dir {
@@ -407,6 +415,15 @@ mod tests {
 
         assert!(error.contains("Command tree not found"));
         assert!(error.contains("scripts/setup_commands_json.sh 26.1.2"));
+        assert!(!temp_dir
+            .path()
+            .read_dir()
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .contains(".output.cobble-staging-")));
     }
 
     #[test]

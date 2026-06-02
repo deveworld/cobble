@@ -9,7 +9,7 @@ phase = 1
 def spawn_boss():
     """Spawn the boss entity"""
     asat @p:
-        /summon minecraft:wither_skeleton ~ ~1 ~ {CustomName:'{"text":"Dark Lord","color":"dark_red","bold":true}', Health:200f, Attributes:[{Name:generic.max_health,Base:200}], HandItems:[{id:"minecraft:netherite_sword",Count:1b},{}], ArmorItems:[{},{},{},{id:"minecraft:dragon_head",Count:1b}]}
+        /summon minecraft:wither_skeleton ~ ~1 ~ {CustomName:'{"text":"Dark Lord","color":"dark_red","bold":true}', Health:200f, attributes:[{id:"minecraft:max_health",base:200.0d}], HandItems:[{id:"minecraft:netherite_sword",Count:1b},{}], ArmorItems:[{},{},{},{id:"minecraft:dragon_head",Count:1b}]}
     /bossbar add boss {"text":"Dark Lord"}
     /bossbar set boss players @a
     /bossbar set boss max 200

@@ -66,6 +66,104 @@ fn source_map_tracks_user_raw_command_locations() {
 }
 
 #[test]
+fn validate_rejects_source_map_generated_paths_outside_datapack() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let pack_dir = temp_dir.path().join("pack");
+    let function_dir = pack_dir.join("data/source_map/function");
+    let source_map_dir = pack_dir.join(".cobble");
+    let commands_json = temp_dir.path().join("commands.json");
+
+    fs::create_dir_all(&function_dir).unwrap();
+    fs::create_dir_all(&source_map_dir).unwrap();
+    fs::write(function_dir.join("safe.mcfunction"), "# empty\n").unwrap();
+    fs::write(&commands_json, r#"{"type":"root","children":{}}"#).unwrap();
+    fs::write(
+        source_map_dir.join("source_map.json"),
+        r#"{
+            "version": 1,
+            "entries": [
+                {
+                    "generated_path": "/etc/passwd",
+                    "generated_line": 1,
+                    "command": "not passwd",
+                    "source": null,
+                    "kind": "UserCommand"
+                },
+                {
+                    "generated_path": "../secret.mcfunction",
+                    "generated_line": 1,
+                    "command": "not secret",
+                    "source": null,
+                    "kind": "UserCommand"
+                }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let report = cobble::commands::validate::run_validation(&pack_dir, &commands_json).unwrap();
+
+    assert_eq!(report.source_map_errors.len(), 2);
+    assert!(report
+        .source_map_errors
+        .iter()
+        .any(|error| error.contains("/etc/passwd:1 has invalid generated_path")));
+    assert!(report
+        .source_map_errors
+        .iter()
+        .any(|error| error.contains("../secret.mcfunction:1 has invalid generated_path")));
+    assert!(report
+        .source_map_errors
+        .iter()
+        .all(|error| !error.contains("root:")));
+}
+
+#[cfg(unix)]
+#[test]
+fn validate_rejects_source_map_generated_paths_that_are_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let pack_dir = temp_dir.path().join("pack");
+    let function_dir = pack_dir.join("data/source_map/function");
+    let source_map_dir = pack_dir.join(".cobble");
+    let commands_json = temp_dir.path().join("commands.json");
+    let secret = temp_dir.path().join("secret.txt");
+
+    fs::create_dir_all(&function_dir).unwrap();
+    fs::create_dir_all(&source_map_dir).unwrap();
+    fs::write(&secret, "secret line\n").unwrap();
+    symlink(&secret, function_dir.join("leak.mcfunction")).unwrap();
+    fs::write(&commands_json, r#"{"type":"root","children":{}}"#).unwrap();
+    fs::write(
+        source_map_dir.join("source_map.json"),
+        r#"{
+            "version": 1,
+            "entries": [
+                {
+                    "generated_path": "data/source_map/function/leak.mcfunction",
+                    "generated_line": 1,
+                    "command": "not secret",
+                    "source": null,
+                    "kind": "UserCommand"
+                }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let report = cobble::commands::validate::run_validation(&pack_dir, &commands_json).unwrap();
+
+    assert!(report.source_map_errors.iter().any(|error| error.contains(
+        "data/source_map/function/leak.mcfunction:1 maps to missing or non-regular file"
+    )));
+    assert!(report
+        .source_map_errors
+        .iter()
+        .all(|error| !error.contains("secret line")));
+}
+
+#[test]
 fn source_map_stays_aligned_after_load_setup_insertions() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.cbl");

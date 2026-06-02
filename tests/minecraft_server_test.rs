@@ -42,7 +42,7 @@ fn purpur_server_loads_and_runs_generated_datapack() {
     seed_purpur_runtime_cache(&repo_root, &server_dir);
 
     let mut child = spawn_server(&jar, &server_dir);
-    let result = run_server_smoke(&mut child, &server_dir.join("logs/latest.log"));
+    let result = run_server_smoke(&mut child, &server_dir);
     stop_server(&mut child);
     if result.is_ok() {
         persist_purpur_runtime_cache(&repo_root, &server_dir);
@@ -253,14 +253,15 @@ fn spawn_server(jar: &Path, server_dir: &Path) -> Child {
         .expect("failed to start Purpur; is Java installed?")
 }
 
-fn run_server_smoke(child: &mut Child, log_path: &Path) -> Result<(), String> {
-    wait_for_log(child, log_path, "Done (", STARTUP_TIMEOUT)?;
-    wait_for_log(child, log_path, "Cobble quiet load ok", COMMAND_TIMEOUT)?;
+fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> {
+    let log_path = server_dir.join("logs/latest.log");
+    wait_for_log(child, &log_path, "Done (", STARTUP_TIMEOUT)?;
+    wait_for_log(child, &log_path, "Cobble quiet load ok", COMMAND_TIMEOUT)?;
 
     send_command(child, "datapack list")?;
     wait_for_log(
         child,
-        log_path,
+        &log_path,
         &format!("file/{NAMESPACE}"),
         COMMAND_TIMEOUT,
     )?;
@@ -268,26 +269,28 @@ fn run_server_smoke(child: &mut Child, log_path: &Path) -> Result<(), String> {
     send_command(child, &format!("function {NAMESPACE}:probe"))?;
     wait_for_log(
         child,
-        log_path,
+        &log_path,
         &format!("Function {NAMESPACE}:probe returned 1"),
         COMMAND_TIMEOUT,
     )?;
-    wait_for_log(child, log_path, "probe first", COMMAND_TIMEOUT)?;
-    wait_for_log(child, log_path, "return command ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "probe first", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "return command ok", COMMAND_TIMEOUT)?;
 
     send_command(child, "reload")?;
-    wait_for_log_count(child, log_path, "Cobble quiet load ok", 2, COMMAND_TIMEOUT)?;
+    wait_for_log_count(child, &log_path, "Cobble quiet load ok", 2, COMMAND_TIMEOUT)?;
 
     send_command(child, "data get storage cobble:server_smoke status")?;
     wait_for_log(
         child,
-        log_path,
+        &log_path,
         "Storage cobble:server_smoke has the following contents: \"loaded\"",
         COMMAND_TIMEOUT,
     )?;
 
-    let log = read_log(log_path);
+    let log = read_log(&log_path);
     assert_no_server_errors(&log)?;
+    let console_log = read_log(&server_dir.join("server-console.log"));
+    assert_no_server_errors(&console_log)?;
     Ok(())
 }
 

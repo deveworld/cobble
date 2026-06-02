@@ -8,11 +8,11 @@
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.6.0** - Build validation, standard library v1, data pack JSON resources, and Minecraft Java Edition 26.1.2 support | Pack Format 101.1
+**✨ Version 0.6.1** - Expanded validation diagnostics, standard library v1.1 helpers, namespaced data pack resources, project templates, and Minecraft Java Edition 26.1.2 support | Pack Format 101.1
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.6.0 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.6.1 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
 
@@ -426,7 +426,7 @@ See [File Import System](#file-import-system) for more details on importing from
 
 ### Standard Library Helpers
 
-Cobble 0.6.0 includes compiler-backed helpers for common data pack tasks:
+Cobble 0.6.1 includes compiler-backed helpers for common data pack tasks:
 
 ```python
 def utilities():
@@ -435,6 +435,9 @@ def utilities():
     random.int("roll", 1, 6)
     timer.tick("cooldown")
     storage.set("status", {"ready": True})
+    score.objective.add("points", "dummy", "Points")
+    bossbar.add("timer", "Timer")
+    schedule.once("utilities", "5s")
     root = math.sqrt(100)
 ```
 
@@ -444,7 +447,12 @@ Supported helper modules:
 - `score` - `set`, `add`, `remove`, `reset`, `copy`, `operation`
 - `random` - `int`, `bool`
 - `timer` - `set`, `tick`, `done`, `reset`
-- `storage` - `set`, `merge`, `remove`, `copy`
+- `storage` - `set`, `merge`, `remove`, `copy`, `append`, `prepend`, `insert`, `get`, `read_score`, `copy_from`
+- `score.objective` - `add`, `remove`, `display`
+- `schedule` - `once`, `clear`
+- `bossbar` - `add`, `remove`, `set_value`, `set_max`, `set_name`, `set_color`, `set_style`, `set_visible`, `set_players`
+- `team` - `add`, `remove`, `join`, `leave`, `modify`
+- `entity` - `tag_add`, `tag_remove`, `effect_give`, `effect_clear`, `attribute_get`, `attribute_base_set`
 - `math` - `sqrt`, `abs`, `min`, `max`
 
 ### Data Pack JSON Resources
@@ -453,6 +461,7 @@ Top-level `datapack.*` declarations generate common JSON resources:
 
 ```python
 datapack.function_tag("utility", ["my_pack:setup"])
+datapack.function_tag("minecraft:load", ["my_pack:setup"])
 datapack.predicate("is_sneaking", {
     "condition": "minecraft:entity_properties",
     "entity": "this",
@@ -465,7 +474,9 @@ datapack.dialog("notice", {
 ```
 
 Supported resources include function/block/item/entity type tags, predicates,
-advancements, loot tables, recipes, item modifiers, and dialogs.
+advancements, loot tables, recipes, item modifiers, and dialogs. Resource names
+can use nested paths and optional explicit namespaces such as
+`other_namespace:checks/is_ready`.
 
 ### Event System
 
@@ -494,6 +505,7 @@ Initialize a new Cobble project.
 ```bash
 cobble init                     # In current directory
 cobble init --name my-project   # Create new directory named 'my-project'
+cobble init --template minimal  # Use minimal, stdlib, or validation template
 ```
 
 **Options:**
@@ -501,6 +513,7 @@ cobble init --name my-project   # Create new directory named 'my-project'
 - `--name <NAME>` - Project name (creates a new directory if specified)
 - `--description <DESCRIPTION>` - Project description
 - `--pack-format <FORMAT>` - Pack format version (default: 101.1)
+- `--template <NAME>` - Project template: `minimal`, `stdlib`, or `validation`
 
 ### `cobble build [input] [options]`
 
@@ -519,12 +532,27 @@ Options:
 - `-o, --output <dir>` - Output directory
 - `--zip` - Create ZIP archive
 - `--validate` - Validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2 commands
-- `--commands-json <path>` - Path to the exported command tree (default: `data/commands.json`)
+- `--commands-json <path>` - Path to the exported command tree (default: `data/commands.json`; auto-generated when missing)
 
-Generate the command tree before using validation:
+The default `data/commands.json` is generated automatically on first validation.
+This requires `curl` and Java because Cobble downloads the Minecraft server jar
+and runs the server reports generator. For custom paths, generate the file
+manually and copy it to the requested path:
 
 ```bash
 scripts/setup_commands_json.sh 26.1.2
+cp data/commands.json /tmp/commands.json
+```
+
+If Mojang's manifest endpoint is blocked on your network, Cobble also tries the
+legacy launcher manifest host and a pinned 26.1.2 server jar URL. You can
+override the source explicitly:
+
+```bash
+COBBLE_COMMANDS_JSON_URL=https://example.com/commands.json cobble build --validate
+COBBLE_MINECRAFT_SERVER_URL=https://example.com/server.jar cobble build --validate
+COBBLE_MINECRAFT_SERVER_JAR=/path/to/server.jar cobble build --validate
+COBBLE_MINECRAFT_SERVER_SHA1=<sha1> COBBLE_MINECRAFT_SERVER_URL=https://example.com/server.jar cobble build --validate
 ```
 
 ### `cobble watch [input] [options]`
@@ -571,7 +599,7 @@ entry_points = []      # Main files to compile; imported files are pulled in by 
 | ----------------- | ----------- |
 | 26.1.2 | 101.1 (required) |
 
-> **Note**: Cobble v0.6.0 exclusively supports **Minecraft Java Edition 26.1.2** (pack format 101.1). No backward compatibility with older versions is provided. This allows us to leverage the latest Minecraft features without worrying about legacy constraints.
+> **Note**: Cobble v0.6.1 exclusively supports **Minecraft Java Edition 26.1.2** (pack format 101.1). No backward compatibility with older versions is provided. This allows us to leverage the latest Minecraft features without worrying about legacy constraints.
 
 ## 📁 Project Structure
 
@@ -588,7 +616,7 @@ my-datapack/
 │   ├── pack.mcmeta
 │   └── data/
 │       └── namespace/
-│           ├── functions/
+│           ├── function/
 │           └── tags/
 └── my-datapack.zip      # Distributable pack
 ```
@@ -609,25 +637,19 @@ phase = 1
 
 def spawn_boss():
     """Spawn the boss entity"""
-    /summon minecraft:wither_skeleton ~ ~1 ~ {
-        CustomName:'{"text":"Dark Lord","color":"dark_red","bold":true}',
-        Health:200f,
-        Attributes:[{Name:generic.max_health,Base:200}],
-        HandItems:[{id:"minecraft:netherite_sword",Count:1b},{}],
-        ArmorItems:[{},{},{},{id:"minecraft:dragon_head",Count:1b}]
-    }
-    /bossbar add boss {"text":"Dark Lord"}
-    /bossbar set boss players @a
-    /bossbar set boss max 200
-    /bossbar set boss value 200
-    /bossbar set boss color red
+    /summon minecraft:wither_skeleton ~ ~1 ~ {CustomName:'{"text":"Dark Lord","color":"dark_red","bold":true}',Health:200f,attributes:[{id:"minecraft:max_health",base:200.0d}],HandItems:[{id:"minecraft:netherite_sword",Count:1b},{}],ArmorItems:[{},{},{},{id:"minecraft:dragon_head",Count:1b}]}
+    /bossbar add namespace:boss {"text":"Dark Lord"}
+    /bossbar set namespace:boss players @a
+    /bossbar set namespace:boss max 200
+    /bossbar set namespace:boss value 200
+    /bossbar set namespace:boss color red
 
 def boss_tick():
     """Boss fight logic - runs every tick"""
     global phase
 
     # Update boss bar
-    /execute store result bossbar boss value run data get entity @e[type=wither_skeleton,name="Dark Lord",limit=1] Health
+    /execute store result bossbar namespace:boss value run data get entity @e[type=wither_skeleton,name="Dark Lord",limit=1] Health
 
     # Phase transitions
     if boss_health <= 50 and phase == 1:
@@ -647,7 +669,7 @@ def enter_phase_2():
 
 def boss_defeated():
     """Called when boss is defeated"""
-    /bossbar remove boss
+    /bossbar remove namespace:boss
     /tellraw @a {"text":"Victory! The Dark Lord has been defeated!","color":"gold","bold":true}
     /advancement grant @a only namespace:defeat_boss
     asat @s:
@@ -664,8 +686,8 @@ stdlib.addEventListener(event.TICK, boss_tick)
 ```python
 def create_checkpoint(x, y, z):
     """Create a checkpoint at coordinates"""
-    /summon minecraft:armor_stand x y z {Invisible:1b,Marker:1b,CustomName:'{"text":"Checkpoint"}'}
-    /particle minecraft:end_rod x y z 0.5 1 0.5 0.01 20
+    /summon minecraft:armor_stand {x} {y} {z} {Invisible:1b,Marker:1b,CustomName:'{"text":"Checkpoint"}'}
+    /particle minecraft:end_rod {x} {y} {z} 0.5 1 0.5 0.01 20
 
 def on_checkpoint():
     """Player reaches checkpoint"""
@@ -736,6 +758,14 @@ cargo watch -x test -x "run -- check examples/"
 ## 🗺️ Roadmap
 
 ### Recently Completed
+
+#### v0.6.1 (2026-06-02)
+
+- [x] **Validation diagnostics** - Macro commands are counted explicitly and invalid commands now include caret-position diagnostics when available
+- [x] **Standard library v1.1** - Added objective, storage list/read, schedule, bossbar, team, and entity helper commands
+- [x] **Namespaced resources** - `datapack.*` declarations can emit explicit `namespace:path` resources and reject non-object JSON resources where Minecraft expects objects
+- [x] **Project templates** - `cobble init --template minimal|stdlib|validation` creates more targeted starter projects
+- [x] **Server QA workflow** - Added `scripts/test_minecraft_server.sh` for the ignored real-server integration test
 
 #### v0.6.0 (2026-06-01)
 
@@ -881,10 +911,10 @@ cargo watch -x test -x "run -- check examples/"
 
 - [ ] Class and object support for entities
 - [ ] NBT data manipulation
-- [ ] Custom advancement generation
-- [ ] Recipe generation
-- [ ] Loot table generation
-- [ ] Predicate support
+- [x] Custom advancement generation
+- [x] Recipe generation
+- [x] Loot table generation
+- [x] Predicate support
 
 ### Long Term
 

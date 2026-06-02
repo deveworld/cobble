@@ -5,6 +5,26 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-06-02
+
+### Added
+- Standard library v1.1 helpers for scoreboard objectives, storage append/prepend/insert/read/copy-from, schedules, bossbars, teams, and entity tags/effects/attributes.
+- `cobble init --template <minimal|stdlib|validation>` for targeted starter projects.
+- Namespaced `datapack.*` resource declarations such as `minecraft:load` tags and `other_ns:checks/is_ready` predicates.
+- `scripts/test_minecraft_server.sh` as a reproducible wrapper for the ignored real-server integration test.
+- Automatic `data/commands.json` generation on first `build --validate`, `watch --validate`, or `validate` run, with fallback manifest hosts and explicit URL/local-jar overrides.
+- Validator fixture tests that run without a local `data/commands.json`.
+
+### Changed
+- Validation summaries now report checked macro commands separately from skipped commands.
+- Validation diagnostics now retain command cursor positions and print caret context when available.
+- Runtime pack-format diagnostics use the package version instead of hardcoded release text.
+- The 26.1.2 feature matrix example now exercises stdlib v1.1 and explicit resource namespaces.
+
+### Fixed
+- `datapack.*` JSON resource helpers now reject non-object JSON values where Minecraft expects object resources.
+- Rebuild cleanup now tracks generated JSON resource namespaces so removed explicit-namespace resources do not survive.
+
 ## [0.6.0] - 2026-06-01
 
 ### Added

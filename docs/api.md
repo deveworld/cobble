@@ -107,6 +107,8 @@ pub enum Statement {
     Global(Vec<String>),
     Execute(ExecuteBlock),
     SelectorDef(SelectorDef),  // v0.4.0
+    EntityDef(EntityDef),
+    CreateEntity(String),
 }
 ```
 
@@ -199,11 +201,13 @@ pub enum Expression {
     String(String),
     Boolean(bool),
     None,
+    Array(Vec<Expression>),
+    Map(Vec<(String, Expression)>),
     Identifier(String),
+    Attribute(Box<Expression>, String),
     Binary(Box<Expression>, BinaryOp, Box<Expression>),
     Unary(UnaryOp, Box<Expression>),
     Call(Box<Expression>, Vec<Expression>),
-    Attribute(Box<Expression>, String),
     Subscript(Box<Expression>, Box<Expression>),
 }
 ```
@@ -285,8 +289,9 @@ Manages data pack structure and file generation.
 
 **Key Features:**
 - Tracks objectives and functions
-- Generates pack.mcmeta with correct format
-- Creates function tag files (load/tick)
+- Generates `pack.mcmeta` with the supported pack format
+- Creates modern `data/<namespace>/function` and `data/<namespace>/tags/function` files
+- Writes namespaced JSON resources such as predicates, recipes, dialogs, and tags
 - Handles standard library event listeners
 
 ### `transpiler/statement_processors/`
@@ -377,13 +382,13 @@ pub struct DataPack {
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
     pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
-    pub pack_format: PackFormat,  // Cobble v0.6.0 requires 101.1
+    pub pack_format: PackFormat,  // Cobble v0.6.1 requires 101.1
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
 }
 ```
 
-**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.6.0 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
+**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.6.1 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
 
 #### Methods
 
@@ -450,7 +455,7 @@ Generates Minecraft function tags for registered events.
 
 Handles project configuration.
 
-#### Struct: `Config`
+#### Struct: `CobbleConfig`
 
 ```rust
 pub struct CobbleConfig {
@@ -467,19 +472,23 @@ pub struct ProjectConfig {
 }
 
 pub struct BuildConfig {
-    pub source: PathBuf,
-    pub output: PathBuf,
+    pub source: String,
+    pub output: String,
     pub entry_points: Vec<String>,
 }
 ```
 
 #### Functions
 
-##### `load_config(path: &Path) -> Result<Config, ConfigError>`
+##### `CobbleConfig::load(path: impl AsRef<Path>) -> Result<CobbleConfig, String>`
 
-Loads configuration from a `cobble.toml` file.
+Loads and validates configuration from a `cobble.toml` file.
 
-##### `default_with_name(name: String) -> CobbleConfig`
+##### `CobbleConfig::load_unvalidated(path: impl AsRef<Path>) -> Result<CobbleConfig, String>`
+
+Loads configuration without enforcing the current release's pack format. The build command uses this only when the user explicitly overrides `--pack-format`.
+
+##### `CobbleConfig::default_with_name(name: String) -> CobbleConfig`
 
 Creates a default configuration.
 
@@ -494,7 +503,7 @@ Handles the `build` command.
 Executes the build command.
 
 **Parameters:**
-- `args` - Build command arguments
+- `options` - Input/output paths, namespace, pack format, zip, and validation settings
 
 **Returns:**
 - `Ok(())` - Build succeeded
@@ -507,6 +516,14 @@ Handles the `init` command.
 #### Function: `init(options: InitOptions) -> Result<(), String>`
 
 Initializes a new Cobble project.
+
+### `commands/validate.rs`
+
+Handles command-tree validation for generated data packs.
+
+#### Function: `validate(options: ValidateOptions) -> Result<(), String>`
+
+Validates `.mcfunction` files against `data/commands.json` and checks generated source maps when present.
 
 ### `commands/check.rs`
 
@@ -528,14 +545,13 @@ Watches files for changes and rebuilds automatically.
 
 ### Module: `error.rs`
 
-#### Enum: `CompileError`
+#### Enum: `CobbleError`
 
 ```rust
-pub enum CompileError {
+pub enum CobbleError {
     ParseError(String),
-    TranspileError(String),
     IoError(std::io::Error),
-    ConfigError(String),
+    TranspileError(String),
 }
 ```
 

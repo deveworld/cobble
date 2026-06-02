@@ -71,7 +71,7 @@ impl CobbleConfig {
             return Err(format!(
                 "Invalid pack_format: {}. Must be {} (Minecraft Java Edition {}).\n\
                  \n\
-                 Cobble v0.6.0 exclusively supports Minecraft Java Edition {}.\n\
+                 Cobble v{} exclusively supports Minecraft Java Edition {}.\n\
                  See https://minecraft.wiki/w/Pack_format for version compatibility.\n\
                  \n\
                  Update your cobble.toml:\n\
@@ -80,6 +80,7 @@ impl CobbleConfig {
                 self.project.pack_format,
                 SUPPORTED_PACK_FORMAT,
                 SUPPORTED_MINECRAFT_VERSION,
+                env!("CARGO_PKG_VERSION"),
                 SUPPORTED_MINECRAFT_VERSION,
                 SUPPORTED_PACK_FORMAT
             ));

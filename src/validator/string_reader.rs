@@ -50,6 +50,12 @@ impl StringReader {
         }
     }
 
+    pub fn skip_required_whitespace(&mut self) -> bool {
+        let start = self.cursor;
+        self.skip_whitespace();
+        self.cursor > start
+    }
+
     pub fn remaining(&self) -> String {
         self.input[self.cursor..].iter().collect()
     }

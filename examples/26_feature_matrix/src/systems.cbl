@@ -2,13 +2,16 @@
 @NearbyMarkers = @e[type=armor_stand,tag=matrix_marker,distance=..16]
 
 def setup_scoreboards():
-    /scoreboard objectives add matrix dummy "Matrix"
-    /scoreboard objectives add matrix_energy dummy "Energy"
-    /team add matrix
-    /team modify matrix color aqua
-    /bossbar add cobble:matrix {"text":"Feature Matrix"}
-    /bossbar set cobble:matrix max 100
-    /bossbar set cobble:matrix value 25
+    score.objective.add("matrix", "dummy", "Matrix")
+    score.objective.add("matrix_energy", "dummy", "Energy")
+    score.objective.display("sidebar", "matrix")
+    team.add("matrix", "Matrix")
+    team.modify("matrix", "color", "aqua")
+    bossbar.add("matrix", {"text":"Feature Matrix"})
+    bossbar.set_max("matrix", 100)
+    bossbar.set_value("matrix", 25)
+    bossbar.set_color("matrix", "blue")
+    bossbar.set_players("matrix", "@a")
 
 def announce(message):
     /tellraw @a {"text":"{message}","color":"light_purple"}

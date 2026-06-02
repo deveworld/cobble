@@ -92,6 +92,108 @@ def use_stdlib():
 }
 
 #[test]
+fn stdlib_v1_1_generates_project_workflow_helpers() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+def helpers():
+    score.objective.add("points", "dummy", "Points")
+    score.objective.display("sidebar", "points")
+    score.objective.remove("old_points")
+    storage.append("items", "diamond")
+    storage.prepend("items", "emerald")
+    storage.insert("items", 1, "gold_ingot")
+    storage.get("items")
+    storage.read_score("item_count", "items", 1)
+    storage.copy_from("health", "entity", "@s", "Health")
+    schedule.once("helpers", "5s", "replace")
+    schedule.clear("helpers")
+    bossbar.add("timer", "Timer")
+    bossbar.set_max("timer", 200)
+    bossbar.set_value("timer", 50)
+    bossbar.set_name("timer", {"text": "Timer", "color": "gold"})
+    bossbar.set_color("timer", "yellow")
+    bossbar.set_style("timer", "progress")
+    bossbar.set_visible("timer", True)
+    bossbar.set_players("timer", "@a")
+    team.add("runners", "Runners")
+    team.join("runners", "@a")
+    team.modify("runners", "color", "green")
+    team.modify("runners", "prefix", "[Run] ")
+    team.leave("@a")
+    entity.tag_add("@s", "runner")
+    entity.tag_remove("@s", "runner")
+    entity.effect_give("@s", "minecraft:speed", 10, 1, True)
+    entity.effect_clear("@s", "minecraft:speed")
+    entity.attribute_get("@s", "minecraft:max_health", 1)
+    entity.attribute_base_set("@s", "minecraft:max_health", 20)
+"#,
+    )
+    .unwrap();
+
+    let content = read_function(&output_dir, "helpers");
+    assert!(content.contains(r#"scoreboard objectives add points dummy {"text":"Points"}"#));
+    assert!(content.contains("scoreboard objectives setdisplay sidebar points"));
+    assert!(content.contains("scoreboard objectives remove old_points"));
+    assert!(
+        content.contains(r#"data modify storage stdlib_v1:global items append value "diamond""#)
+    );
+    assert!(
+        content.contains(r#"data modify storage stdlib_v1:global items prepend value "emerald""#)
+    );
+    assert!(content
+        .contains(r#"data modify storage stdlib_v1:global items insert 1 value "gold_ingot""#));
+    assert!(content.contains("data get storage stdlib_v1:global items"));
+    assert!(content.contains(
+        "execute store result score item_count temp run data get storage stdlib_v1:global items 1"
+    ));
+    assert!(
+        content.contains("data modify storage stdlib_v1:global health set from entity @s Health")
+    );
+    assert!(content.contains("schedule function stdlib_v1:helpers 5s replace"));
+    assert!(content.contains("schedule clear stdlib_v1:helpers"));
+    assert!(content.contains(r#"bossbar add stdlib_v1:timer {"text":"Timer"}"#));
+    assert!(content.contains("bossbar set stdlib_v1:timer max 200"));
+    assert!(content.contains("bossbar set stdlib_v1:timer value 50"));
+    assert!(content.contains(r#"bossbar set stdlib_v1:timer name {"color":"gold","text":"Timer"}"#));
+    assert!(content.contains("bossbar set stdlib_v1:timer color yellow"));
+    assert!(content.contains("bossbar set stdlib_v1:timer style progress"));
+    assert!(content.contains("bossbar set stdlib_v1:timer visible true"));
+    assert!(content.contains("bossbar set stdlib_v1:timer players @a"));
+    assert!(content.contains(r#"team add runners {"text":"Runners"}"#));
+    assert!(content.contains("team join runners @a"));
+    assert!(content.contains("team modify runners color green"));
+    assert!(content.contains(r#"team modify runners prefix {"text":"[Run] "}"#));
+    assert!(content.contains("team leave @a"));
+    assert!(content.contains("tag @s add runner"));
+    assert!(content.contains("tag @s remove runner"));
+    assert!(content.contains("effect give @s minecraft:speed 10 1 true"));
+    assert!(content.contains("effect clear @s minecraft:speed"));
+    assert!(content.contains("attribute @s minecraft:max_health get 1"));
+    assert!(content.contains("attribute @s minecraft:max_health base set 20"));
+}
+
+#[test]
+fn stdlib_bossbar_helpers_reject_invalid_enum_values() {
+    let color_error = compile_source(
+        r#"
+def bad_color():
+    bossbar.set_color("timer", "orange")
+"#,
+    )
+    .unwrap_err();
+    assert!(color_error.contains("Invalid bossbar color: orange"));
+
+    let style_error = compile_source(
+        r#"
+def bad_style():
+    bossbar.set_style("timer", "notched_7")
+"#,
+    )
+    .unwrap_err();
+    assert!(style_error.contains("Invalid bossbar style: notched_7"));
+}
+
+#[test]
 fn math_sqrt_no_longer_emits_placeholder_runtime_warning() {
     let (_temp, output_dir) = compile_source(
         r#"
@@ -147,6 +249,35 @@ def use_stdlib():
     storage.merge("status", {"extra": "ok"})
     storage.copy("status_copy", "status")
     storage.remove("status.extra")
+    score.objective.add("points", "dummy", "Points")
+    score.objective.display("sidebar", "points")
+    storage.append("items", "diamond")
+    storage.prepend("items", "emerald")
+    storage.insert("items", 1, "gold_ingot")
+    storage.get("items")
+    storage.read_score("item_count", "items", 1)
+    storage.copy_from("health", "entity", "@s", "Health")
+    schedule.once("use_stdlib", "5s", "replace")
+    schedule.clear("use_stdlib")
+    bossbar.add("timer", "Timer")
+    bossbar.set_max("timer", 200)
+    bossbar.set_value("timer", 50)
+    bossbar.set_name("timer", {"text": "Timer", "color": "gold"})
+    bossbar.set_color("timer", "yellow")
+    bossbar.set_style("timer", "progress")
+    bossbar.set_visible("timer", True)
+    bossbar.set_players("timer", "@a")
+    team.add("runners", "Runners")
+    team.join("runners", "@a")
+    team.modify("runners", "color", "green")
+    team.modify("runners", "prefix", "[Run] ")
+    team.leave("@a")
+    entity.tag_add("@s", "runner")
+    entity.tag_remove("@s", "runner")
+    entity.effect_give("@s", "minecraft:speed", 10, 1, True)
+    entity.effect_clear("@s", "minecraft:speed")
+    entity.attribute_get("@s", "minecraft:max_health", 1)
+    entity.attribute_base_set("@s", "minecraft:max_health", 20)
 "#,
     )
     .unwrap();

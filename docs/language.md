@@ -235,7 +235,7 @@ def give_reward(player, amount):
     /tellraw {player} {"text":"You received diamonds!", "color":"gold"}
 ```
 
-**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. Cobble v0.6.0 targets Minecraft Java Edition 26.1.2, where this macro syntax is available.
+**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. Cobble v0.6.1 targets Minecraft Java Edition 26.1.2, where this macro syntax is available.
 
 ### Calling Functions
 
@@ -680,6 +680,8 @@ def update_score():
     score.copy("backup", "points")
     score.operation("points", "+=", "backup")
     score.reset("backup")
+    score.objective.add("points", "dummy", "Points")
+    score.objective.display("sidebar", "points")
 ```
 
 Score helpers use the default Cobble `temp` objective.
@@ -712,10 +714,29 @@ def save_status():
     storage.set("status", {"ready": True, "count": 3})
     storage.merge("status", {"extra": "ok"})
     storage.copy("status_copy", "status")
+    storage.append("events", "loaded")
+    storage.read_score("event_count", "events", 1)
     storage.remove("status.extra")
 ```
 
 Storage helpers write to `<namespace>:global`.
+
+### Schedule, Bossbar, Team, And Entity Helpers
+
+```python
+def setup_ui():
+    schedule.once("tick", "20t", "replace")
+    bossbar.add("timer", "Timer")
+    bossbar.set_max("timer", 100)
+    bossbar.set_players("timer", "@a")
+    team.add("runners", "Runners")
+    team.modify("runners", "color", "green")
+    entity.tag_add("@a", "runner")
+    entity.effect_give("@a", "minecraft:speed", 10, 1, True)
+```
+
+These helpers are thin wrappers over Minecraft commands. Use raw commands when a
+specialized option is not covered yet.
 
 ### Data Pack JSON Resources
 
@@ -724,6 +745,7 @@ namespace using the modern 26.1.2 folder layout.
 
 ```python
 datapack.function_tag("utility", ["mypack:setup"])
+datapack.function_tag("minecraft:load", ["mypack:setup"])
 datapack.block_tag("solid_blocks", ["minecraft:stone"])
 datapack.item_tag("reward_items", ["minecraft:diamond"])
 datapack.entity_type_tag("targets", ["minecraft:zombie"])
@@ -758,6 +780,9 @@ Supported resource declarations:
 - `datapack.dialog(name, json)`
 
 Duplicate resource IDs are compile errors.
+Resource names may use nested paths and explicit namespaces, such as
+`other_pack:checks/is_ready`. Predicate, advancement, loot table, recipe, item
+modifier, and dialog declarations require object JSON values.
 
 ### Math Helpers
 
@@ -847,17 +872,17 @@ def calculate():
 ```
 
 **Operator Precedence** (highest to lowest):
-1. `^` - Power/exponentiation (left to right)
+1. `^` - Power/exponentiation (right to left)
 2. `*`, `/`, `%` - Multiplication, division, and modulo (left to right)
 3. `+`, `-` - Addition and subtraction (left to right)
 4. `==`, `!=`, `<`, `<=`, `>`, `>=` - Comparisons
 
 **Important Notes**:
 - Operators follow standard mathematical precedence
-- Multiplication, division, and modulo use temporary scoreboard objectives (`multiplier`, `divisor`, `modulus`)
+- Multiplication, division, and modulo use temporary fake players such as `#multiplier`, `#divisor`, and `#modulus` in the `temp` objective
 - Power operator (`^`) uses compile-time expansion: `x^3` becomes `x*x*x`
 - Power exponent must be a constant (variables not supported)
-- Complex expressions automatically use `expr_temp` for intermediate results
+- Complex expressions automatically use temporary fake players such as `#expr_temp` for intermediate results
 - All operations work with both constants and variables
 - Loop variables (like `i` in `for i in range(5)`) use the correct objective (`loop_counter`)
 
@@ -940,7 +965,7 @@ stdlib.addEventListener(event.TICK, game_loop)
 
 ## Minecraft Version Compatibility
 
-Cobble v0.6.0 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
+Cobble v0.6.1 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
 
 - **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax

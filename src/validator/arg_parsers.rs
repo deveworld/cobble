@@ -283,12 +283,24 @@ fn parse_brigadier_string(
         }
         "phrase" => {
             // Quotable phrase: quoted string or single word
-            reader.read_string()
+            let saved = reader.cursor();
+            if reader.read_string() && reader.at_token_boundary() {
+                true
+            } else {
+                reader.set_cursor(saved);
+                false
+            }
         }
         _ => {
             // "word" — single unquoted word
+            let saved = reader.cursor();
             let s = reader.read_unquoted_string();
-            !s.is_empty()
+            if !s.is_empty() && reader.at_token_boundary() {
+                true
+            } else {
+                reader.set_cursor(saved);
+                false
+            }
         }
     }
 }
@@ -598,35 +610,118 @@ fn selector_arguments_allowed(selector: &str) -> bool {
         return true;
     }
 
-    args.split(',').all(|part| {
-        let key = part
-            .split_once('=')
-            .map(|(key, _)| key.trim().trim_start_matches('!'))
-            .unwrap_or_else(|| part.trim().trim_start_matches('!'));
-        matches!(
-            key,
-            "x" | "y"
-                | "z"
-                | "dx"
-                | "dy"
-                | "dz"
-                | "distance"
-                | "scores"
-                | "tag"
-                | "team"
-                | "limit"
-                | "sort"
-                | "level"
-                | "gamemode"
-                | "name"
-                | "x_rotation"
-                | "y_rotation"
-                | "type"
-                | "nbt"
-                | "predicate"
-                | "advancements"
-        )
-    })
+    split_selector_arguments(args)
+        .iter()
+        .all(|part| selector_argument_allowed(part))
+}
+
+fn selector_argument_allowed(part: &str) -> bool {
+    let part = part.trim();
+    let Some((key, value)) = part.split_once('=') else {
+        let key = part.trim_start_matches('!');
+        return selector_key_allowed(key);
+    };
+    let key = key.trim().trim_start_matches('!');
+    let value = value.trim();
+    if !selector_key_allowed(key) {
+        return false;
+    }
+
+    match key {
+        "limit" => value.parse::<i32>().is_ok_and(|limit| limit >= 1),
+        "distance" | "x_rotation" | "y_rotation" => {
+            let mut reader = StringReader::new(value.trim_start_matches('!'));
+            parse_float_range(&mut reader) && !reader.can_read()
+        }
+        "level" => {
+            let mut reader = StringReader::new(value.trim_start_matches('!'));
+            parse_int_range(&mut reader) && !reader.can_read()
+        }
+        "sort" => matches!(value, "nearest" | "furthest" | "random" | "arbitrary"),
+        "gamemode" => matches!(
+            value.trim_start_matches('!'),
+            "survival" | "creative" | "adventure" | "spectator"
+        ),
+        _ => true,
+    }
+}
+
+fn selector_key_allowed(key: &str) -> bool {
+    matches!(
+        key,
+        "x" | "y"
+            | "z"
+            | "dx"
+            | "dy"
+            | "dz"
+            | "distance"
+            | "scores"
+            | "tag"
+            | "team"
+            | "limit"
+            | "sort"
+            | "level"
+            | "gamemode"
+            | "name"
+            | "x_rotation"
+            | "y_rotation"
+            | "type"
+            | "nbt"
+            | "predicate"
+            | "advancements"
+    )
+}
+
+fn split_selector_arguments(args: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escape_next = false;
+
+    for ch in args.chars() {
+        if escape_next {
+            current.push(ch);
+            escape_next = false;
+            continue;
+        }
+        if ch == '\\' && quote.is_some() {
+            current.push(ch);
+            escape_next = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            current.push(ch);
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            '[' | '{' | '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ']' | '}' | ')' => {
+                depth = depth.saturating_sub(1);
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_string());
+    }
+    parts
 }
 
 fn selector_contains_limit_one(selector: &str) -> bool {
@@ -712,9 +807,15 @@ fn parse_resource_or_tag(reader: &mut StringReader) -> bool {
 fn parse_block_pos(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
     if reader.read_coordinate() {
-        reader.skip_whitespace();
+        if !reader.skip_required_whitespace() {
+            reader.set_cursor(saved);
+            return false;
+        }
         if reader.read_coordinate() {
-            reader.skip_whitespace();
+            if !reader.skip_required_whitespace() {
+                reader.set_cursor(saved);
+                return false;
+            }
             if reader.read_coordinate() && reader.at_token_boundary() {
                 return true;
             }
@@ -731,7 +832,10 @@ fn parse_block_pos(reader: &mut StringReader) -> bool {
 fn parse_column_pos(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
     if reader.read_coordinate() {
-        reader.skip_whitespace();
+        if !reader.skip_required_whitespace() {
+            reader.set_cursor(saved);
+            return false;
+        }
         if reader.read_coordinate() && reader.at_token_boundary() {
             return true;
         }
@@ -747,7 +851,10 @@ fn parse_column_pos(reader: &mut StringReader) -> bool {
 fn parse_vec2(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
     if reader.read_coordinate() {
-        reader.skip_whitespace();
+        if !reader.skip_required_whitespace() {
+            reader.set_cursor(saved);
+            return false;
+        }
         if reader.read_coordinate() && reader.at_token_boundary() {
             return true;
         }
@@ -763,9 +870,15 @@ fn parse_vec2(reader: &mut StringReader) -> bool {
 fn parse_vec3(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
     if reader.read_coordinate() {
-        reader.skip_whitespace();
+        if !reader.skip_required_whitespace() {
+            reader.set_cursor(saved);
+            return false;
+        }
         if reader.read_coordinate() {
-            reader.skip_whitespace();
+            if !reader.skip_required_whitespace() {
+                reader.set_cursor(saved);
+                return false;
+            }
             if reader.read_coordinate() && reader.at_token_boundary() {
                 return true;
             }
@@ -1164,6 +1277,26 @@ mod tests {
         let mut r = StringReader::new("hello rest");
         assert!(parse_argument(&mut r, "brigadier:string", Some(&props)));
         assert_eq!(r.remaining(), " rest");
+
+        let mut invalid = StringReader::new("hello{\"text\":\"bad\"}");
+        assert!(!parse_argument(
+            &mut invalid,
+            "brigadier:string",
+            Some(&props)
+        ));
+        assert_eq!(invalid.cursor(), 0);
+    }
+
+    #[test]
+    fn test_parse_phrase_string_requires_boundary() {
+        let props = serde_json::json!({"type": "phrase"});
+        let mut invalid = StringReader::new("test{\"text\":\"bad\"}");
+        assert!(!parse_argument(
+            &mut invalid,
+            "brigadier:string",
+            Some(&props)
+        ));
+        assert_eq!(invalid.cursor(), 0);
     }
 
     #[test]
@@ -1195,6 +1328,20 @@ mod tests {
         let mut r = StringReader::new("@a[tag=foo] rest");
         assert!(parse_argument(&mut r, "minecraft:entity", None));
         assert_eq!(r.remaining(), " rest");
+
+        for selector in [
+            "@e[limit=abc]",
+            "@e[limit=0]",
+            "@e[distance=abc]",
+            "@e[sort=sideways]",
+            "@e[gamemode=flying]",
+        ] {
+            let mut invalid = StringReader::new(selector);
+            assert!(
+                !parse_argument(&mut invalid, "minecraft:entity", None),
+                "selector should be rejected: {selector}"
+            );
+        }
     }
 
     #[test]
@@ -1209,6 +1356,10 @@ mod tests {
         let mut r = StringReader::new("~ ~1 ~ rest");
         assert!(parse_argument(&mut r, "minecraft:block_pos", None));
         assert_eq!(r.remaining(), " rest");
+
+        let mut invalid = StringReader::new("~~~ rest");
+        assert!(!parse_argument(&mut invalid, "minecraft:block_pos", None));
+        assert_eq!(invalid.cursor(), 0);
     }
 
     #[test]
@@ -1216,6 +1367,10 @@ mod tests {
         let mut r = StringReader::new("1.0 2.5 3.0 rest");
         assert!(parse_argument(&mut r, "minecraft:vec3", None));
         assert_eq!(r.remaining(), " rest");
+
+        let mut invalid = StringReader::new("1.02.53.0 rest");
+        assert!(!parse_argument(&mut invalid, "minecraft:vec3", None));
+        assert_eq!(invalid.cursor(), 0);
     }
 
     #[test]

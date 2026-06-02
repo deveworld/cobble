@@ -6,6 +6,7 @@
 # Cobble output
 /output/
 /dist/
+.*.cobble-staging-*
 *.zip
 
 # Verify folder

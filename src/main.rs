@@ -27,6 +27,10 @@ enum Commands {
         /// Set the pack format version (default: 101.1 for Minecraft Java Edition 26.1.2)
         #[arg(long)]
         pack_format: Option<String>,
+
+        /// Project template: minimal, stdlib, or validation
+        #[arg(long, default_value = "stdlib")]
+        template: String,
     },
 
     /// Build the data pack
@@ -62,7 +66,7 @@ enum Commands {
         #[arg(long)]
         validate: bool,
 
-        /// Path to commands.json (generated from Minecraft server --reports)
+        /// Path to commands.json (default data/commands.json is auto-generated if missing)
         #[arg(long, default_value = "data/commands.json")]
         commands_json: PathBuf,
     },
@@ -100,7 +104,7 @@ enum Commands {
         #[arg(long)]
         validate: bool,
 
-        /// Path to commands.json (generated from Minecraft server --reports)
+        /// Path to commands.json (default data/commands.json is auto-generated if missing)
         #[arg(long, default_value = "data/commands.json")]
         commands_json: PathBuf,
     },
@@ -116,7 +120,7 @@ enum Commands {
         /// Datapack directory to validate (output from build)
         input: PathBuf,
 
-        /// Path to commands.json (generated from Minecraft server --reports)
+        /// Path to commands.json (default data/commands.json is auto-generated if missing)
         #[arg(long, default_value = "data/commands.json")]
         commands_json: PathBuf,
     },
@@ -130,10 +134,12 @@ fn main() {
             name,
             description,
             pack_format,
+            template,
         } => commands::init(commands::init::InitOptions {
             name,
             description,
             pack_format,
+            template,
         }),
         Commands::Build {
             input,

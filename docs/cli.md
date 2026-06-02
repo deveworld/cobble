@@ -26,11 +26,13 @@ cobble init [OPTIONS]
 **Options:**
 - `--name <NAME>` - Set the project name (default: current directory name)
 - `--description <DESC>` - Set the project description
-- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.6.0 requires Minecraft Java Edition 26.1.2)
+- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.6.1 requires Minecraft Java Edition 26.1.2)
+- `--template <NAME>` - Starter template: `minimal`, `stdlib`, or `validation` (default: `stdlib`)
 
 **Example:**
 ```bash
 cobble init --name my_datapack --description "My awesome data pack"
+cobble init --name smoke_pack --template validation
 ```
 
 This creates:
@@ -70,8 +72,8 @@ cobble build src/main.cbl
 # Build with custom output
 cobble build -o ~/minecraft/saves/MyWorld/datapacks/my_pack
 
-# Build entire directory
-cobble build examples/
+# Build a single example file
+cobble build examples/hello_world.cbl
 
 # Build and create ZIP file
 cobble build --zip
@@ -87,11 +89,26 @@ cobble build --pack-format 101.1
 ```
 
 When `--validate` is enabled, Cobble fails the build if any generated command is
-invalid for Minecraft Java Edition 26.1.2. If `data/commands.json` is missing,
-generate it first:
+invalid for Minecraft Java Edition 26.1.2. If the default `data/commands.json`
+is missing, Cobble downloads the Minecraft server jar and generates it
+automatically. This requires `curl` and Java. Cobble tries Mojang's current
+Piston manifest host, the legacy launcher manifest host, and a pinned 26.1.2
+server jar URL.
+
+If your network blocks those endpoints, use one of these overrides:
+
+```bash
+COBBLE_COMMANDS_JSON_URL=https://example.com/commands.json cobble build --validate
+COBBLE_MINECRAFT_SERVER_URL=https://example.com/server.jar cobble build --validate
+COBBLE_MINECRAFT_SERVER_JAR=/path/to/server.jar cobble build --validate
+COBBLE_MINECRAFT_SERVER_SHA1=<sha1> COBBLE_MINECRAFT_SERVER_URL=https://example.com/server.jar cobble build --validate
+```
+
+For custom command-tree paths, generate the file manually:
 
 ```bash
 scripts/setup_commands_json.sh 26.1.2
+cp data/commands.json /tmp/commands.json
 ```
 
 ### `cobble check`
@@ -120,22 +137,26 @@ cobble validate <DATAPACK_DIR> [OPTIONS]
 - `DATAPACK_DIR` - Generated data pack directory to validate
 
 **Options:**
-- `--commands-json <PATH>` - Path to `commands.json` generated from the Minecraft server reports (default: `data/commands.json`)
+- `--commands-json <PATH>` - Path to `commands.json` generated from the Minecraft server reports (default: `data/commands.json`; auto-generated when missing)
 
 **Examples:**
 ```bash
-# Generate the 26.1.2 command tree used by validation
-scripts/setup_commands_json.sh 26.1.2
-
-# Build and validate a data pack
+# Build and validate a data pack; data/commands.json is generated if missing
 cobble build -o output
 cobble validate output
 
 # Use a custom command tree path
+scripts/setup_commands_json.sh 26.1.2
+cp data/commands.json /tmp/commands.json
 cobble validate output --commands-json /tmp/commands.json
 ```
 
 The validator uses Minecraft's exported Brigadier command tree, including 26.1.2 commands such as `dialog`, `fetchprofile`, `transfer`, `waypoint`, `stopwatch`, `version`, and `return run`.
+
+Validation output includes the number of macro commands checked and skipped.
+When the validator can identify an error position, it prints a caret under the
+generated command text. If `.cobble/source_map.json` is present, diagnostics also
+include the originating Cobble source location when available.
 
 ### `cobble watch`
 
@@ -217,7 +238,7 @@ entry_points = []
 |-------------------|-------------|
 | Java Edition 26.1.2 | 101.1 |
 
-Cobble v0.6.0 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
+Cobble v0.6.1 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
 
 **Note**: Pack format 101.1 is written to `pack.mcmeta` as `min_format` and `max_format` arrays: `[101, 1]`.
 
@@ -228,7 +249,7 @@ Cobble v0.6.0 targets Minecraft Java Edition 26.1.2 and rejects other pack forma
 ```bash
 mkdir my_datapack
 cd my_datapack
-cobble init --name my_datapack
+cobble init
 ```
 
 ### 2. Edit Your Code
@@ -412,7 +433,7 @@ give {player} diamond 1
 cobble build --pack-format 101.1
 ```
 
-Note: Cobble v0.6.0 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
+Note: Cobble v0.6.1 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ### Issue: Functions not found
 

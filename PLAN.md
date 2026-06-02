@@ -1,535 +1,525 @@
-# Cobble 0.6.0 Release Plan
+# Cobble 0.6.1 Implementation Plan
+
+## Status
+
+- Planning date: 2026-06-02
+- Base release: `0.6.0`
+- Target release: `0.6.1`
+- Minecraft target: Java Edition `26.1.2`
+- Data pack format: `101.1`
 
 ## Theme
 
-Cobble 0.6.0 should make Cobble feel dependable for real Minecraft Java Edition
-26.1.2 data pack projects.
+Cobble 0.6.1 should be broader than a narrow patch. It should turn the 0.6.0
+foundation into a more practical release for real projects while preserving
+compatibility with existing 0.6.0 code.
 
 The release theme is:
 
-> Build data packs that are not only generated successfully, but also validated
-> against the Minecraft 26.1.2 command tree before users try them in-game.
+> Expand the 0.6.0 validation-first compiler into a more complete project
+> workflow: better diagnostics, richer stdlib helpers, stronger data pack
+> resources, repeatable server QA, and clearer docs.
 
-This release should not try to become a full pack development ecosystem like
-Beet. Cobble should stay focused as a strong DSL compiler, while improving the
-quality of generated output, validation, standard library coverage, and project
-workflow.
-
-## Target
-
-- Cobble version: `0.6.0`
-- Minecraft target: Java Edition `26.1.2`
-- Data pack format: `101.1`
-- Primary output format:
-  - `pack.mcmeta` uses `min_format` and `max_format` arrays for decimal format.
-  - Function folders use the modern singular `function` layout.
-  - Tags use the modern singular `tags/function` layout.
+0.6.1 can include non-breaking user-facing features because Cobble is still
+pre-1.0, but it should avoid broad rewrites. The main rule is: every added
+feature must be validated, documented, and represented in examples or tests.
 
 ## Release Goals
 
-1. Integrate command validation into the normal build workflow.
-2. Ship a practical standard library v1 for common data pack tasks.
-3. Add first-class support for common data pack JSON resources.
-4. Track generated command source locations so diagnostics can improve.
-5. Stabilize multi-file projects, imports, and configured entry points.
-6. Promote example projects into repeatable build-and-validate fixtures.
-7. Remove or block placeholder runtime behavior from release builds.
+1. Improve command validation accuracy, macro handling, and diagnostics.
+2. Expand source-map diagnostics so generated failures point back to Cobble
+   source reliably.
+3. Add stdlib v1.1 helpers for common Minecraft systems beyond 0.6.0 basics.
+4. Expand the raw JSON data pack resource model with better ergonomics and
+   guardrails.
+5. Improve project workflows: init templates, build/watch behavior, ZIP output,
+   and release packaging.
+6. Add repeatable real-server QA with Purpur as an optional release gate.
+7. Promote examples and docs into a complete 26.1.2 learning and QA path.
+8. Keep all 0.6.0-compatible projects building without source changes.
+
+## Scope Policy
+
+0.6.1 may add features if they satisfy all of these constraints:
+
+- The feature compiles to ordinary Minecraft Java Edition 26.1.2 data packs.
+- The generated commands validate against `data/commands.json` when applicable.
+- The implementation fits the existing compiler architecture.
+- The docs can explain the behavior without promising future-only semantics.
+- The feature has focused tests and at least one realistic example or fixture.
+
+If a feature needs a new type system, a plugin system, cross-version targeting,
+or a major parser redesign, defer it to 0.7.0 or later.
 
 ## Non-Goals
 
-These are explicitly out of scope for `0.6.0`.
+These are explicitly out of scope for `0.6.1`.
 
+- Supporting a second Minecraft version.
+- Changing the `101.1` data pack target.
+- Adding a package manager or remote module imports.
+- Adding a Beet-style plugin ecosystem.
+- Full LSP/editor integration.
 - Resource pack authoring.
-- A Beet-style plugin ecosystem.
-- Package manager or remote module imports.
-- Full LSP or editor integration.
-- Supporting multiple Minecraft versions at the same time.
-- Typed DSLs for every Minecraft JSON schema.
-- A complete runtime framework for all gameplay systems.
+- Schema-typed builders for every Minecraft JSON format.
+- A runtime framework that hides Minecraft commands completely.
+- Making the Minecraft server smoke test part of default `cargo test`.
 
 ## Workstreams
 
-### 1. Build And Validation Workflow
+### 1. Validation Semantics And Diagnostics
 
-Add validation as a first-class part of the CLI instead of a separate manual
-step.
+The validator is now central to normal builds. 0.6.1 should make it more
+accurate, more transparent, and easier to debug.
 
-#### Tasks
+#### Current Findings
 
-- Add `cobble build --validate`.
-- Add `cobble build --commands-json <PATH>`.
-- Add `cobble watch --validate`.
-- Add `cobble watch --commands-json <PATH>`.
-- Keep `cobble validate <DATAPACK_DIR>` as a standalone command.
-- Make validation failures include:
-  - generated `.mcfunction` path,
-  - line number,
-  - command text,
-  - parser error message.
-- Print a validation summary after successful validation:
-  - files checked,
-  - commands checked,
-  - macro lines skipped,
-  - command tree path used.
-- Fail the build when `--validate` is enabled and command validation fails.
-- Make missing `commands.json` errors actionable:
-  - mention `scripts/setup_commands_json.sh 26.1.2`,
-  - show the expected default path.
-
-#### Acceptance Criteria
-
-- `cobble build --validate` builds and validates a valid project.
-- `cobble build --validate` exits non-zero for invalid generated commands.
-- `cobble watch --validate` validates after each successful rebuild.
-- `cobble validate output --commands-json data/commands.json` remains supported.
-- Tests cover success, validation failure, and missing command tree cases.
-
-### 2. Command Validator Hardening
-
-The command validator should remain strict enough to catch real generated
-command bugs, while documenting what it cannot validate yet.
+- `ValidationReport::commands_skipped` exists, but macro lines are not currently
+  counted as skipped.
+- `validate_command()` strips a leading `$` and validates the remaining command.
+- CLI output says `skipped macro lines`, which can be misleading if macro lines
+  were actually validated.
+- `ValidationError::position` exists, but reported errors currently use
+  `position: 0`.
 
 #### Tasks
 
-- Keep the validator based on Minecraft's exported Brigadier command tree.
-- Ensure 26.1.2 commands are covered:
-  - `dialog`,
-  - `fetchprofile`,
-  - `transfer`,
-  - `waypoint`,
-  - `stopwatch`,
-  - `version`,
-  - `return run`,
-  - `test run`.
-- Improve skipped macro-line reporting.
-- Add tests for validation error formatting.
-- Add tests for command tree redirect cases, including:
-  - `execute run`,
-  - `return run`.
-- Document current limitation:
-  - lines starting with `$` are macro function lines and are skipped.
+- Define one consistent macro validation policy:
+  - validate `$` macro commands when the static command skeleton is parseable,
+  - accept `$(name)` placeholders in argument positions where Minecraft macros
+    are valid,
+  - skip only macro lines whose dynamic expansion prevents meaningful checking,
+  - report checked macro lines and skipped macro lines separately if needed.
+- Populate error positions from the parser failure state.
+- Add caret-style command diagnostics when a position is available.
+- Improve validation report wording so summary counters cannot misrepresent
+  actual behavior.
+- Add command-tree regression tests that do not require `data/commands.json`.
+- Add full 26.1.2 validation tests that run when `data/commands.json` exists.
+- Add negative tests for close misspellings and incomplete command tails.
+- Keep `fetchprofile` in static validator coverage, but do not execute it in
+  server tests because it can contact Mojang services.
 
 #### Acceptance Criteria
 
-- Latest command smoke tests pass against generated `data/commands.json`.
-- Validator does not reject valid `execute run` or `return run` commands.
-- Macro skips are counted and visible in CLI output.
+- `cobble validate` reports counters that match actual validator behavior.
+- Invalid generated commands include generated file, line, command text, parser
+  message, and useful position context when available.
+- Existing valid macro-function output remains accepted.
+- Intentional typos such as `titel` fail reliably.
+- Validator unit tests can run without a locally generated command tree.
 
-### 3. Standard Library v1
+### 2. Source Map Diagnostics
 
-0.6.0 should include enough helpers to make real Cobble projects less raw-command
-heavy, without hiding Minecraft from advanced users.
+Source maps should become useful in day-to-day debugging, not only an internal
+metadata file.
 
-#### Modules
+#### Tasks
+
+- Keep source map format version at `1` unless a breaking field change is
+  unavoidable.
+- Audit source locations for:
+  - module-level initialization,
+  - imported files,
+  - stdlib calls,
+  - function calls with generated storage setup,
+  - control-flow helper functions,
+  - macro functions,
+  - generated runtime setup commands.
+- Make validation diagnostics prefer Cobble source locations when available.
+- Add imported-file validation failure coverage.
+- Add duplicate-generated-command coverage, especially in `match` and helper
+  functions.
+- Decide whether generated JSON resources need source-map entries in 0.6.1 or
+  should stay command-only.
+- Avoid committing generated source maps because they contain local absolute
+  paths.
+
+#### Acceptance Criteria
+
+- A validation failure in generated `.mcfunction` output points back to the
+  originating `.cbl` file when source metadata exists.
+- Source map validation catches stale or missing command entries without false
+  positives on clean builds.
+- Source map output remains deterministic except for expected source file paths.
+
+### 3. Standard Library v1.1
+
+0.6.0 introduced practical stdlib helpers. 0.6.1 should expand coverage for
+common data pack systems while keeping helpers thin and predictable.
+
+#### Candidate Modules
 
 ##### `text`
 
-- `text.tellraw(target, component)`
-- `text.title(target, component)`
-- `text.subtitle(target, component)`
-- `text.actionbar(target, component)`
-
-Initial implementation can generate direct Minecraft commands. The API should
-not require a full text-component builder in 0.6.0.
+- Add convenience builders for common JSON text components:
+  - plain text,
+  - colored text,
+  - bold/italic/underlined text,
+  - score components,
+  - selector components.
+- Keep raw JSON component strings accepted.
+- Ensure macro parameters in text commands still normalize correctly.
 
 ##### `score`
 
-- `score.set(name, value)`
-- `score.add(name, value)`
-- `score.remove(name, value)`
-- `score.reset(name)`
-- `score.copy(dst, src)`
-- `score.operation(dst, op, src)`
-
-This should wrap common scoreboard commands while still allowing raw scoreboard
-commands when needed.
-
-##### `random`
-
-- `random.int(name, min, max)`
-- `random.bool(name)`
-
-Prefer Minecraft's modern `random` command when valid for 26.1.2. Avoid older
-entity-UUID randomness unless needed as a fallback.
-
-##### `timer`
-
-- `timer.set(name, ticks)`
-- `timer.tick(name)`
-- `timer.done(name)`
-- `timer.reset(name)`
-
-Timers should compile to scoreboard operations and simple conditions.
+- Add objective helpers:
+  - `score.objective.add(name, criteria, display_name?)`,
+  - `score.objective.remove(name)`,
+  - `score.objective.display(slot, objective?)`.
+- Add comparison helpers that generate `execute if score` fragments where the
+  existing compiler architecture can support them cleanly.
 
 ##### `storage`
 
-- `storage.set(path, value)`
-- `storage.merge(path, value)`
-- `storage.remove(path)`
-- `storage.copy(dst, src)`
+- Add list/object path helpers for common `data modify storage` operations:
+  - append,
+  - prepend,
+  - insert,
+  - copy from entity/block/storage,
+  - read into score.
+- Make generated NBT/JSON values deterministic and validate command output.
 
-This can start as a thin wrapper over `data modify storage`.
+##### `schedule`
 
-##### `math`
+- Add thin wrappers around Minecraft's `schedule function` command:
+  - `schedule.once(function, delay, mode?)`,
+  - `schedule.clear(function)`.
+- Ensure function names are namespace-safe.
 
-- Keep existing arithmetic operators.
-- Implement or remove placeholder helpers.
-- `math.sqrt` must not ship as a fake implementation.
+##### `bossbar`
 
-#### Acceptance Criteria
+- Add helpers for simple bossbar creation and updates:
+  - add,
+  - remove,
+  - set value/max/name/color/style/visible/players.
 
-- Every stdlib function has at least one integration test.
-- Generated commands validate against the 26.1.2 command tree.
-- No stdlib helper emits placeholder `tellraw` warnings as runtime behavior.
-- Documentation includes concise examples for each module.
+##### `team`
 
-### 4. Data Pack JSON Resources
+- Add helpers for common team operations:
+  - add/remove,
+  - join/leave,
+  - modify color/prefix/suffix/collision/nametag visibility.
 
-Cobble should be able to generate common data pack JSON files without users
-manually maintaining separate output directories.
+##### `entity`
 
-#### Initial Resource Types
-
-- Function tags.
-- Block tags.
-- Item tags.
-- Entity type tags.
-- Predicates.
-- Advancements.
-- Loot tables.
-- Recipes.
-- Item modifiers.
-- Dialog files.
-
-#### 0.6.0 Design
-
-Start with a pragmatic raw JSON declaration model:
-
-```python
-datapack.predicate("is_sneaking", {
-    "condition": "minecraft:entity_properties",
-    "entity": "this",
-    "predicate": {
-        "flags": {
-            "is_sneaking": True
-        }
-    }
-})
-```
-
-Do not attempt full schema-level typing for 0.6.0. That belongs in a later
-release after the resource model is stable.
+- Add small helpers that remain close to Minecraft commands:
+  - tag add/remove,
+  - effect give/clear,
+  - attribute get/base set/modifier operations where 26.1.2 syntax is stable.
 
 #### Tasks
 
-- Add AST representation for data pack resource declarations.
-- Add parser support for resource declaration calls if needed.
-- Add `DataPack` storage for each resource type.
-- Emit JSON resources into modern 26.1.2 folders:
-  - `advancement`,
-  - `loot_table`,
-  - `predicate`,
-  - `recipe`,
-  - `item_modifier`,
-  - `dialog`,
-  - `tags/function`,
-  - `tags/block`,
-  - `tags/item`,
-  - `tags/entity_type`.
-- Validate JSON syntax before writing.
-- Detect duplicate resource IDs.
-- Add tests for folder layout and JSON output.
+- Choose the v1.1 module subset based on implementation risk.
+- Keep helpers compiler-backed rather than runtime magic.
+- Add tests for every helper.
+- Validate generated helper commands against the 26.1.2 command tree.
+- Add concise docs and example snippets.
+- Avoid helpers that require hidden long-running runtime systems.
 
 #### Acceptance Criteria
 
-- A Cobble project can generate at least one file for each initial resource type.
-- Duplicate resource IDs fail with a clear compile error.
-- Generated JSON is pretty-printed and deterministic.
-- Generated example project validates all generated `.mcfunction` commands.
+- Every shipped stdlib v1.1 helper has at least one integration test.
+- Generated commands validate when `data/commands.json` is present.
+- Helpers do not emit placeholder runtime warnings.
+- Users can still write raw Minecraft commands for unsupported cases.
 
-### 5. Generated Command Source Tracking
+### 4. Data Pack Resource Model v1.1
 
-Validation errors currently point to generated files. 0.6.0 should add the
-internal structure needed to map generated commands back to Cobble source later.
-
-#### Proposed Internal Type
-
-```rust
-pub struct GeneratedCommand {
-    pub text: String,
-    pub source: Option<SourceLocation>,
-    pub kind: GeneratedCommandKind,
-}
-
-pub struct SourceLocation {
-    pub file: PathBuf,
-    pub line: usize,
-    pub column: usize,
-}
-
-pub enum GeneratedCommandKind {
-    UserCommand,
-    StdLib,
-    RuntimeSetup,
-    ControlFlow,
-    JsonGenerated,
-}
-```
-
-The exact shape can change during implementation, but the compiler should stop
-treating every command as an unannotated `String` internally.
+0.6.0 added raw JSON data pack declarations. 0.6.1 should make them safer and
+more ergonomic without attempting full schema typing.
 
 #### Tasks
 
-- Introduce source-location structures.
-- Preserve source location through parsing or attach it during transpilation.
-- Store generated commands with metadata internally.
-- Convert to plain strings only at final write time.
-- Add validation diagnostics that can optionally include source location when
-  available.
+- Add clearer resource ID validation:
+  - namespace/path rules,
+  - lowercase enforcement,
+  - helpful errors for invalid separators,
+  - clear duplicate resource diagnostics.
+- Add optional namespace-qualified resource declarations where useful:
+  - `datapack.predicate("other_ns:path", {...})`,
+  - `datapack.function_tag("minecraft:load", [...])`.
+- Add resource merge/replace policy documentation.
+- Add support or tests for nested resource paths for every supported resource
+  type.
+- Add deterministic ordering for emitted JSON and resource writes.
+- Add light semantic validation for common mistakes where cheap:
+  - tag `values` must be a list,
+  - recipe/predicate/advancement top-level value must be an object,
+  - dialog top-level value must be an object.
+- Keep raw JSON escape hatches available.
 
 #### Acceptance Criteria
 
-- Existing generated output stays stable unless intentionally changed.
-- At least user-written raw Minecraft commands carry source location metadata.
-- Internal setup commands are distinguishable from user commands.
-- Validation diagnostics are ready to include source file locations.
+- All supported resource types accept nested paths and reject invalid names.
+- Duplicate resources fail with clear type/name information.
+- Generated JSON remains pretty-printed and deterministic.
+- Fixture projects cover tags, predicates, advancements, loot tables, recipes,
+  item modifiers, and dialogs.
 
-### 6. Multi-File Project Stability
+### 5. Language And Compiler Ergonomics
 
-Imports and configured entry points should be reliable enough for larger
-projects.
+0.6.1 can add small, contained language improvements when they remove friction
+for real data pack code.
+
+#### Candidate Improvements
+
+- Improve import diagnostics:
+  - missing import path,
+  - circular import chain,
+  - duplicate symbol or function conflicts,
+  - imported-file source locations.
+- Add safer handling for configured entry points:
+  - imported files are not compiled as top-level entries when entry points are
+    configured,
+  - stale output is removed after entry-point changes.
+- Improve string and JSON command interpolation errors.
+- Improve function-call diagnostics when parameter counts or unsupported return
+  usage are involved.
+- Add better errors for unsupported expressions instead of fallback no-ops.
+- Add small parser/tokenizer hardening for Minecraft command syntax edge cases:
+  - NBT compounds,
+  - quoted strings,
+  - ranges,
+  - coordinates,
+  - macro placeholders.
+
+#### Deferred Candidates
+
+- User-defined structs or classes.
+- General list/dict runtime semantics.
+- Async/task syntax.
+- Full expression support inside every command argument.
+- Function return values.
+
+#### Acceptance Criteria
+
+- Any language change is backward-compatible with 0.6.0 examples.
+- New diagnostics are covered by regression tests.
+- Unsupported features fail loudly and explain the supported alternative.
+
+### 6. Project Workflow And CLI UX
+
+The CLI should support the common edit-build-validate-test loop without requiring
+manual cleanup or fragile commands.
 
 #### Tasks
 
-- Keep `build.entry_points` respected when building from `cobble.toml`.
-- Prevent imported files from being compiled as independent top-level entry
-  files when entry points are configured.
-- Add import cycle detection.
-- Add clear errors for missing imports.
-- Add namespace-safe generated names for imported functions.
-- Document import semantics:
-  - entry files,
-  - imported files,
-  - top-level initialization behavior,
-  - selector aliases,
-  - constants.
+- Confirm `build --validate` leaves existing output untouched on validation
+  failure.
+- Confirm `build --validate --zip` only creates or updates the ZIP after
+  validation succeeds.
+- Clean stale staging directories after failed validation builds where possible.
+- Improve watch mode:
+  - debounce bursty filesystem events,
+  - avoid repeated rebuilds for generated output changes,
+  - watch updated `cobble.toml` source paths,
+  - keep validation output readable.
+- Expand `cobble init` templates:
+  - minimal project,
+  - stdlib starter,
+  - validation-ready fixture-style project.
+- Add a documented command for validating all examples.
+- Run `cargo package --allow-dirty --locked` during release prep.
 
 #### Acceptance Criteria
 
-- Multi-file fixture builds exactly the configured entry points.
-- Import cycle errors include the cycle path.
-- Missing import errors include the importing file.
-- Rebuilding after deleting an imported function does not leave stale output.
+- Validation failure does not replace a previously good output directory.
+- ZIP output is not refreshed from an invalid staging build.
+- Watch mode is usable for normal source edits.
+- New project templates build immediately from a clean checkout.
 
-### 7. Example Projects And Fixtures
+### 7. Real Server QA
 
-The two verification projects created during development should become official
-fixtures.
-
-#### Candidate Fixtures
-
-- `examples/26_smoke`
-  - latest command coverage,
-  - imports,
-  - selector aliases,
-  - events,
-  - function macro parameters.
-- `examples/26_feature_matrix`
-  - boolean expressions,
-  - `if`/`elif`/`else`,
-  - `match`,
-  - positive and negative step loops,
-  - storage/string usage,
-  - stdlib helpers,
-  - validation coverage.
+Static command validation is necessary, but a real server catches pack loading,
+tag loading, storage, reload, and runtime command behavior.
 
 #### Tasks
 
-- Move curated verification projects into `examples/`.
-- Keep generated `output/` out of git unless snapshots are intentionally added.
-- Add tests that build each fixture.
-- Add tests that validate each fixture against `data/commands.json` when present.
-- Add README links to the examples.
-
-#### Acceptance Criteria
-
-- `cargo test` builds example fixtures.
-- A documented command validates all examples:
+- Add a documented wrapper script for the ignored server test, for example:
 
 ```bash
-scripts/setup_commands_json.sh 26.1.2
-cargo test --quiet
+scripts/test_minecraft_server.sh
 ```
 
-### 8. Testing And CI Quality
+- Keep EULA acceptance explicit through `COBBLE_MINECRAFT_EULA_ACCEPTED=1`.
+- Support a predownloaded jar through `COBBLE_PURPUR_JAR`.
+- Cache server runtime files under `target/minecraft-server-test/`.
+- Add optional Purpur jar checksum verification when metadata is available.
+- Make failure output easy to inspect:
+  - server console log path,
+  - latest.log path,
+  - exact command that timed out.
+- Keep network-sensitive Minecraft commands out of server execution.
+- Keep Paper as a later optional backend after Purpur remains stable.
 
-0.6.0 should increase confidence without making tests too brittle.
+#### Acceptance Criteria
 
-#### Test Types
+- The server smoke test can be run with one documented command after EULA
+  acceptance.
+- A failed server test prints enough information to debug without rerunning.
+- The test shuts down the server process on timeout or failure.
+- Default `cargo test` remains fast and does not require Java or network access.
 
-- Parser tests for new syntax.
-- Transpiler tests for generated command fragments.
-- Integration tests for full `.cbl` programs.
-- Example fixture build tests.
-- Command validation tests.
-- Snapshot or golden tests for selected generated packs.
+### 8. Example Projects And Documentation
+
+Examples should function as both learning material and release fixtures.
 
 #### Tasks
 
-- Add focused regression tests for bugs found during 26.1.2 verification:
-  - entry point handling,
-  - complex `if` + `elif` boolean lowering,
-  - no invalid `execute unless if`,
-  - no raw `OR(...)` output.
-- Add fixture tests for stdlib v1.
-- Add JSON resource output tests.
-- Add a test helper for build + validate.
-- Keep tests deterministic:
-  - sorted output where possible,
-  - stable generated helper names,
-  - no dependence on local Minecraft install.
+- Keep `examples/26_smoke` focused on latest command coverage, imports, events,
+  macros, and validation.
+- Expand `examples/26_feature_matrix` to cover the 0.6.1 stdlib/resource subset.
+- Add one new realistic example project if the 0.6.1 feature set warrants it:
+  - scoreboard HUD,
+  - bossbar timer,
+  - advancement/reward flow,
+  - storage-driven state machine.
+- Update docs:
+  - README,
+  - `docs/cli.md`,
+  - `docs/language.md`,
+  - `docs/api.md`,
+  - examples README,
+  - changelog.
+- Replace hardcoded `Cobble v0.6.0` strings in runtime diagnostics where a
+  package version or version-neutral phrase is more accurate.
+- Document macro validation behavior exactly after implementation.
 
 #### Acceptance Criteria
 
-- `cargo test --quiet` passes.
-- `cargo check --quiet` passes.
-- Targeted `rustfmt --check` passes for touched Rust files.
-- Example projects build and validate.
+- Quick start works from a clean checkout.
+- Examples build with documented commands.
+- Examples validate when `data/commands.json` is present.
+- Docs do not describe unsupported or placeholder behavior.
 
-### 9. Documentation
+### 9. Release QA And Packaging
 
-Documentation should match actual behavior exactly.
+The wider 0.6.1 scope needs a stronger release gate than a narrow patch.
 
-#### Files To Update
+#### Required Checks
 
-- `README.md`
-- `docs/cli.md`
-- `docs/language.md`
-- `docs/api.md`
-- `CHANGELOG.md`
-- Example project READMEs if useful.
-
-#### Topics
-
-- 0.6.0 release theme.
-- `build --validate`.
-- Command tree setup.
-- Stdlib v1 modules.
-- Data pack JSON declarations.
-- Multi-file project entry points.
-- Validation limitations for macro lines.
-- Supported Minecraft version and pack format.
+- `cargo fmt --check`
+- `cargo test --quiet`
+- `cargo clippy --all-targets --quiet -- -D warnings`
+- `cargo package --allow-dirty --locked`
+- Automatic `data/commands.json` generation code path is covered, and the
+  external Mojang download path is smoke-tested where network access permits.
+- Example fixture build and validation.
+- Manual `cobble build --validate`.
+- Manual `cobble watch --validate` smoke test.
+- Ignored Purpur server smoke test for release validation.
 
 #### Acceptance Criteria
 
-- No docs mention unsupported pack formats as accepted.
-- No docs claim placeholder or incomplete behavior as released functionality.
-- Quick start can be followed from a clean checkout.
+- No generated data pack output, ZIP, or local source map artifacts are
+  committed.
+- Repository is clean before release tagging.
+- Release notes list user-facing additions and validation caveats.
 
 ## Suggested Milestones
 
-### Milestone A: Validation-First Build
+### Milestone A: Validation And Diagnostics
 
-- Implement `build --validate`.
-- Implement `watch --validate`.
-- Improve validation diagnostics.
-- Add CLI tests.
-
-Exit criteria:
-
-- Invalid generated commands fail `build --validate`.
-- Valid example project passes `build --validate`.
-
-### Milestone B: Project Stability
-
-- Harden entry points and imports.
-- Add cycle/missing import errors.
-- Add source tracking foundations.
-- Promote example fixtures.
+- Fix macro accounting and summary text.
+- Improve validation error positions.
+- Add command-tree fixture tests.
+- Improve source-map-backed diagnostics.
 
 Exit criteria:
 
-- Multi-file examples compile once and validate.
-- Import errors are clear and tested.
+- Validation reports are internally consistent.
+- Generated command failures can be traced back to source in tested cases.
 
-### Milestone C: Stdlib v1
+### Milestone B: Stdlib And Resource Expansion
 
-- Implement `text`, `score`, `random`, `timer`, `storage`.
-- Fix or remove `math.sqrt`.
-- Add docs and tests.
-
-Exit criteria:
-
-- Each stdlib helper has tests.
-- Generated helper commands validate.
-
-### Milestone D: JSON Resources
-
-- Add raw JSON resource declarations.
-- Emit modern folder layout.
-- Add duplicate detection.
-- Add resource tests.
+- Select final stdlib v1.1 helper subset.
+- Implement helpers with integration tests.
+- Harden resource ID validation and nested paths.
+- Expand fixture coverage.
 
 Exit criteria:
 
-- Fixture generates tags, predicate, advancement, loot table, recipe, item
-  modifier, and dialog.
+- Every shipped helper and resource enhancement is tested and documented.
+- Generated commands validate against 26.1.2 where applicable.
 
-### Milestone E: Release Hardening
+### Milestone C: Project Workflow
 
+- Improve build/watch validation UX.
+- Add or improve init templates.
+- Add example validation commands/scripts.
+- Run packaging checks.
+
+Exit criteria:
+
+- New users can create, build, validate, and package a project without ad hoc
+  setup beyond `commands.json`.
+
+### Milestone D: Server QA And Release Hygiene
+
+- Add the server-test wrapper.
+- Run the ignored real-server test.
 - Update docs and changelog.
-- Run full test suite.
-- Run example build + validate.
-- Audit placeholder behavior.
-- Prepare release notes.
+- Bump version to `0.6.1`.
+- Prepare tag and release notes.
 
 Exit criteria:
 
-- No known placeholder runtime behavior remains.
-- All documented examples compile.
+- Full release checklist is complete.
+- Repository is clean and ready to tag.
 
 ## Release Checklist
 
-- [x] `Cargo.toml` version set to `0.6.0`.
+- [x] Final 0.6.1 scope selected from candidate workstreams.
+- [x] `Cargo.toml` version set to `0.6.1`.
+- [x] `Cargo.lock` version updated.
+- [x] `CHANGELOG.md` has a `0.6.1` entry.
 - [x] README version text updated.
 - [x] CLI docs updated.
 - [x] Language docs updated.
 - [x] API docs updated.
-- [x] Changelog entry written.
-- [x] `scripts/setup_commands_json.sh 26.1.2` succeeds.
-- [x] `cargo fmt --check` or targeted `rustfmt --check` succeeds.
-- [x] `cargo check --quiet` succeeds.
+- [x] Examples README updated.
+- [x] Runtime diagnostics do not hardcode stale `0.6.0` release text.
+- [x] New stdlib helpers documented and tested.
+- [x] Resource model changes documented and tested.
+- [x] Validation macro policy documented and tested.
+- [x] Source-map diagnostics tested.
+- [x] Automatic `data/commands.json` generation policy and failure path tested.
+- [x] Automatic `data/commands.json` generation succeeds end-to-end with
+      `COBBLE_MINECRAFT_SERVER_JAR`.
+- [x] Automatic `data/commands.json` generation succeeds end-to-end against the
+      Mojang manifest endpoint.
+- [x] `cargo fmt --check` succeeds.
 - [x] `cargo test --quiet` succeeds.
+- [x] `cargo clippy --all-targets --quiet -- -D warnings` succeeds.
+- [x] `cargo package --allow-dirty --locked` succeeds.
 - [x] Official examples build.
-- [x] Official examples validate.
+- [x] Official examples validate when `data/commands.json` is present.
 - [x] `cobble build --validate` tested manually.
 - [x] `cobble watch --validate` smoke tested.
-- [x] No placeholder stdlib behavior remains.
-- [x] No generated command validation regressions remain.
+- [x] Ignored Purpur server smoke test run for release validation.
+- [x] No generated data pack output, ZIP, or local source map artifacts are
+      committed.
 
-## Open Design Questions
+## Resolved Decisions
 
-1. Should stdlib helpers be real Cobble imports, built-in compiler intrinsics, or
-   a mix of both?
-2. Should JSON resource declarations use `datapack.*` calls, decorators, or
-   top-level declarations?
-3. Should `build --validate` become default in a later release?
-4. Should Cobble eventually emit a Beet-compatible project or remain fully
-   independent?
-5. Should source maps be written to disk for external tools, or kept internal
-   until diagnostics need them?
+1. Stdlib v1.1 includes objective, storage list/read, schedule, bossbar, team,
+   and entity helpers. Particles, sounds, damage, and loot remain stretch goals.
+2. Macro-function lines are validated as static command skeletons and counted
+   separately. Malformed placeholders fail validation.
+3. Resource declarations support explicit namespaces in 0.6.1.
+4. `cobble init` exposes `--template minimal|stdlib|validation`.
+5. Server smoke testing targets Purpur for now. Paper remains a later optional
+   backend after the Purpur path stays stable.
+6. Source-map validation remains part of `cobble validate` for 0.6.1.
+7. `scripts/setup_commands_json.sh` jar metadata verification is deferred.
 
-## Post-0.6 Candidates
+## Stretch Goals
 
-These should be considered for `0.7.0` or later.
+These are useful but should not block 0.6.1 if core workstreams are complete.
 
-- Typed JSON schema builders.
-- Beet interop.
-- Resource pack support.
-- Plugin API.
-- Package/module registry.
-- LSP/editor diagnostics.
-- Multi-version Minecraft target support.
-- More advanced macro validation with sample argument expansion.
-- Source map files for generated data packs.
+- Optional Paper backend for the real-server smoke test.
+- More stdlib helpers for particles, sounds, damage, and loot.
+- Lightweight generated-pack snapshot tests.
+- A `cobble examples validate` command or script.
+- Initial machine-readable diagnostic output for editor tooling experiments.

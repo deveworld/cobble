@@ -368,10 +368,23 @@ impl DataPack {
     }
 
     pub fn add_json_resource(&mut self, relative_path: String, json: String) -> Result<(), String> {
-        if self.json_resources.contains_key(&relative_path) {
-            return Err(format!("Duplicate data pack resource '{}'", relative_path));
+        self.add_json_resource_in_namespace(self.namespace.clone(), relative_path, json)
+    }
+
+    pub fn add_json_resource_in_namespace(
+        &mut self,
+        namespace: String,
+        relative_path: String,
+        json: String,
+    ) -> Result<(), String> {
+        let key = Self::json_resource_key(&namespace, &relative_path);
+        if self.json_resources.contains_key(&key) {
+            return Err(format!(
+                "Duplicate data pack resource '{}:{}'",
+                namespace, relative_path
+            ));
         }
-        self.json_resources.insert(relative_path, json);
+        self.json_resources.insert(key, json);
         Ok(())
     }
 
@@ -392,18 +405,24 @@ impl DataPack {
             .join("minecraft")
             .join("tags")
             .join("functions");
-        let tags_dir = namespace_dir.join("tags").join("function");
         let source_map_dir = self.output_dir.join(".cobble");
         let generated_namespaces_path = source_map_dir.join("generated_namespaces.json");
+        let generated_namespaces = self.generated_namespaces();
 
         if let Ok(content) = fs::read_to_string(&generated_namespaces_path) {
             if let Ok(previous_namespaces) = serde_json::from_str::<Vec<String>>(&content) {
                 for namespace in previous_namespaces {
-                    if namespace != self.namespace && Self::is_safe_namespace_path(&namespace) {
+                    if !Self::is_safe_namespace_path(&namespace) {
+                        continue;
+                    }
+
+                    if !generated_namespaces.contains(&namespace) {
                         let old_namespace_dir = data_dir.join(namespace);
                         if old_namespace_dir.exists() {
                             fs::remove_dir_all(old_namespace_dir)?;
                         }
+                    } else if namespace != self.namespace {
+                        Self::clean_generated_function_dirs(&data_dir.join(namespace))?;
                     }
                 }
             }
@@ -423,37 +442,17 @@ impl DataPack {
         if source_map_dir.exists() {
             fs::remove_dir_all(&source_map_dir)?;
         }
-        let namespace_tags_dir = namespace_dir.join("tags");
-        if namespace_tags_dir.exists() {
-            fs::remove_dir_all(&namespace_tags_dir)?;
-        }
         if minecraft_tags_dir.exists() {
             fs::remove_dir_all(&minecraft_tags_dir)?;
         }
         if legacy_minecraft_tags_dir.exists() {
             fs::remove_dir_all(&legacy_minecraft_tags_dir)?;
         }
-        for resource_dir in [
-            "advancement",
-            "advancements",
-            "loot_table",
-            "loot_tables",
-            "recipe",
-            "recipes",
-            "predicate",
-            "predicates",
-            "item_modifier",
-            "item_modifiers",
-            "dialog",
-        ] {
-            let path = namespace_dir.join(resource_dir);
-            if path.exists() {
-                fs::remove_dir_all(path)?;
-            }
+        for namespace in &generated_namespaces {
+            Self::clean_generated_resource_dirs(&data_dir.join(namespace))?;
         }
 
         fs::create_dir_all(&function_dir)?;
-        fs::create_dir_all(&tags_dir)?;
 
         // Write pack.mcmeta
         self.write_pack_mcmeta()?;
@@ -505,85 +504,77 @@ impl DataPack {
         fs::create_dir_all(&source_map_dir)?;
         fs::write(
             source_map_dir.join("generated_namespaces.json"),
-            serde_json::to_string_pretty(&vec![self.namespace.clone()]).unwrap(),
+            serde_json::to_string_pretty(&generated_namespaces).unwrap(),
         )?;
 
         // Write tags from stdlib
         let stdlib_tags = self.stdlib.generate_tags(&self.namespace);
         for (tag_name, functions) in stdlib_tags {
-            Self::write_function_tag(&minecraft_tags_dir, &tags_dir, &tag_name, &functions)?;
+            Self::write_function_tag(&data_dir, &self.namespace, &tag_name, &functions)?;
         }
         let mut custom_tag_names: Vec<_> = self.tags.keys().collect();
         custom_tag_names.sort();
         for tag_name in custom_tag_names {
-            Self::write_function_tag(
-                &minecraft_tags_dir,
-                &tags_dir,
-                tag_name,
-                &self.tags[tag_name],
-            )?;
+            Self::write_function_tag(&data_dir, &self.namespace, tag_name, &self.tags[tag_name])?;
         }
 
         // Write advancements
         if !self.advancements.is_empty() {
             let advancement_dir = namespace_dir.join("advancement");
-            fs::create_dir_all(&advancement_dir)?;
             for (name, json) in &self.advancements {
-                let file_path = advancement_dir.join(format!("{}.json", name));
-                fs::write(file_path, json)?;
+                Self::write_json_resource_file(&advancement_dir, name, json)?;
             }
         }
 
         // Write loot tables
         if !self.loot_tables.is_empty() {
             let loot_table_dir = namespace_dir.join("loot_table");
-            fs::create_dir_all(&loot_table_dir)?;
             for (name, json) in &self.loot_tables {
-                let file_path = loot_table_dir.join(format!("{}.json", name));
-                fs::write(file_path, json)?;
+                Self::write_json_resource_file(&loot_table_dir, name, json)?;
             }
         }
 
         // Write recipes
         if !self.recipes.is_empty() {
             let recipe_dir = namespace_dir.join("recipe");
-            fs::create_dir_all(&recipe_dir)?;
             for (name, json) in &self.recipes {
-                let file_path = recipe_dir.join(format!("{}.json", name));
-                fs::write(file_path, json)?;
+                Self::write_json_resource_file(&recipe_dir, name, json)?;
             }
         }
 
         // Write predicates
         if !self.predicates.is_empty() {
             let predicate_dir = namespace_dir.join("predicate");
-            fs::create_dir_all(&predicate_dir)?;
             for (name, json) in &self.predicates {
-                let file_path = predicate_dir.join(format!("{}.json", name));
-                fs::write(file_path, json)?;
+                Self::write_json_resource_file(&predicate_dir, name, json)?;
             }
         }
 
         // Write item modifiers
         if !self.item_modifiers.is_empty() {
             let item_modifier_dir = namespace_dir.join("item_modifier");
-            fs::create_dir_all(&item_modifier_dir)?;
             for (name, json) in &self.item_modifiers {
-                let file_path = item_modifier_dir.join(format!("{}.json", name));
-                fs::write(file_path, json)?;
+                Self::write_json_resource_file(&item_modifier_dir, name, json)?;
             }
         }
 
         // Write generic JSON resources generated by datapack.* declarations
         let mut json_resource_paths: Vec<_> = self.json_resources.keys().collect();
         json_resource_paths.sort();
-        for relative_path in json_resource_paths {
-            let json = &self.json_resources[relative_path];
-            let file_path = namespace_dir.join(format!("{}.json", relative_path));
+        for key in json_resource_paths {
+            let json = &self.json_resources[key];
+            let Some((resource_namespace, relative_path)) = Self::split_json_resource_key(key)
+            else {
+                continue;
+            };
+            let file_path = data_dir
+                .join(resource_namespace)
+                .join(format!("{}.json", relative_path));
             if let Some(parent) = file_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(file_path, json)?;
+            let content = Self::merge_tag_json_if_existing(&file_path, relative_path, json)?;
+            fs::write(file_path, content)?;
         }
 
         Ok(())
@@ -596,24 +587,135 @@ impl DataPack {
             })
     }
 
+    fn json_resource_key(namespace: &str, relative_path: &str) -> String {
+        format!("{}/{}", namespace, relative_path)
+    }
+
+    fn split_json_resource_key(key: &str) -> Option<(&str, &str)> {
+        key.split_once('/')
+    }
+
+    fn generated_namespaces(&self) -> Vec<String> {
+        let mut namespaces = HashSet::new();
+        namespaces.insert(self.namespace.clone());
+        namespaces.insert("minecraft".to_string());
+        for key in self.json_resources.keys() {
+            if let Some((namespace, _)) = Self::split_json_resource_key(key) {
+                namespaces.insert(namespace.to_string());
+            }
+        }
+        for tag_name in self.tags.keys() {
+            if let Some((namespace, _)) = tag_name.split_once(':') {
+                namespaces.insert(namespace.to_string());
+            }
+        }
+        let mut namespaces = namespaces.into_iter().collect::<Vec<_>>();
+        namespaces.sort();
+        namespaces
+    }
+
+    fn clean_generated_resource_dirs(namespace_dir: &Path) -> std::io::Result<()> {
+        let tags_dir = namespace_dir.join("tags");
+        if tags_dir.exists() {
+            fs::remove_dir_all(tags_dir)?;
+        }
+
+        for resource_dir in [
+            "advancement",
+            "advancements",
+            "loot_table",
+            "loot_tables",
+            "recipe",
+            "recipes",
+            "predicate",
+            "predicates",
+            "item_modifier",
+            "item_modifiers",
+            "dialog",
+        ] {
+            let path = namespace_dir.join(resource_dir);
+            if path.exists() {
+                fs::remove_dir_all(path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn clean_generated_function_dirs(namespace_dir: &Path) -> std::io::Result<()> {
+        for function_dir in ["function", "functions"] {
+            let path = namespace_dir.join(function_dir);
+            if path.exists() {
+                fs::remove_dir_all(path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn merge_tag_json_if_existing(
+        file_path: &Path,
+        relative_path: &str,
+        new_json: &str,
+    ) -> std::io::Result<String> {
+        if !relative_path.starts_with("tags/") || !file_path.exists() {
+            return Ok(new_json.to_string());
+        }
+
+        let Ok(existing_content) = fs::read_to_string(file_path) else {
+            return Ok(new_json.to_string());
+        };
+        let Ok(mut merged_value) = serde_json::from_str::<serde_json::Value>(&existing_content)
+        else {
+            return Ok(new_json.to_string());
+        };
+        let Ok(new_value) = serde_json::from_str::<serde_json::Value>(new_json) else {
+            return Ok(new_json.to_string());
+        };
+
+        let Some(merged_values) = merged_value
+            .get_mut("values")
+            .and_then(|value| value.as_array_mut())
+        else {
+            return Ok(new_json.to_string());
+        };
+        let Some(new_values) = new_value.get("values").and_then(|value| value.as_array()) else {
+            return Ok(new_json.to_string());
+        };
+
+        for new_value in new_values {
+            if !merged_values.contains(new_value) {
+                merged_values.push(new_value.clone());
+            }
+        }
+
+        serde_json::to_string_pretty(&merged_value)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+
     fn write_function_tag(
-        minecraft_tags_dir: &Path,
-        tags_dir: &Path,
+        data_dir: &Path,
+        default_namespace: &str,
         tag_name: &str,
         functions: &[String],
     ) -> std::io::Result<()> {
-        let tag_file = if tag_name.starts_with("minecraft:") {
-            fs::create_dir_all(minecraft_tags_dir)?;
-            let tag_name = tag_name.strip_prefix("minecraft:").unwrap();
-            minecraft_tags_dir.join(format!("{}.json", tag_name))
-        } else {
-            tags_dir.join(format!("{}.json", tag_name))
-        };
+        let (namespace, relative_tag_name) =
+            if let Some((namespace, path)) = tag_name.split_once(':') {
+                (namespace, path)
+            } else {
+                (default_namespace, tag_name)
+            };
+        let tag_file = data_dir
+            .join(namespace)
+            .join("tags")
+            .join("function")
+            .join(format!("{}.json", relative_tag_name));
 
         let tag_content = json!({
             "values": functions
         });
 
+        if let Some(parent) = tag_file.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let mut file = fs::File::create(tag_file)?;
         writeln!(
             file,
@@ -621,6 +723,18 @@ impl DataPack {
             serde_json::to_string_pretty(&tag_content).unwrap()
         )?;
         Ok(())
+    }
+
+    fn write_json_resource_file(
+        resource_dir: &Path,
+        name: &str,
+        json: &str,
+    ) -> std::io::Result<()> {
+        let file_path = resource_dir.join(format!("{}.json", name));
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(file_path, json)
     }
 
     fn write_pack_mcmeta(&self) -> std::io::Result<()> {

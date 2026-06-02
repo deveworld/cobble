@@ -75,6 +75,77 @@ def setup():
 }
 
 #[test]
+fn datapack_resource_declarations_support_explicit_namespaces() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+datapack.function_tag("minecraft:load", ["resources:setup"])
+datapack.predicate("other_ns:checks/is_ready", {
+    "condition": "minecraft:random_chance",
+    "chance": 1
+})
+
+def setup():
+    /say setup
+"#,
+    )
+    .unwrap();
+
+    assert!(output_dir
+        .join("data/minecraft/tags/function/load.json")
+        .exists());
+    assert!(output_dir
+        .join("data/other_ns/predicate/checks/is_ready.json")
+        .exists());
+}
+
+#[test]
+fn datapack_function_tags_merge_with_stdlib_event_tags() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+import stdlib
+from stdlib import event
+
+datapack.function_tag("minecraft:load", ["resources:extra_load"])
+
+def load():
+    /say load
+
+def extra_load():
+    /say extra
+
+stdlib.addEventListener(event.LOAD, load)
+"#,
+    )
+    .unwrap();
+
+    let tag: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("data/minecraft/tags/function/load.json")).unwrap(),
+    )
+    .unwrap();
+    let values = tag["values"].as_array().unwrap().clone();
+
+    assert_eq!(
+        values,
+        vec![
+            serde_json::json!("resources:load"),
+            serde_json::json!("resources:extra_load")
+        ]
+    );
+}
+
+#[test]
+fn datapack_json_resources_require_object_values() {
+    let error = compile_source(
+        r#"
+datapack.predicate("bad", ["not", "an", "object"])
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("datapack.predicate() JSON value must be an object"));
+}
+
+#[test]
 fn duplicate_datapack_resource_ids_fail() {
     let error = compile_source(
         r#"
@@ -213,13 +284,83 @@ fn namespace_changes_clean_previous_generated_namespace() {
 }
 
 #[test]
+fn namespace_changes_clean_previous_function_dir_when_namespace_is_still_used_for_resources() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.cbl");
+    let output_dir = temp_dir.path().join("output");
+
+    fs::write(&input_file, "def main():\n    /say old\n").unwrap();
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file.clone()),
+        output: Some(output_dir.clone()),
+        namespace: Some("old".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        zip: false,
+        validate: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    assert!(output_dir
+        .join("data/old/function/main.mcfunction")
+        .exists());
+
+    fs::write(
+        &input_file,
+        r#"
+datapack.predicate("old:checks/ready", {
+    "condition": "minecraft:random_chance",
+    "chance": 1
+})
+
+def main():
+    /say new
+"#,
+    )
+    .unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file),
+        output: Some(output_dir.clone()),
+        namespace: Some("new".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        zip: false,
+        validate: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    assert!(!output_dir
+        .join("data/old/function/main.mcfunction")
+        .exists());
+    assert!(output_dir
+        .join("data/old/predicate/checks/ready.json")
+        .exists());
+    assert!(output_dir
+        .join("data/new/function/main.mcfunction")
+        .exists());
+}
+
+#[test]
 fn direct_datapack_tags_are_written() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let output_dir = temp_dir.path().join("output");
     let mut data_pack = DataPack::new("resources".to_string(), output_dir.clone());
     data_pack.add_tag("utility".to_string(), vec!["resources:setup".to_string()]);
     data_pack.add_tag(
+        "utility/nested".to_string(),
+        vec!["resources:nested_setup".to_string()],
+    );
+    data_pack.add_tag(
         "minecraft:load".to_string(),
+        vec!["resources:setup".to_string()],
+    );
+    data_pack.add_tag(
+        "other_ns:utility/nested".to_string(),
         vec!["resources:setup".to_string()],
     );
 
@@ -229,6 +370,36 @@ fn direct_datapack_tags_are_written() {
         .join("data/resources/tags/function/utility.json")
         .exists());
     assert!(output_dir
+        .join("data/resources/tags/function/utility/nested.json")
+        .exists());
+    assert!(output_dir
         .join("data/minecraft/tags/function/load.json")
+        .exists());
+    assert!(output_dir
+        .join("data/other_ns/tags/function/utility/nested.json")
+        .exists());
+}
+
+#[test]
+fn direct_datapack_resource_writers_create_nested_paths() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let output_dir = temp_dir.path().join("output");
+    let mut data_pack = DataPack::new("resources".to_string(), output_dir.clone());
+
+    data_pack.add_advancement("story/root".to_string(), "{}".to_string());
+    data_pack.add_loot_table("chests/reward".to_string(), "{}".to_string());
+    data_pack.add_recipe("stonecutting/test".to_string(), "{}".to_string());
+    data_pack.add_predicate("checks/ready".to_string(), "{}".to_string());
+    data_pack.add_item_modifier("items/set_name".to_string(), "{}".to_string());
+
+    data_pack.write().unwrap();
+
+    let namespace_dir = output_dir.join("data/resources");
+    assert!(namespace_dir.join("advancement/story/root.json").exists());
+    assert!(namespace_dir.join("loot_table/chests/reward.json").exists());
+    assert!(namespace_dir.join("recipe/stonecutting/test.json").exists());
+    assert!(namespace_dir.join("predicate/checks/ready.json").exists());
+    assert!(namespace_dir
+        .join("item_modifier/items/set_name.json")
         .exists());
 }
