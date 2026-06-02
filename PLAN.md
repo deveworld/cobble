@@ -11,18 +11,22 @@
 
 ## Theme
 
-Cobble 0.6.2 is a stabilization patch for the 0.6.1 release line. It should
-not expand the language or standard library unless a change is required to fix a
-release-blocking correctness issue.
+Cobble 0.6.2 should be wider than a narrow patch, but still smaller and more
+controlled than a 0.7.0 release. It should use the post-0.6.1 QA findings as a
+base and expand into practical workflow improvements that make Cobble easier to
+trust in real data pack projects.
 
 The release theme is:
 
-> Turn the post-0.6.1 QA fixes into a clean, reproducible patch release:
-> stronger command validation, safer command-tree handling, modern examples,
-> clearer release docs, and tighter deployment hygiene.
+> Make Cobble 0.6.2 the first "release-quality workflow" build: stronger
+> command validation, safer command-tree handling, better project feedback,
+> clearer generated metadata, a more useful web demo, modern examples, and
+> repeatable release QA.
 
-0.6.2 should be treated as a patch release even though Cobble is still
-pre-1.0. The main rule is: no broad new feature work until 0.6.2 is stable.
+0.6.2 may include non-breaking user-facing improvements because Cobble is still
+pre-1.0. The main rule is: every addition must be small, testable, documented,
+and directly useful to authors building Minecraft Java Edition 26.1.2 data
+packs.
 
 ## Release Goals
 
@@ -33,11 +37,15 @@ pre-1.0. The main rule is: no broad new feature work until 0.6.2 is stable.
    server QA are complete.
 4. Fix correctness gaps discovered during 0.6.1 QA without changing the
    supported Minecraft version or pack format.
-5. Make default command-tree validation fail loudly when a stale local
+5. Add a small set of workflow improvements that reduce friction in normal
+   project development.
+6. Improve generated source metadata and build feedback so users can understand
+   what Cobble emitted.
+7. Make default command-tree validation fail loudly when a stale local
    `data/commands.json` is present.
-6. Keep GitHub Pages deployment scoped to actual web demo changes.
-7. Ensure examples and docs match Minecraft Java Edition 26.1.2 syntax.
-8. Keep crates.io and GitHub release notes aligned with the exact version being
+8. Keep GitHub Pages deployment scoped to actual web demo changes.
+9. Ensure examples and docs match Minecraft Java Edition 26.1.2 syntax.
+10. Keep crates.io and GitHub release notes aligned with the exact version being
    published.
 
 ## Scope Policy
@@ -49,15 +57,21 @@ pre-1.0. The main rule is: no broad new feature work until 0.6.2 is stable.
 - Example updates needed because stricter validation now rejects old syntax.
 - Documentation, README, changelog, and release workflow cleanup.
 - Packaging, CI, and deployment hygiene changes.
+- Small CLI/project workflow improvements.
+- Additional source-map or generated-manifest metadata.
+- Focused stdlib helper additions only when they remove common raw-command
+  boilerplate and validate cleanly.
+- Web demo improvements that help evaluate Cobble output.
 
 0.6.2 should not include:
 
-- New language syntax.
-- New stdlib modules beyond bug-fix-level adjustments.
+- New language syntax that changes parser fundamentals.
+- Large new stdlib modules.
 - Support for another Minecraft version.
 - A new data pack format target.
 - Major parser, transpiler, or project layout rewrites.
 - Making real-server tests part of default `cargo test`.
+- Plugin systems, package managers, remote imports, or LSP support.
 
 If a candidate task needs broad design work, defer it to 0.7.0 or a later
 feature release.
@@ -198,7 +212,125 @@ feature release.
 - No docs page advertises unsupported Minecraft versions.
 - No docs page describes 0.6.2-a0 changes as stable 0.6.2 before promotion.
 
-### 5. Web Demo And GitHub Pages
+### 5. Project Workflow And CLI UX
+
+#### Motivation
+
+0.6.1 made project creation and validation more capable, but the normal loop
+can still be clearer. 0.6.2 should improve the feedback users get when they
+initialize, build, validate, and inspect a project.
+
+#### Candidate Tasks
+
+- Add `cobble doctor` or `cobble env` to report:
+  - Cobble version,
+  - target Minecraft version,
+  - pack format,
+  - whether Java is available,
+  - whether `curl` is available,
+  - whether default `data/commands.json` exists and matches the expected SHA-1,
+  - whether the current directory has a valid `cobble.toml`.
+- Add `cobble build --dry-run` to parse, resolve imports, compute output plan,
+  and optionally validate generated commands without writing final output.
+- Add clearer build summaries:
+  - source files compiled,
+  - generated function count,
+  - generated resource count,
+  - macro command count,
+  - validation command count,
+  - ZIP output path when enabled.
+- Improve `cobble init` post-create output with exact next commands:
+  - `cd <project>`,
+  - `cobble build`,
+  - `cobble build --validate`.
+- Add `--quiet` or refine current verbosity if logs are noisy in scripts.
+- Add tests for CLI output where behavior is stable enough to assert.
+
+#### Acceptance Criteria
+
+- New CLI behavior is covered by focused tests.
+- Existing commands keep backward-compatible defaults.
+- Build output remains readable in CI logs.
+- `cobble doctor` or equivalent does not require network access by default.
+
+### 6. Source Maps And Generated Metadata
+
+#### Motivation
+
+Generated packs now include `.cobble/source_map.json`, but 0.6.2 can make the
+metadata more useful for debugging and tooling without changing Cobble syntax.
+
+#### Candidate Tasks
+
+- Add `.cobble/build_manifest.json` with:
+  - Cobble version,
+  - Minecraft target,
+  - pack format,
+  - namespace,
+  - source root,
+  - entry points,
+  - generated function/resource counts,
+  - validation summary when validation ran.
+- Add generated resource entries to metadata where useful:
+  - tags,
+  - predicates,
+  - advancements,
+  - loot tables,
+  - recipes,
+  - item modifiers,
+  - dialogs.
+- Improve source-map path stability:
+  - prefer project-relative paths where possible,
+  - avoid leaking absolute paths when a relative source path is known,
+  - keep existing validation checks for generated paths outside the data pack.
+- Add a `cobble inspect <output>` command only if it can be implemented as a
+  small manifest/source-map reader.
+- Document the metadata files as internal but stable enough for debugging.
+
+#### Acceptance Criteria
+
+- Metadata is deterministic across clean builds from the same project path.
+- Source-map validation still catches stale or missing command entries.
+- Generated metadata does not include unnecessary absolute paths.
+- Metadata tests cover imported files and generated resources.
+
+### 7. Stdlib And Data Pack Resource Polish
+
+#### Motivation
+
+0.6.1 expanded stdlib v1.1 and resource declarations. 0.6.2 can add small
+quality-of-life helpers and safety checks where they are clearly bounded.
+
+#### Candidate Tasks
+
+- Add focused text helpers if they map directly to stable JSON text components:
+  - `text.plain`,
+  - `text.colored`,
+  - `text.score`,
+  - `text.selector`.
+- Add scoreboard display convenience helpers only if they reuse existing command
+  generation and validation paths.
+- Add storage helper coverage for common list/object operations if gaps remain
+  after 0.6.1.
+- Add resource name normalization diagnostics:
+  - reject accidental uppercase paths,
+  - point to the invalid character,
+  - suggest `namespace:path` form when users include slashes that look like a
+    namespace.
+- Add duplicate-resource diagnostics with both declaration locations if source
+  locations are available.
+- Keep all helpers thin; do not add a framework that hides Minecraft commands.
+
+#### Acceptance Criteria
+
+- Every new helper has a direct generated-command/resource fixture.
+- Generated helper output validates against the 26.1.2 command tree when it
+  emits commands.
+- Resource diagnostics include enough context for users to fix the declaration.
+- No helper requires runtime state that Cobble cannot explain in generated
+  output.
+
+### 8. Web Demo And GitHub Pages
 
 #### Current State
 
@@ -216,14 +348,37 @@ feature release.
 - Verify the live preview image returns `200` after any asset change.
 - Keep the base path assumption documented in web deployment notes if needed.
 
+#### Candidate Enhancements
+
+- Add tabs for generated outputs:
+  - `.mcfunction`,
+  - `pack.mcmeta`,
+  - tags/resources,
+  - source map,
+  - build manifest if added.
+- Add copy/download buttons for each generated file.
+- Add a ZIP download if it can be done without pulling in heavy dependencies.
+- Add sample selector:
+  - hello world,
+  - stdlib events,
+  - inventory components,
+  - resource declarations,
+  - validation-focused example.
+- Surface parser/transpiler errors in a compact diagnostics panel.
+- Keep the page usable on mobile and desktop.
+
 #### Acceptance Criteria
 
 - README-only, docs-only, and Cargo-only pushes do not trigger Pages.
 - Web changes trigger Pages automatically.
 - Manual dispatch can deploy when explicitly requested.
 - The live demo loads the WASM bundle and preview image under `/cobble/`.
+- `npm run lint` passes.
+- `npm run build:github` passes.
+- Playwright smoke verifies the live editor renders non-empty generated output.
+- Asset paths work under `/cobble/`.
 
-### 6. Optional Real-Server QA
+### 9. Optional Real-Server QA
 
 #### Current State
 
@@ -278,7 +433,17 @@ cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-
 cargo package --locked
 ```
 
-### Web Required Only If `web/**` Changed
+### Required If CLI Or Metadata Changes
+
+```bash
+cargo run --locked -- init --name /tmp/cobble-qa-init --template validation
+cargo run --locked -- build /tmp/cobble-qa-init --validate -o /tmp/cobble-qa-init-out
+```
+
+If `cobble doctor`, `build --dry-run`, `inspect`, or build manifest support is
+implemented, add direct smoke commands here before promotion.
+
+### Required If `web/**` Changed
 
 ```bash
 cd web
@@ -296,16 +461,18 @@ COBBLE_MINECRAFT_EULA_ACCEPTED=1 scripts/test_minecraft_server.sh
 
 1. Complete the QA matrix.
 2. Resolve any findings with focused commits.
-3. Update `CHANGELOG.md` from `0.6.2-a0` to `0.6.2`.
-4. Bump Cargo/doc versions from `0.6.2-a0` to `0.6.2`.
-5. Run required QA again on the clean stable release commit.
-6. Run `cargo publish --dry-run`.
-7. Commit the stable version bump.
-8. Tag `v0.6.2`.
-9. Push branch and tag.
-10. Publish to crates.io.
-11. Create GitHub Release `Cobble 0.6.2`.
-12. Verify install:
+3. Make sure every implemented 0.6.2 feature has a changelog entry.
+4. Decide whether remaining candidate tasks are deferred to 0.7.0.
+5. Update `CHANGELOG.md` from `0.6.2-a0` to `0.6.2`.
+6. Bump Cargo/doc versions from `0.6.2-a0` to `0.6.2`.
+7. Run required QA again on the clean stable release commit.
+8. Run `cargo publish --dry-run`.
+9. Commit the stable version bump.
+10. Tag `v0.6.2`.
+11. Push branch and tag.
+12. Publish to crates.io.
+13. Create GitHub Release `Cobble 0.6.2`.
+14. Verify install:
 
 ```bash
 cargo install cobble-lang --version 0.6.2
@@ -320,12 +487,21 @@ cobble --version
   error message enough?
 - Should we add a dedicated release checklist file separate from `PLAN.md` for
   future patch releases?
+- Which workflow feature is highest priority: `doctor`, `build --dry-run`,
+  `inspect`, or richer build summaries?
+- Should build metadata be considered internal-only, or can downstream tools
+  rely on `.cobble/build_manifest.json` once introduced?
+- How much web demo work should land in 0.6.2 versus a dedicated website
+  milestone?
 
 ## Completion Checklist
 
 - [ ] Keep `v0.6.1` unchanged.
 - [ ] Keep development version as `0.6.2-a0` until release QA passes.
 - [ ] Confirm Pages workflow only auto-runs on `web/**` changes.
+- [ ] Select final 0.6.2 feature workstreams from the candidate list.
+- [ ] Implement selected workflow/metadata/web/doc improvements.
+- [ ] Add focused tests for every selected implementation task.
 - [ ] Run required QA matrix.
 - [ ] Run optional real-server QA or document why it was skipped.
 - [ ] Decide whether to publish `0.6.2-a0`.
