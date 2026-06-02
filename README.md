@@ -14,7 +14,7 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Version 0.6.1** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
+**Version 0.6.2-a0** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ## Web Demo
 
@@ -25,7 +25,7 @@ so you can edit Cobble code and inspect the generated data pack files without
 installing the CLI.
 
 > [!WARNING]
-> Cobble is in active development (v0.6.1 Pre-Alpha). Bugs and API changes are
+> Cobble is in active development (v0.6.2-a0 Pre-Alpha). Bugs and API changes are
 > expected. Please report issues at
 > <https://github.com/deveworld/cobble/issues>.
 

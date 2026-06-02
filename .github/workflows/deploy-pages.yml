@@ -5,10 +5,7 @@ on:
     branches:
       - main
     paths:
-      - .github/workflows/deploy-pages.yml
-      - README.md
       - web/**
-      - src/**
   workflow_dispatch:
 
 permissions:

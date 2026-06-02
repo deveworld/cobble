@@ -5,6 +5,19 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2-a0] - 2026-06-02
+
+### Changed
+- Moved the README preview image to the top of the document and replaced the large PNG with a smaller JPEG asset.
+- Updated the web demo package link to docs.rs while the crates.io web route is unavailable from some regions.
+- Updated the inventory example to use modern Minecraft 26.1.2 item component syntax.
+
+### Fixed
+- Hardened `scripts/setup_commands_json.sh` so manifest-detail fetch failures fall through to alternate manifests and the pinned server jar fallback.
+- Verified the default `data/commands.json` fingerprint before validation so stale local command trees do not silently masquerade as the 26.1.2 tree.
+- Tightened command validation for nested NBT/JSON delimiters, scoreboard slots, execute swizzles, item slots, and legacy item-stack NBT.
+- Removed a disabled GitHub Discussions link and clarified release documentation wording.
+
 ## [0.6.1] - 2026-06-02
 
 ### Added

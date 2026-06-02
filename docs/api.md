@@ -382,13 +382,13 @@ pub struct DataPack {
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
     pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
-    pub pack_format: PackFormat,  // Cobble v0.6.1 requires 101.1
+    pub pack_format: PackFormat,  // Cobble v0.6.2-a0 requires 101.1
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
 }
 ```
 
-**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.6.1 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
+**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.6.2-a0 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
 
 #### Methods
 
