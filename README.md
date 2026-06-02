@@ -1,16 +1,21 @@
-# Cobble 🧱
+# Cobble
 
 > A modern, Python-like language for creating Minecraft Data Packs
 
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange.svg)](https://www.rust-lang.org)
 [![Minecraft](https://img.shields.io/badge/minecraft-26.1.2-green.svg)](https://minecraft.net)
 [![Pack Format](https://img.shields.io/badge/pack%20format-101.1-blue.svg)](https://minecraft.wiki/w/Data_pack)
+[![Web Demo](https://img.shields.io/badge/web%20demo-live-7bd66f.svg)](https://deveworld.github.io/cobble/)
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.6.1** - Expanded validation diagnostics, standard library v1.1 helpers, namespaced data pack resources, project templates, and Minecraft Java Edition 26.1.2 support | Pack Format 101.1
+**Version 0.6.1** - Expanded validation diagnostics, standard library v1.1 helpers, namespaced data pack resources, project templates, and Minecraft Java Edition 26.1.2 support | Pack Format 101.1
 
-## 🌐 Web Demo
+## Web Demo
+
+**Live demo:** <https://deveworld.github.io/cobble/>
+
+![Cobble web demo preview](web/public/cobble-workshop.png)
 
 Cobble now includes a browser demo in [`web/`](web/) that runs the Rust parser
 and transpiler through WebAssembly. You can edit Cobble code in the page and see
@@ -29,7 +34,7 @@ For static hosting:
 # Cloudflare Pages or any root-mounted static host
 npm run build
 
-# GitHub Pages under https://<owner>.github.io/cobble/
+# GitHub Pages under https://deveworld.github.io/cobble/
 npm run build:github
 ```
 
@@ -37,46 +42,46 @@ The exported site is written to `web/out`. The build runs `wasm-pack`, so the
 deployment environment needs Rust with the `wasm32-unknown-unknown` target
 available.
 
-## ⚠️ Pre-release Notice
+> [!WARNING]
+> Cobble is currently in active development (v0.6.1 Pre-Alpha). While we've
+> implemented many features and extensive tests, the project may contain bugs
+> and unexpected behavior. Features and APIs may change between releases.
+>
+> Feedback is welcome. If you encounter issues, unexpected behavior, or have
+> suggestions, please report them at:
+>
+> - **GitHub Issues**: <https://github.com/deveworld/cobble/issues>
 
-**Cobble is currently in active development (v0.6.1 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+## Features
 
-**We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
+- **Static Type System** - Immutable types with compile-time inference and validation
+- **Python-like Syntax** - Familiar, clean syntax with proper indentation
+- **Function Parameters** - Full support using Minecraft function macro system
+- **Event System** - Built-in event handling for load and tick events
+- **Control Flow** - If statements, for loops (with step support), while loops with smart optimization
+- **Match/Switch Statements** - Efficient multi-way branching with overlap validation
+- **Boolean Operators** - `and`, `or`, `not` operators for complex conditions (e.g., `if x > 0 and y < 5 or z == 10:`)
+- **Complex Expressions** - Multi-operator expressions with proper precedence (e.g., `a + b * c`)
+- **Arithmetic Operations** - Full support for +, -, *, /, %, ^ with variable and constant operands
+- **Advanced Operators** - Modulo (%) and power (^) operators with compile-time optimization
+- **Expressions in Conditions** - Use arithmetic directly in if/while (e.g., `if x % 3 == 1:`)
+- **Compile-time Constants** - Define constants with `const` keyword for compile-time evaluation
+- **Entity Selector Definitions** - Create custom selector aliases (e.g., `@Player = @a[type=player]`)
+- **File Import System** - Import functions and definitions from other `.cbl` files
+- **Module-level Variables** - Top-level assignments automatically initialized at pack load
+- **Numeric Range Warnings** - Compile-time warnings for float precision and overflow
+- **Modern CLI** - Full-featured command-line interface with watch mode and ZIP creation
+- **Project Management** - Configuration via `cobble.toml`
+- **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
+- **JSON Safety** - Preserves JSON commands without breaking syntax
+- **Command Tree Validation** - Validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2 commands
+- **WASM Web Demo** - Try Cobble in the browser and inspect generated data pack files
+- **Nested If Optimization** - Automatically splits complex control flow
+- **Comprehensive Tests** - Extensive unit, integration, fixture, validation, and source-map coverage
+- **Modern Parser** - Built with chumsky combinator library for reliability
+- **Beautiful Errors** - Clear error messages powered by ariadne
 
-- **GitHub Issues**: <https://github.com/deveworld/cobble/issues>
-
-Your bug reports and feature requests help make Cobble better for everyone. Thank you for being an early adopter! 🙏
-
-## ✨ Features
-
-- ✅ **Static Type System** - Immutable types with compile-time inference and validation
-- ✅ **Python-like Syntax** - Familiar, clean syntax with proper indentation
-- ✅ **Function Parameters** - Full support using Minecraft function macro system
-- ✅ **Event System** - Built-in event handling for load and tick events
-- ✅ **Control Flow** - If statements, for loops (with step support), while loops with smart optimization
-- ✅ **Match/Switch Statements** - Efficient multi-way branching with overlap validation
-- ✅ **Boolean Operators** - `and`, `or`, `not` operators for complex conditions (e.g., `if x > 0 and y < 5 or z == 10:`)
-- ✅ **Complex Expressions** - Multi-operator expressions with proper precedence (e.g., `a + b * c`)
-- ✅ **Arithmetic Operations** - Full support for +, -, *, /, %, ^ with variable and constant operands
-- ✅ **Advanced Operators** - Modulo (%) and power (^) operators with compile-time optimization
-- ✅ **Expressions in Conditions** - Use arithmetic directly in if/while (e.g., `if x % 3 == 1:`)
-- ✅ **Compile-time Constants** - Define constants with `const` keyword for compile-time evaluation
-- ✅ **Entity Selector Definitions** - Create custom selector aliases (e.g., `@Player = @a[type=player]`)
-- ✅ **File Import System** - Import functions and definitions from other `.cbl` files
-- ✅ **Module-level Variables** - Top-level assignments automatically initialized at pack load
-- ✅ **Numeric Range Warnings** - Compile-time warnings for float precision and overflow
-- ✅ **Modern CLI** - Full-featured command-line interface with watch mode and ZIP creation
-- ✅ **Project Management** - Configuration via `cobble.toml`
-- ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
-- ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
-- ✅ **Command Tree Validation** - Validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2 commands
-- ✅ **WASM Web Demo** - Try Cobble in the browser and inspect generated data pack files
-- ✅ **Nested If Optimization** - Automatically splits complex control flow
-- ✅ **Comprehensive Tests** - Extensive unit, integration, fixture, validation, and source-map coverage
-- ✅ **Modern Parser** - Built with chumsky combinator library for reliability
-- ✅ **Beautiful Errors** - Clear error messages powered by ariadne
-
-## 📦 Installation
+## Installation
 
 ### From crates.io
 
@@ -111,7 +116,7 @@ export PATH="$PATH:/path/to/cobble/target/release"
 sudo cp target/release/cobble /usr/local/bin/
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Create a New Project
 
@@ -176,7 +181,7 @@ Copy the output folder to your Minecraft world's `datapacks` directory:
 .minecraft/saves/YourWorld/datapacks/
 ```
 
-## 📖 Language Guide
+## Language Guide
 
 ### Functions
 
@@ -534,7 +539,7 @@ stdlib.addEventListener(event.LOAD, on_load)
 stdlib.addEventListener(event.TICK, on_tick)
 ```
 
-## 🛠️ CLI Commands
+## CLI Commands
 
 ### `cobble init [OPTIONS]`
 
@@ -613,7 +618,7 @@ cobble check                  # Check all project files
 cobble check src/main.cbl     # Check specific file
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 `cobble.toml` configures your project:
 
@@ -639,7 +644,7 @@ entry_points = []      # Main files to compile; imported files are pulled in by 
 
 > **Note**: Cobble v0.6.1 exclusively supports **Minecraft Java Edition 26.1.2** (pack format 101.1). No backward compatibility with older versions is provided. This allows us to leverage the latest Minecraft features without worrying about legacy constraints.
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 my-datapack/
@@ -659,7 +664,7 @@ my-datapack/
 └── my-datapack.zip      # Distributable pack
 ```
 
-## 🎮 Complete Example
+## Complete Example
 
 ### Boss Fight System
 
@@ -740,7 +745,7 @@ def reset_player():
     /effect give @p minecraft:resistance 3 255 true
 ```
 
-## 🧪 Testing
+## Testing
 
 Run the test suite:
 
@@ -754,7 +759,7 @@ Check syntax of example files:
 cobble check examples/
 ```
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
@@ -791,7 +796,7 @@ Use `npm run build` for Cloudflare Pages or another root-mounted static host.
 Use `npm run build:github` when deploying this repository to GitHub Pages under
 the `/cobble` base path.
 
-## 📚 Documentation
+## Documentation
 
 - [Language Reference](docs/language.md)
 - [CLI Documentation](docs/cli.md)
@@ -799,7 +804,7 @@ the `/cobble` base path.
 - [Examples](examples/)
 - [Web Demo Source](web/)
 
-## 🐛 Known Limitations
+## Known Limitations
 
 - **Variable Scope**: All variables are effectively global due to Minecraft's scoreboard architecture. The `global` keyword is accepted for code clarity but has no functional effect. Variables defined in one function can affect variables in another function if they share the same name.
 - For loops only support `range()` iterators
@@ -807,7 +812,7 @@ the `/cobble` base path.
 - No array/list data structures yet
 - **While loops**: Execute all iterations in a single game tick, which can cause server lag with large iteration counts (>100)
 
-## 🗺️ Roadmap
+## Roadmap
 
 ### Recently Completed
 
@@ -976,7 +981,7 @@ the `/cobble` base path.
 - [ ] Online playground/REPL
 - [ ] Standard library expansion
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
@@ -995,4 +1000,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-Made with ❤️ for the Minecraft community
+Built for the Minecraft community
