@@ -1,8 +1,11 @@
 use crate::commands::validate::{print_validation_report, run_validation};
 use crate::config::CobbleConfig;
-use crate::pack_format::{PackFormat, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
+use crate::pack_format::{
+    PackFormat, COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT,
+};
 use crate::parser::parse;
-use crate::transpiler::Transpiler;
+use crate::transpiler::{BuildManifestInput, BuildManifestValidation, Transpiler};
+use crate::validator::ValidationReport;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -17,12 +20,24 @@ pub struct BuildOptions {
     pub pack_format: Option<String>,
     pub description: Option<String>,
     pub verbose: bool,
+    pub quiet: bool,
     pub zip: bool,
     pub validate: bool,
+    pub dry_run: bool,
     pub commands_json: PathBuf,
 }
 
 pub fn build(options: BuildOptions) -> Result<(), String> {
+    if options.quiet && options.verbose {
+        return Err("--quiet cannot be combined with --verbose".to_string());
+    }
+    if options.dry_run && options.zip {
+        return Err(
+            "--dry-run cannot be combined with --zip because no final output is written"
+                .to_string(),
+        );
+    }
+
     // Try to find cobble.toml
     let (config, config_dir) = if let Some(config_path) = find_config(&options.input) {
         let config = if options.pack_format.is_some() {
@@ -89,22 +104,27 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
             SUPPORTED_PACK_FORMAT,
             SUPPORTED_MINECRAFT_VERSION,
             pack_format,
-            env!("CARGO_PKG_VERSION"),
+            COBBLE_VERSION,
             SUPPORTED_MINECRAFT_VERSION
         ));
     }
+
+    let configured_entry_points = if options.input.is_none() {
+        config
+            .as_ref()
+            .map(|cfg| cfg.build.entry_points.clone())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     // Check if source is a file or directory
     let files_to_compile = if source_path.is_file() {
         vec![source_path.clone()]
     } else if source_path.is_dir() {
         if options.input.is_none() {
-            if let Some(ref cfg) = config {
-                if !cfg.build.entry_points.is_empty() {
-                    resolve_entry_points(&source_path, &cfg.build.entry_points)?
-                } else {
-                    find_cobble_files(&source_path)?
-                }
+            if !configured_entry_points.is_empty() {
+                resolve_entry_points(&source_path, &configured_entry_points)?
             } else {
                 find_cobble_files(&source_path)?
             }
@@ -115,13 +135,18 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         return Err(format!("Source path does not exist: {:?}", source_path));
     };
 
+    let source_display_root = source_display_root(&source_path, &config_dir);
+
     if options.verbose {
         println!("Building {} file(s)...", files_to_compile.len());
         println!("Namespace: {}", namespace);
         println!("Pack format: {}", pack_format);
         println!("Description: {}", description);
-    } else {
+    } else if !options.quiet {
         println!("Building {} file(s)...", files_to_compile.len());
+    }
+    if options.dry_run && !options.quiet {
+        println!("Dry run: final output will not be written");
     }
 
     let final_output_dir = output_dir.clone();
@@ -135,23 +160,29 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     let mut transpiler = Transpiler::new(namespace.clone(), build_output_dir.clone());
     transpiler.set_description(description);
     transpiler.set_pack_format(pack_format);
+    transpiler.set_source_display_root(source_display_root.clone());
+    transpiler.set_build_input(BuildManifestInput {
+        source: path_display_relative(&source_path, &source_display_root),
+        entry_points: configured_entry_points,
+        compiled_files: files_to_compile
+            .iter()
+            .map(|path| path_display_relative(path, &source_display_root))
+            .collect(),
+    });
 
     if files_to_compile.is_empty() {
-        transpiler
-            .write_data_pack()
-            .map_err(|e| format!("Failed to clean data pack output: {}", e))?;
+        if !options.dry_run {
+            transpiler
+                .write_data_pack()
+                .map_err(|e| format!("Failed to clean data pack output: {}", e))?;
+        }
         return Err("No Cobble files found to compile".to_string());
     }
 
     // Compile all files
     for file_path in &files_to_compile {
-        if options.verbose {
+        if !options.quiet {
             println!(
-                "  • Compiling: {:?}",
-                file_path.file_name().unwrap_or_default()
-            );
-        } else {
-            print!(
                 "  • Compiling: {:?}",
                 file_path.file_name().unwrap_or_default()
             );
@@ -176,13 +207,17 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
             .map_err(|e| format!("Transpilation failed for {:?}: {}", file_path, e))?;
     }
 
-    // Write data pack
-    transpiler
-        .write_data_pack()
-        .map_err(|e| format!("Failed to write data pack: {}", e))?;
+    if !options.dry_run || options.validate {
+        transpiler
+            .write_data_pack()
+            .map_err(|e| format!("Failed to write data pack: {}", e))?;
+    }
 
+    let mut validation_summary = None;
     if options.validate {
-        println!("Validating generated commands...");
+        if !options.quiet {
+            println!("Validating generated commands...");
+        }
         let report = match run_validation(&build_output_dir, &options.commands_json) {
             Ok(report) => report,
             Err(error) => {
@@ -192,8 +227,16 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
                 return Err(error);
             }
         };
-        print_validation_report(&report, &options.commands_json, &build_output_dir);
-        if !report.errors.is_empty() || !report.source_map_errors.is_empty() {
+        let has_validation_errors =
+            !report.errors.is_empty() || !report.source_map_errors.is_empty();
+        if !options.quiet || has_validation_errors {
+            print_validation_report(&report, &options.commands_json, &build_output_dir);
+        }
+        validation_summary = Some(validation_summary_from_report(
+            &options.commands_json,
+            &report,
+        ));
+        if has_validation_errors {
             if build_output_dir != final_output_dir {
                 let _ = fs::remove_dir_all(&build_output_dir);
             }
@@ -202,22 +245,161 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
                 report.errors.len() + report.source_map_errors.len()
             ));
         }
+        transpiler.set_validation_summary(validation_summary.clone());
+        if !options.dry_run {
+            transpiler
+                .write_data_pack()
+                .map_err(|e| format!("Failed to write validation metadata: {}", e))?;
+        }
+    }
+
+    if options.dry_run {
+        if build_output_dir != final_output_dir {
+            let _ = fs::remove_dir_all(&build_output_dir);
+        }
+        if !options.quiet {
+            println!("✓ Dry run completed; no output written");
+        }
+        if options.validate && !options.quiet {
+            println!("✓ All commands valid");
+        }
+        if !options.quiet {
+            print_build_summary(
+                &transpiler,
+                files_to_compile.len(),
+                validation_summary.as_ref(),
+                None,
+                true,
+            );
+        }
+        return Ok(());
+    }
+
+    if options.validate {
         if build_output_dir != final_output_dir {
             replace_output_dir(&build_output_dir, &final_output_dir)?;
         }
-        println!("✓ Data pack generated at {:?}", final_output_dir);
-        println!("✓ All commands valid");
-    } else {
+        if !options.quiet {
+            println!("✓ Data pack generated at {:?}", final_output_dir);
+            println!("✓ All commands valid");
+        }
+    } else if !options.quiet {
         println!("✓ Data pack generated at {:?}", final_output_dir);
     }
 
     // Create zip if requested
-    if options.zip {
-        create_zip(&final_output_dir, &namespace)?;
-        println!("✓ Created {}.zip", namespace);
+    let zip_path = if options.zip {
+        let zip_path = create_zip(&final_output_dir, &namespace)?;
+        if !options.quiet {
+            println!("✓ Created {}", zip_path.display());
+        }
+        Some(zip_path)
+    } else {
+        None
+    };
+
+    if !options.quiet {
+        print_build_summary(
+            &transpiler,
+            files_to_compile.len(),
+            validation_summary.as_ref(),
+            zip_path.as_deref(),
+            false,
+        );
     }
 
     Ok(())
+}
+
+fn path_display(path: &Path) -> String {
+    path.display().to_string()
+}
+
+fn path_display_relative(path: &Path, root: &Path) -> String {
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
+    if let Ok(relative_path) = canonical_path.strip_prefix(&canonical_root) {
+        if relative_path.as_os_str().is_empty() {
+            return ".".to_string();
+        }
+        return path_display(relative_path);
+    }
+
+    if path.is_relative() {
+        return path_display(path);
+    }
+
+    path_display(&canonical_path)
+}
+
+fn source_display_root(source_path: &Path, config_dir: &Path) -> PathBuf {
+    let source_path = source_path
+        .canonicalize()
+        .unwrap_or_else(|_| source_path.to_path_buf());
+    let config_dir = config_dir
+        .canonicalize()
+        .unwrap_or_else(|_| config_dir.to_path_buf());
+
+    if source_path.strip_prefix(&config_dir).is_ok() {
+        return config_dir;
+    }
+
+    if source_path.is_file() {
+        return source_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+    }
+
+    source_path
+}
+
+fn validation_summary_from_report(
+    commands_json: &Path,
+    report: &ValidationReport,
+) -> BuildManifestValidation {
+    BuildManifestValidation {
+        enabled: true,
+        commands_json: path_display(commands_json),
+        files_checked: report.files_checked,
+        commands_checked: report.commands_checked,
+        macro_commands_checked: report.macro_commands_checked,
+        commands_skipped: report.commands_skipped,
+        errors: report.errors.len(),
+        source_map_errors: report.source_map_errors.len(),
+    }
+}
+
+fn print_build_summary(
+    transpiler: &Transpiler,
+    source_files: usize,
+    validation: Option<&BuildManifestValidation>,
+    zip_path: Option<&Path>,
+    dry_run: bool,
+) {
+    let generated = transpiler.data_pack.generated_counts();
+    println!("Build summary:");
+    println!("  Source files: {}", source_files);
+    println!("  Functions: {}", generated.functions);
+    println!("  Commands: {}", generated.commands);
+    println!("  Function tags: {}", generated.function_tags);
+    println!("  JSON resources: {}", generated.total_json_resources);
+    if let Some(validation) = validation {
+        println!(
+            "  Validation: {} commands in {} files ({} macro checked, {} skipped)",
+            validation.commands_checked,
+            validation.files_checked,
+            validation.macro_commands_checked,
+            validation.commands_skipped
+        );
+    }
+    if let Some(zip_path) = zip_path {
+        println!("  ZIP: {}", zip_path.display());
+    }
+    if dry_run {
+        println!("  Output: not written (--dry-run)");
+    }
 }
 
 /// Validate that namespace contains only safe characters
@@ -407,8 +589,10 @@ mod tests {
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: true,
+            dry_run: false,
             commands_json,
         })
         .unwrap_err();
@@ -442,8 +626,10 @@ mod tests {
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: true,
+            dry_run: false,
             commands_json,
         })
         .unwrap_err();
@@ -472,8 +658,10 @@ mod tests {
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: true,
+            dry_run: false,
             commands_json: valid_commands_json.clone(),
         })
         .unwrap();
@@ -486,8 +674,10 @@ mod tests {
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: true,
+            dry_run: false,
             commands_json: valid_commands_json,
         })
         .unwrap_err();
@@ -496,6 +686,155 @@ mod tests {
         let content =
             fs::read_to_string(output_dir.join("data/cobble/function/test.mcfunction")).unwrap();
         assert_eq!(content.trim(), "say valid");
+    }
+
+    #[test]
+    fn dry_run_does_not_write_output() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_dir = temp_dir.path().join("output");
+        fs::write(&input_file, "def test():\n    /say dry run\n").unwrap();
+
+        build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir.clone()),
+            namespace: Some("dry_run".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: false,
+            dry_run: true,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+
+        assert!(!output_dir.exists());
+    }
+
+    #[test]
+    fn quiet_build_succeeds_and_verbose_quiet_is_rejected() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_dir = temp_dir.path().join("output");
+        fs::write(&input_file, "def test():\n    /say quiet\n").unwrap();
+
+        build(BuildOptions {
+            input: Some(input_file.clone()),
+            output: Some(output_dir.clone()),
+            namespace: Some("quiet".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+        assert!(output_dir
+            .join("data/quiet/function/test.mcfunction")
+            .exists());
+
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir),
+            namespace: Some("quiet".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: true,
+            quiet: true,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+        assert!(error.contains("--quiet cannot be combined with --verbose"));
+    }
+
+    #[test]
+    fn dry_run_validate_preserves_existing_output_and_cleans_staging() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let valid_commands_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("commands.json");
+        if !valid_commands_json.exists() {
+            return;
+        }
+
+        fs::write(&input_file, "def test():\n    /say valid\n").unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::write(output_dir.join("marker.txt"), "keep\n").unwrap();
+
+        build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir.clone()),
+            namespace: Some("dry_run".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: true,
+            dry_run: true,
+            commands_json: valid_commands_json,
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(output_dir.join("marker.txt")).unwrap(),
+            "keep\n"
+        );
+        assert!(!temp_dir
+            .path()
+            .read_dir()
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .contains(".output.cobble-staging-")));
+    }
+
+    #[test]
+    fn build_validate_writes_validation_summary_to_manifest() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let valid_commands_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("commands.json");
+        if !valid_commands_json.exists() {
+            return;
+        }
+
+        fs::write(&input_file, "def test():\n    /say valid\n").unwrap();
+        build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir.clone()),
+            namespace: Some("manifest_validate".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: true,
+            dry_run: false,
+            commands_json: valid_commands_json,
+        })
+        .unwrap();
+
+        let manifest_path = output_dir.join(".cobble/build_manifest.json");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(manifest_path).unwrap()).unwrap();
+        assert_eq!(manifest["validation"]["enabled"], true);
+        assert_eq!(manifest["validation"]["commands_checked"], 1);
+        assert_eq!(manifest["validation"]["errors"], 0);
     }
 
     #[test]
@@ -512,8 +851,10 @@ mod tests {
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: false,
+            dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
         .unwrap_err();
@@ -542,8 +883,10 @@ mod tests {
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: false,
+            dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
         .unwrap_err();
@@ -583,8 +926,10 @@ output = "output"
             pack_format: Some("101.1".to_string()),
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: false,
+            dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
         .unwrap();
@@ -611,8 +956,10 @@ output = "output"
                 pack_format: None,
                 description: None,
                 verbose: false,
+                quiet: false,
                 zip: false,
                 validate: false,
+                dry_run: false,
                 commands_json: PathBuf::from("data/commands.json"),
             })
         };
@@ -645,8 +992,10 @@ output = "output"
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: true,
             validate: false,
+            dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
         .unwrap();
@@ -667,7 +1016,7 @@ output = "output"
     }
 }
 
-fn create_zip(output_dir: &Path, namespace: &str) -> Result<(), String> {
+fn create_zip(output_dir: &Path, namespace: &str) -> Result<PathBuf, String> {
     let zip_path = output_dir.with_file_name(format!("{}.zip", namespace));
     let file =
         fs::File::create(&zip_path).map_err(|e| format!("Failed to create zip file: {}", e))?;
@@ -703,5 +1052,5 @@ fn create_zip(output_dir: &Path, namespace: &str) -> Result<(), String> {
     zip.finish()
         .map_err(|e| format!("Failed to finalize zip: {}", e))?;
 
-    Ok(())
+    Ok(zip_path)
 }

@@ -14,19 +14,21 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Version 0.6.2-a0** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
+**Version 0.6.2** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
 
-## Web Demo
+## Website And Web Demo
 
-**Live demo:** <https://deveworld.github.io/cobble/>
+**Website:** <https://deveworld.github.io/cobble/>
+**Browser compiler:** <https://deveworld.github.io/cobble/try/>
 
-The browser demo runs Cobble's Rust parser and transpiler through WebAssembly,
-so you can edit Cobble code and inspect the generated data pack files without
-installing the CLI.
+The website introduces Cobble with short examples and links to the browser
+compiler at `/try`. The compiler runs Cobble's Rust parser and transpiler
+through WebAssembly, so you can inspect generated functions, resources,
+metadata, diagnostics, and data pack ZIP output without installing the CLI.
 
 > [!WARNING]
-> Cobble is in active development (v0.6.2-a0 Pre-Alpha). Bugs and API changes are
-> expected. Please report issues at
+> Cobble is pre-1.0 software in active development. Bugs and API changes are
+> still possible. Please report issues at
 > <https://github.com/deveworld/cobble/issues>.
 
 ## Features
@@ -102,8 +104,17 @@ Copy the generated output to your world's `datapacks` directory:
 | `cobble init` | Create a new project |
 | `cobble build` | Build source files into a data pack |
 | `cobble check` | Check Cobble syntax without building |
+| `cobble doctor` | Inspect project and validation environment status |
+| `cobble inspect` | Summarize generated build metadata |
 | `cobble validate` | Validate generated `.mcfunction` files |
 | `cobble watch` | Rebuild when source files change |
+
+Use `cobble build --dry-run` to compile and inspect the output plan without
+writing the final data pack. Each build writes `.cobble/build_manifest.json`
+with the Cobble version, Minecraft target, pack format, source inputs,
+generated resource entries, validation summary when available, and generated
+file counts. Use `cobble inspect output/` to summarize that metadata after a
+build. Use `cobble build --quiet` when a script only needs the exit code.
 
 `cobble build --validate` and `cobble validate` check generated `.mcfunction`
 files against Minecraft Java Edition 26.1.2 commands. The default

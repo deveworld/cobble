@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "npm run build:wasm && next dev --webpack",
-    "build:wasm": "wasm-pack build wasm --target bundler --out-dir ../src/wasm/pkg --release",
+    "build:wasm": "rm -rf src/wasm/pkg public/wasm && wasm-pack build wasm --target web --out-dir ../src/wasm/pkg --release && mkdir -p public/wasm && cp src/wasm/pkg/cobble_web_wasm_bg.wasm public/wasm/cobble_web_wasm_bg.wasm",
     "build": "npm run build:wasm && next build --webpack",
     "build:github": "NEXT_PUBLIC_BASE_PATH=/cobble npm run build",
     "start": "next start",

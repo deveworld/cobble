@@ -16,8 +16,10 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })?;
 
@@ -72,6 +74,64 @@ def setup():
     let tag = fs::read_to_string(namespace_dir.join("tags/function/utility.json")).unwrap();
     assert!(tag.contains(r#""values""#));
     assert!(tag.contains(r#""resources:setup""#));
+}
+
+#[test]
+fn build_writes_cobble_manifest_metadata() {
+    let (_temp, output_dir) = compile_source(
+        r##"
+datapack.function_tag("minecraft:load", ["resources:setup"])
+datapack.predicate("always", {
+    "condition": "minecraft:random_chance",
+    "chance": 1
+})
+
+def setup():
+    /say setup
+"##,
+    )
+    .unwrap();
+
+    let manifest_path = output_dir.join(".cobble/build_manifest.json");
+    assert!(manifest_path.exists());
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(manifest_path).unwrap()).unwrap();
+
+    assert_eq!(manifest["version"], 1);
+    assert_eq!(manifest["cobble_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(manifest["minecraft_version"], "26.1.2");
+    assert_eq!(manifest["pack_format_text"], "101.1");
+    assert_eq!(manifest["namespace"], "resources");
+    assert_eq!(
+        manifest["input"]["compiled_files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(manifest["generated"]["functions"], 1);
+    assert_eq!(manifest["generated"]["commands"], 1);
+    assert_eq!(manifest["generated"]["source_map_entries"], 1);
+    assert_eq!(manifest["generated"]["json_function_tags"], 1);
+    assert_eq!(manifest["generated"]["predicates"], 1);
+    assert_eq!(manifest["generated"]["json_resources"], 2);
+    assert_eq!(manifest["generated"]["total_json_resources"], 2);
+    assert!(manifest["generated_namespaces"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::Value::String("minecraft".to_string())));
+    let resources = manifest["resources"].as_array().unwrap();
+    assert!(resources.iter().any(|resource| {
+        resource["kind"] == "function_tag"
+            && resource["namespace"] == "minecraft"
+            && resource["path"] == "load"
+    }));
+    assert!(resources.iter().any(|resource| {
+        resource["kind"] == "predicate"
+            && resource["namespace"] == "resources"
+            && resource["path"] == "always"
+    }));
+    assert!(manifest["validation"].is_null());
 }
 
 #[test]
@@ -131,6 +191,22 @@ stdlib.addEventListener(event.LOAD, load)
             serde_json::json!("resources:extra_load")
         ]
     );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let function_tag_resources: Vec<_> = manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|resource| resource["kind"] == "function_tag")
+        .collect();
+
+    assert_eq!(manifest["generated"]["function_tags"], 1);
+    assert_eq!(function_tag_resources.len(), 1);
+    assert_eq!(function_tag_resources[0]["namespace"], "minecraft");
+    assert_eq!(function_tag_resources[0]["path"], "load");
 }
 
 #[test]
@@ -169,7 +245,18 @@ datapack.predicate("Bad/Name", {"condition": "minecraft:random_chance", "chance"
     .unwrap_err();
 
     assert!(error.contains("Invalid resource name"));
+    assert!(error.contains("uppercase character 'B' at position 1"));
     assert!(error.contains("lowercase resource paths"));
+
+    let namespace_error = compile_source(
+        r#"
+datapack.function_tag("minecraft/load", ["resources:setup"])
+"#,
+    )
+    .unwrap_err();
+
+    assert!(namespace_error.contains("'minecraft' looks like a namespace"));
+    assert!(namespace_error.contains("minecraft:load"));
 }
 
 #[test]
@@ -197,8 +284,10 @@ def setup():
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: false,
+            dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
     };
@@ -268,8 +357,10 @@ fn namespace_changes_clean_previous_generated_namespace() {
             pack_format: None,
             description: None,
             verbose: false,
+            quiet: false,
             zip: false,
             validate: false,
+            dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
         .unwrap();
@@ -297,8 +388,10 @@ fn namespace_changes_clean_previous_function_dir_when_namespace_is_still_used_fo
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -328,8 +421,10 @@ def main():
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();

@@ -4,7 +4,7 @@
 
 - Planning date: 2026-06-02
 - Base release: `0.6.1`
-- Current development version: `0.6.2-a0`
+- Current release candidate version: `0.6.2`
 - Target release: `0.6.2`
 - Minecraft target: Java Edition `26.1.2`
 - Data pack format: `101.1`
@@ -31,10 +31,10 @@ packs.
 ## Release Goals
 
 1. Preserve the published `v0.6.1` tag and crate as immutable release history.
-2. Keep the current development line on a prerelease version until the full
-   0.6.2 release gate passes.
-3. Promote `0.6.2-a0` to `0.6.2` only after local, package, web, and optional
-   server QA are complete.
+2. Use a prerelease version during active development, then promote to stable
+   only after the full 0.6.2 release gate passes.
+3. Promote the working tree to stable `0.6.2` only after local, package, web,
+   and optional server QA are complete.
 4. Fix correctness gaps discovered during 0.6.1 QA without changing the
    supported Minecraft version or pack format.
 5. Add a small set of workflow improvements that reduce friction in normal
@@ -43,7 +43,7 @@ packs.
    what Cobble emitted.
 7. Make default command-tree validation fail loudly when a stale local
    `data/commands.json` is present.
-8. Keep GitHub Pages deployment scoped to actual web demo changes.
+8. Keep GitHub Pages deployment scoped to actual web demo build inputs.
 9. Ensure examples and docs match Minecraft Java Edition 26.1.2 syntax.
 10. Keep crates.io and GitHub release notes aligned with the exact version being
    published.
@@ -84,22 +84,19 @@ feature release.
 
 - `v0.6.1` points at the published 0.6.1 release commit.
 - QA fixes landed after `v0.6.1`, so they must not be folded into 0.6.1.
-- The current branch is versioned as `0.6.2-a0`.
-- Cargo/crates.io require SemVer-compatible prerelease identifiers, so the
-  development version is `0.6.2-a0`, not raw `0.6.2a0`.
+- The current branch is versioned as stable `0.6.2` after prerelease QA.
+- The earlier development build used a Cargo-compatible prerelease identifier.
 
 #### Tasks
 
-- Keep `Cargo.toml`, `Cargo.lock`, README, docs, and changelog on
-  `0.6.2-a0` while QA is incomplete.
+- Keep `Cargo.toml`, `Cargo.lock`, README, docs, and changelog on the exact
+  version being tested.
 - Do not move the `v0.6.1` tag.
 - Do not publish a stable `0.6.2` crate until the full release gate passes.
-- When ready, bump `0.6.2-a0` to `0.6.2` in one focused release commit.
+- Stable version bump from the development prerelease to `0.6.2` is prepared in
+  this working tree and passed dirty-worktree release QA. A final clean-worktree
+  `cargo package --locked` run is still required after the release commit.
 - Tag stable release as `v0.6.2`.
-- If publishing an alpha crate is needed, use:
-  - `cargo publish --dry-run`
-  - `cargo publish`
-  - install test with `cargo install cobble-lang --version 0.6.2-a0`
 - For stable release, verify `cargo install cobble-lang` resolves to `0.6.2`
   only after the stable crate is published.
 
@@ -114,7 +111,7 @@ feature release.
 
 #### Current State
 
-0.6.2-a0 already includes fixes for several 0.6.1 QA findings:
+0.6.2 already includes fixes for several 0.6.1 QA findings:
 
 - Nested NBT/JSON delimiter parsing now tracks delimiter type with a stack.
 - Legacy item-stack NBT after item IDs is rejected for modern 26.1.2 item
@@ -157,7 +154,7 @@ feature release.
 
 #### Current State
 
-0.6.2-a0 strengthens the Rust validation path and the shell setup script:
+0.6.2 strengthens the Rust validation path and the shell setup script:
 
 - Rust auto-generation already tries multiple manifest hosts and falls back to a
   pinned 26.1.2 server jar URL.
@@ -210,7 +207,8 @@ feature release.
 - `cargo run --locked -- check examples` passes for all example files.
 - README links resolve or intentionally point to local repo paths.
 - No docs page advertises unsupported Minecraft versions.
-- No docs page describes 0.6.2-a0 changes as stable 0.6.2 before promotion.
+- No docs page describes unreleased changes as already published before
+  promotion.
 
 ### 5. Project Workflow And CLI UX
 
@@ -222,7 +220,7 @@ initialize, build, validate, and inspect a project.
 
 #### Candidate Tasks
 
-- Add `cobble doctor` or `cobble env` to report:
+- [x] Add `cobble doctor` to report:
   - Cobble version,
   - target Minecraft version,
   - pack format,
@@ -230,20 +228,20 @@ initialize, build, validate, and inspect a project.
   - whether `curl` is available,
   - whether default `data/commands.json` exists and matches the expected SHA-1,
   - whether the current directory has a valid `cobble.toml`.
-- Add `cobble build --dry-run` to parse, resolve imports, compute output plan,
+- [x] Add `cobble build --dry-run` to parse, resolve imports, compute output plan,
   and optionally validate generated commands without writing final output.
-- Add clearer build summaries:
+- [x] Add clearer build summaries:
   - source files compiled,
   - generated function count,
   - generated resource count,
   - macro command count,
   - validation command count,
   - ZIP output path when enabled.
-- Improve `cobble init` post-create output with exact next commands:
+- [x] Improve `cobble init` post-create output with exact next commands:
   - `cd <project>`,
-  - `cobble build`,
+  - `cobble build --dry-run`,
   - `cobble build --validate`.
-- Add `--quiet` or refine current verbosity if logs are noisy in scripts.
+- [x] Add `--quiet` or refine current verbosity if logs are noisy in scripts.
 - Add tests for CLI output where behavior is stable enough to assert.
 
 #### Acceptance Criteria
@@ -262,7 +260,7 @@ metadata more useful for debugging and tooling without changing Cobble syntax.
 
 #### Candidate Tasks
 
-- Add `.cobble/build_manifest.json` with:
+- [x] Add `.cobble/build_manifest.json` with:
   - Cobble version,
   - Minecraft target,
   - pack format,
@@ -271,7 +269,7 @@ metadata more useful for debugging and tooling without changing Cobble syntax.
   - entry points,
   - generated function/resource counts,
   - validation summary when validation ran.
-- Add generated resource entries to metadata where useful:
+- [x] Add generated resource entries to metadata where useful:
   - tags,
   - predicates,
   - advancements,
@@ -279,13 +277,13 @@ metadata more useful for debugging and tooling without changing Cobble syntax.
   - recipes,
   - item modifiers,
   - dialogs.
-- Improve source-map path stability:
+- [x] Improve source-map path stability:
   - prefer project-relative paths where possible,
   - avoid leaking absolute paths when a relative source path is known,
   - keep existing validation checks for generated paths outside the data pack.
-- Add a `cobble inspect <output>` command only if it can be implemented as a
+- [x] Add a `cobble inspect <output>` command only if it can be implemented as a
   small manifest/source-map reader.
-- Document the metadata files as internal but stable enough for debugging.
+- [x] Document the metadata files as internal but stable enough for debugging.
 
 #### Acceptance Criteria
 
@@ -303,16 +301,16 @@ quality-of-life helpers and safety checks where they are clearly bounded.
 
 #### Candidate Tasks
 
-- Add focused text helpers if they map directly to stable JSON text components:
+- [x] Add focused text helpers if they map directly to stable JSON text components:
   - `text.plain`,
   - `text.colored`,
   - `text.score`,
   - `text.selector`.
-- Add scoreboard display convenience helpers only if they reuse existing command
+- [x] Add scoreboard display convenience helpers only if they reuse existing command
   generation and validation paths.
-- Add storage helper coverage for common list/object operations if gaps remain
+- [x] Add storage helper coverage for common list/object operations if gaps remain
   after 0.6.1.
-- Add resource name normalization diagnostics:
+- [x] Add resource name normalization diagnostics:
   - reject accidental uppercase paths,
   - point to the invalid character,
   - suggest `namespace:path` form when users include slashes that look like a
@@ -335,12 +333,14 @@ quality-of-life helpers and safety checks where they are clearly bounded.
 #### Current State
 
 - The web demo is already deployed at <https://deveworld.github.io/cobble/>.
-- Push-triggered Pages deployment now runs only for `web/**` changes.
+- Push-triggered Pages deployment runs only when web demo build inputs change:
+  `web/**`, `src/**`, `Cargo.toml`, `Cargo.lock`, or the Pages workflow.
 - `workflow_dispatch` remains available for manual deployment.
 
 #### Tasks
 
-- Keep Pages deployment path filter to `web/**` only.
+- Keep Pages deployment path filter limited to files that can affect the static
+  web demo build.
 - Use manual `workflow_dispatch` when a docs-only release needs a redeploy.
 - Re-run local web checks after any web change:
   - `npm run lint`
@@ -350,32 +350,39 @@ quality-of-life helpers and safety checks where they are clearly bounded.
 
 #### Candidate Enhancements
 
-- Add tabs for generated outputs:
+- [x] Add tabs for generated outputs:
   - `.mcfunction`,
   - `pack.mcmeta`,
   - tags/resources,
   - source map,
   - build manifest if added.
-- Add copy/download buttons for each generated file.
-- Add a ZIP download if it can be done without pulling in heavy dependencies.
-- Add sample selector:
+- [x] Add copy/download buttons for each generated file.
+- [x] Add a ZIP download if it can be done without pulling in heavy dependencies.
+- [x] Add sample selector:
   - hello world,
   - stdlib events,
   - inventory components,
   - resource declarations,
   - validation-focused example.
-- Surface parser/transpiler errors in a compact diagnostics panel.
-- Keep the page usable on mobile and desktop.
+- [x] Surface parser/transpiler errors in a compact diagnostics panel.
+- [x] Split the website root from the compiler route so `/` explains Cobble and
+  `/try` hosts the browser compiler.
+- [x] Keep the page usable on mobile and desktop.
+  - Checked local headless browser screenshots and sub-agent review across
+    320/360/390 mobile widths, 768/820/1024 tablet widths, and
+    1280/1440/1920 desktop widths.
 
 #### Acceptance Criteria
 
-- README-only, docs-only, and Cargo-only pushes do not trigger Pages.
-- Web changes trigger Pages automatically.
+- README-only and docs-only pushes do not trigger Pages.
+- Web changes and Rust compiler changes that affect the WASM demo trigger Pages
+  automatically.
 - Manual dispatch can deploy when explicitly requested.
 - The live demo loads the WASM bundle and preview image under `/cobble/`.
 - `npm run lint` passes.
 - `npm run build:github` passes.
-- Playwright smoke verifies the live editor renders non-empty generated output.
+- Headless browser smoke verifies the live editor renders non-empty generated
+  output.
 - Asset paths work under `/cobble/`.
 
 ### 9. Optional Real-Server QA
@@ -386,6 +393,13 @@ quality-of-life helpers and safety checks where they are clearly bounded.
   network/Purpur jar access, and explicit Minecraft EULA acceptance.
 - `scripts/test_minecraft_server.sh` guards execution with
   `COBBLE_MINECRAFT_EULA_ACCEPTED=1`.
+- 2026-06-02 pre-commit QA: `COBBLE_MINECRAFT_EULA_ACCEPTED=1
+  scripts/test_minecraft_server.sh` passed. Purpur downloaded, the generated
+  data pack loaded, smoke commands ran, and the server shut down cleanly.
+- 2026-06-02 stable pre-commit QA reran
+  `COBBLE_MINECRAFT_EULA_ACCEPTED=1 scripts/test_minecraft_server.sh` after
+  the working tree was promoted to `0.6.2`; the generated data pack loaded and
+  the server smoke passed.
 
 #### Tasks
 
@@ -417,7 +431,7 @@ scripts/test_minecraft_server.sh
 
 ## QA Matrix
 
-Run this matrix before promoting `0.6.2-a0` to stable `0.6.2`.
+Run this matrix before committing, tagging, and publishing stable `0.6.2`.
 
 ### Required
 
@@ -430,8 +444,16 @@ cargo run --locked -- check examples
 cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
 cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
 cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
+cargo run --locked -- doctor
+cargo run --locked -- build examples/26_smoke --dry-run --validate
+cargo run --locked -- inspect /tmp/cobble-qa-26-smoke
+cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
 cargo package --locked
 ```
+
+During active pre-commit QA with a dirty worktree, use
+`cargo package --locked --allow-dirty` to verify package contents, then rerun
+`cargo package --locked` after the release commit is clean.
 
 ### Required If CLI Or Metadata Changes
 
@@ -440,10 +462,7 @@ cargo run --locked -- init --name /tmp/cobble-qa-init --template validation
 cargo run --locked -- build /tmp/cobble-qa-init --validate -o /tmp/cobble-qa-init-out
 ```
 
-If `cobble doctor`, `build --dry-run`, `inspect`, or build manifest support is
-implemented, add direct smoke commands here before promotion.
-
-### Required If `web/**` Changed
+### Required If Web Build Inputs Changed
 
 ```bash
 cd web
@@ -457,22 +476,88 @@ npm run build:github
 COBBLE_MINECRAFT_EULA_ACCEPTED=1 scripts/test_minecraft_server.sh
 ```
 
+### Results From 2026-06-02 Stable Pre-Commit QA
+
+Passed:
+
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo test --locked`
+- `cargo clippy --locked --all-targets -- -D warnings`
+- `cargo run --locked -- --version` prints `cobble 0.6.2`
+- `cargo run --locked -- check examples`
+- `cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke`
+- `cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix`
+- `cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory`
+- `cargo run --locked -- init --name /tmp/cobble-qa-init --template validation`
+- `cargo run --locked -- build /tmp/cobble-qa-init --validate -o /tmp/cobble-qa-init-out`
+- `cargo run --locked -- doctor`
+- `cargo run --locked -- build examples/26_smoke --dry-run --validate`
+- `cargo run --locked -- inspect /tmp/cobble-qa-26-smoke`
+- `cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json`
+- `cargo package --locked --allow-dirty`
+- `cargo publish --dry-run --locked --allow-dirty`
+- `npm run lint`
+- `npm run build:github`
+- Static GitHub Pages smoke for `/cobble/`, `/cobble/try/`,
+  `/cobble/cobble-workshop.jpg`, `/cobble/icon.svg`, and
+  `/cobble/wasm/cobble_web_wasm_bg.wasm`.
+- Headless Chrome `/try` smoke confirmed non-empty generated mcfunction output.
+- Headless Chrome screenshots checked at 390px, 1280px, and 1440px.
+- `COBBLE_MINECRAFT_EULA_ACCEPTED=1 scripts/test_minecraft_server.sh`
+
+Notes:
+
+- Sub-agent review found duplicate `.cobble/build_manifest.json` function-tag
+  entries when stdlib event tags merged with explicit `datapack.function_tag`
+  declarations. This was fixed and covered by
+  `cargo test --locked --test datapack_resources_test`.
+- After the sub-agent fix, `cargo test --locked`,
+  `cargo clippy --locked --all-targets -- -D warnings`,
+  `cargo package --locked --allow-dirty`,
+  `cargo publish --dry-run --locked --allow-dirty`, `npm run lint`,
+  `npm run build:github`, static `/cobble/try/` WASM smoke, `cargo fmt --check`,
+  `git diff --check`, and the opt-in Purpur server smoke passed again.
+- Final WASM direct-call QA found that `.cobble/build_manifest.json` generated
+  by the web demo reported the internal `cobble-web-wasm` helper crate version
+  instead of the root `cobble-lang` version. The web WASM build now injects the
+  root Cargo version through `COBBLE_LANG_VERSION`, and direct-call QA confirmed
+  manifest `cobble_version: "0.6.2"`.
+- After the WASM version fix, the stable release gate was rerun: `cargo fmt --check`,
+  `git diff --check`, `cargo test --locked`,
+  `cargo clippy --locked --all-targets -- -D warnings`, CLI example
+  check/build/dry-run/inspect smoke, `npm run lint`, `npm run build:github`,
+  static `/cobble/try/` smoke, web WASM direct-call manifest QA,
+  `cargo package --locked --allow-dirty`,
+  `cargo publish --dry-run --locked --allow-dirty`, and the opt-in Purpur
+  server smoke all passed.
+- Final sub-agent review found a web `/try` parity issue where stdlib function
+  tags and explicit `datapack.function_tag` declarations could produce duplicate
+  file entries for the same tag path in the browser file list and ZIP download.
+  The web WASM materializer now merges duplicate tag paths in memory, and a
+  direct WASM smoke confirmed one `data/minecraft/tags/function/load.json` file
+  with merged values.
+- Final sub-agent review also noted that the Pages workflow was too narrow now
+  that the web WASM compiler depends on root Rust sources. The workflow path
+  filter now includes `web/**`, `src/**`, `Cargo.toml`, `Cargo.lock`, and the
+  workflow file itself while still avoiding README-only and docs-only deploys.
+- `cargo package --locked` still needs one final clean-worktree run after the
+  stable `0.6.2` release commit is prepared.
+
 ## Promotion Plan
 
 1. Complete the QA matrix.
 2. Resolve any findings with focused commits.
 3. Make sure every implemented 0.6.2 feature has a changelog entry.
 4. Decide whether remaining candidate tasks are deferred to 0.7.0.
-5. Update `CHANGELOG.md` from `0.6.2-a0` to `0.6.2`.
-6. Bump Cargo/doc versions from `0.6.2-a0` to `0.6.2`.
-7. Run required QA again on the clean stable release commit.
-8. Run `cargo publish --dry-run`.
-9. Commit the stable version bump.
-10. Tag `v0.6.2`.
-11. Push branch and tag.
-12. Publish to crates.io.
-13. Create GitHub Release `Cobble 0.6.2`.
-14. Verify install:
+5. Run required QA again on the stable `0.6.2` working tree.
+6. Run `cargo publish --dry-run`.
+7. Commit the stable version bump and implementation changes.
+8. Tag `v0.6.2`.
+9. Push branch and tag.
+10. Publish to crates.io.
+11. Create GitHub Release `Cobble 0.6.2`.
+12. Verify install:
 
 ```bash
 cargo install cobble-lang --version 0.6.2
@@ -481,29 +566,23 @@ cobble --version
 
 ## Open Questions
 
-- Should `0.6.2-a0` be published to crates.io, or should it remain a GitHub-only
-  prerelease marker until stable 0.6.2?
 - Should the command-tree SHA-1 be documented publicly, or is the actionable
   error message enough?
 - Should we add a dedicated release checklist file separate from `PLAN.md` for
   future patch releases?
-- Which workflow feature is highest priority: `doctor`, `build --dry-run`,
-  `inspect`, or richer build summaries?
 - Should build metadata be considered internal-only, or can downstream tools
   rely on `.cobble/build_manifest.json` once introduced?
-- How much web demo work should land in 0.6.2 versus a dedicated website
-  milestone?
 
 ## Completion Checklist
 
-- [ ] Keep `v0.6.1` unchanged.
-- [ ] Keep development version as `0.6.2-a0` until release QA passes.
-- [ ] Confirm Pages workflow only auto-runs on `web/**` changes.
-- [ ] Select final 0.6.2 feature workstreams from the candidate list.
-- [ ] Implement selected workflow/metadata/web/doc improvements.
-- [ ] Add focused tests for every selected implementation task.
-- [ ] Run required QA matrix.
-- [ ] Run optional real-server QA or document why it was skipped.
-- [ ] Decide whether to publish `0.6.2-a0`.
-- [ ] Promote to stable `0.6.2`.
+- [x] Keep `v0.6.1` unchanged.
+- [x] Keep a prerelease development version until release QA passes.
+- [x] Confirm Pages workflow only auto-runs when web build inputs change.
+- [x] Select final 0.6.2 feature workstreams from the candidate list.
+- [x] Implement selected workflow/metadata/web/doc improvements.
+- [x] Add focused test or smoke coverage for selected implementation tasks.
+- [x] Run required QA matrix.
+- [x] Run optional real-server QA or document why it was skipped.
+- [x] Decide to publish stable `0.6.2` instead of a prerelease crate.
+- [x] Promote working tree to stable `0.6.2`.
 - [ ] Publish crate and GitHub Release.

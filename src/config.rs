@@ -1,4 +1,4 @@
-use crate::pack_format::{SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
+use crate::pack_format::{COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -80,7 +80,7 @@ impl CobbleConfig {
                 self.project.pack_format,
                 SUPPORTED_PACK_FORMAT,
                 SUPPORTED_MINECRAFT_VERSION,
-                env!("CARGO_PKG_VERSION"),
+                COBBLE_VERSION,
                 SUPPORTED_MINECRAFT_VERSION,
                 SUPPORTED_PACK_FORMAT
             ));

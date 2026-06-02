@@ -48,7 +48,9 @@ pub fn init(options: InitOptions) -> Result<(), String> {
         config.project.description = desc;
     }
     if let Some(format_str) = options.pack_format {
-        use crate::pack_format::{PackFormat, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
+        use crate::pack_format::{
+            PackFormat, COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT,
+        };
         let pack_fmt = PackFormat::parse_format(&format_str)?;
 
         if !pack_fmt.is_supported() {
@@ -59,7 +61,7 @@ pub fn init(options: InitOptions) -> Result<(), String> {
                 SUPPORTED_PACK_FORMAT,
                 SUPPORTED_MINECRAFT_VERSION,
                 pack_fmt,
-                env!("CARGO_PKG_VERSION"),
+                COBBLE_VERSION,
                 SUPPORTED_MINECRAFT_VERSION
             ));
         }
@@ -111,10 +113,12 @@ Thumbs.db
     println!();
     println!("Project initialized successfully!");
     println!("Next steps:");
-    println!("  • Edit src/main.cbl to add your code");
-    println!("  • Run 'cobble build' to generate the data pack");
-    println!("  • Run 'cobble build --validate' to validate generated commands");
-    println!("  • Run 'cobble watch' for development mode");
+    if has_name {
+        println!("  cd {}", project_dir.display());
+    }
+    println!("  cobble build --dry-run");
+    println!("  cobble build --validate");
+    println!("  cobble watch");
 
     Ok(())
 }

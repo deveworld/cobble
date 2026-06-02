@@ -1,4 +1,6 @@
-use crate::pack_format::{PackFormat, SUPPORTED_PACK_FORMAT};
+use crate::pack_format::{
+    PackFormat, COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT,
+};
 use crate::stdlib::{EventType, StdLib};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -6,6 +8,23 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+fn stable_relative_path(path: &Path, root: &Path) -> PathBuf {
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
+    if let Ok(relative_path) = canonical_path.strip_prefix(&canonical_root) {
+        if !relative_path.as_os_str().is_empty() {
+            return relative_path.to_path_buf();
+        }
+    }
+
+    if path.is_relative() {
+        return path.to_path_buf();
+    }
+
+    canonical_path
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SourceLocation {
@@ -51,6 +70,66 @@ pub struct SourceMap {
     pub entries: Vec<SourceMapEntry>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildManifest {
+    pub version: u8,
+    pub cobble_version: String,
+    pub minecraft_version: String,
+    pub pack_format: PackFormat,
+    pub pack_format_text: String,
+    pub namespace: String,
+    pub description: String,
+    pub input: Option<BuildManifestInput>,
+    pub generated_namespaces: Vec<String>,
+    pub generated: BuildManifestGenerated,
+    pub resources: Vec<BuildManifestResourceEntry>,
+    pub validation: Option<BuildManifestValidation>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildManifestInput {
+    pub source: String,
+    pub entry_points: Vec<String>,
+    pub compiled_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildManifestGenerated {
+    pub functions: usize,
+    pub commands: usize,
+    pub source_map_entries: usize,
+    pub function_tags: usize,
+    pub stdlib_function_tags: usize,
+    pub custom_function_tags: usize,
+    pub json_function_tags: usize,
+    pub advancements: usize,
+    pub loot_tables: usize,
+    pub recipes: usize,
+    pub predicates: usize,
+    pub item_modifiers: usize,
+    pub json_resources: usize,
+    pub total_json_resources: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
+pub struct BuildManifestResourceEntry {
+    pub kind: String,
+    pub namespace: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildManifestValidation {
+    pub enabled: bool,
+    pub commands_json: String,
+    pub files_checked: usize,
+    pub commands_checked: usize,
+    pub macro_commands_checked: usize,
+    pub commands_skipped: usize,
+    pub errors: usize,
+    pub source_map_errors: usize,
+}
+
 pub struct DataPack {
     pub namespace: String,
     pub description: String,
@@ -67,6 +146,9 @@ pub struct DataPack {
     pub pack_format: PackFormat,
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
+    pub source_display_root: Option<PathBuf>,
+    pub build_input: Option<BuildManifestInput>,
+    pub validation_summary: Option<BuildManifestValidation>,
 }
 
 impl DataPack {
@@ -87,6 +169,9 @@ impl DataPack {
             pack_format: SUPPORTED_PACK_FORMAT,
             stdlib: StdLib::new(),
             used_objectives: HashSet::new(),
+            source_display_root: None,
+            build_input: None,
+            validation_summary: None,
         }
     }
 
@@ -96,6 +181,30 @@ impl DataPack {
 
     pub fn set_pack_format(&mut self, format: PackFormat) {
         self.pack_format = format;
+    }
+
+    pub fn set_build_input(&mut self, input: BuildManifestInput) {
+        self.build_input = Some(input);
+    }
+
+    pub fn set_source_display_root(&mut self, root: PathBuf) {
+        self.source_display_root = Some(root);
+    }
+
+    pub fn set_validation_summary(&mut self, validation: Option<BuildManifestValidation>) {
+        self.validation_summary = validation;
+    }
+
+    pub fn generated_counts(&self) -> BuildManifestGenerated {
+        let resources = self.generated_resource_entries();
+        let source_map_entry_count = self.functions.values().map(Vec::len).sum();
+        self.generated_counts_with_source_map(source_map_entry_count, &resources)
+    }
+
+    pub fn build_manifest_snapshot(&self) -> BuildManifest {
+        let generated_namespaces = self.generated_namespaces();
+        let source_map_entry_count = self.functions.values().map(Vec::len).sum();
+        self.build_manifest(source_map_entry_count, &generated_namespaces)
     }
 
     fn metadata_for_commands(
@@ -484,12 +593,15 @@ impl DataPack {
                     generated_path: generated_path.clone(),
                     generated_line: index + 1,
                     command: metadata.text,
-                    source: metadata.source,
+                    source: metadata
+                        .source
+                        .map(|source| self.normalize_source_location(source)),
                     kind: metadata.kind,
                 });
             }
         }
 
+        let source_map_entry_count = source_map_entries.len();
         if !source_map_entries.is_empty() {
             let source_map = SourceMap {
                 version: 1,
@@ -507,8 +619,14 @@ impl DataPack {
             serde_json::to_string_pretty(&generated_namespaces).unwrap(),
         )?;
 
-        // Write tags from stdlib
         let stdlib_tags = self.stdlib.generate_tags(&self.namespace);
+        let build_manifest = self.build_manifest(source_map_entry_count, &generated_namespaces);
+        fs::write(
+            source_map_dir.join("build_manifest.json"),
+            serde_json::to_string_pretty(&build_manifest).unwrap(),
+        )?;
+
+        // Write tags from stdlib
         for (tag_name, functions) in stdlib_tags {
             Self::write_function_tag(&data_dir, &self.namespace, &tag_name, &functions)?;
         }
@@ -578,6 +696,264 @@ impl DataPack {
         }
 
         Ok(())
+    }
+
+    fn build_manifest(
+        &self,
+        source_map_entry_count: usize,
+        generated_namespaces: &[String],
+    ) -> BuildManifest {
+        let resources = self.generated_resource_entries();
+        let generated = self.generated_counts_with_source_map(source_map_entry_count, &resources);
+
+        BuildManifest {
+            version: 1,
+            cobble_version: COBBLE_VERSION.to_string(),
+            minecraft_version: SUPPORTED_MINECRAFT_VERSION.to_string(),
+            pack_format: self.pack_format,
+            pack_format_text: self.pack_format.to_string(),
+            namespace: self.namespace.clone(),
+            description: self.description.clone(),
+            input: self.build_input.clone(),
+            generated_namespaces: generated_namespaces.to_vec(),
+            generated,
+            resources,
+            validation: self.validation_summary.clone(),
+        }
+    }
+
+    fn normalize_source_location(&self, mut source: SourceLocation) -> SourceLocation {
+        if let Some(root) = &self.source_display_root {
+            source.file = stable_relative_path(&source.file, root);
+        }
+        source
+    }
+
+    fn generated_resource_entries(&self) -> Vec<BuildManifestResourceEntry> {
+        let mut entries = Vec::new();
+
+        entries.extend(self.stdlib_function_tag_entries());
+        entries.extend(self.custom_function_tag_entries());
+
+        entries.extend(
+            self.advancements
+                .keys()
+                .map(|name| self.resource_entry("advancement", name)),
+        );
+        entries.extend(
+            self.loot_tables
+                .keys()
+                .map(|name| self.resource_entry("loot_table", name)),
+        );
+        entries.extend(
+            self.recipes
+                .keys()
+                .map(|name| self.resource_entry("recipe", name)),
+        );
+        entries.extend(
+            self.predicates
+                .keys()
+                .map(|name| self.resource_entry("predicate", name)),
+        );
+        entries.extend(
+            self.item_modifiers
+                .keys()
+                .map(|name| self.resource_entry("item_modifier", name)),
+        );
+
+        for key in self.json_resources.keys() {
+            let Some((namespace, path)) = Self::split_json_resource_key(key) else {
+                continue;
+            };
+            entries.push(Self::resource_entry_from_json_path(namespace, path));
+        }
+
+        Self::sort_and_dedup_resource_entries(&mut entries);
+        entries
+    }
+
+    fn stdlib_function_tag_entries(&self) -> Vec<BuildManifestResourceEntry> {
+        let mut entries: Vec<_> = self
+            .stdlib
+            .generate_tags(&self.namespace)
+            .keys()
+            .map(|tag_name| {
+                Self::resource_entry_from_tag_name("function_tag", &self.namespace, tag_name)
+            })
+            .collect();
+        Self::sort_and_dedup_resource_entries(&mut entries);
+        entries
+    }
+
+    fn custom_function_tag_entries(&self) -> Vec<BuildManifestResourceEntry> {
+        let mut entries = Vec::new();
+
+        for tag_name in self.tags.keys() {
+            entries.push(Self::resource_entry_from_tag_name(
+                "function_tag",
+                &self.namespace,
+                tag_name,
+            ));
+        }
+
+        for key in self.json_resources.keys() {
+            let Some((namespace, path)) = Self::split_json_resource_key(key) else {
+                continue;
+            };
+            if let Some(path) = path.strip_prefix("tags/function/") {
+                entries.push(BuildManifestResourceEntry {
+                    kind: "function_tag".to_string(),
+                    namespace: namespace.to_string(),
+                    path: path.to_string(),
+                });
+            }
+        }
+
+        Self::sort_and_dedup_resource_entries(&mut entries);
+        entries
+    }
+
+    fn sort_and_dedup_resource_entries(entries: &mut Vec<BuildManifestResourceEntry>) {
+        entries.sort_by(|left, right| {
+            (
+                left.kind.as_str(),
+                left.namespace.as_str(),
+                left.path.as_str(),
+            )
+                .cmp(&(
+                    right.kind.as_str(),
+                    right.namespace.as_str(),
+                    right.path.as_str(),
+                ))
+        });
+        entries.dedup();
+    }
+
+    fn resource_entry(&self, kind: &str, path: &str) -> BuildManifestResourceEntry {
+        BuildManifestResourceEntry {
+            kind: kind.to_string(),
+            namespace: self.namespace.clone(),
+            path: path.to_string(),
+        }
+    }
+
+    fn resource_entry_from_tag_name(
+        kind: &str,
+        default_namespace: &str,
+        tag_name: &str,
+    ) -> BuildManifestResourceEntry {
+        let (namespace, path) = tag_name
+            .split_once(':')
+            .unwrap_or((default_namespace, tag_name));
+        BuildManifestResourceEntry {
+            kind: kind.to_string(),
+            namespace: namespace.to_string(),
+            path: path.to_string(),
+        }
+    }
+
+    fn resource_entry_from_json_path(namespace: &str, path: &str) -> BuildManifestResourceEntry {
+        let (kind, path) = if let Some(path) = path.strip_prefix("tags/function/") {
+            ("function_tag", path)
+        } else if let Some(path) = path.strip_prefix("tags/block/") {
+            ("block_tag", path)
+        } else if let Some(path) = path.strip_prefix("tags/item/") {
+            ("item_tag", path)
+        } else if let Some(path) = path.strip_prefix("tags/entity_type/") {
+            ("entity_type_tag", path)
+        } else if let Some(path) = path.strip_prefix("advancement/") {
+            ("advancement", path)
+        } else if let Some(path) = path.strip_prefix("loot_table/") {
+            ("loot_table", path)
+        } else if let Some(path) = path.strip_prefix("recipe/") {
+            ("recipe", path)
+        } else if let Some(path) = path.strip_prefix("predicate/") {
+            ("predicate", path)
+        } else if let Some(path) = path.strip_prefix("item_modifier/") {
+            ("item_modifier", path)
+        } else if let Some(path) = path.strip_prefix("dialog/") {
+            ("dialog", path)
+        } else {
+            ("json_resource", path)
+        };
+
+        BuildManifestResourceEntry {
+            kind: kind.to_string(),
+            namespace: namespace.to_string(),
+            path: path.to_string(),
+        }
+    }
+
+    fn generated_counts_with_source_map(
+        &self,
+        source_map_entry_count: usize,
+        resources: &[BuildManifestResourceEntry],
+    ) -> BuildManifestGenerated {
+        let mut json_advancement_count = 0;
+        let mut json_loot_table_count = 0;
+        let mut json_recipe_count = 0;
+        let mut json_predicate_count = 0;
+        let mut json_item_modifier_count = 0;
+        let mut json_function_tag_count = 0;
+
+        for key in self.json_resources.keys() {
+            let Some((_, path)) = Self::split_json_resource_key(key) else {
+                continue;
+            };
+            if path.starts_with("advancement/") {
+                json_advancement_count += 1;
+            } else if path.starts_with("loot_table/") {
+                json_loot_table_count += 1;
+            } else if path.starts_with("recipe/") {
+                json_recipe_count += 1;
+            } else if path.starts_with("predicate/") {
+                json_predicate_count += 1;
+            } else if path.starts_with("item_modifier/") {
+                json_item_modifier_count += 1;
+            } else if path.starts_with("tags/function/") {
+                json_function_tag_count += 1;
+            }
+        }
+
+        let advancement_count = self.advancements.len() + json_advancement_count;
+        let loot_table_count = self.loot_tables.len() + json_loot_table_count;
+        let recipe_count = self.recipes.len() + json_recipe_count;
+        let predicate_count = self.predicates.len() + json_predicate_count;
+        let item_modifier_count = self.item_modifiers.len() + json_item_modifier_count;
+        let legacy_typed_json_resources = self.advancements.len()
+            + self.loot_tables.len()
+            + self.recipes.len()
+            + self.predicates.len()
+            + self.item_modifiers.len();
+
+        let function_tag_count = resources
+            .iter()
+            .filter(|resource| resource.kind == "function_tag")
+            .count();
+        let stdlib_function_tags = self.stdlib_function_tag_entries();
+        let stdlib_function_tag_set: HashSet<_> = stdlib_function_tags.iter().cloned().collect();
+        let custom_function_tag_count = self
+            .custom_function_tag_entries()
+            .into_iter()
+            .filter(|entry| !stdlib_function_tag_set.contains(entry))
+            .count();
+
+        BuildManifestGenerated {
+            functions: self.functions.len(),
+            commands: self.functions.values().map(Vec::len).sum(),
+            source_map_entries: source_map_entry_count,
+            function_tags: function_tag_count,
+            stdlib_function_tags: stdlib_function_tags.len(),
+            custom_function_tags: custom_function_tag_count,
+            json_function_tags: json_function_tag_count,
+            advancements: advancement_count,
+            loot_tables: loot_table_count,
+            recipes: recipe_count,
+            predicates: predicate_count,
+            item_modifiers: item_modifier_count,
+            json_resources: self.json_resources.len(),
+            total_json_resources: legacy_typed_json_resources + self.json_resources.len(),
+        }
     }
 
     fn is_safe_namespace_path(namespace: &str) -> bool {

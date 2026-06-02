@@ -1,5 +1,5 @@
-import { CobbleDemo } from "@/components/CobbleDemo";
+import { CobbleHome } from "@/components/CobbleHome";
 
 export default function Home() {
-  return <CobbleDemo />;
+  return <CobbleHome />;
 }

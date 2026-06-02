@@ -235,7 +235,7 @@ def give_reward(player, amount):
     /tellraw {player} {"text":"You received diamonds!", "color":"gold"}
 ```
 
-**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. Cobble v0.6.2-a0 targets Minecraft Java Edition 26.1.2, where this macro syntax is available.
+**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. Cobble v0.6.2 targets Minecraft Java Edition 26.1.2, where this macro syntax is available.
 
 ### Calling Functions
 
@@ -665,10 +665,18 @@ from stdlib import event
 ```python
 def notify():
     text.tellraw("@a", {"text": "Loaded", "color": "green"})
+    text.tellraw("@a", text.plain("Plain message"))
+    text.tellraw("@a", text.colored("Gold message", "gold"))
+    text.tellraw("@a", text.score("@s", "points"))
+    text.tellraw("@a", text.selector("@p"))
     text.title("@a", "Ready")
     text.subtitle("@a", {"text": "Go", "bold": True})
     text.actionbar("@a", "Running")
 ```
+
+`text.plain`, `text.colored`, `text.score`, and `text.selector` return JSON
+text components for use inside other helpers or JSON resource declarations.
+Colors accept Minecraft named colors or `#RRGGBB`.
 
 ### Score Helpers
 
@@ -742,6 +750,9 @@ specialized option is not covered yet.
 
 Top-level `datapack.*` declarations generate JSON resources in the pack's
 namespace using the modern 26.1.2 folder layout.
+Resource IDs must use lowercase `namespace:path` syntax or lowercase relative
+paths. Cobble reports uppercase characters, invalid path separators, and common
+`namespace/path` mistakes with focused diagnostics.
 
 ```python
 datapack.function_tag("utility", ["mypack:setup"])
@@ -965,7 +976,7 @@ stdlib.addEventListener(event.TICK, game_loop)
 
 ## Minecraft Version Compatibility
 
-Cobble v0.6.2-a0 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
+Cobble v0.6.2 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
 
 - **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax

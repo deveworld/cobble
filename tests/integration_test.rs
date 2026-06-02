@@ -18,8 +18,10 @@ fn compile_source(source: &str) -> Result<(TempDir, PathBuf), String> {
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })?;
 
@@ -143,8 +145,10 @@ fn test_directory_build_does_not_duplicate_module_initializers() {
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -1672,8 +1676,10 @@ def test():
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -2427,8 +2433,10 @@ fn test_regression_decimal_pack_format() {
         pack_format: Some("101.1".to_string()),
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     });
 
@@ -2466,8 +2474,10 @@ fn test_regression_decimal_pack_format() {
         pack_format: Some("18".to_string()),
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     });
 
@@ -2486,8 +2496,10 @@ fn test_regression_decimal_pack_format() {
         pack_format: Some("101.0".to_string()),
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     });
 

@@ -5,17 +5,40 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.2-a0] - 2026-06-02
+## [0.6.2] - 2026-06-02
+
+### Added
+- `cobble doctor` to report Cobble version, Minecraft target, pack format, Java/curl availability, project config status, and command-tree fingerprint status without network access.
+- `cobble build --dry-run` to parse/transpile and optionally validate through temporary staging without writing final output.
+- `cobble build --quiet` for script-friendly successful builds while still surfacing validation diagnostics on failure.
+- `cobble inspect <output>` to summarize generated build manifests and source-map entry counts, with optional `--json` output.
+- Text component helpers `text.plain`, `text.colored`, `text.score`, and `text.selector` for reusable JSON text values.
+- `.cobble/build_manifest.json` for each build, including version metadata, source inputs, generated namespaces, generated resource entries, generated function/resource counts, and validation summary when validation ran.
+- Build summaries that report source files, generated functions, commands, function tags, JSON resources, validation counts, and ZIP output path when enabled.
+- Web demo output views for functions, resources, metadata, build manifest, and diagnostics, with sample selection and copy/download actions for generated files and data pack ZIP output.
+- Syntax highlighting for home-page examples, the `/try` editor, and generated output views.
+- A website favicon for the GitHub Pages export.
 
 ### Changed
+- `cobble init` now prints exact next commands for the created project, including dry-run and validation steps.
+- Source-map source paths now prefer project/source-relative paths when Cobble can determine a stable display root.
+- The website now uses the root page for Cobble overview content and keeps the browser compiler under `/try`.
+- The web demo WASM transcript now emits `.cobble/build_manifest.json` alongside source maps and generated namespace metadata.
+- The web demo now initializes the browser WASM compiler through a public web-target bundle so static GitHub Pages builds can load the `.wasm` asset reliably.
+- Refined the website header, example cards, `/try` workbench spacing, and mobile/tablet/desktop responsive layouts after viewport QA.
 - Moved the README preview image to the top of the document and replaced the large PNG with a smaller JPEG asset.
 - Updated the web demo package link to docs.rs while the crates.io web route is unavailable from some regions.
 - Updated the inventory example to use modern Minecraft 26.1.2 item component syntax.
 
 ### Fixed
 - Hardened `scripts/setup_commands_json.sh` so manifest-detail fetch failures fall through to alternate manifests and the pinned server jar fallback.
+- Improved data pack resource diagnostics for uppercase paths, slash-separated namespace mistakes, and invalid path separators.
 - Verified the default `data/commands.json` fingerprint before validation so stale local command trees do not silently masquerade as the 26.1.2 tree.
 - Tightened command validation for nested NBT/JSON delimiters, scoreboard slots, execute swizzles, item slots, and legacy item-stack NBT.
+- Deduplicated build-manifest resource entries and function-tag counts when stdlib events and explicit data pack tags merge into the same generated tag file.
+- Corrected web-demo build manifests to report the root `cobble-lang` version instead of the internal WASM helper crate version.
+- Merged duplicate web-demo tag output paths so `/try` file downloads and ZIP output match CLI function-tag merging.
+- Fixed the `/try` runtime failure where the browser could report `can't access property "__wbindgen_externrefs", wasm is undefined`.
 - Removed a disabled GitHub Discussions link and clarified release documentation wording.
 
 ## [0.6.1] - 2026-06-02

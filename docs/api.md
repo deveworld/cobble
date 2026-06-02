@@ -64,7 +64,7 @@ let program = parse(source)
 - **Multi-operator expressions**: Chains operations using `.foldl().repeated()` pattern
 - Error reporting integrated with ariadne for beautiful error messages
 
-**Recent Enhancements (v0.1.0)**:
+**Historical Parser Enhancements**:
 - Fixed division operator tokenization to correctly distinguish `a / b` from `/command`
 - Implemented proper operator precedence (multiplication and division before addition and subtraction)
 - Added support for chained multi-operator expressions like `a + b + c` and `x * y * z`
@@ -304,7 +304,7 @@ Individual processors for each statement type:
 - `execute_processor.rs` - Execute block modifiers
 - `selector_processor.rs` - Selector definitions
 
-**Recent Enhancements:**
+**Historical Transpiler Enhancements:**
 - **v0.4.0**:
   - **Entity selector definitions**: Custom selector aliases with compile-time replacement
   - **File import system**: Import functions and definitions from other `.cbl` files
@@ -382,13 +382,14 @@ pub struct DataPack {
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
     pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
-    pub pack_format: PackFormat,  // Cobble v0.6.2-a0 requires 101.1
+    pub pack_format: PackFormat,  // Cobble v0.6.2 requires 101.1
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
+    pub source_display_root: Option<PathBuf>,
 }
 ```
 
-**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.6.2-a0 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
+**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.6.2 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
 
 #### Methods
 
@@ -402,7 +403,59 @@ Adds a function to the data pack.
 
 ##### `write(&self) -> std::io::Result<()>`
 
-Writes the data pack to the file system.
+Writes the data pack to the file system, including `.cobble/source_map.json`
+when generated command metadata exists and `.cobble/build_manifest.json` for
+build metadata. Source-map source paths are normalized against
+`source_display_root` when available.
+
+##### `set_source_display_root(&mut self, root: PathBuf)`
+
+Sets the display root used to avoid unnecessary absolute source paths in
+`.cobble/source_map.json`.
+
+### Struct: `BuildManifest`
+
+Summary metadata written to `.cobble/build_manifest.json`.
+
+```rust
+pub struct BuildManifest {
+    pub version: u8,
+    pub cobble_version: String,
+    pub minecraft_version: String,
+    pub pack_format: PackFormat,
+    pub pack_format_text: String,
+    pub namespace: String,
+    pub description: String,
+    pub input: Option<BuildManifestInput>,
+    pub generated_namespaces: Vec<String>,
+    pub generated: BuildManifestGenerated,
+    pub resources: Vec<BuildManifestResourceEntry>,
+    pub validation: Option<BuildManifestValidation>,
+}
+
+pub struct BuildManifestInput {
+    pub source: String,
+    pub entry_points: Vec<String>,
+    pub compiled_files: Vec<String>,
+}
+
+pub struct BuildManifestResourceEntry {
+    pub kind: String,
+    pub namespace: String,
+    pub path: String,
+}
+
+pub struct BuildManifestValidation {
+    pub enabled: bool,
+    pub commands_json: String,
+    pub files_checked: usize,
+    pub commands_checked: usize,
+    pub macro_commands_checked: usize,
+    pub commands_skipped: usize,
+    pub errors: usize,
+    pub source_map_errors: usize,
+}
+```
 
 ## Module: Standard Library
 
@@ -524,6 +577,25 @@ Handles command-tree validation for generated data packs.
 #### Function: `validate(options: ValidateOptions) -> Result<(), String>`
 
 Validates `.mcfunction` files against `data/commands.json` and checks generated source maps when present.
+
+### `commands/doctor.rs`
+
+Handles project and environment diagnostics.
+
+#### Function: `doctor(options: DoctorOptions) -> Result<(), String>`
+
+Reports Cobble version, Minecraft target, pack format, Java/curl availability,
+project config status, and command-tree fingerprint status without contacting
+the network.
+
+### `commands/inspect.rs`
+
+Handles generated metadata inspection.
+
+#### Function: `inspect(options: InspectOptions) -> Result<(), String>`
+
+Reads `.cobble/build_manifest.json` and `.cobble/source_map.json` from a
+generated data pack directory and prints either a text summary or formatted JSON.
 
 ### `commands/check.rs`
 

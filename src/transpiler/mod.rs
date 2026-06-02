@@ -7,7 +7,9 @@ mod statement_processors;
 
 // Public exports
 pub use data_pack::{
-    DataPack, GeneratedCommand, GeneratedCommandKind, SourceLocation, SourceMap, SourceMapEntry,
+    BuildManifest, BuildManifestGenerated, BuildManifestInput, BuildManifestResourceEntry,
+    BuildManifestValidation, DataPack, GeneratedCommand, GeneratedCommandKind, SourceLocation,
+    SourceMap, SourceMapEntry,
 };
 
 use crate::ast::*;
@@ -74,6 +76,39 @@ impl FunctionCapture {
         self.commands
             .iter()
             .any(|command| command.trim_start().starts_with('$'))
+    }
+}
+
+fn validate_text_color(color: &str) -> Result<(), String> {
+    const NAMED_COLORS: &[&str] = &[
+        "black",
+        "dark_blue",
+        "dark_green",
+        "dark_aqua",
+        "dark_red",
+        "dark_purple",
+        "gold",
+        "gray",
+        "dark_gray",
+        "blue",
+        "green",
+        "aqua",
+        "red",
+        "light_purple",
+        "yellow",
+        "white",
+    ];
+
+    let valid_hex = color.len() == 7
+        && color.starts_with('#')
+        && color.chars().skip(1).all(|c| c.is_ascii_hexdigit());
+    if NAMED_COLORS.contains(&color) || valid_hex {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid text color '{}': use a Minecraft named color or #RRGGBB",
+            color
+        ))
     }
 }
 
@@ -718,6 +753,18 @@ impl Transpiler {
 
     pub fn set_pack_format(&mut self, format: crate::pack_format::PackFormat) {
         self.data_pack.set_pack_format(format);
+    }
+
+    pub fn set_build_input(&mut self, input: BuildManifestInput) {
+        self.data_pack.set_build_input(input);
+    }
+
+    pub fn set_source_display_root(&mut self, root: PathBuf) {
+        self.data_pack.set_source_display_root(root);
+    }
+
+    pub fn set_validation_summary(&mut self, validation: Option<BuildManifestValidation>) {
+        self.data_pack.set_validation_summary(validation);
     }
 
     pub fn transpile(&mut self, program: &Program) -> Result<(), String> {
@@ -1707,6 +1754,13 @@ impl Transpiler {
                 }
                 Ok(serde_json::Value::Object(object))
             }
+            Expression::Call(func, args) => {
+                if let Some(value) = self.text_component_helper_json(func, args)? {
+                    Ok(value)
+                } else {
+                    Err("Only text.plain(), text.colored(), text.score(), and text.selector() can be serialized to JSON here".to_string())
+                }
+            }
             Expression::Identifier(name) => {
                 if let Some(value) = self.compile_time_constants.get(name) {
                     if value.fract() == 0.0 {
@@ -1733,7 +1787,65 @@ impl Transpiler {
         serde_json::to_string(&value).map_err(|e| format!("Failed to encode text component: {}", e))
     }
 
+    fn text_component_helper_json(
+        &self,
+        func: &Expression,
+        args: &[Expression],
+    ) -> Result<Option<serde_json::Value>, String> {
+        let Expression::Attribute(obj, method) = func else {
+            return Ok(None);
+        };
+        let Some(module_name) = Self::expression_path(obj) else {
+            return Ok(None);
+        };
+        if module_name != "text" {
+            return Ok(None);
+        }
+
+        let value = match method.as_str() {
+            "plain" => {
+                if args.len() != 1 {
+                    return Err("text.plain() takes 1 argument".to_string());
+                }
+                let text = self.expr_to_plain_arg(&args[0], "text.plain text")?;
+                serde_json::json!({ "text": text })
+            }
+            "colored" => {
+                if args.len() != 2 {
+                    return Err("text.colored() takes 2 arguments".to_string());
+                }
+                let text = self.expr_to_plain_arg(&args[0], "text.colored text")?;
+                let color = self.expr_to_plain_arg(&args[1], "text color")?;
+                validate_text_color(&color)?;
+                serde_json::json!({ "text": text, "color": color })
+            }
+            "score" => {
+                if args.len() != 2 {
+                    return Err("text.score() takes 2 arguments".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "score component name")?;
+                let objective = self.expr_to_plain_arg(&args[1], "score component objective")?;
+                serde_json::json!({ "score": { "name": name, "objective": objective } })
+            }
+            "selector" => {
+                if args.len() != 1 {
+                    return Err("text.selector() takes 1 argument".to_string());
+                }
+                let selector = self.expr_to_plain_arg(&args[0], "selector component")?;
+                serde_json::json!({ "selector": selector })
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(value))
+    }
+
     fn process_text_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+        if matches!(method, "plain" | "colored" | "score" | "selector") {
+            return Err(format!(
+                "text.{}() returns a JSON text component; pass it to text.tellraw(), text.title(), or another JSON value",
+                method
+            ));
+        }
         if args.len() != 2 {
             return Err(format!("text.{}() takes 2 arguments", method));
         }
@@ -2451,6 +2563,34 @@ impl Transpiler {
                     label, id
                 ));
             }
+        }
+
+        if namespace.is_none() {
+            if let Some((prefix, suffix)) = path.split_once('/') {
+                if matches!(prefix, "minecraft") || prefix == self.data_pack.namespace {
+                    return Err(format!(
+                        "Invalid {} '{}': '{}' looks like a namespace. Use '{}:{}' instead of a slash-separated namespace prefix.",
+                        label, id, prefix, prefix, suffix
+                    ));
+                }
+            }
+        }
+
+        if let Some((index, c)) = path.char_indices().find(|(_, c)| c.is_ascii_uppercase()) {
+            return Err(format!(
+                "Invalid {} '{}': uppercase character '{}' at position {}. Use lowercase resource paths or namespace:path IDs.",
+                label,
+                id,
+                c,
+                index + 1
+            ));
+        }
+
+        if path.contains('\\') {
+            return Err(format!(
+                "Invalid {} '{}': use '/' path separators, not '\\'",
+                label, id
+            ));
         }
 
         let has_invalid_segment = path

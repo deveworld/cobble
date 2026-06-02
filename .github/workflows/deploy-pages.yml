@@ -5,6 +5,10 @@ on:
     branches:
       - main
     paths:
+      - .github/workflows/deploy-pages.yml
+      - Cargo.lock
+      - Cargo.toml
+      - src/**
       - web/**
   workflow_dispatch:
 

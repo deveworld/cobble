@@ -37,8 +37,10 @@ fn build_fixture(project: &str) {
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: commands_json.exists(),
+        dry_run: false,
         commands_json,
     })
     .unwrap();

@@ -21,8 +21,10 @@ fn source_map_tracks_user_raw_command_locations() {
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -60,7 +62,7 @@ fn source_map_tracks_user_raw_command_locations() {
     assert_eq!(entry.kind, GeneratedCommandKind::UserCommand);
 
     let source = entry.source.as_ref().expect("source location missing");
-    assert_eq!(source.file, input_file.canonicalize().unwrap());
+    assert_eq!(source.file, PathBuf::from("main.cbl"));
     assert_eq!(source.line, 4);
     assert_eq!(source.column, 5);
 }
@@ -191,8 +193,10 @@ stdlib.addEventListener(event.LOAD, load)
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -223,7 +227,7 @@ stdlib.addEventListener(event.LOAD, load)
     assert_eq!(entry.kind, GeneratedCommandKind::UserCommand);
 
     let source = entry.source.as_ref().expect("source location missing");
-    assert_eq!(source.file, input_file.canonicalize().unwrap());
+    assert_eq!(source.file, PathBuf::from("main.cbl"));
     assert_eq!(source.line, 8);
     assert_eq!(source.column, 5);
 }
@@ -246,8 +250,10 @@ fn source_map_tracks_user_commands_through_control_flow_rewrites() {
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -255,7 +261,7 @@ fn source_map_tracks_user_commands_through_control_flow_rewrites() {
     let source_map_path = output_dir.join(".cobble/source_map.json");
     let source_map: SourceMap =
         serde_json::from_str(&fs::read_to_string(source_map_path).unwrap()).unwrap();
-    let canonical_input = input_file.canonicalize().unwrap();
+    let expected_source = PathBuf::from("main.cbl");
 
     let assert_user_entry = |needle: &str, path_fragment: &str, line: usize, column: usize| {
         let entry = source_map
@@ -270,7 +276,7 @@ fn source_map_tracks_user_commands_through_control_flow_rewrites() {
         );
         assert_eq!(entry.kind, GeneratedCommandKind::UserCommand);
         let source = entry.source.as_ref().expect("source location missing");
-        assert_eq!(source.file, canonical_input);
+        assert_eq!(source.file, expected_source);
         assert_eq!(source.line, line);
         assert_eq!(source.column, column);
     };
@@ -317,8 +323,10 @@ def test():
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -326,7 +334,7 @@ def test():
     let source_map_path = output_dir.join(".cobble/source_map.json");
     let source_map: SourceMap =
         serde_json::from_str(&fs::read_to_string(source_map_path).unwrap()).unwrap();
-    let canonical_input = input_file.canonicalize().unwrap();
+    let expected_source = PathBuf::from("main.cbl");
 
     let assert_entry = |needle: &str, kind: GeneratedCommandKind, line: usize, column: usize| {
         let entry = source_map
@@ -336,7 +344,7 @@ def test():
             .unwrap_or_else(|| panic!("source map entry containing '{needle}' missing"));
         assert_eq!(entry.kind, kind);
         let source = entry.source.as_ref().expect("source location missing");
-        assert_eq!(source.file, canonical_input);
+        assert_eq!(source.file, expected_source);
         assert_eq!(source.line, line);
         assert_eq!(source.column, column);
     };
@@ -409,8 +417,10 @@ fn source_map_keeps_duplicate_match_commands_on_original_case_lines() {
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -418,7 +428,7 @@ fn source_map_keeps_duplicate_match_commands_on_original_case_lines() {
     let source_map_path = output_dir.join(".cobble/source_map.json");
     let source_map: SourceMap =
         serde_json::from_str(&fs::read_to_string(source_map_path).unwrap()).unwrap();
-    let canonical_input = input_file.canonicalize().unwrap();
+    let expected_source = PathBuf::from("main.cbl");
 
     let source_line_for_match = |range: &str| {
         let entry = source_map
@@ -431,7 +441,7 @@ fn source_map_keeps_duplicate_match_commands_on_original_case_lines() {
             .unwrap_or_else(|| panic!("source map entry for match range {range} missing"));
         assert_eq!(entry.kind, GeneratedCommandKind::UserCommand);
         let source = entry.source.as_ref().expect("source location missing");
-        assert_eq!(source.file, canonical_input);
+        assert_eq!(source.file, expected_source);
         source.line
     };
 
@@ -466,8 +476,10 @@ def test():
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -475,7 +487,7 @@ def test():
     let source_map_path = output_dir.join(".cobble/source_map.json");
     let source_map: SourceMap =
         serde_json::from_str(&fs::read_to_string(source_map_path).unwrap()).unwrap();
-    let canonical_input = input_file.canonicalize().unwrap();
+    let expected_source = PathBuf::from("main.cbl");
 
     let counter_entry = source_map
         .entries
@@ -484,7 +496,7 @@ def test():
         .expect("module-level counter init source map entry missing");
     assert_eq!(counter_entry.kind, GeneratedCommandKind::ControlFlow);
     let counter_source = counter_entry.source.as_ref().expect("source missing");
-    assert_eq!(counter_source.file, canonical_input);
+    assert_eq!(counter_source.file, expected_source);
     assert_eq!(counter_source.line, 1);
     assert_eq!(counter_source.column, 1);
 
@@ -495,7 +507,7 @@ def test():
         .expect("multiline tellraw source map entry missing");
     assert_eq!(tellraw_entry.kind, GeneratedCommandKind::StdLib);
     let tellraw_source = tellraw_entry.source.as_ref().expect("source missing");
-    assert_eq!(tellraw_source.file, input_file.canonicalize().unwrap());
+    assert_eq!(tellraw_source.file, PathBuf::from("main.cbl"));
     assert_eq!(tellraw_source.line, 6);
     assert_eq!(tellraw_source.column, 9);
 }
@@ -518,8 +530,10 @@ fn source_map_tracks_while_condition_helper_metadata() {
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
@@ -527,7 +541,7 @@ fn source_map_tracks_while_condition_helper_metadata() {
     let source_map_path = output_dir.join(".cobble/source_map.json");
     let source_map: SourceMap =
         serde_json::from_str(&fs::read_to_string(source_map_path).unwrap()).unwrap();
-    let canonical_input = input_file.canonicalize().unwrap();
+    let expected_source = PathBuf::from("main.cbl");
 
     let entry = source_map
         .entries
@@ -538,7 +552,7 @@ fn source_map_tracks_while_condition_helper_metadata() {
         })
         .expect("while OR helper source map entry missing");
     let source = entry.source.as_ref().expect("source missing");
-    assert_eq!(source.file, canonical_input);
+    assert_eq!(source.file, expected_source);
     assert_eq!(source.line, 4);
     assert_eq!(source.column, 5);
 }
@@ -562,8 +576,10 @@ fn validate_reports_stale_source_map_entries() {
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: commands_json.clone(),
     })
     .unwrap();

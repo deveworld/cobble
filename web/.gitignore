@@ -3,5 +3,6 @@ node_modules/
 out/
 wasm/target/
 src/wasm/pkg/
+public/wasm/
 tsconfig.tsbuildinfo
 npm-debug.log*

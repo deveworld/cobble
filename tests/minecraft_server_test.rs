@@ -143,8 +143,10 @@ fn build_datapack(repo_root: &Path, project_dir: &Path, datapack_dir: &Path) {
         pack_format: Some("101.1".to_string()),
         description: Some("Cobble Purpur server smoke test".to_string()),
         verbose: false,
+        quiet: false,
         zip: false,
         validate: commands_json.exists(),
+        dry_run: false,
         commands_json,
     })
     .unwrap();

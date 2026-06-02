@@ -14,8 +14,10 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })?;
 
@@ -37,6 +39,10 @@ fn stdlib_v1_generates_common_helpers() {
         r#"
 def use_stdlib():
     text.tellraw("@a", {"text": "Hello", "color": "green"})
+    text.tellraw("@a", text.plain("Plain"))
+    text.tellraw("@a", text.colored("Gold", "gold"))
+    text.tellraw("@a", text.score("@s", "points"))
+    text.tellraw("@a", text.selector("@p"))
     text.title("@a", "Ready")
     text.subtitle("@a", {"text": "Go", "bold": True})
     text.actionbar("@a", "Running")
@@ -61,6 +67,10 @@ def use_stdlib():
 
     let content = read_function(&output_dir, "use_stdlib");
     assert!(content.contains(r#"tellraw @a {"color":"green","text":"Hello"}"#));
+    assert!(content.contains(r#"tellraw @a {"text":"Plain"}"#));
+    assert!(content.contains(r#"tellraw @a {"color":"gold","text":"Gold"}"#));
+    assert!(content.contains(r#"tellraw @a {"score":{"name":"@s","objective":"points"}}"#));
+    assert!(content.contains(r#"tellraw @a {"selector":"@p"}"#));
     assert!(content.contains(r#"title @a title {"text":"Ready"}"#));
     assert!(content.contains(r#"title @a subtitle {"bold":true,"text":"Go"}"#));
     assert!(content.contains(r#"title @a actionbar {"text":"Running"}"#));
@@ -191,6 +201,27 @@ def bad_style():
     )
     .unwrap_err();
     assert!(style_error.contains("Invalid bossbar style: notched_7"));
+}
+
+#[test]
+fn text_component_helpers_validate_color_and_must_be_used_as_values() {
+    let color_error = compile_source(
+        r#"
+def bad_color():
+    text.tellraw("@a", text.colored("Oops", "orange"))
+"#,
+    )
+    .unwrap_err();
+    assert!(color_error.contains("Invalid text color 'orange'"));
+
+    let standalone_error = compile_source(
+        r#"
+def standalone():
+    text.plain("Only a component")
+"#,
+    )
+    .unwrap_err();
+    assert!(standalone_error.contains("text.plain() returns a JSON text component"));
 }
 
 #[test]

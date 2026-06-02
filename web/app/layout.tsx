@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Cobble Demo",
+  title: "Cobble",
   description:
-    "Compile Python-like Cobble code into Minecraft data pack mcfunction output in the browser."
+    "A modern, Python-like language for creating Minecraft Java Edition data packs."
 };
 
 export default function RootLayout({

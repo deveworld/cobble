@@ -1,4 +1,5 @@
 use cobble::commands;
+use cobble::commands::{DoctorOptions, InspectOptions};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -58,6 +59,10 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
 
+        /// Suppress successful build progress and summary output
+        #[arg(short, long)]
+        quiet: bool,
+
         /// Create a zip file
         #[arg(long)]
         zip: bool,
@@ -65,6 +70,10 @@ enum Commands {
         /// Validate generated .mcfunction files after building
         #[arg(long)]
         validate: bool,
+
+        /// Compile and summarize without writing final output
+        #[arg(long)]
+        dry_run: bool,
 
         /// Path to commands.json (default data/commands.json is auto-generated if missing)
         #[arg(long, default_value = "data/commands.json")]
@@ -115,6 +124,26 @@ enum Commands {
         input: Option<PathBuf>,
     },
 
+    /// Report Cobble project and validation environment status
+    Doctor {
+        /// Project path to inspect (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Path to commands.json to inspect
+        #[arg(long, default_value = "data/commands.json")]
+        commands_json: PathBuf,
+    },
+
+    /// Inspect Cobble metadata in a generated data pack directory
+    Inspect {
+        /// Generated data pack directory to inspect
+        input: PathBuf,
+
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Validate generated .mcfunction files against Minecraft's command tree
     Validate {
         /// Datapack directory to validate (output from build)
@@ -148,8 +177,10 @@ fn main() {
             pack_format,
             description,
             verbose,
+            quiet,
             zip,
             validate,
+            dry_run,
             commands_json,
         } => commands::build(commands::build::BuildOptions {
             input,
@@ -158,8 +189,10 @@ fn main() {
             pack_format,
             description,
             verbose,
+            quiet,
             zip,
             validate,
+            dry_run,
             commands_json,
         }),
         Commands::Watch {
@@ -184,6 +217,14 @@ fn main() {
             commands_json,
         ),
         Commands::Check { input } => commands::check(input),
+        Commands::Doctor {
+            path,
+            commands_json,
+        } => commands::doctor(DoctorOptions {
+            path,
+            commands_json,
+        }),
+        Commands::Inspect { input, json } => commands::inspect(InspectOptions { input, json }),
         Commands::Validate {
             input,
             commands_json,

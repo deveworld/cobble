@@ -33,8 +33,10 @@ fn compile_and_validate(source: &str) -> Vec<(String, cobble::validator::Validat
         pack_format: None,
         description: None,
         verbose: false,
+        quiet: false,
         zip: false,
         validate: false,
+        dry_run: false,
         commands_json: std::path::PathBuf::from("data/commands.json"),
     })
     .unwrap();

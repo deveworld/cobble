@@ -62,8 +62,10 @@ pub fn watch(
         pack_format: pack_format.clone(),
         description: description.clone(),
         verbose,
+        quiet: false,
         zip,
         validate,
+        dry_run: false,
         commands_json: commands_json.clone(),
     });
 
@@ -174,8 +176,10 @@ pub fn watch(
                         pack_format: pack_format.clone(),
                         description: description.clone(),
                         verbose,
+                        quiet: false,
                         zip,
                         validate,
+                        dry_run: false,
                         commands_json: commands_json.clone(),
                     });
 

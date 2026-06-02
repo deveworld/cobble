@@ -1,5 +1,9 @@
 use serde::{Serialize, Serializer};
 
+pub const COBBLE_VERSION: &str = match option_env!("COBBLE_LANG_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
 pub const SUPPORTED_MINECRAFT_VERSION: &str = "26.1.2";
 pub const SUPPORTED_PACK_FORMAT: PackFormat = PackFormat::Decimal(101, 1);
 

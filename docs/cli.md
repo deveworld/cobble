@@ -28,7 +28,7 @@ cobble init [OPTIONS]
 **Options:**
 - `--name <NAME>` - Set the project name (default: current directory name)
 - `--description <DESC>` - Set the project description
-- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.6.2-a0 requires Minecraft Java Edition 26.1.2)
+- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.6.2 requires Minecraft Java Edition 26.1.2)
 - `--template <NAME>` - Starter template: `minimal`, `stdlib`, or `validation` (default: `stdlib`)
 
 **Example:**
@@ -36,6 +36,10 @@ cobble init [OPTIONS]
 cobble init --name my_datapack --description "My awesome data pack"
 cobble init --name smoke_pack --template validation
 ```
+
+After creation, Cobble prints the exact next commands for the selected target
+directory, including `cobble build --dry-run`, `cobble build --validate`, and
+`cobble watch`.
 
 This creates:
 - `cobble.toml` - Project configuration file
@@ -59,8 +63,10 @@ cobble build [SOURCE] [OPTIONS]
 - `--pack-format <NUM>` - Override pack format version (currently must be `101.1`)
 - `--description <DESC>` - Override pack description
 - `-v, --verbose` - Show verbose output
+- `-q, --quiet` - Suppress successful build progress and summary output
 - `--zip` - Create a ZIP archive of the data pack
 - `--validate` - Validate generated `.mcfunction` files after building
+- `--dry-run` - Compile and print the build summary without writing final output
 - `--commands-json <PATH>` - Path to `commands.json` for validation (default: `data/commands.json`)
 
 **Examples:**
@@ -83,6 +89,15 @@ cobble build --zip
 # Build and validate generated commands
 cobble build --validate
 
+# Build quietly for scripts
+cobble build --quiet
+
+# Compile and inspect the output plan without writing output
+cobble build --dry-run
+
+# Dry-run with command validation through a temporary staging output
+cobble build --dry-run --validate
+
 # Build with all options
 cobble build src/ -o output/ --namespace mypack --pack-format 101.1 --zip --validate --verbose
 
@@ -96,6 +111,17 @@ is missing, Cobble downloads the Minecraft server jar and generates it
 automatically. This requires `curl` and Java. Cobble tries Mojang's current
 Piston manifest host, the legacy launcher manifest host, and a pinned 26.1.2
 server jar URL.
+
+`--dry-run` parses and transpiles sources, prints the same build summary, and
+does not replace or clean the final output directory. When combined with
+`--validate`, Cobble writes only a temporary staging data pack, validates it,
+and removes the staging directory afterward. `--dry-run` cannot be combined
+with `--zip`.
+
+`--quiet` suppresses successful build progress and summary output. If validation
+fails, Cobble still prints validation diagnostics before returning an error.
+Compiler warnings are still shown. `--quiet` cannot be combined with
+`--verbose`.
 
 If your network blocks those endpoints, use one of these overrides:
 
@@ -113,6 +139,15 @@ scripts/setup_commands_json.sh 26.1.2
 cp data/commands.json /tmp/commands.json
 ```
 
+Every non-dry-run build writes `.cobble/build_manifest.json` with the Cobble
+version, Minecraft target, pack format, namespace, source input, configured
+entry points, compiled files, generated namespaces, generated function/resource
+counts, generated resource entries, and validation summary when validation ran.
+`.cobble/source_map.json` is written when generated commands are available to
+map generated commands back to Cobble source. Source-map file paths are written
+relative to the project/source root when Cobble can determine one, avoiding
+unnecessary absolute paths in generated metadata.
+
 ### `cobble check`
 
 Check Cobble source files for syntax errors without building.
@@ -126,6 +161,57 @@ cobble check [SOURCE]
 cobble check src/main.cbl
 cobble check examples/
 ```
+
+### `cobble doctor`
+
+Report project and validation environment status without contacting the
+network.
+
+```bash
+cobble doctor [PROJECT_PATH] [OPTIONS]
+```
+
+**Arguments:**
+- `PROJECT_PATH` - Project directory or file to inspect (default: current directory)
+
+**Options:**
+- `--commands-json <PATH>` - Command tree path to inspect (default: `data/commands.json`)
+
+**Examples:**
+```bash
+cobble doctor
+cobble doctor examples/26_smoke --commands-json data/commands.json
+```
+
+The report includes the Cobble version, Minecraft target, pack format, Java and
+`curl` availability, `cobble.toml` status, and the default command tree SHA-1
+match when `data/commands.json` exists.
+
+### `cobble inspect`
+
+Summarize Cobble metadata in a generated data pack directory.
+
+```bash
+cobble inspect <DATAPACK_DIR> [OPTIONS]
+```
+
+**Arguments:**
+- `DATAPACK_DIR` - Generated data pack directory containing `.cobble/build_manifest.json`
+
+**Options:**
+- `--json` - Print the manifest and source-map entry count as formatted JSON
+
+**Examples:**
+```bash
+cobble build --validate -o output
+cobble inspect output
+cobble inspect output --json
+```
+
+The command reads `.cobble/build_manifest.json` and, when present,
+`.cobble/source_map.json`. ZIP archives created by `cobble build --zip` include
+only data pack files (`pack.mcmeta` and `data/**`), so inspect a generated
+directory before or alongside ZIP packaging.
 
 ### `cobble validate`
 
@@ -240,7 +326,7 @@ entry_points = []
 |-------------------|-------------|
 | Java Edition 26.1.2 | 101.1 |
 
-Cobble v0.6.2-a0 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
+Cobble v0.6.2 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
 
 **Note**: Pack format 101.1 is written to `pack.mcmeta` as `min_format` and `max_format` arrays: `[101, 1]`.
 
@@ -435,7 +521,7 @@ give {player} diamond 1
 cobble build --pack-format 101.1
 ```
 
-Note: Cobble v0.6.2-a0 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
+Note: Cobble v0.6.2 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ### Issue: Functions not found
 
