@@ -50,6 +50,16 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 
 ## 📦 Installation
 
+### From crates.io
+
+```bash
+cargo install cobble-lang
+cobble --help
+```
+
+The crates.io package is named `cobble-lang`; the installed command remains
+`cobble`.
+
 ### From Source
 
 ```bash

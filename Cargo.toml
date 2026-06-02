@@ -1,5 +1,5 @@
 [package]
-name = "cobble"
+name = "cobble-lang"
 version = "0.6.1"
 edition = "2021"
 authors = ["deveworld <world@worldsw.dev>"]
@@ -10,6 +10,14 @@ homepage = "https://github.com/deveworld/cobble"
 documentation = "https://github.com/deveworld/cobble/tree/main/docs"
 keywords = ["minecraft", "datapack", "transpiler", "compiler"]
 categories = ["game-engines", "command-line-utilities"]
+
+[lib]
+name = "cobble"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cobble"
+path = "src/main.rs"
 
 [dependencies]
 chumsky = "0.11.1"
