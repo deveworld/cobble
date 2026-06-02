@@ -1,0 +1,7 @@
+node_modules/
+.next/
+out/
+wasm/target/
+src/wasm/pkg/
+tsconfig.tsbuildinfo
+npm-debug.log*

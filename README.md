@@ -10,6 +10,33 @@ Cobble is a transpiler that converts Python-like code into Minecraft Data Packs,
 
 **✨ Version 0.6.1** - Expanded validation diagnostics, standard library v1.1 helpers, namespaced data pack resources, project templates, and Minecraft Java Edition 26.1.2 support | Pack Format 101.1
 
+## 🌐 Web Demo
+
+Cobble now includes a browser demo in [`web/`](web/) that runs the Rust parser
+and transpiler through WebAssembly. You can edit Cobble code in the page and see
+the generated `.mcfunction`, `pack.mcmeta`, tags, and source-map files without
+installing the CLI.
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+For static hosting:
+
+```bash
+# Cloudflare Pages or any root-mounted static host
+npm run build
+
+# GitHub Pages under https://<owner>.github.io/cobble/
+npm run build:github
+```
+
+The exported site is written to `web/out`. The build runs `wasm-pack`, so the
+deployment environment needs Rust with the `wasm32-unknown-unknown` target
+available.
+
 ## ⚠️ Pre-release Notice
 
 **Cobble is currently in active development (v0.6.1 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
@@ -43,6 +70,7 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
 - ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
 - ✅ **Command Tree Validation** - Validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2 commands
+- ✅ **WASM Web Demo** - Try Cobble in the browser and inspect generated data pack files
 - ✅ **Nested If Optimization** - Automatically splits complex control flow
 - ✅ **Comprehensive Tests** - Extensive unit, integration, fixture, validation, and source-map coverage
 - ✅ **Modern Parser** - Built with chumsky combinator library for reliability
@@ -750,12 +778,26 @@ cargo install cargo-watch
 cargo watch -x test -x "run -- check examples/"
 ```
 
+### Web Demo Development
+
+```bash
+cd web
+npm install
+npm run build:wasm
+npm run dev
+```
+
+Use `npm run build` for Cloudflare Pages or another root-mounted static host.
+Use `npm run build:github` when deploying this repository to GitHub Pages under
+the `/cobble` base path.
+
 ## 📚 Documentation
 
 - [Language Reference](docs/language.md)
 - [CLI Documentation](docs/cli.md)
 - [API Reference](docs/api.md)
 - [Examples](examples/)
+- [Web Demo Source](web/)
 
 ## 🐛 Known Limitations
 
