@@ -14,7 +14,8 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Version 0.6.2** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
+**Development version 0.6.3-a0** targets Minecraft Java Edition 26.1.2 and
+pack format 101.1. The latest stable release is 0.6.2.
 
 ## Website And Web Demo
 

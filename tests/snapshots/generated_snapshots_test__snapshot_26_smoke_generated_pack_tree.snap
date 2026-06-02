@@ -1,0 +1,743 @@
+---
+source: tests/generated_snapshots_test.rs
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "cobble_version": "<cobble-version>",
+  "description": "Cobble 26.1.2 smoke fixture",
+  "generated": {
+    "advancements": 0,
+    "commands": 52,
+    "custom_function_tags": 0,
+    "function_tags": 2,
+    "functions": 10,
+    "item_modifiers": 0,
+    "json_function_tags": 0,
+    "json_resources": 1,
+    "loot_tables": 0,
+    "predicates": 0,
+    "recipes": 0,
+    "source_map_entries": 52,
+    "stdlib_function_tags": 2,
+    "total_json_resources": 1
+  },
+  "generated_namespaces": [
+    "cobble_26_smoke",
+    "minecraft"
+  ],
+  "input": {
+    "compiled_files": [
+      "src/main.cbl"
+    ],
+    "entry_points": [
+      "main.cbl"
+    ],
+    "source": "src"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "cobble_26_smoke",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "resources": [
+    {
+      "kind": "dialog",
+      "namespace": "cobble_26_smoke",
+      "path": "notice"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "load"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "tick"
+    }
+  ],
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "cobble_26_smoke",
+  "minecraft"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/cobble_26_smoke/function/admin_probe.mcfunction",
+      "generated_line": 1,
+      "command": "$transfer example.org 25565 $(player)",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 57,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/admin_probe.mcfunction",
+      "generated_line": 2,
+      "command": "$swing $(player) mainhand",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 58,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/admin_probe.mcfunction",
+      "generated_line": 3,
+      "command": "return run say nested return ok",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 59,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/admin_probe.mcfunction",
+      "generated_line": 4,
+      "command": "test run minecraft:always_pass 1 true",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 60,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/announce.mcfunction",
+      "generated_line": 1,
+      "command": "$tellraw @a {\"text\":\"$(message)\",\"color\":\"aqua\"}",
+      "source": {
+        "file": "src/utils.cbl",
+        "line": 5,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 1,
+      "command": "gamerule max_command_sequence_length 1000000000",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard objectives add loop_counter dummy",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 3,
+      "command": "scoreboard objectives add temp dummy",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 4,
+      "command": "scoreboard players set score temp 10",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 6,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 5,
+      "command": "scoreboard players set health temp 20",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 7,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 6,
+      "command": "scoreboard players set active temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 8,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 7,
+      "command": "data modify storage cobble_26_smoke:global args.message set value \"Cobble 26.1.2 smoke test loaded\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 16,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 8,
+      "command": "function cobble_26_smoke:announce with storage cobble_26_smoke:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 16,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 9,
+      "command": "data modify storage cobble_26_smoke:global args.player set value \"@a\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 10,
+      "command": "data modify storage cobble_26_smoke:global args.amount set value 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 11,
+      "command": "function cobble_26_smoke:reward with storage cobble_26_smoke:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 12,
+      "command": "scoreboard objectives add smoke dummy \"Smoke Test\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 18,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 13,
+      "command": "tellraw @a {\"text\":\"Smoke datapack initialized\",\"color\":\"green\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 19,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 14,
+      "command": "dialog clear @a",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 20,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 15,
+      "command": "dialog show @a cobble_26_smoke:notice",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 21,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 16,
+      "command": "fetchprofile name Notch",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 22,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 17,
+      "command": "fetchprofile id 123e4567-e89b-12d3-a456-426614174000",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 23,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 18,
+      "command": "waypoint list",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 24,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 19,
+      "command": "stopwatch create cobble:smoke",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 25,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 20,
+      "command": "stopwatch query cobble:smoke 20.0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 26,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 21,
+      "command": "version",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 27,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/loop_body_3.mcfunction",
+      "generated_line": 1,
+      "command": "$say loop $(i)",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 50,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/loop_temp_3.mcfunction",
+      "generated_line": 1,
+      "command": "execute if score i loop_counter matches ..2 run function cobble_26_smoke:loop_wrapper_4",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/loop_temp_3.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard players add i loop_counter 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/loop_temp_3.mcfunction",
+      "generated_line": 3,
+      "command": "execute if score i loop_counter matches ..2 run function cobble_26_smoke:loop_temp_3",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/loop_wrapper_4.mcfunction",
+      "generated_line": 1,
+      "command": "execute store result storage cobble_26_smoke:global args.i int 1 run scoreboard players get i loop_counter",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/loop_wrapper_4.mcfunction",
+      "generated_line": 2,
+      "command": "function cobble_26_smoke:loop_body_3 with storage cobble_26_smoke:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/operator_probe.mcfunction",
+      "generated_line": 1,
+      "command": "execute as @a[tag=operator] run tellraw @s {\"text\":\"Operator probe\",\"color\":\"yellow\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 64,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/reward.mcfunction",
+      "generated_line": 1,
+      "command": "$give $(player) minecraft:diamond $(amount)",
+      "source": {
+        "file": "src/utils.cbl",
+        "line": 8,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/reward.mcfunction",
+      "generated_line": 2,
+      "command": "$say rewarded $(player) with $(amount) diamond",
+      "source": {
+        "file": "src/utils.cbl",
+        "line": 9,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/survivor_ping.mcfunction",
+      "generated_line": 1,
+      "command": "execute as @a[gamemode=survival] run say survivor online",
+      "source": {
+        "file": "src/utils.cbl",
+        "line": 13,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard players add score temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 32,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard players set if_branch_0 temp 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 34,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 3,
+      "command": "execute if score score temp matches 15.. run scoreboard players set if_branch_0 temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 34,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 4,
+      "command": "execute if score score temp matches 15.. run tellraw @a [{\"text\":\"score high \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 35,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 5,
+      "command": "scoreboard players set elif_taken_1 temp 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 34,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 6,
+      "command": "execute unless score if_branch_0 temp matches 1 if score score temp matches 12.. run scoreboard players set elif_taken_1 temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 34,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 7,
+      "command": "execute if score elif_taken_1 temp matches 1 run scoreboard players set if_branch_0 temp 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 34,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 8,
+      "command": "execute if score elif_taken_1 temp matches 1 run tellraw @a [{\"text\":\"score medium \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 9,
+      "command": "execute unless score if_branch_0 temp matches 1 run tellraw @a [{\"text\":\"score low \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 39,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 10,
+      "command": "scoreboard players operation match_temp_2 temp = score temp",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 41,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 11,
+      "command": "execute if score match_temp_2 temp matches 0..14 run say warming",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 43,
+        "column": 13
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 12,
+      "command": "execute if score match_temp_2 temp matches 15..30 run say active",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 45,
+        "column": 13
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 13,
+      "command": "execute unless score match_temp_2 temp matches 0..14 unless score match_temp_2 temp matches 15..30 run say overflow",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 47,
+        "column": 13
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 14,
+      "command": "scoreboard players set i loop_counter 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 15,
+      "command": "function cobble_26_smoke:loop_temp_3",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 16,
+      "command": "execute as @a[gamemode=creative] at @s run particle flame ~ ~1 ~",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 53,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    }
+  ]
+}
+
+===== data/cobble_26_smoke/dialog/notice.json =====
+{
+  "title": {
+    "text": "Smoke Notice"
+  },
+  "type": "minecraft:notice"
+}
+
+===== data/cobble_26_smoke/function/admin_probe.mcfunction =====
+$transfer example.org 25565 $(player)
+$swing $(player) mainhand
+return run say nested return ok
+test run minecraft:always_pass 1 true
+
+===== data/cobble_26_smoke/function/announce.mcfunction =====
+$tellraw @a {"text":"$(message)","color":"aqua"}
+
+===== data/cobble_26_smoke/function/init.mcfunction =====
+gamerule max_command_sequence_length 1000000000
+scoreboard objectives add loop_counter dummy
+scoreboard objectives add temp dummy
+scoreboard players set score temp 10
+scoreboard players set health temp 20
+scoreboard players set active temp 1
+data modify storage cobble_26_smoke:global args.message set value "Cobble 26.1.2 smoke test loaded"
+function cobble_26_smoke:announce with storage cobble_26_smoke:global args
+data modify storage cobble_26_smoke:global args.player set value "@a"
+data modify storage cobble_26_smoke:global args.amount set value 1
+function cobble_26_smoke:reward with storage cobble_26_smoke:global args
+scoreboard objectives add smoke dummy "Smoke Test"
+tellraw @a {"text":"Smoke datapack initialized","color":"green"}
+dialog clear @a
+dialog show @a cobble_26_smoke:notice
+fetchprofile name Notch
+fetchprofile id 123e4567-e89b-12d3-a456-426614174000
+waypoint list
+stopwatch create cobble:smoke
+stopwatch query cobble:smoke 20.0
+version
+
+===== data/cobble_26_smoke/function/loop_body_3.mcfunction =====
+$say loop $(i)
+
+===== data/cobble_26_smoke/function/loop_temp_3.mcfunction =====
+execute if score i loop_counter matches ..2 run function cobble_26_smoke:loop_wrapper_4
+scoreboard players add i loop_counter 1
+execute if score i loop_counter matches ..2 run function cobble_26_smoke:loop_temp_3
+
+===== data/cobble_26_smoke/function/loop_wrapper_4.mcfunction =====
+execute store result storage cobble_26_smoke:global args.i int 1 run scoreboard players get i loop_counter
+function cobble_26_smoke:loop_body_3 with storage cobble_26_smoke:global args
+
+===== data/cobble_26_smoke/function/operator_probe.mcfunction =====
+execute as @a[tag=operator] run tellraw @s {"text":"Operator probe","color":"yellow"}
+
+===== data/cobble_26_smoke/function/reward.mcfunction =====
+$give $(player) minecraft:diamond $(amount)
+$say rewarded $(player) with $(amount) diamond
+
+===== data/cobble_26_smoke/function/survivor_ping.mcfunction =====
+execute as @a[gamemode=survival] run say survivor online
+
+===== data/cobble_26_smoke/function/tick.mcfunction =====
+scoreboard players add score temp 1
+scoreboard players set if_branch_0 temp 0
+execute if score score temp matches 15.. run scoreboard players set if_branch_0 temp 1
+execute if score score temp matches 15.. run tellraw @a [{"text":"score high "},{"score":{"name":"score","objective":"temp"}}]
+scoreboard players set elif_taken_1 temp 0
+execute unless score if_branch_0 temp matches 1 if score score temp matches 12.. run scoreboard players set elif_taken_1 temp 1
+execute if score elif_taken_1 temp matches 1 run scoreboard players set if_branch_0 temp 1
+execute if score elif_taken_1 temp matches 1 run tellraw @a [{"text":"score medium "},{"score":{"name":"score","objective":"temp"}}]
+execute unless score if_branch_0 temp matches 1 run tellraw @a [{"text":"score low "},{"score":{"name":"score","objective":"temp"}}]
+scoreboard players operation match_temp_2 temp = score temp
+execute if score match_temp_2 temp matches 0..14 run say warming
+execute if score match_temp_2 temp matches 15..30 run say active
+execute unless score match_temp_2 temp matches 0..14 unless score match_temp_2 temp matches 15..30 run say overflow
+scoreboard players set i loop_counter 0
+function cobble_26_smoke:loop_temp_3
+execute as @a[gamemode=creative] at @s run particle flame ~ ~1 ~
+
+===== data/minecraft/tags/function/load.json =====
+{
+  "values": [
+    "cobble_26_smoke:init"
+  ]
+}
+
+===== data/minecraft/tags/function/tick.json =====
+{
+  "values": [
+    "cobble_26_smoke:tick"
+  ]
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Cobble 26.1.2 smoke fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

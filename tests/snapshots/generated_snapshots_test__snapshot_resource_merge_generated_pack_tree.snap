@@ -1,0 +1,132 @@
+---
+source: tests/generated_snapshots_test.rs
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "cobble_version": "<cobble-version>",
+  "description": "Snapshot fixture",
+  "generated": {
+    "advancements": 0,
+    "commands": 3,
+    "custom_function_tags": 0,
+    "function_tags": 1,
+    "functions": 2,
+    "item_modifiers": 0,
+    "json_function_tags": 1,
+    "json_resources": 2,
+    "loot_tables": 0,
+    "predicates": 1,
+    "recipes": 0,
+    "source_map_entries": 3,
+    "stdlib_function_tags": 1,
+    "total_json_resources": 2
+  },
+  "generated_namespaces": [
+    "minecraft",
+    "snapshot_merge"
+  ],
+  "input": {
+    "compiled_files": [
+      "main.cbl"
+    ],
+    "entry_points": [],
+    "source": "main.cbl"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "snapshot_merge",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "resources": [
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "load"
+    },
+    {
+      "kind": "predicate",
+      "namespace": "snapshot_merge",
+      "path": "checks/ready"
+    }
+  ],
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "minecraft",
+  "snapshot_merge"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/snapshot_merge/function/extra_load.mcfunction",
+      "generated_line": 1,
+      "command": "say extra",
+      "source": {
+        "file": "main.cbl",
+        "line": 15,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/snapshot_merge/function/load.mcfunction",
+      "generated_line": 1,
+      "command": "gamerule max_command_sequence_length 1000000000",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/snapshot_merge/function/load.mcfunction",
+      "generated_line": 2,
+      "command": "say load",
+      "source": {
+        "file": "main.cbl",
+        "line": 12,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    }
+  ]
+}
+
+===== data/minecraft/tags/function/load.json =====
+{
+  "values": [
+    "snapshot_merge:load",
+    "snapshot_merge:extra_load"
+  ]
+}
+
+===== data/snapshot_merge/function/extra_load.mcfunction =====
+say extra
+
+===== data/snapshot_merge/function/load.mcfunction =====
+gamerule max_command_sequence_length 1000000000
+say load
+
+===== data/snapshot_merge/predicate/checks/ready.json =====
+{
+  "chance": 1,
+  "condition": "minecraft:random_chance"
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Snapshot fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}
