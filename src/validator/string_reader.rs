@@ -224,15 +224,16 @@ impl StringReader {
             return false;
         }
         let open = self.input[self.cursor];
-        let close = match open {
+        let first_close = match open {
             '{' => '}',
             '[' => ']',
             _ => return false,
         };
 
-        let mut depth = 0;
+        let mut stack = vec![first_close];
         let mut quote: Option<char> = None;
         let mut escape_next = false;
+        self.cursor += 1;
 
         while self.can_read() {
             let ch = self.input[self.cursor];
@@ -260,13 +261,18 @@ impl StringReader {
                 continue;
             }
 
-            if ch == open {
-                depth += 1;
-            } else if ch == close {
-                depth -= 1;
-                if depth == 0 {
-                    return true;
+            match ch {
+                '{' => stack.push('}'),
+                '[' => stack.push(']'),
+                '}' | ']' => {
+                    if stack.pop() != Some(ch) {
+                        return false;
+                    }
+                    if stack.is_empty() {
+                        return true;
+                    }
                 }
+                _ => {}
             }
         }
 
@@ -392,6 +398,7 @@ fn is_unquoted_char(c: char) -> bool {
         || c == '+'
         || c == '-'
         || c == '#'
+        || c == '*'
 }
 
 #[cfg(test)]
@@ -440,6 +447,16 @@ mod tests {
         let mut r = StringReader::new("{key:\"value\",nested:{a:1}} rest");
         assert!(r.read_nbt());
         assert_eq!(r.remaining(), " rest");
+
+        let mut array = StringReader::new("[{key:\"value\"}] rest");
+        assert!(array.read_nbt());
+        assert_eq!(array.remaining(), " rest");
+    }
+
+    #[test]
+    fn test_read_nbt_rejects_mismatched_nested_delimiters() {
+        let mut r = StringReader::new("{Items:[{id:\"stone\"}} rest");
+        assert!(!r.read_nbt());
     }
 
     #[test]

@@ -658,6 +658,16 @@ mod tests {
         assert!(v
             .validate_command("execute anchored nose run say hi")
             .is_err());
+        assert!(v
+            .validate_command("scoreboard objectives setdisplay sideways points")
+            .is_err());
+        assert!(v.validate_command("execute align xx run say hi").is_err());
+        assert!(v
+            .validate_command("item replace entity @s armor.tail with minecraft:stone")
+            .is_err());
+        assert!(v
+            .validate_command("give @s minecraft:diamond{Enchantments:[]}")
+            .is_err());
     }
 
     #[test]

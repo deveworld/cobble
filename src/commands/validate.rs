@@ -20,6 +20,7 @@ const VERSION_MANIFEST_URLS: &[&str] = &[
 const SUPPORTED_SERVER_JAR_URL: &str =
     "https://piston-data.mojang.com/v1/objects/97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51/server.jar";
 const SUPPORTED_SERVER_JAR_SHA1: &str = "97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51";
+const SUPPORTED_COMMANDS_JSON_SHA1: &str = "18bb0eb6768838b2237821418aa5832d1c837d45";
 
 pub struct ValidateOptions {
     pub input: PathBuf,
@@ -52,7 +53,7 @@ pub fn run_validation(input: &Path, commands_json: &Path) -> Result<ValidationRe
 
 fn ensure_commands_json(commands_json: &Path) -> Result<(), String> {
     if commands_json.exists() {
-        return Ok(());
+        return verify_default_commands_json_fingerprint(commands_json);
     }
 
     if !is_auto_download_commands_json_path(commands_json) {
@@ -66,7 +67,38 @@ fn ensure_commands_json(commands_json: &Path) -> Result<(), String> {
         ));
     }
 
-    generate_commands_json(commands_json)
+    generate_commands_json(commands_json)?;
+    verify_default_commands_json_fingerprint(commands_json)
+}
+
+fn verify_default_commands_json_fingerprint(commands_json: &Path) -> Result<(), String> {
+    if !is_auto_download_commands_json_path(commands_json) {
+        return Ok(());
+    }
+
+    verify_commands_json_sha1(commands_json, SUPPORTED_COMMANDS_JSON_SHA1).map_err(|error| {
+        format!(
+            "{}\n\
+            The default command tree must match Minecraft Java Edition {}. Remove {} and rerun validation to regenerate it, or pass --commands-json with a deliberate custom tree.",
+            error,
+            SUPPORTED_MINECRAFT_VERSION,
+            commands_json.display()
+        )
+    })
+}
+
+fn verify_commands_json_sha1(commands_json: &Path, expected_sha1: &str) -> Result<(), String> {
+    let actual_sha1 = sha1_file(commands_json)?;
+    if actual_sha1.eq_ignore_ascii_case(expected_sha1) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Command tree SHA-1 mismatch for {}: expected {}, got {}",
+        commands_json.display(),
+        expected_sha1,
+        actual_sha1
+    ))
 }
 
 fn missing_command_tree_error(commands_json: &Path) -> String {
@@ -632,5 +664,17 @@ mod tests {
         assert!(error.contains("Command tree not found"));
         assert!(error.contains("scripts/setup_commands_json.sh"));
         assert!(!commands_json.exists());
+    }
+
+    #[test]
+    fn command_tree_fingerprint_rejects_wrong_sha1() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let commands_json = temp_dir.path().join("commands.json");
+        fs::write(&commands_json, "{}").unwrap();
+
+        let error =
+            verify_commands_json_sha1(&commands_json, SUPPORTED_COMMANDS_JSON_SHA1).unwrap_err();
+
+        assert!(error.contains("Command tree SHA-1 mismatch"));
     }
 }

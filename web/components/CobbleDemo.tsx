@@ -196,7 +196,7 @@ export function CobbleDemo() {
       <section className="demo-shell">
         <img
           className="hero-image"
-          src={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/cobble-workshop.png`}
+          src={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/cobble-workshop.jpg`}
           alt=""
         />
         <div className="hero-scrim" />
@@ -207,7 +207,7 @@ export function CobbleDemo() {
             <span>Cobble</span>
           </a>
           <div className="nav-actions">
-            <a className="icon-button" href="https://crates.io/crates/cobble-lang" title="crates.io">
+            <a className="icon-button" href="https://docs.rs/cobble-lang/latest/cobble/" title="docs.rs">
               <Package size={18} />
             </a>
             <a className="icon-button" href="https://github.com/deveworld/cobble" title="GitHub">

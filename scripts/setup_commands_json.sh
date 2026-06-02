@@ -44,16 +44,25 @@ if [ -n "${COBBLE_COMMANDS_JSON_URL:-}" ]; then
     exit 0
 fi
 
-echo "Fetching version manifest..."
 MANIFEST_URLS=(
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
     "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
     "https://piston-meta.mojang.com/mc/game/version_manifest.json"
     "https://launchermeta.mojang.com/mc/game/version_manifest.json"
 )
-VERSION_JSON_URL=""
-for MANIFEST_URL in "${MANIFEST_URLS[@]}"; do
-    if VERSION_JSON_URL=$(curl -fsSL --retry 3 "$MANIFEST_URL" | python3 -c "
+SERVER_URL="${COBBLE_MINECRAFT_SERVER_URL:-}"
+SERVER_SHA1="${COBBLE_MINECRAFT_SERVER_SHA1:-}"
+
+if [ -z "$SERVER_URL" ]; then
+    echo "Fetching version manifest..."
+    RESOLVE_ERRORS=()
+    for MANIFEST_URL in "${MANIFEST_URLS[@]}"; do
+        if ! MANIFEST_JSON=$(curl -fsSL --retry 3 "$MANIFEST_URL" 2>&1); then
+            RESOLVE_ERRORS+=("$MANIFEST_URL: $MANIFEST_JSON")
+            continue
+        fi
+
+        if ! VERSION_JSON_URL=$(printf '%s' "$MANIFEST_JSON" | python3 -c "
 import json, sys
 manifest = json.load(sys.stdin)
 for v in manifest['versions']:
@@ -61,38 +70,52 @@ for v in manifest['versions']:
         print(v['url'])
         break
 "); then
-        if [ -n "$VERSION_JSON_URL" ]; then
+            RESOLVE_ERRORS+=("$MANIFEST_URL: failed to parse manifest")
+            continue
+        fi
+
+        if [ -z "$VERSION_JSON_URL" ]; then
+            RESOLVE_ERRORS+=("$MANIFEST_URL: version $VERSION not found")
+            continue
+        fi
+
+        echo "Fetching version $VERSION info..."
+        if ! VERSION_INFO=$(curl -fsSL --retry 3 "$VERSION_JSON_URL" 2>&1); then
+            RESOLVE_ERRORS+=("$VERSION_JSON_URL: $VERSION_INFO")
+            continue
+        fi
+
+        if ! SERVER_METADATA=$(printf '%s' "$VERSION_INFO" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+server = data['downloads']['server']
+print(server['url'])
+print(server['sha1'])
+"); then
+            RESOLVE_ERRORS+=("$VERSION_JSON_URL: missing server download metadata")
+            continue
+        fi
+
+        SERVER_URL="$(printf '%s' "$SERVER_METADATA" | sed -n '1p')"
+        SERVER_SHA1="$(printf '%s' "$SERVER_METADATA" | sed -n '2p')"
+        if [ -n "$SERVER_URL" ] && [ -n "$SERVER_SHA1" ]; then
             break
         fi
-    fi
-done
+    done
+fi
 
-SERVER_URL="${COBBLE_MINECRAFT_SERVER_URL:-}"
-SERVER_SHA1="${COBBLE_MINECRAFT_SERVER_SHA1:-}"
-if [ -z "$VERSION_JSON_URL" ] && [ -z "$SERVER_URL" ] && [ "$VERSION" = "26.1.2" ]; then
+if [ -z "$SERVER_URL" ] && [ "$VERSION" = "26.1.2" ]; then
     echo "Warning: manifest download failed; using pinned 26.1.2 server.jar URL."
+    if [ ${#RESOLVE_ERRORS[@]} -gt 0 ]; then
+        printf '  - %s\n' "${RESOLVE_ERRORS[@]}"
+    fi
     SERVER_URL="https://piston-data.mojang.com/v1/objects/97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51/server.jar"
     SERVER_SHA1="$PINNED_2612_SERVER_SHA1"
 fi
 
-if [ -z "$VERSION_JSON_URL" ] && [ -z "$SERVER_URL" ]; then
+if [ -z "$SERVER_URL" ]; then
     echo "Error: Version $VERSION not found in manifest"
     exit 1
-fi
-
-if [ -z "$SERVER_URL" ]; then
-    echo "Fetching version $VERSION info..."
-    VERSION_INFO=$(curl -fsSL --retry 3 "$VERSION_JSON_URL")
-    SERVER_URL=$(printf '%s' "$VERSION_INFO" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-print(data['downloads']['server']['url'])
-")
-    SERVER_SHA1=$(printf '%s' "$VERSION_INFO" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-print(data['downloads']['server']['sha1'])
-")
 fi
 
 echo "Downloading server.jar..."

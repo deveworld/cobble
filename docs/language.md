@@ -969,7 +969,7 @@ Cobble v0.6.1 requires **Minecraft Java Edition 26.1.2** and pack format **101.1
 
 - **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax
-- **Data packs**: Full data pack specification support
+- **Data packs**: Selected modern data pack resources through `datapack.*` helpers
 - **Decimal pack formats**: Emits `pack.mcmeta` with `min_format` and `max_format` set to `[101, 1]`
 
 ## Limitations

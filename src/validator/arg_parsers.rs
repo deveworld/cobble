@@ -31,12 +31,12 @@ pub fn parse_argument(
         // === Simple word-accepting types ===
         "minecraft:objective"
         | "minecraft:team"
-        | "minecraft:scoreboard_slot"
-        | "minecraft:swizzle"
-        | "minecraft:item_slot"
-        | "minecraft:item_slots"
         | "minecraft:dialog"
         | "minecraft:objective_criteria" => parse_word(reader),
+        "minecraft:scoreboard_slot" => parse_scoreboard_slot(reader),
+        "minecraft:swizzle" => parse_swizzle(reader),
+        "minecraft:item_slot" => parse_item_slot(reader),
+        "minecraft:item_slots" => parse_item_slots(reader),
         "minecraft:hex_color" => parse_hex_color(reader),
         "minecraft:color" => parse_literal_word(
             reader,
@@ -327,6 +327,160 @@ fn parse_literal_word(reader: &mut StringReader, allowed: &[&str]) -> bool {
     }
     reader.set_cursor(saved);
     false
+}
+
+fn parse_scoreboard_slot(reader: &mut StringReader) -> bool {
+    let saved = reader.cursor();
+    let value = reader.read_unquoted_string();
+    let valid = matches!(value.as_str(), "list" | "sidebar" | "below_name")
+        || value
+            .strip_prefix("sidebar.team.")
+            .is_some_and(is_scoreboard_team_color);
+
+    if valid && reader.at_token_boundary() {
+        return true;
+    }
+    reader.set_cursor(saved);
+    false
+}
+
+fn is_scoreboard_team_color(value: &str) -> bool {
+    matches!(
+        value,
+        "black"
+            | "dark_blue"
+            | "dark_green"
+            | "dark_aqua"
+            | "dark_red"
+            | "dark_purple"
+            | "gold"
+            | "gray"
+            | "dark_gray"
+            | "blue"
+            | "green"
+            | "aqua"
+            | "red"
+            | "light_purple"
+            | "yellow"
+            | "white"
+    )
+}
+
+fn parse_swizzle(reader: &mut StringReader) -> bool {
+    let saved = reader.cursor();
+    let value = reader.read_unquoted_string();
+    let mut seen = [false; 3];
+
+    if value.is_empty() || value.len() > 3 {
+        reader.set_cursor(saved);
+        return false;
+    }
+
+    for ch in value.chars() {
+        let index = match ch {
+            'x' => 0,
+            'y' => 1,
+            'z' => 2,
+            _ => {
+                reader.set_cursor(saved);
+                return false;
+            }
+        };
+        if seen[index] {
+            reader.set_cursor(saved);
+            return false;
+        }
+        seen[index] = true;
+    }
+
+    if reader.at_token_boundary() {
+        return true;
+    }
+    reader.set_cursor(saved);
+    false
+}
+
+fn parse_item_slot(reader: &mut StringReader) -> bool {
+    parse_item_slot_value(reader, false)
+}
+
+fn parse_item_slots(reader: &mut StringReader) -> bool {
+    parse_item_slot_value(reader, true)
+}
+
+fn parse_item_slot_value(reader: &mut StringReader, allow_groups: bool) -> bool {
+    let saved = reader.cursor();
+    let value = reader.read_unquoted_string();
+    if is_item_slot_value(&value, allow_groups) && reader.at_token_boundary() {
+        return true;
+    }
+    reader.set_cursor(saved);
+    false
+}
+
+fn is_item_slot_value(value: &str, allow_groups: bool) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+
+    if allow_groups
+        && (value == "*"
+            || matches!(
+                value,
+                "armor.*"
+                    | "container.*"
+                    | "enderchest.*"
+                    | "horse.*"
+                    | "hotbar.*"
+                    | "inventory.*"
+                    | "villager.*"
+                    | "weapon.*"
+            ))
+    {
+        return true;
+    }
+
+    if matches!(
+        value,
+        "weapon"
+            | "weapon.mainhand"
+            | "weapon.offhand"
+            | "armor.head"
+            | "armor.chest"
+            | "armor.legs"
+            | "armor.feet"
+            | "armor.body"
+            | "horse.saddle"
+            | "horse.armor"
+            | "saddle"
+            | "player.cursor"
+            | "crafting_table.result"
+            | "smithing_template"
+            | "smithing_base"
+            | "smithing_addition"
+            | "smithing_result"
+    ) {
+        return true;
+    }
+
+    let Some((prefix, index)) = value.rsplit_once('.') else {
+        return false;
+    };
+    let Ok(index) = index.parse::<u32>() else {
+        return false;
+    };
+
+    match prefix {
+        "container" => index <= 53,
+        "hotbar" => index <= 8,
+        "inventory" => index <= 26,
+        "enderchest" => index <= 26,
+        "villager" => index <= 7,
+        "horse" => index <= 14,
+        "player.crafting" => index <= 3,
+        "crafting_table.input" => index <= 8,
+        _ => false,
+    }
 }
 
 fn parse_hex_color(reader: &mut StringReader) -> bool {
@@ -1169,12 +1323,6 @@ fn parse_item_stack(reader: &mut StringReader) -> bool {
         return false;
     }
 
-    // Optional NBT data {...} (legacy format)
-    if reader.can_read() && reader.peek() == Some('{') && !reader.read_nbt() {
-        reader.set_cursor(saved);
-        return false;
-    }
-
     if reader.at_token_boundary() {
         return true;
     }
@@ -1324,6 +1472,66 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_scoreboard_slot() {
+        for slot in ["sidebar rest", "below_name rest", "sidebar.team.red rest"] {
+            let mut valid = StringReader::new(slot);
+            assert!(parse_argument(
+                &mut valid,
+                "minecraft:scoreboard_slot",
+                None
+            ));
+            assert_eq!(valid.remaining(), " rest");
+        }
+
+        let mut invalid = StringReader::new("sideways rest");
+        assert!(!parse_argument(
+            &mut invalid,
+            "minecraft:scoreboard_slot",
+            None
+        ));
+        assert_eq!(invalid.cursor(), 0);
+    }
+
+    #[test]
+    fn test_parse_swizzle() {
+        for axes in ["x rest", "zy rest", "xyz rest"] {
+            let mut valid = StringReader::new(axes);
+            assert!(parse_argument(&mut valid, "minecraft:swizzle", None));
+            assert_eq!(valid.remaining(), " rest");
+        }
+
+        for axes in ["xx rest", "xyq rest", "xyzz rest"] {
+            let mut invalid = StringReader::new(axes);
+            assert!(!parse_argument(&mut invalid, "minecraft:swizzle", None));
+            assert_eq!(invalid.cursor(), 0);
+        }
+    }
+
+    #[test]
+    fn test_parse_item_slots() {
+        for slot in [
+            "armor.head rest",
+            "container.53 rest",
+            "weapon.offhand rest",
+            "inventory.26 rest",
+        ] {
+            let mut valid = StringReader::new(slot);
+            assert!(parse_argument(&mut valid, "minecraft:item_slot", None));
+            assert_eq!(valid.remaining(), " rest");
+        }
+
+        for slot in ["armor.tail rest", "container.54 rest", "garbage rest"] {
+            let mut invalid = StringReader::new(slot);
+            assert!(!parse_argument(&mut invalid, "minecraft:item_slot", None));
+            assert_eq!(invalid.cursor(), 0);
+        }
+
+        let mut group = StringReader::new("armor.* rest");
+        assert!(parse_argument(&mut group, "minecraft:item_slots", None));
+        assert_eq!(group.remaining(), " rest");
+    }
+
+    #[test]
     fn test_parse_entity_selector() {
         let mut r = StringReader::new("@a[tag=foo] rest");
         assert!(parse_argument(&mut r, "minecraft:entity", None));
@@ -1392,6 +1600,13 @@ mod tests {
         let mut r = StringReader::new("minecraft:oak_stairs[facing=north]{Items:[]} rest");
         assert!(parse_argument(&mut r, "minecraft:block_state", None));
         assert_eq!(r.remaining(), " rest");
+    }
+
+    #[test]
+    fn test_parse_item_stack_rejects_legacy_nbt() {
+        let mut invalid = StringReader::new("minecraft:diamond{Enchantments:[]} rest");
+        assert!(!parse_argument(&mut invalid, "minecraft:item_stack", None));
+        assert_eq!(invalid.cursor(), 0);
     }
 
     #[test]

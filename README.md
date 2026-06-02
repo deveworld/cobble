@@ -7,6 +7,8 @@
 [![Pack Format](https://img.shields.io/badge/pack%20format-101.1-blue.svg)](https://minecraft.wiki/w/Data_pack)
 [![Web Demo](https://img.shields.io/badge/web%20demo-live-7bd66f.svg)](https://deveworld.github.io/cobble/)
 
+![Cobble web demo preview](web/public/cobble-workshop.jpg)
+
 Cobble transpiles `.cbl` source into Minecraft Java Edition data packs. It lets
 you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
@@ -17,8 +19,6 @@ and JSON resource files.
 ## Web Demo
 
 **Live demo:** <https://deveworld.github.io/cobble/>
-
-![Cobble web demo preview](web/public/cobble-workshop.png)
 
 The browser demo runs Cobble's Rust parser and transpiler through WebAssembly,
 so you can edit Cobble code and inspect the generated data pack files without
@@ -102,12 +102,13 @@ Copy the generated output to your world's `datapacks` directory:
 | `cobble init` | Create a new project |
 | `cobble build` | Build source files into a data pack |
 | `cobble check` | Check Cobble syntax without building |
+| `cobble validate` | Validate generated `.mcfunction` files |
 | `cobble watch` | Rebuild when source files change |
 
-`cobble build --validate` checks generated `.mcfunction` files against
-Minecraft Java Edition 26.1.2 commands. The default `data/commands.json` file is
-generated automatically on first validation when missing; this requires `curl`
-and Java.
+`cobble build --validate` and `cobble validate` check generated `.mcfunction`
+files against Minecraft Java Edition 26.1.2 commands. The default
+`data/commands.json` file is generated automatically on first validation when
+missing; this requires `curl` and Java.
 
 ## Configuration
 
@@ -149,7 +150,6 @@ npm run dev
 ## Support
 
 - [GitHub Issues](https://github.com/deveworld/cobble/issues)
-- [GitHub Discussions](https://github.com/deveworld/cobble/discussions)
 
 ## License
 

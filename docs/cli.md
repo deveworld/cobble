@@ -17,7 +17,9 @@ Add the binary to your PATH for easy access.
 
 ### `cobble init`
 
-Initialize a new Cobble project in the current directory.
+Initialize a new Cobble project. Without `--name`, Cobble initializes the
+current directory. With `--name <NAME>`, Cobble creates and initializes that
+project directory.
 
 ```bash
 cobble init [OPTIONS]

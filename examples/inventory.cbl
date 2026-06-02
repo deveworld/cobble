@@ -18,8 +18,8 @@ def give_starter_kit(player):
     /item replace entity {player} armor.feet with minecraft:iron_boots
 
     # Tools
-    /give {player} minecraft:iron_sword{display:{Name:'{"text":"Starter Sword","color":"gray"}'}}
-    /give {player} minecraft:iron_pickaxe{Enchantments:[{id:"minecraft:efficiency",lvl:2}]}
+    /give {player} minecraft:iron_sword[minecraft:custom_name='{"text":"Starter Sword","color":"gray"}']
+    /give {player} minecraft:iron_pickaxe[minecraft:enchantments={levels:{"minecraft:efficiency":2}}]
     /give {player} minecraft:iron_axe
     /give {player} minecraft:iron_shovel
 
@@ -33,16 +33,16 @@ def give_starter_kit(player):
 def create_custom_item():
     """Create a custom enchanted item"""
     asat @s:
-        /give @s minecraft:diamond_sword{display:{Name:'{"text":"Excalibur","color":"gold","bold":true,"italic":false}',Lore:['{"text":"A legendary blade","color":"gray","italic":true}','{"text":"Forged by ancient smiths","color":"gray","italic":true}']},Enchantments:[{id:"minecraft:sharpness",lvl:5},{id:"minecraft:unbreaking",lvl:3},{id:"minecraft:mending",lvl:1},{id:"minecraft:looting",lvl:3}],Unbreakable:1b}
+        /give @s minecraft:diamond_sword[minecraft:custom_name='{"text":"Excalibur","color":"gold","bold":true,"italic":false}',minecraft:lore=['{"text":"A legendary blade","color":"gray","italic":true}','{"text":"Forged by ancient smiths","color":"gray","italic":true}'],minecraft:enchantments={levels:{"minecraft:sharpness":5,"minecraft:unbreaking":3,"minecraft:mending":1,"minecraft:looting":3}},minecraft:unbreakable={}]
 
 def create_potion_set():
     """Create a set of useful potions"""
     asat @s:
-        /give @s minecraft:potion{Potion:"minecraft:strong_healing"} 3
-        /give @s minecraft:potion{Potion:"minecraft:strong_strength"} 2
-        /give @s minecraft:potion{Potion:"minecraft:swiftness"} 2
-        /give @s minecraft:potion{Potion:"minecraft:fire_resistance"} 1
-        /give @s minecraft:splash_potion{Potion:"minecraft:strong_harming"} 3
+        /give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:strong_healing"}] 3
+        /give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:strong_strength"}] 2
+        /give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:swiftness"}] 2
+        /give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:fire_resistance"}] 1
+        /give @s minecraft:splash_potion[minecraft:potion_contents={potion:"minecraft:strong_harming"}] 3
 
 def check_inventory(player):
     """Check if player has specific items"""
