@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub struct ExpressionEvaluator<'a> {
     pub data_pack: &'a mut DataPack,
     pub variable_objectives: &'a HashMap<String, String>,
+    pub variable_storage_paths: &'a HashMap<String, String>,
     pub compile_time_constants: &'a HashMap<String, f64>,
 }
 
@@ -13,24 +14,60 @@ impl<'a> ExpressionEvaluator<'a> {
     pub fn new(
         data_pack: &'a mut DataPack,
         variable_objectives: &'a HashMap<String, String>,
+        variable_storage_paths: &'a HashMap<String, String>,
         compile_time_constants: &'a HashMap<String, f64>,
     ) -> Self {
         Self {
             data_pack,
             variable_objectives,
+            variable_storage_paths,
             compile_time_constants,
         }
     }
 
+    fn resolve_storage_path(&self, expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::Identifier(name) => self.variable_storage_paths.get(name).cloned(),
+            Expression::Attribute(obj, attr) => {
+                let base_path = self.resolve_storage_path(obj)?;
+                Some(format!("{}.{}", base_path, attr))
+            }
+            Expression::Subscript(obj, index) => {
+                let base_path = self.resolve_storage_path(obj)?;
+                match &**index {
+                    Expression::Number(n) => Some(format!("{}[{}]", base_path, *n as i32)),
+                    Expression::String(s) => Some(format!("{}.{}", base_path, s)),
+                    _ => None, // Dynamic index not supported in path resolution yet
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn target_objective(&self, target: &str) -> &str {
+        self.variable_objectives
+            .get(target)
+            .map(String::as_str)
+            .unwrap_or_else(|| {
+                if target.starts_with("#math_") {
+                    "math"
+                } else {
+                    "temp"
+                }
+            })
+    }
+
     /// Helper method to evaluate a complex expression into a target variable
-    /// Returns the commands needed to compute the expression
+    #[allow(clippy::single_match)]
     pub fn evaluate_expression_to_target(
         &mut self,
         expr: &Expression,
         target: &str,
     ) -> Result<Vec<String>, String> {
         let mut commands = Vec::new();
+        let target_obj = self.target_objective(target).to_string();
         self.data_pack.track_objective("temp");
+        self.data_pack.track_objective(&target_obj);
 
         match expr {
             Expression::Number(n) => {
@@ -42,17 +79,23 @@ impl<'a> ExpressionEvaluator<'a> {
                     );
                 }
                 commands.push(format!(
-                    "scoreboard players set {} temp {}",
-                    target, *n as i32
+                    "scoreboard players set {} {} {}",
+                    target, target_obj, *n as i32
                 ));
             }
             Expression::Identifier(var) => {
                 if let Some(const_value) = self.compile_time_constants.get(var) {
                     let truncated = *const_value as i32;
-                    self.data_pack.track_objective("temp");
                     commands.push(format!(
-                        "scoreboard players set {} temp {}",
-                        target, truncated
+                        "scoreboard players set {} {} {}",
+                        target, target_obj, truncated
+                    ));
+                } else if let Some(storage_path) = self.variable_storage_paths.get(var) {
+                    // Load from storage to scoreboard
+                    let namespace = &self.data_pack.namespace;
+                    commands.push(format!(
+                        "execute store result score {} {} run data get storage {}:global {}",
+                        target, target_obj, namespace, storage_path
                     ));
                 } else {
                     let var_obj = self
@@ -60,10 +103,122 @@ impl<'a> ExpressionEvaluator<'a> {
                         .get(var)
                         .unwrap_or(&"temp".to_string())
                         .clone();
+                    // Skip no-op self-assignment (e.g. target temp = target temp)
+                    if !(var == target && var_obj == target_obj) {
+                        commands.push(format!(
+                            "scoreboard players operation {} {} = {} {}",
+                            target, target_obj, var, var_obj
+                        ));
+                    }
+                }
+            }
+            Expression::Call(func, args) => {
+                // Handle intrinsics like math.sqrt
+                match &**func {
+                    Expression::Attribute(obj, method) => {
+                        if let Expression::Identifier(module) = &**obj {
+                            if module == "math" {
+                                let op = method.as_str();
+                                match op {
+                                    "sqrt" | "abs" => {
+                                        if args.len() != 1 {
+                                            return Err(format!("math.{} takes 1 argument", op));
+                                        }
+                                        let input_var = "#math_input";
+                                        self.data_pack.track_objective("math");
+
+                                        let eval_cmds = self
+                                            .evaluate_expression_to_target(&args[0], input_var)?;
+                                        commands.extend(eval_cmds);
+
+                                        self.data_pack.ensure_math_helper(op);
+                                        commands.push(format!(
+                                            "function {}:_cobble_math_{}",
+                                            self.data_pack.namespace, op
+                                        ));
+
+                                        self.data_pack.track_objective("temp");
+                                        commands.push(format!("scoreboard players operation {} temp = #math_result math", target));
+                                        return Ok(commands);
+                                    }
+                                    "min" | "max" => {
+                                        if args.len() != 2 {
+                                            return Err(format!("math.{} takes 2 arguments", op));
+                                        }
+                                        let input1 = "#math_input";
+                                        let input2 = "#math_input2";
+                                        self.data_pack.track_objective("math");
+
+                                        let mut eval_cmds =
+                                            self.evaluate_expression_to_target(&args[0], input1)?;
+                                        eval_cmds.extend(
+                                            self.evaluate_expression_to_target(&args[1], input2)?,
+                                        );
+                                        commands.extend(eval_cmds);
+
+                                        self.data_pack.ensure_math_helper(op);
+                                        commands.push(format!(
+                                            "function {}:_cobble_math_{}",
+                                            self.data_pack.namespace, op
+                                        ));
+
+                                        self.data_pack.track_objective("temp");
+                                        commands.push(format!("scoreboard players operation {} temp = #math_result math", target));
+                                        return Ok(commands);
+                                    }
+                                    _ => return Err(format!("Unknown math function: {}", op)),
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                return Err(
+                    "Function calls in expressions are not supported (except math intrinsics)."
+                        .to_string(),
+                );
+            }
+            Expression::Subscript(base, index) => {
+                // Handle array/map access: base[index]
+                if let Some(storage_path) = self.resolve_storage_path(base) {
+                    // 3. Evaluate index
+                    let index_str = match &**index {
+                        Expression::Number(n) => format!("[{}]", *n as i32),
+                        Expression::String(s) => format!(".{}", s),
+                        Expression::Identifier(name) => {
+                            if let Some(val) = self.compile_time_constants.get(name) {
+                                format!("[{}]", *val as i32)
+                            } else {
+                                return Err(format!("Dynamic index '{}' in subscript is not yet supported. Use a literal or constant.", name));
+                            }
+                        }
+                        _ => return Err("Unsupported index type".to_string()),
+                    };
+
+                    let full_path = format!("{}{}", storage_path, index_str);
+                    let namespace = &self.data_pack.namespace;
+
                     commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        target, var, var_obj
+                        "execute store result score {} {} run data get storage {}:global {}",
+                        target, target_obj, namespace, full_path
                     ));
+                } else {
+                    return Err(
+                        "Subscript base must resolve to a storage path (list/map).".to_string()
+                    );
+                }
+            }
+            Expression::Attribute(obj, attr) => {
+                // Handle attribute access as map access: obj.attr
+                if let Some(storage_path) = self.resolve_storage_path(obj) {
+                    let full_path = format!("{}.{}", storage_path, attr);
+                    let namespace = &self.data_pack.namespace;
+                    commands.push(format!(
+                        "execute store result score {} {} run data get storage {}:global {}",
+                        target, target_obj, namespace, full_path
+                    ));
+                } else {
+                    return Err("Attribute base must resolve to a storage path".to_string());
                 }
             }
             Expression::Binary(left, op, right) => {
@@ -87,25 +242,39 @@ impl<'a> ExpressionEvaluator<'a> {
                         let value = *n as i32;
                         match op {
                             BinaryOp::Add => {
-                                commands.push(format!(
-                                    "scoreboard players add {} temp {}",
-                                    target, value
-                                ));
+                                if value < 0 {
+                                    commands.push(format!(
+                                        "scoreboard players remove {} {} {}",
+                                        target, target_obj, -value
+                                    ));
+                                } else {
+                                    commands.push(format!(
+                                        "scoreboard players add {} {} {}",
+                                        target, target_obj, value
+                                    ));
+                                }
                             }
                             BinaryOp::Sub => {
-                                commands.push(format!(
-                                    "scoreboard players remove {} temp {}",
-                                    target, value
-                                ));
+                                if value < 0 {
+                                    commands.push(format!(
+                                        "scoreboard players add {} {} {}",
+                                        target, target_obj, -value
+                                    ));
+                                } else {
+                                    commands.push(format!(
+                                        "scoreboard players remove {} {} {}",
+                                        target, target_obj, value
+                                    ));
+                                }
                             }
                             BinaryOp::Mul => {
                                 commands.push(format!(
-                                    "scoreboard players set multiplier temp {}",
+                                    "scoreboard players set #multiplier temp {}",
                                     value
                                 ));
                                 commands.push(format!(
-                                    "scoreboard players operation {} temp *= multiplier temp",
-                                    target
+                                    "scoreboard players operation {} {} *= #multiplier temp",
+                                    target, target_obj
                                 ));
                             }
                             BinaryOp::Div => {
@@ -116,11 +285,13 @@ impl<'a> ExpressionEvaluator<'a> {
                                         value
                                     ));
                                 }
-                                commands
-                                    .push(format!("scoreboard players set divisor temp {}", value));
                                 commands.push(format!(
-                                    "scoreboard players operation {} temp /= divisor temp",
-                                    target
+                                    "scoreboard players set #divisor temp {}",
+                                    value
+                                ));
+                                commands.push(format!(
+                                    "scoreboard players operation {} {} /= #divisor temp",
+                                    target, target_obj
                                 ));
                             }
                             BinaryOp::Mod => {
@@ -131,11 +302,13 @@ impl<'a> ExpressionEvaluator<'a> {
                                         value
                                     ));
                                 }
-                                commands
-                                    .push(format!("scoreboard players set modulus temp {}", value));
                                 commands.push(format!(
-                                    "scoreboard players operation {} temp %= modulus temp",
-                                    target
+                                    "scoreboard players set #modulus temp {}",
+                                    value
+                                ));
+                                commands.push(format!(
+                                    "scoreboard players operation {} {} %= #modulus temp",
+                                    target, target_obj
                                 ));
                             }
                             BinaryOp::Pow => {
@@ -156,21 +329,23 @@ impl<'a> ExpressionEvaluator<'a> {
                                 }
                                 if value == 0 {
                                     // x^0 = 1
-                                    commands
-                                        .push(format!("scoreboard players set {} temp 1", target));
+                                    commands.push(format!(
+                                        "scoreboard players set {} {} 1",
+                                        target, target_obj
+                                    ));
                                 } else if value == 1 {
                                     // x^1 = x, no operation needed
                                 } else {
                                     // Store original value for multiplication
                                     commands.push(format!(
-                                        "scoreboard players operation power_base temp = {} temp",
-                                        target
+                                        "scoreboard players operation #power_base temp = {} {}",
+                                        target, target_obj
                                     ));
                                     // Multiply (value - 1) times
                                     for _ in 0..(value - 1) {
                                         commands.push(format!(
-                                            "scoreboard players operation {} temp *= power_base temp",
-                                            target
+                                            "scoreboard players operation {} {} *= #power_base temp",
+                                            target, target_obj
                                         ));
                                     }
                                 }
@@ -183,25 +358,39 @@ impl<'a> ExpressionEvaluator<'a> {
                             let value = *const_value as i32;
                             match op {
                                 BinaryOp::Add => {
-                                    commands.push(format!(
-                                        "scoreboard players add {} temp {}",
-                                        target, value
-                                    ));
+                                    if value < 0 {
+                                        commands.push(format!(
+                                            "scoreboard players remove {} {} {}",
+                                            target, target_obj, -value
+                                        ));
+                                    } else {
+                                        commands.push(format!(
+                                            "scoreboard players add {} {} {}",
+                                            target, target_obj, value
+                                        ));
+                                    }
                                 }
                                 BinaryOp::Sub => {
-                                    commands.push(format!(
-                                        "scoreboard players remove {} temp {}",
-                                        target, value
-                                    ));
+                                    if value < 0 {
+                                        commands.push(format!(
+                                            "scoreboard players add {} {} {}",
+                                            target, target_obj, -value
+                                        ));
+                                    } else {
+                                        commands.push(format!(
+                                            "scoreboard players remove {} {} {}",
+                                            target, target_obj, value
+                                        ));
+                                    }
                                 }
                                 BinaryOp::Mul => {
                                     commands.push(format!(
-                                        "scoreboard players set multiplier temp {}",
+                                        "scoreboard players set #multiplier temp {}",
                                         value
                                     ));
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp *= multiplier temp",
-                                        target
+                                        "scoreboard players operation {} {} *= #multiplier temp",
+                                        target, target_obj
                                     ));
                                 }
                                 BinaryOp::Div => {
@@ -209,12 +398,12 @@ impl<'a> ExpressionEvaluator<'a> {
                                         return Err("Division by zero in expression".to_string());
                                     }
                                     commands.push(format!(
-                                        "scoreboard players set divisor temp {}",
+                                        "scoreboard players set #divisor temp {}",
                                         value
                                     ));
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp /= divisor temp",
-                                        target
+                                        "scoreboard players operation {} {} /= #divisor temp",
+                                        target, target_obj
                                     ));
                                 }
                                 BinaryOp::Mod => {
@@ -222,12 +411,12 @@ impl<'a> ExpressionEvaluator<'a> {
                                         return Err("Modulo by zero in expression".to_string());
                                     }
                                     commands.push(format!(
-                                        "scoreboard players set modulus temp {}",
+                                        "scoreboard players set #modulus temp {}",
                                         value
                                     ));
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp %= modulus temp",
-                                        target
+                                        "scoreboard players operation {} {} %= #modulus temp",
+                                        target, target_obj
                                     ));
                                 }
                                 BinaryOp::Pow => {
@@ -238,20 +427,20 @@ impl<'a> ExpressionEvaluator<'a> {
                                     }
                                     if value == 0 {
                                         commands.push(format!(
-                                            "scoreboard players set {} temp 1",
-                                            target
+                                            "scoreboard players set {} {} 1",
+                                            target, target_obj
                                         ));
                                     } else if value == 1 {
                                         // x^1 = x, nothing to do (target already holds left side)
                                     } else {
                                         commands.push(format!(
-                                            "scoreboard players operation power_base temp = {} temp",
-                                            target
+                                            "scoreboard players operation #power_base temp = {} {}",
+                                            target, target_obj
                                         ));
                                         for _ in 0..(value - 1) {
                                             commands.push(format!(
-                                                "scoreboard players operation {} temp *= power_base temp",
-                                                target
+                                                "scoreboard players operation {} {} *= #power_base temp",
+                                                target, target_obj
                                             ));
                                         }
                                     }
@@ -267,20 +456,20 @@ impl<'a> ExpressionEvaluator<'a> {
                             match op {
                                 BinaryOp::Add => {
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp += {} {}",
-                                        target, var, var_obj
+                                        "scoreboard players operation {} {} += {} {}",
+                                        target, target_obj, var, var_obj
                                     ));
                                 }
                                 BinaryOp::Sub => {
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp -= {} {}",
-                                        target, var, var_obj
+                                        "scoreboard players operation {} {} -= {} {}",
+                                        target, target_obj, var, var_obj
                                     ));
                                 }
                                 BinaryOp::Mul => {
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp *= {} {}",
-                                        target, var, var_obj
+                                        "scoreboard players operation {} {} *= {} {}",
+                                        target, target_obj, var, var_obj
                                     ));
                                 }
                                 BinaryOp::Div => {
@@ -292,8 +481,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                         var, var, var
                                     );
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp /= {} {}",
-                                        target, var, var_obj
+                                        "scoreboard players operation {} {} /= {} {}",
+                                        target, target_obj, var, var_obj
                                     ));
                                 }
                                 BinaryOp::Mod => {
@@ -305,8 +494,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                         var, var, var
                                     );
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp %= {} {}",
-                                        target, var, var_obj
+                                        "scoreboard players operation {} {} %= {} {}",
+                                        target, target_obj, var, var_obj
                                     ));
                                 }
                                 BinaryOp::Pow => {
@@ -323,27 +512,27 @@ impl<'a> ExpressionEvaluator<'a> {
                         // Right side is also a binary expression - need to evaluate it first
                         // Use a temporary variable for the right side
                         let right_commands =
-                            self.evaluate_expression_to_target(right, "expr_temp")?;
+                            self.evaluate_expression_to_target(right, "#expr_temp")?;
                         commands.extend(right_commands);
 
                         // Now perform the operation
                         match op {
                             BinaryOp::Add => {
                                 commands.push(format!(
-                                    "scoreboard players operation {} temp += expr_temp temp",
-                                    target
+                                    "scoreboard players operation {} {} += #expr_temp temp",
+                                    target, target_obj
                                 ));
                             }
                             BinaryOp::Sub => {
                                 commands.push(format!(
-                                    "scoreboard players operation {} temp -= expr_temp temp",
-                                    target
+                                    "scoreboard players operation {} {} -= #expr_temp temp",
+                                    target, target_obj
                                 ));
                             }
                             BinaryOp::Mul => {
                                 commands.push(format!(
-                                    "scoreboard players operation {} temp *= expr_temp temp",
-                                    target
+                                    "scoreboard players operation {} {} *= #expr_temp temp",
+                                    target, target_obj
                                 ));
                             }
                             BinaryOp::Div => {
@@ -354,8 +543,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                     Consider validating the divisor before division."
                                 );
                                 commands.push(format!(
-                                    "scoreboard players operation {} temp /= expr_temp temp",
-                                    target
+                                    "scoreboard players operation {} {} /= #expr_temp temp",
+                                    target, target_obj
                                 ));
                             }
                             BinaryOp::Mod => {
@@ -366,8 +555,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                     Consider validating the divisor before modulo."
                                 );
                                 commands.push(format!(
-                                    "scoreboard players operation {} temp %= expr_temp temp",
-                                    target
+                                    "scoreboard players operation {} {} %= #expr_temp temp",
+                                    target, target_obj
                                 ));
                             }
                             BinaryOp::Pow => {
@@ -392,12 +581,11 @@ impl<'a> ExpressionEvaluator<'a> {
                         let expr_commands = self.evaluate_expression_to_target(expr, target)?;
                         commands.extend(expr_commands);
 
-                        // Multiply by -1
-                        self.data_pack.track_objective("multiplier");
-                        commands.push("scoreboard players set multiplier temp -1".to_string());
+                        // Multiply by -1 using temp objective fake player
+                        commands.push("scoreboard players set #neg_const temp -1".to_string());
                         commands.push(format!(
-                            "scoreboard players operation {} temp *= multiplier temp",
-                            target
+                            "scoreboard players operation {} {} *= #neg_const temp",
+                            target, target_obj
                         ));
                     }
                     UnaryOp::Pos => {
@@ -410,9 +598,6 @@ impl<'a> ExpressionEvaluator<'a> {
                             "Logical NOT operator cannot be used in arithmetic expressions"
                                 .to_string(),
                         );
-                    }
-                    _ => {
-                        return Err(format!("Unsupported unary operator: {:?}", op));
                     }
                 }
             }

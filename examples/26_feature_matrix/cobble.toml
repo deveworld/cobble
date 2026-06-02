@@ -1,0 +1,11 @@
+[project]
+name = "cobble_26_feature_matrix"
+description = "Cobble 26.1.2 feature matrix fixture"
+namespace = "cobble_26_feature_matrix"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = ["main.cbl"]

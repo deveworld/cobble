@@ -168,11 +168,10 @@ impl<'a> ConditionTranslator<'a> {
                 // regardless of execution context
                 if *b {
                     // True: use a condition that always succeeds
-                    // Using a dummy scoreboard check that's always true
-                    Ok("score #true_const __internal__ matches 1..".to_string())
+                    Ok("score #true_const __internal__ matches 1".to_string())
                 } else {
                     // False: use a condition that always fails
-                    Ok("score #false_const __internal__ matches 1..".to_string())
+                    Ok("score #false_const __internal__ matches 1".to_string())
                 }
             }
             _ => Err(format!(
@@ -254,7 +253,7 @@ impl<'a> ConditionTranslator<'a> {
                     "score {} {} matches {}..",
                     var_name,
                     objective,
-                    value + 1  // Safe because we checked value != i32::MAX
+                    value + 1 // Safe because we checked value != i32::MAX
                 )
             }
             GtEq => format!("score {} {} matches {}..", var_name, objective, value),
@@ -271,7 +270,7 @@ impl<'a> ConditionTranslator<'a> {
                     "score {} {} matches ..{}",
                     var_name,
                     objective,
-                    value - 1  // Safe because we checked value != i32::MIN
+                    value - 1 // Safe because we checked value != i32::MIN
                 )
             }
             LtEq => format!("score {} {} matches ..{}", var_name, objective, value),
@@ -301,9 +300,9 @@ impl<'a> ConditionTranslator<'a> {
 
         // Use internal scoreboard constants for compile-time boolean results
         if result {
-            Ok("score #true_const __internal__ matches 1..".to_string())
+            Ok("score #true_const __internal__ matches 1".to_string())
         } else {
-            Ok("score #false_const __internal__ matches 1..".to_string())
+            Ok("score #false_const __internal__ matches 1".to_string())
         }
     }
 }

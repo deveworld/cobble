@@ -24,7 +24,7 @@ enum Commands {
         #[arg(long)]
         description: Option<String>,
 
-        /// Set the pack format version (default: 18, supports decimal like 88.0)
+        /// Set the pack format version (default: 101.1 for Minecraft Java Edition 26.1.2)
         #[arg(long)]
         pack_format: Option<String>,
     },
@@ -42,7 +42,7 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
 
-        /// Override pack format version (default: 18, supports decimal like 88.0)
+        /// Override pack format version (default: 101.1 for Minecraft Java Edition 26.1.2)
         #[arg(long)]
         pack_format: Option<String>,
 
@@ -57,6 +57,14 @@ enum Commands {
         /// Create a zip file
         #[arg(long)]
         zip: bool,
+
+        /// Validate generated .mcfunction files after building
+        #[arg(long)]
+        validate: bool,
+
+        /// Path to commands.json (generated from Minecraft server --reports)
+        #[arg(long, default_value = "data/commands.json")]
+        commands_json: PathBuf,
     },
 
     /// Watch for changes and rebuild automatically
@@ -72,7 +80,7 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
 
-        /// Pack format version (supports decimal like 88.0)
+        /// Pack format version (currently requires 101.1)
         #[arg(long)]
         pack_format: Option<String>,
 
@@ -87,12 +95,30 @@ enum Commands {
         /// Create a zip file
         #[arg(long)]
         zip: bool,
+
+        /// Validate generated .mcfunction files after each successful build
+        #[arg(long)]
+        validate: bool,
+
+        /// Path to commands.json (generated from Minecraft server --reports)
+        #[arg(long, default_value = "data/commands.json")]
+        commands_json: PathBuf,
     },
 
     /// Check syntax without building
     Check {
         /// Input file or directory to check
         input: Option<PathBuf>,
+    },
+
+    /// Validate generated .mcfunction files against Minecraft's command tree
+    Validate {
+        /// Datapack directory to validate (output from build)
+        input: PathBuf,
+
+        /// Path to commands.json (generated from Minecraft server --reports)
+        #[arg(long, default_value = "data/commands.json")]
+        commands_json: PathBuf,
     },
 }
 
@@ -117,6 +143,8 @@ fn main() {
             description,
             verbose,
             zip,
+            validate,
+            commands_json,
         } => commands::build(commands::build::BuildOptions {
             input,
             output,
@@ -125,6 +153,8 @@ fn main() {
             description,
             verbose,
             zip,
+            validate,
+            commands_json,
         }),
         Commands::Watch {
             input,
@@ -134,6 +164,8 @@ fn main() {
             description,
             verbose,
             zip,
+            validate,
+            commands_json,
         } => commands::watch(
             input,
             output,
@@ -142,8 +174,17 @@ fn main() {
             description,
             verbose,
             zip,
+            validate,
+            commands_json,
         ),
         Commands::Check { input } => commands::check(input),
+        Commands::Validate {
+            input,
+            commands_json,
+        } => commands::validate(commands::validate::ValidateOptions {
+            input,
+            commands_json,
+        }),
     };
 
     if let Err(e) = result {

@@ -20,6 +20,11 @@ This directory contains example Cobble programs demonstrating various language f
 - **arithmetic.cbl** - Arithmetic operations and precedence
 - **type_system.cbl** - Static type system examples
 
+## Project Fixtures
+
+- **26_smoke/** - Minecraft Java Edition 26.1.2 command smoke project with imports, events, macros, and latest commands.
+- **26_feature_matrix/** - Full project fixture covering control flow, storage, stdlib helpers, JSON resources, and build validation.
+
 ## Running Examples
 
 To compile an example:
@@ -30,6 +35,10 @@ cobble build hello_world.cbl -o output/hello_world
 
 # Or with zip output
 cobble build counter.cbl -o output/counter --zip
+
+# Project fixtures use cobble.toml; run from the fixture directory
+cd 26_feature_matrix
+cobble build --validate --commands-json ../../data/commands.json
 ```
 
 ## Learning Path

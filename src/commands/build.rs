@@ -1,5 +1,6 @@
+use crate::commands::validate::{print_validation_report, run_validation};
 use crate::config::CobbleConfig;
-use crate::pack_format::PackFormat;
+use crate::pack_format::{PackFormat, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
 use crate::parser::parse;
 use crate::transpiler::Transpiler;
 use std::fs;
@@ -17,12 +18,18 @@ pub struct BuildOptions {
     pub description: Option<String>,
     pub verbose: bool,
     pub zip: bool,
+    pub validate: bool,
+    pub commands_json: PathBuf,
 }
 
 pub fn build(options: BuildOptions) -> Result<(), String> {
     // Try to find cobble.toml
     let (config, config_dir) = if let Some(config_path) = find_config(&options.input) {
-        let config = CobbleConfig::load(&config_path)?;
+        let config = if options.pack_format.is_some() {
+            CobbleConfig::load_unvalidated(&config_path)?
+        } else {
+            CobbleConfig::load(&config_path)?
+        };
         let config_dir = config_path.parent().unwrap().to_path_buf();
         (Some(config), config_dir)
     } else {
@@ -56,6 +63,9 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         .or_else(|| config.as_ref().map(|c| c.project.namespace.clone()))
         .unwrap_or_else(|| "cobble".to_string());
 
+    // Security: Validate namespace to prevent command injection
+    validate_namespace(&namespace)?;
+
     let description = options
         .description
         .clone()
@@ -67,18 +77,20 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     } else if let Some(ref cfg) = config {
         PackFormat::parse_format(&cfg.project.pack_format)?
     } else {
-        PackFormat::Integer(18) // Minecraft 1.20.2+ (macro support, maximum compatibility)
+        SUPPORTED_PACK_FORMAT
     };
 
     // Validate pack_format
-    // Cobble requires Minecraft 1.20.2+ (pack format 18) for macro support
-    const MIN_PACK_FORMAT: u8 = 18;
-    if pack_format.major() < MIN_PACK_FORMAT {
+    // Cobble v0.6.0 targets Minecraft Java Edition 26.1.2 (pack format 101.1).
+    if !pack_format.is_supported() {
         return Err(format!(
-            "pack_format must be at least {} (Minecraft 1.20.2+), got {}.\n\
-            Cobble requires Minecraft 1.20.2 or newer for function macro support.\n\
+            "pack_format must be {} (Minecraft Java Edition {}), got {}.\n\
+            Cobble v0.6.0 exclusively supports Minecraft Java Edition {}.\n\
             See https://minecraft.wiki/w/Pack_format for version compatibility.",
-            MIN_PACK_FORMAT, pack_format
+            SUPPORTED_PACK_FORMAT,
+            SUPPORTED_MINECRAFT_VERSION,
+            pack_format,
+            SUPPORTED_MINECRAFT_VERSION
         ));
     }
 
@@ -86,14 +98,22 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     let files_to_compile = if source_path.is_file() {
         vec![source_path.clone()]
     } else if source_path.is_dir() {
-        find_cobble_files(&source_path)?
+        if options.input.is_none() {
+            if let Some(ref cfg) = config {
+                if !cfg.build.entry_points.is_empty() {
+                    resolve_entry_points(&source_path, &cfg.build.entry_points)?
+                } else {
+                    find_cobble_files(&source_path)?
+                }
+            } else {
+                find_cobble_files(&source_path)?
+            }
+        } else {
+            find_cobble_files(&source_path)?
+        }
     } else {
         return Err(format!("Source path does not exist: {:?}", source_path));
     };
-
-    if files_to_compile.is_empty() {
-        return Err("No Cobble files found to compile".to_string());
-    }
 
     if options.verbose {
         println!("Building {} file(s)...", files_to_compile.len());
@@ -104,10 +124,24 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         println!("Building {} file(s)...", files_to_compile.len());
     }
 
+    let final_output_dir = output_dir.clone();
+    let build_output_dir = if options.validate && !files_to_compile.is_empty() {
+        staging_output_dir(&final_output_dir)?
+    } else {
+        final_output_dir.clone()
+    };
+
     // Create transpiler
-    let mut transpiler = Transpiler::new(namespace.clone(), output_dir.clone());
+    let mut transpiler = Transpiler::new(namespace.clone(), build_output_dir.clone());
     transpiler.set_description(description);
     transpiler.set_pack_format(pack_format);
+
+    if files_to_compile.is_empty() {
+        transpiler
+            .write_data_pack()
+            .map_err(|e| format!("Failed to clean data pack output: {}", e))?;
+        return Err("No Cobble files found to compile".to_string());
+    }
 
     // Compile all files
     for file_path in &files_to_compile {
@@ -134,8 +168,8 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
             )
         })?;
 
-        // Set current file for import resolution
-        transpiler.set_current_file(file_path);
+        // Set current file for import resolution and source tracking
+        transpiler.set_current_file_with_source(file_path, &src);
 
         transpiler
             .transpile(&program)
@@ -147,15 +181,100 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         .write_data_pack()
         .map_err(|e| format!("Failed to write data pack: {}", e))?;
 
-    println!("✓ Data pack generated at {:?}", output_dir);
+    if options.validate {
+        println!("Validating generated commands...");
+        let report = run_validation(&build_output_dir, &options.commands_json)?;
+        print_validation_report(&report, &options.commands_json, &build_output_dir);
+        if !report.errors.is_empty() || !report.source_map_errors.is_empty() {
+            if build_output_dir != final_output_dir {
+                let _ = fs::remove_dir_all(&build_output_dir);
+            }
+            return Err(format!(
+                "{} validation error(s) found",
+                report.errors.len() + report.source_map_errors.len()
+            ));
+        }
+        if build_output_dir != final_output_dir {
+            replace_output_dir(&build_output_dir, &final_output_dir)?;
+        }
+        println!("✓ Data pack generated at {:?}", final_output_dir);
+        println!("✓ All commands valid");
+    } else {
+        println!("✓ Data pack generated at {:?}", final_output_dir);
+    }
 
     // Create zip if requested
     if options.zip {
-        create_zip(&output_dir, &namespace)?;
+        create_zip(&final_output_dir, &namespace)?;
         println!("✓ Created {}.zip", namespace);
     }
 
     Ok(())
+}
+
+/// Validate that namespace contains only safe characters
+fn validate_namespace(namespace: &str) -> Result<(), String> {
+    if namespace.is_empty() {
+        return Err("Namespace cannot be empty".to_string());
+    }
+    if namespace.len() > 64 {
+        return Err(format!(
+            "Namespace too long: {} chars (max 64)",
+            namespace.len()
+        ));
+    }
+    if !namespace
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' || c == '.')
+    {
+        return Err(format!(
+            "Invalid namespace '{}': Can only contain lowercase letters, digits, underscores, hyphens, and dots.\n\
+            Example: 'my_datapack', 'cool-pack.v2'",
+            namespace
+        ));
+    }
+    Ok(())
+}
+
+fn staging_output_dir(output_dir: &Path) -> Result<PathBuf, String> {
+    let parent = output_dir.parent().unwrap_or_else(|| Path::new("."));
+    let name = output_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("output");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("System clock error while creating staging output: {}", e))?
+        .as_nanos();
+    let staging = parent.join(format!(
+        ".{}.cobble-staging-{}-{}",
+        name,
+        std::process::id(),
+        stamp
+    ));
+    if staging.exists() {
+        fs::remove_dir_all(&staging)
+            .map_err(|e| format!("Failed to clean staging output {:?}: {}", staging, e))?;
+    }
+    Ok(staging)
+}
+
+fn replace_output_dir(staging_dir: &Path, output_dir: &Path) -> Result<(), String> {
+    if output_dir.exists() {
+        if output_dir.is_dir() {
+            fs::remove_dir_all(output_dir)
+                .map_err(|e| format!("Failed to replace output {:?}: {}", output_dir, e))?;
+        } else {
+            fs::remove_file(output_dir)
+                .map_err(|e| format!("Failed to replace output {:?}: {}", output_dir, e))?;
+        }
+    }
+    fs::rename(staging_dir, output_dir).map_err(|e| {
+        format!(
+            "Failed to move validated data pack from {:?} to {:?}: {}",
+            staging_dir, output_dir, e
+        )
+    })
 }
 
 fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
@@ -174,15 +293,45 @@ fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
     CobbleConfig::find_in_path(".")
 }
 
+fn resolve_entry_points(
+    source_dir: &Path,
+    entry_points: &[String],
+) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+
+    for entry_point in entry_points {
+        let entry_path = Path::new(entry_point);
+        let path = if entry_path.is_absolute() {
+            entry_path.to_path_buf()
+        } else {
+            source_dir.join(entry_path)
+        };
+
+        if path.is_file() {
+            files.push(path);
+        } else if path.is_dir() {
+            files.extend(find_cobble_files(&path)?);
+        } else {
+            return Err(format!("Entry point does not exist: {}", path.display()));
+        }
+    }
+
+    Ok(files)
+}
+
 fn find_cobble_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
 
     for entry in WalkDir::new(dir)
-        .follow_links(true)
+        .follow_links(false) // Security: Don't follow symlinks to prevent attacks
         .into_iter()
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
+        if path.is_symlink() {
+            eprintln!("⚠️  Warning: Skipping symlink: {:?}", path);
+            continue;
+        }
         if path.is_file() {
             if let Some(ext) = path.extension() {
                 if ext == "cbl" || ext == "cobble" {
@@ -194,6 +343,311 @@ fn find_cobble_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
 
     files.sort();
     Ok(files)
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    struct CurrentDirGuard {
+        previous: PathBuf,
+    }
+
+    impl CurrentDirGuard {
+        fn push(path: &Path) -> Self {
+            let previous = std::env::current_dir().unwrap();
+            std::env::set_current_dir(path).unwrap();
+            Self { previous }
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            std::env::set_current_dir(&self.previous).unwrap();
+        }
+    }
+
+    #[test]
+    fn resolves_entry_points_relative_to_source_dir() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let source_dir = temp_dir.path().join("src");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("main.cbl"), "def main():\n    pass\n").unwrap();
+        fs::write(source_dir.join("utils.cbl"), "def helper():\n    pass\n").unwrap();
+
+        let files = resolve_entry_points(&source_dir, &["main.cbl".to_string()]).unwrap();
+
+        assert_eq!(files, vec![source_dir.join("main.cbl")]);
+    }
+
+    #[test]
+    fn build_validate_reports_missing_command_tree() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let commands_json = temp_dir.path().join("missing_commands.json");
+        fs::write(&input_file, "def test():\n    /say hello\n").unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir.clone()),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            zip: false,
+            validate: true,
+            commands_json,
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Command tree not found"));
+        assert!(error.contains("scripts/setup_commands_json.sh 26.1.2"));
+    }
+
+    #[test]
+    fn build_validate_fails_on_invalid_generated_command() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let commands_json = temp_dir.path().join("commands.json");
+        fs::write(&input_file, "def test():\n    /say hello\n").unwrap();
+        fs::write(&commands_json, r#"{"type":"root","children":{}}"#).unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir.clone()),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            zip: false,
+            validate: true,
+            commands_json,
+        })
+        .unwrap_err();
+
+        assert!(error.contains("validation error(s) found"));
+        assert!(!output_dir.exists());
+    }
+
+    #[test]
+    fn build_validate_preserves_previous_output_on_validation_failure() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let valid_commands_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("commands.json");
+        if !valid_commands_json.exists() {
+            return;
+        }
+
+        fs::write(&input_file, "def test():\n    /say valid\n").unwrap();
+        build(BuildOptions {
+            input: Some(input_file.clone()),
+            output: Some(output_dir.clone()),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            zip: false,
+            validate: true,
+            commands_json: valid_commands_json.clone(),
+        })
+        .unwrap();
+
+        fs::write(&input_file, "def test():\n    /titel @a actionbar bad\n").unwrap();
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir.clone()),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            zip: false,
+            validate: true,
+            commands_json: valid_commands_json,
+        })
+        .unwrap_err();
+
+        assert!(error.contains("validation error(s) found"));
+        let content =
+            fs::read_to_string(output_dir.join("data/cobble/function/test.mcfunction")).unwrap();
+        assert_eq!(content.trim(), "say valid");
+    }
+
+    #[test]
+    fn build_fails_on_missing_import_with_importing_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("main.cbl");
+        let output_dir = temp_dir.path().join("output");
+        fs::write(&input_file, "import missing\n\ndef test():\n    pass\n").unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(input_file.clone()),
+            output: Some(output_dir),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            zip: false,
+            validate: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Cannot import 'missing'"));
+        assert!(error.contains(&input_file.display().to_string()));
+    }
+
+    #[test]
+    fn build_fails_on_import_cycle_with_chain() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let main_file = temp_dir.path().join("main.cbl");
+        let helper_file = temp_dir.path().join("helper.cbl");
+        let output_dir = temp_dir.path().join("output");
+        fs::write(&main_file, "import helper\n\ndef main():\n    /say main\n").unwrap();
+        fs::write(
+            &helper_file,
+            "import main\n\ndef helper():\n    /say helper\n",
+        )
+        .unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(main_file.clone()),
+            output: Some(output_dir),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            zip: false,
+            validate: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Circular import detected"));
+        assert!(error.contains(&main_file.display().to_string()));
+        assert!(error.contains(&helper_file.display().to_string()));
+    }
+
+    #[test]
+    fn cli_pack_format_overrides_invalid_config_value() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let source_dir = temp_dir.path().join("src");
+        let output_dir = temp_dir.path().join("output");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("main.cbl"), "def main():\n    /say hi\n").unwrap();
+        fs::write(
+            temp_dir.path().join("cobble.toml"),
+            r#"
+[project]
+name = "Override"
+description = "Override"
+namespace = "override"
+pack_format = "18"
+
+[build]
+source = "src"
+output = "output"
+"#,
+        )
+        .unwrap();
+
+        build(BuildOptions {
+            input: Some(source_dir),
+            output: Some(output_dir.clone()),
+            namespace: None,
+            pack_format: Some("101.1".to_string()),
+            description: None,
+            verbose: false,
+            zip: false,
+            validate: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+
+        assert!(output_dir
+            .join("data/override/function/main.mcfunction")
+            .exists());
+    }
+
+    #[test]
+    fn empty_source_directory_cleans_previous_output() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let source_dir = temp_dir.path().join("src");
+        let output_dir = temp_dir.path().join("output");
+        let input_file = source_dir.join("main.cbl");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(&input_file, "def main():\n    /say hi\n").unwrap();
+
+        let build_once = || {
+            build(BuildOptions {
+                input: Some(source_dir.clone()),
+                output: Some(output_dir.clone()),
+                namespace: Some("stale".to_string()),
+                pack_format: None,
+                description: None,
+                verbose: false,
+                zip: false,
+                validate: false,
+                commands_json: PathBuf::from("data/commands.json"),
+            })
+        };
+
+        build_once().unwrap();
+        assert!(output_dir
+            .join("data/stale/function/main.mcfunction")
+            .exists());
+
+        fs::remove_file(input_file).unwrap();
+        let error = build_once().unwrap_err();
+
+        assert!(error.contains("No Cobble files found"));
+        assert!(!output_dir
+            .join("data/stale/function/main.mcfunction")
+            .exists());
+    }
+
+    #[test]
+    fn zip_contains_only_datapack_files_when_output_is_current_dir() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let _lock = CWD_LOCK.lock().unwrap();
+        let _guard = CurrentDirGuard::push(temp_dir.path());
+        fs::write("main.cbl", "def main():\n    /say hi\n").unwrap();
+
+        build(BuildOptions {
+            input: Some(PathBuf::from("main.cbl")),
+            output: Some(PathBuf::from(".")),
+            namespace: Some("zipped".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            zip: true,
+            validate: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+
+        let zip_file = fs::File::open(temp_dir.path().join("zipped.zip")).unwrap();
+        let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().to_string())
+            .collect();
+
+        assert!(names.iter().any(|name| name == "pack.mcmeta"));
+        assert!(names
+            .iter()
+            .any(|name| name == "data/zipped/function/main.mcfunction"));
+        assert!(!names.iter().any(|name| name == "main.cbl"));
+        assert!(!names.iter().any(|name| name == "zipped.zip"));
+        assert!(!names.iter().any(|name| name.starts_with(".cobble/")));
+    }
 }
 
 fn create_zip(output_dir: &Path, namespace: &str) -> Result<(), String> {
@@ -212,11 +666,14 @@ fn create_zip(output_dir: &Path, namespace: &str) -> Result<(), String> {
                 .strip_prefix(output_dir)
                 .map_err(|e| format!("Failed to get relative path: {}", e))?;
 
-            let file_data =
-                fs::read(path).map_err(|e| format!("Failed to read file for zip: {}", e))?;
-
             // Convert path to use forward slashes for ZIP (required by Minecraft)
             let zip_path = relative_path.to_string_lossy().replace('\\', "/");
+            if zip_path != "pack.mcmeta" && !zip_path.starts_with("data/") {
+                continue;
+            }
+
+            let file_data =
+                fs::read(path).map_err(|e| format!("Failed to read file for zip: {}", e))?;
 
             zip.start_file(zip_path, options)
                 .map_err(|e| format!("Failed to add file to zip: {}", e))?;

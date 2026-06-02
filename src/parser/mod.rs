@@ -7,5 +7,5 @@ pub mod tokenizer;
 mod combinators;
 
 // Re-export public API
-pub use tokenizer::{Token, tokenize};
-pub use combinators::{token_parser, parse};
+pub use combinators::{parse, token_parser};
+pub use tokenizer::{tokenize, Token};

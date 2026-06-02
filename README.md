@@ -2,20 +2,21 @@
 
 > A modern, Python-like language for creating Minecraft Data Packs
 
-[![Rust](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](https://www.rust-lang.org)
-[![Minecraft](https://img.shields.io/badge/minecraft-1.20.2+-green.svg)](https://minecraft.net)
-[![Pack Format](https://img.shields.io/badge/pack%20format-18-blue.svg)](https://minecraft.wiki/w/Data_pack)
+[![Rust](https://img.shields.io/badge/rust-2021%20edition-orange.svg)](https://www.rust-lang.org)
+[![Minecraft](https://img.shields.io/badge/minecraft-26.1.2-green.svg)](https://minecraft.net)
+[![Pack Format](https://img.shields.io/badge/pack%20format-101.1-blue.svg)](https://minecraft.wiki/w/Data_pack)
 
 Cobble is a transpiler that converts Python-like code into Minecraft Data Packs, making it easier and more intuitive to create complex Minecraft command systems.
 
-**✨ Version 0.5.18** - Performance improvements and enhanced /say command: Removed unnecessary scoreboard objectives, automatic tellraw conversion for /say with scoreboard variables | Minecraft 1.20.2+ compatible
+**✨ Version 0.6.0** - Build validation, standard library v1, data pack JSON resources, and Minecraft Java Edition 26.1.2 support | Pack Format 101.1
 
 ## ⚠️ Pre-release Notice
 
-**Cobble is currently in active development (v0.5.18 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
+**Cobble is currently in active development (v0.6.0 Pre-Alpha).** While we've implemented many features and extensive tests, the project may contain bugs and unexpected behavior. Features and APIs may change between releases.
 
 **We appreciate your feedback!** If you encounter any issues, unexpected behavior, or have suggestions, please report them at:
-- **GitHub Issues**: https://github.com/deveworld/cobble/issues
+
+- **GitHub Issues**: <https://github.com/deveworld/cobble/issues>
 
 Your bug reports and feature requests help make Cobble better for everyone. Thank you for being an early adopter! 🙏
 
@@ -23,7 +24,7 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 
 - ✅ **Static Type System** - Immutable types with compile-time inference and validation
 - ✅ **Python-like Syntax** - Familiar, clean syntax with proper indentation
-- ✅ **Function Parameters** - Full support using Minecraft 1.20.2+ macro system
+- ✅ **Function Parameters** - Full support using Minecraft function macro system
 - ✅ **Event System** - Built-in event handling for load and tick events
 - ✅ **Control Flow** - If statements, for loops (with step support), while loops with smart optimization
 - ✅ **Match/Switch Statements** - Efficient multi-way branching with overlap validation
@@ -41,8 +42,9 @@ Your bug reports and feature requests help make Cobble better for everyone. Than
 - ✅ **Project Management** - Configuration via `cobble.toml`
 - ✅ **Correct Command Format** - Follows Minecraft data pack specifications (no slash prefix)
 - ✅ **JSON Safety** - Preserves JSON commands without breaking syntax
+- ✅ **Command Tree Validation** - Validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2 commands
 - ✅ **Nested If Optimization** - Automatically splits complex control flow
-- ✅ **Comprehensive Tests** - 102 tests with output verification (7 unit + 95 integration tests)
+- ✅ **Comprehensive Tests** - Extensive unit, integration, fixture, validation, and source-map coverage
 - ✅ **Modern Parser** - Built with chumsky combinator library for reliability
 - ✅ **Beautiful Errors** - Clear error messages powered by ariadne
 
@@ -81,7 +83,8 @@ cd my-datapack
 ```
 
 This creates:
-```
+
+```text
 my-datapack/
 ├── cobble.toml      # Project configuration
 ├── src/
@@ -130,7 +133,8 @@ cobble build --zip
 ### 4. Use in Minecraft
 
 Copy the output folder to your Minecraft world's `datapacks` directory:
-```
+
+```text
 .minecraft/saves/YourWorld/datapacks/
 ```
 
@@ -148,7 +152,8 @@ def function_name(param1, param2):
 ```
 
 **Parameter Substitution:**
-- Use `{param}` syntax directly for macro parameters (Minecraft 1.20.2+)
+
+- Use `{param}` syntax directly for macro parameters
 - Cobble convert it to the `$()` syntax for function parameters
 
 ### Variables and Type System
@@ -171,6 +176,7 @@ def my_function():
 ```
 
 **Type System Features:**
+
 - **Automatic type inference** - Types are inferred from first assignment
 - **Immutable types** - Variables cannot change their type
 - **Compile-time checking** - Type errors are caught before generating the data pack
@@ -239,8 +245,10 @@ def test():
 ```
 
 Features:
+
 - Relative import resolution
-- Automatic circular dependency prevention
+- Circular import errors with the import chain
+- Missing import errors with the importing file and expected path
 - Functions and selectors are merged into current namespace
 
 ### Minecraft Commands
@@ -335,6 +343,7 @@ def handle_difficulty(level):
 ```
 
 Features:
+
 - **Literal matching**: `case 5:` - matches exactly 5
 - **Range matching**: `case 1 to 10:` - matches values from 1 to 10 (inclusive)
 - **Wildcard pattern**: `case _:` - matches anything not matched by previous cases
@@ -380,12 +389,14 @@ def calculations():
 ```
 
 **Operator Precedence** (highest to lowest):
+
 1. `^` - Power/exponentiation
 2. `*`, `/`, `%` - Multiplication, division, and modulo
 3. `+`, `-` - Addition and subtraction
 4. `==`, `!=`, `<`, `<=`, `>`, `>=` - Comparisons
 
 **Implementation Details**:
+
 - Simple operations compile to optimized scoreboard commands
 - Complex expressions use temporary variables automatically
 - Power operator uses compile-time expansion (e.g., `x^3` becomes `x*x*x`)
@@ -412,6 +423,49 @@ helper_function()  # From utils.cbl
 ```
 
 See [File Import System](#file-import-system) for more details on importing from `.cbl` files.
+
+### Standard Library Helpers
+
+Cobble 0.6.0 includes compiler-backed helpers for common data pack tasks:
+
+```python
+def utilities():
+    text.tellraw("@a", {"text": "Hello", "color": "green"})
+    score.set("points", 10)
+    random.int("roll", 1, 6)
+    timer.tick("cooldown")
+    storage.set("status", {"ready": True})
+    root = math.sqrt(100)
+```
+
+Supported helper modules:
+
+- `text` - `tellraw`, `title`, `subtitle`, `actionbar`
+- `score` - `set`, `add`, `remove`, `reset`, `copy`, `operation`
+- `random` - `int`, `bool`
+- `timer` - `set`, `tick`, `done`, `reset`
+- `storage` - `set`, `merge`, `remove`, `copy`
+- `math` - `sqrt`, `abs`, `min`, `max`
+
+### Data Pack JSON Resources
+
+Top-level `datapack.*` declarations generate common JSON resources:
+
+```python
+datapack.function_tag("utility", ["my_pack:setup"])
+datapack.predicate("is_sneaking", {
+    "condition": "minecraft:entity_properties",
+    "entity": "this",
+    "predicate": {"flags": {"is_sneaking": True}}
+})
+datapack.dialog("notice", {
+    "type": "minecraft:notice",
+    "title": {"text": "Notice"}
+})
+```
+
+Supported resources include function/block/item/entity type tags, predicates,
+advancements, loot tables, recipes, item modifiers, and dialogs.
 
 ### Event System
 
@@ -443,9 +497,10 @@ cobble init --name my-project   # Create new directory named 'my-project'
 ```
 
 **Options:**
+
 - `--name <NAME>` - Project name (creates a new directory if specified)
 - `--description <DESCRIPTION>` - Project description
-- `--pack-format <FORMAT>` - Pack format version (default: 18)
+- `--pack-format <FORMAT>` - Pack format version (default: 101.1)
 
 ### `cobble build [input] [options]`
 
@@ -456,11 +511,21 @@ cobble build                  # Use cobble.toml settings
 cobble build src/             # Build specific directory
 cobble build -o dist          # Custom output directory
 cobble build --zip            # Create ZIP file
+cobble build --validate       # Validate generated commands
 ```
 
 Options:
+
 - `-o, --output <dir>` - Output directory
 - `--zip` - Create ZIP archive
+- `--validate` - Validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2 commands
+- `--commands-json <path>` - Path to the exported command tree (default: `data/commands.json`)
+
+Generate the command tree before using validation:
+
+```bash
+scripts/setup_commands_json.sh 26.1.2
+```
 
 ### `cobble watch [input] [options]`
 
@@ -470,6 +535,7 @@ Watch files and rebuild on changes.
 cobble watch                  # Watch project
 cobble watch src/             # Watch specific directory
 cobble watch -o output        # With custom output
+cobble watch --validate       # Validate after each rebuild
 ```
 
 ### `cobble check [input]`
@@ -491,35 +557,25 @@ name = "my-datapack"
 description = "My awesome data pack"
 namespace = "my_namespace"
 version = "1.0.0"
-pack_format = 88  # Minecraft 1.21.9+
+pack_format = "101.1"  # Minecraft Java Edition 26.1.2
 
 [build]
 source = "src"         # Source directory
 output = "output"      # Output directory
-entry_points = []      # Main files to compile
+entry_points = []      # Main files to compile; imported files are pulled in by those entries
 ```
 
-### Pack Format Versions
+### Supported Minecraft Version
 
 | Minecraft Version | Pack Format |
-|------------------|-------------|
-| 1.21.9+         | 88.0        |
-| 1.21.7 - 1.21.8 | 81          |
-| 1.21.6          | 80          |
-| 1.21.5          | 71          |
-| 1.21.4          | 61          |
-| 1.21.2 - 1.21.3 | 57          |
-| 1.21 - 1.21.1   | 48          |
-| 1.20.5 - 1.20.6 | 41          |
-| 1.20.3 - 1.20.4 | 26          |
-| 1.20.2          | 18 (default) |
-| 1.20 - 1.20.1   | 15          |
+| ----------------- | ----------- |
+| 26.1.2 | 101.1 (required) |
 
-**Note**: Cobble requires Minecraft 1.20.2+ (minimum pack format 18) for function macro support and defaults to pack format 18 for maximum compatibility. Starting from Minecraft 1.21.9, pack format includes minor versions (e.g., 88.0).
+> **Note**: Cobble v0.6.0 exclusively supports **Minecraft Java Edition 26.1.2** (pack format 101.1). No backward compatibility with older versions is provided. This allows us to leverage the latest Minecraft features without worrying about legacy constraints.
 
 ## 📁 Project Structure
 
-```
+```text
 my-datapack/
 ├── cobble.toml           # Configuration
 ├── src/
@@ -542,6 +598,7 @@ my-datapack/
 ### Boss Fight System
 
 `src/boss.cbl`:
+
 ```python
 import stdlib
 from stdlib import event
@@ -603,6 +660,7 @@ stdlib.addEventListener(event.TICK, boss_tick)
 ### Parkour System
 
 `src/parkour.cbl`:
+
 ```python
 def create_checkpoint(x, y, z):
     """Create a checkpoint at coordinates"""
@@ -671,7 +729,7 @@ cargo watch -x test -x "run -- check examples/"
 
 - **Variable Scope**: All variables are effectively global due to Minecraft's scoreboard architecture. The `global` keyword is accepted for code clarity but has no functional effect. Variables defined in one function can affect variables in another function if they share the same name.
 - For loops only support `range()` iterators
-- Function parameters require Minecraft 1.20.2+ (macro system)
+- **Minecraft Java Edition 26.1.2 Required**: Cobble exclusively supports Minecraft Java Edition 26.1.2 (pack format 101.1). Older versions are not supported.
 - No array/list data structures yet
 - **While loops**: Execute all iterations in a single game tick, which can cause server lag with large iteration counts (>100)
 
@@ -679,24 +737,36 @@ cargo watch -x test -x "run -- check examples/"
 
 ### Recently Completed
 
+#### v0.6.0 (2026-06-01)
+
+- [x] **Build validation workflow** - `cobble build --validate` and `cobble watch --validate` validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2 commands
+- [x] **Standard library v1** - Added compiler-backed `text`, `score`, `random`, `timer`, `storage`, and non-placeholder `math.sqrt` helpers
+- [x] **Data pack JSON resources** - Added `datapack.*` helpers for tags, predicates, advancements, loot tables, recipes, item modifiers, and dialogs
+- [x] **Generated command source maps** - Generated packs include `.cobble/source_map.json` with command text, generated location, source location when available, and command kind
+- [x] **Project stability** - Circular imports now fail with import chains, missing imports include the importing file, and example projects are covered by build-and-validate fixtures
+
 #### v0.5.18 (2025-10-21)
+
 - [x] **Performance optimization** - Removed unnecessary scoreboard objectives (multiplier, divisor, modulus, power_base, expr_temp) - now uses only temp objective with fake players
 - [x] **Enhanced /say command** - Scoreboard variables in /say commands are automatically converted to tellraw with proper score display components
 - [x] **Cleaner datapacks** - Generated packs now have fewer objectives in the objectives list, reducing clutter
 
 #### v0.5.17 (2025-01-19)
+
 - [x] **Return statement error handling** - Return statements now produce clear compile-time errors instead of being silently ignored
 - [x] **Function call assignment validation** - Assignments like `x = helper()` now error with helpful messages explaining Minecraft limitations
 - [x] **Enhanced expression errors** - Attribute, subscript, and None assignments now have explicit error handling
 - [x] **Comprehensive regression tests** - Added 7 new tests to prevent these bugs from reoccurring (102 total tests)
 
 #### v0.5.16 (2025-01-09)
+
 - [x] **Critical bug fixes** - Fixed three major issues that prevented proper Minecraft functionality
 - [x] **Range syntax parsing** - Fixed tokenizer to correctly parse Minecraft range syntax (`1..`, `..5`, `1..5`)
 - [x] **Circular import detection** - Restored proper circular dependency detection that was broken in v0.5.15
 - [x] **Python expression translation** - Execute blocks now properly translate Python expressions to Minecraft conditions
 
 #### v0.5.6 (2025-10-04)
+
 - [x] **Execute modifiers fix** - All execute modifiers (positioned, in, rotated, etc.) now work as first modifier
 - [x] **Unary operators** - Negation (-x) and positive (+x) operators now work correctly
 - [x] **Macro parameters in /say** - Function parameters can be used in /say commands (e.g., `/say Count: {counter}`)
@@ -705,11 +775,13 @@ cargo watch -x test -x "run -- check examples/"
 - [x] **For loop error handling** - Clear error messages for unsupported variable ranges instead of silent failure
 
 #### v0.5.5 (2025-10-03)
+
 - [x] **Inline comments** - Support for # comments on same line as code
 - [x] **Execute modifier improvements** - Initial support for various execute modifiers
 - [x] **Parser enhancements** - Better error recovery and reporting
 
 #### v0.5.0 (2025-10-03)
+
 - [x] **Type System** - Static, immutable type system with compile-time inference
 - [x] **Type checking** - Prevents accidental type changes (e.g., overwriting score with boolean)
 - [x] **Match validation** - Compile-time detection of overlapping case ranges
@@ -718,30 +790,35 @@ cargo watch -x test -x "run -- check examples/"
 - [x] **Documentation updates** - New Type System section in language reference
 
 #### v0.4.3 (2025-10-03)
+
 - [x] **Critical bug fix** - Fixed execute block keyword capitalization (if/unless were incorrectly capitalized)
 - [x] **Token Display trait fix** - Added explicit lowercase mappings for all keywords
 - [x] **Enhanced test coverage** - 58 integration tests with regression tests for execute chains
 - [x] **Documentation improvements** - Added division by zero warnings and safe usage patterns
 
 #### v0.4.2 (2025-10-03)
+
 - [x] **Critical bug fixes** - Fixed nested OR operators, NOT+OR combination, and match wildcard cases
 - [x] **OR operator improvements** - Recursive flattening for complex OR expressions
 - [x] **Match wildcard fixes** - Proper conditional execution for single and multi-statement wildcards
 - [x] **Comprehensive testing** - 58 integration tests, all passing
 
 #### v0.4.1 (2025-10-03)
+
 - [x] **Loop variable macro support** - Use loop variables directly in commands (e.g., `/say Count: {i}`)
 - [x] **Loop body as macro functions** - Loop bodies compile to macro functions for variable access
 - [x] **Function call fix** - Fixed parameterless function calls (no longer incorrectly use `with storage`)
 - [x] **Parser improvements** - Fixed `by` keyword recognition in for loops
 
 #### v0.4.0 (2025-10-03)
+
 - [x] **Entity Selector Definitions** - Custom selector aliases (e.g., `@Player = @a[type=player]`)
 - [x] **File Import System** - Import functions and definitions from other `.cbl` files
 - [x] **Circular dependency prevention** - Automatic detection and prevention
 - [x] **Relative import resolution** - Import files relative to current file location
 
 #### v0.3.0 (2025-10-03)
+
 - [x] **Compile-time constants** - `const` keyword for compile-time evaluation
 - [x] **Match/switch statements** - Efficient multi-way branching
 - [x] **Literal matching** - Match exact values (e.g., `case 5:`)
@@ -750,16 +827,19 @@ cargo watch -x test -x "run -- check examples/"
 - [x] **4-way split algorithm** - Optimized branching implementation
 
 #### v0.2.2 (2025-10-02)
+
 - [x] **Critical bug fixes** - If/elif/else inlining bug, while loop condition bug
 - [x] **Automatic gamerule configuration** - `maxCommandChainLength` set automatically
 - [x] **Module variable initialization order** - Proper command ordering
 
 #### v0.2.1 (2025-10-02)
+
 - [x] **Complex expressions in conditions** - Use arithmetic directly in if/while (e.g., `if x % 3 == 1:`)
 - [x] **Automatic temporary variables** - Unique variables for each expression in conditions
 - [x] **Nested expression support** - Works with AND/OR operators
 
 #### v0.2.0 (2025-10-02)
+
 - [x] **Modulo operator (%)** - Compute remainders (e.g., `x % y`)
 - [x] **Power operator (^)** - Exponentiation with compile-time expansion (e.g., `x ^ 2`)
 - [x] **OR operator** - Boolean OR in conditions (e.g., `if x == 5 or y == 10:`)
@@ -767,10 +847,12 @@ cargo watch -x test -x "run -- check examples/"
 - [x] **Java Edition compatibility** - Fixed negative loop steps
 
 #### v0.1.1 (2025-10-02)
+
 - [x] **Parenthesized expressions** - Support for `(a + b) * c` style expressions
 - [x] **Self-assignment optimization** - Removed unnecessary operations
 
 #### v0.1.0 (Pre-release)
+
 - [x] elif and else branch support
 - [x] Scoreboard objectives auto-generation
 - [x] User function calls
@@ -789,12 +871,14 @@ cargo watch -x test -x "run -- check examples/"
 - [x] Comprehensive test suite (58 integration tests)
 
 ### Near Term
+
 - [ ] **Template functions** - Parameterized code generation (e.g., `def summon[entity]: /summon {entity} ~ ~ ~`)
 - [ ] Array and list data structures
 - [ ] More built-in functions (math, strings)
 - [ ] Enhanced loop optimizations
 
 ### Medium Term
+
 - [ ] Class and object support for entities
 - [ ] NBT data manipulation
 - [ ] Custom advancement generation
@@ -803,6 +887,7 @@ cargo watch -x test -x "run -- check examples/"
 - [ ] Predicate support
 
 ### Long Term
+
 - [ ] Resource pack integration
 - [ ] VS Code extension with syntax highlighting
 - [ ] Language server protocol (LSP) support

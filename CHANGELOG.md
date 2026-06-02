@@ -5,6 +5,25 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-01
+
+### Added
+- `cobble build --validate` and `cobble watch --validate` to validate generated `.mcfunction` files during normal workflows.
+- `--commands-json <PATH>` for build, watch, and standalone validation.
+- Standard library v1 helpers: `text`, `score`, `random`, `timer`, `storage`, and non-placeholder `math.sqrt`.
+- `datapack.*` JSON resource helpers for function/block/item/entity tags, predicates, advancements, loot tables, recipes, item modifiers, and dialogs.
+- `.cobble/source_map.json` with generated command path, line, text, kind, and source location when available.
+- Build-and-validate example fixture projects for Minecraft Java Edition 26.1.2.
+
+### Changed
+- Circular imports now fail with a concrete import chain instead of being skipped.
+- Missing imports now report the importing file and expected path.
+- Generated functions use the modern singular `data/<namespace>/function` layout and pack format `101.1`.
+
+### Fixed
+- Removed placeholder runtime behavior from `math.sqrt`.
+- Hardened validation diagnostics and macro-line skip reporting.
+
 ## [0.5.18] - 2025-10-21
 
 ### Changed

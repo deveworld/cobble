@@ -1,5 +1,11 @@
 use crate::ast::*;
-use crate::transpiler::Transpiler;
+use crate::transpiler::{FunctionCapture, Transpiler};
+
+struct PreparedMatchCase {
+    body_len: usize,
+    needs_storage: bool,
+    capture: FunctionCapture,
+}
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_match(
@@ -14,16 +20,26 @@ impl Transpiler {
         self.data_pack.track_objective("temp");
         match &match_stmt.value {
             Expression::Identifier(name) => {
-                // If it's already a variable, just use it
-                let obj = self.variable_objectives.get(name).unwrap_or(&"temp".to_string()).clone();
-                let (result_var, result_obj) = (name.as_str(), obj.as_str());
-                return self.process_match_with_var(result_var, result_obj, match_stmt);
+                let obj = self
+                    .variable_objectives
+                    .get(name)
+                    .unwrap_or(&"temp".to_string())
+                    .clone();
+                if let Some(ref mut commands) = self.current_function {
+                    commands.push(format!(
+                        "scoreboard players operation {} temp = {} {}",
+                        temp_var, name, obj
+                    ));
+                }
             }
             Expression::Number(n) => {
                 // If it's a constant, assign it to temp variable
                 let value = *n as i32;
                 if let Some(ref mut commands) = self.current_function {
-                    commands.push(format!("scoreboard players set {} temp {}", temp_var, value));
+                    commands.push(format!(
+                        "scoreboard players set {} temp {}",
+                        temp_var, value
+                    ));
                 }
             }
             _ => {
@@ -44,7 +60,6 @@ impl Transpiler {
         result_obj: &str,
         match_stmt: &MatchStatement,
     ) -> Result<(), String> {
-
         // Convert cases to (min, max, body_idx) tuples
         let mut cases: Vec<(i32, i32, usize)> = Vec::new();
         let mut wildcard_case: Option<usize> = None;
@@ -102,56 +117,44 @@ impl Transpiler {
         }
 
         // Generate switch tree using 4-way split algorithm
+        let mut prepared_cases = self.prepare_match_cases(match_stmt, &cases, wildcard_case)?;
         if !cases.is_empty() {
-            self.generate_switch_tree(result_var, result_obj, &cases, match_stmt)?;
+            self.generate_switch_tree(result_var, result_obj, &cases, &mut prepared_cases)?;
         }
 
         // Handle wildcard case if present (executes if no other case matched)
         if let Some(wildcard_idx) = wildcard_case {
-            let case = &match_stmt.cases[wildcard_idx];
+            let prepared_case = Self::take_prepared_match_case(&mut prepared_cases, wildcard_idx)?;
 
             // Generate condition that excludes all ranges
             let mut unless_conditions = Vec::new();
             for (min, max, _) in &cases {
-                unless_conditions.push(format!("unless score {} {} matches {}..{}",
-                    result_var, result_obj, min, max));
+                unless_conditions.push(format!(
+                    "unless score {} {} matches {}..{}",
+                    result_var, result_obj, min, max
+                ));
             }
 
-            if case.body.len() == 1 {
+            if prepared_case.body_len == 1 && !prepared_case.needs_storage {
                 // Inline single statement with condition
-                let saved_function = self.current_function.take();
-                self.current_function = Some(Vec::new());
-                self.process_statement(&case.body[0])?;
-
-                if let Some(stmt_commands) = self.current_function.take() {
-                    self.current_function = saved_function;
-
-                    if let Some(ref mut commands) = self.current_function {
-                        for cmd in stmt_commands {
-                            let clean_cmd = Self::strip_command_prefix(&cmd);
-                            if unless_conditions.is_empty() {
-                                commands.push(clean_cmd);
-                            } else {
-                                commands.push(format!(
-                                    "execute {} run {}",
-                                    unless_conditions.join(" "),
-                                    clean_cmd
-                                ));
-                            }
-                        }
+                self.append_transformed_capture(prepared_case.capture, |cmd| {
+                    let clean_cmd = Self::strip_command_prefix(cmd);
+                    if unless_conditions.is_empty() {
+                        clean_cmd
+                    } else {
+                        format!("execute {} run {}", unless_conditions.join(" "), clean_cmd)
                     }
-                } else {
-                    self.current_function = saved_function;
-                }
+                })?;
             } else {
                 // Create function for multi-statement wildcard
                 let func_name = format!("match_default_{}", self.temp_counter);
                 self.temp_counter += 1;
 
-                self.create_match_case_function(&func_name, &case.body)?;
+                let needs_storage = prepared_case.needs_storage;
+                self.add_captured_function(func_name.clone(), prepared_case.capture);
 
                 // Call function only if no other case matched
-                let call_cmd = format!("function {}:{}", self.data_pack.namespace, func_name);
+                let call_cmd = self.function_call_command(&func_name, needs_storage);
                 if let Some(ref mut commands) = self.current_function {
                     if unless_conditions.is_empty() {
                         commands.push(call_cmd);
@@ -176,7 +179,7 @@ impl Transpiler {
         var: &str,
         obj: &str,
         cases: &[(i32, i32, usize)],
-        match_stmt: &MatchStatement,
+        prepared_cases: &mut [Option<PreparedMatchCase>],
     ) -> Result<(), String> {
         if cases.is_empty() {
             return Ok(());
@@ -185,9 +188,9 @@ impl Transpiler {
         // Base case: single case
         if cases.len() == 1 {
             let (min, max, case_idx) = cases[0];
-            let case = &match_stmt.cases[case_idx];
+            let prepared_case = Self::take_prepared_match_case(prepared_cases, case_idx)?;
 
-            if case.body.len() == 1 {
+            if prepared_case.body_len == 1 && !prepared_case.needs_storage {
                 // Inline single command
                 if self.current_function.is_some() {
                     let range = if min == max {
@@ -196,41 +199,39 @@ impl Transpiler {
                         format!("{}..{}", min, max)
                     };
 
-                    // Save and restore function context for processing the statement
-                    let saved_commands = self.current_function.take();
-                    self.current_function = Some(Vec::new());
-
-                    for stmt in &case.body {
-                        self.process_statement(stmt)?;
-                    }
-
-                    let body_commands = self.current_function.take().unwrap();
-                    self.current_function = saved_commands;
-
-                    for cmd in body_commands {
-                        let exec_cmd = format!("execute if score {} {} matches {} run {}", var, obj, range, cmd);
-                        if let Some(ref mut cmds) = self.current_function {
-                            cmds.push(exec_cmd);
+                    self.append_transformed_capture(prepared_case.capture, |cmd| {
+                        if let Some(inner_parts) = cmd.strip_prefix("execute ") {
+                            format!(
+                                "execute if score {} {} matches {} {}",
+                                var, obj, range, inner_parts
+                            )
+                        } else {
+                            format!(
+                                "execute if score {} {} matches {} run {}",
+                                var, obj, range, cmd
+                            )
                         }
-                    }
+                    })?;
                 }
             } else {
                 // Create function for multi-statement case
                 let func_name = format!("match_case_{}_{}", min, self.temp_counter);
                 self.temp_counter += 1;
 
-                self.create_match_case_function(&func_name, &case.body)?;
+                let needs_storage = prepared_case.needs_storage;
+                self.add_captured_function(func_name.clone(), prepared_case.capture);
 
+                let range = if min == max {
+                    format!("{}", min)
+                } else {
+                    format!("{}..{}", min, max)
+                };
+                let call_cmd = self.function_call_command(&func_name, needs_storage);
+                let call_cmd = format!(
+                    "execute if score {} {} matches {} run {}",
+                    var, obj, range, call_cmd
+                );
                 if let Some(ref mut commands) = self.current_function {
-                    let range = if min == max {
-                        format!("{}", min)
-                    } else {
-                        format!("{}..{}", min, max)
-                    };
-                    let call_cmd = format!(
-                        "execute if score {} {} matches {} run function {}:{}",
-                        var, obj, range, self.data_pack.namespace, func_name
-                    );
                     commands.push(call_cmd);
                 }
             }
@@ -252,28 +253,19 @@ impl Transpiler {
 
             if sub_cases.len() == 1 {
                 // Single case in this quarter - process directly
-                self.generate_switch_tree(var, obj, sub_cases, match_stmt)?;
+                self.generate_switch_tree(var, obj, sub_cases, prepared_cases)?;
             } else {
                 // Multiple cases - create a function and recursively process
                 let func_name = format!("match_switch_{}_{}", vmin, self.temp_counter);
                 self.temp_counter += 1;
 
-                // Save current function context
-                let saved_commands = self.current_function.take();
-                self.current_function = Some(Vec::new());
-
                 // Recursively generate the switch tree in the new function
-                self.generate_switch_tree(var, obj, sub_cases, match_stmt)?;
-
-                // Get the generated commands
-                let func_commands = self.current_function.take().unwrap();
-
-                // Restore previous function context
-                self.current_function = saved_commands;
+                let capture = self.capture_commands(|transpiler| {
+                    transpiler.generate_switch_tree(var, obj, sub_cases, prepared_cases)
+                })?;
 
                 // Add the generated function to the data pack
-                self.data_pack
-                    .add_function(func_name.clone(), func_commands);
+                self.add_captured_function(func_name.clone(), capture);
 
                 // Call the function with range condition
                 if let Some(ref mut commands) = self.current_function {
@@ -289,34 +281,50 @@ impl Transpiler {
         Ok(())
     }
 
-    /// Create a function for a match case body
-    fn create_match_case_function(
+    fn prepare_match_cases(
         &mut self,
-        func_name: &str,
-        body: &[Statement],
-    ) -> Result<(), String> {
-        // Save current function context
-        let saved_commands = self.current_function.take();
-
-        // Create new function
-        self.current_function = Some(Vec::new());
-
-        // Process body statements
-        for stmt in body {
-            self.process_statement(stmt)?;
+        match_stmt: &MatchStatement,
+        cases: &[(i32, i32, usize)],
+        wildcard_case: Option<usize>,
+    ) -> Result<Vec<Option<PreparedMatchCase>>, String> {
+        let mut prepared_cases = Vec::with_capacity(match_stmt.cases.len());
+        let mut should_prepare = vec![false; match_stmt.cases.len()];
+        for (_, _, case_idx) in cases {
+            should_prepare[*case_idx] = true;
+        }
+        if let Some(wildcard_idx) = wildcard_case {
+            should_prepare[wildcard_idx] = true;
         }
 
-        // Get the generated commands
-        let func_commands = self.current_function.take().unwrap();
+        for (idx, case) in match_stmt.cases.iter().enumerate() {
+            if !should_prepare[idx] {
+                prepared_cases.push(None);
+                continue;
+            }
+            let capture = self.capture_statements_isolated(&case.body)?;
+            let needs_storage = capture.requires_macro_context();
+            prepared_cases.push(Some(PreparedMatchCase {
+                body_len: case.body.len(),
+                needs_storage,
+                capture,
+            }));
+        }
 
-        // Restore previous function context
-        self.current_function = saved_commands;
-
-        // Add function to data pack
-        self.data_pack
-            .add_function(func_name.to_string(), func_commands);
-
-        Ok(())
+        Ok(prepared_cases)
     }
 
+    fn take_prepared_match_case(
+        prepared_cases: &mut [Option<PreparedMatchCase>],
+        case_idx: usize,
+    ) -> Result<PreparedMatchCase, String> {
+        prepared_cases
+            .get_mut(case_idx)
+            .and_then(Option::take)
+            .ok_or_else(|| {
+                format!(
+                    "Internal error: match case {} was already generated",
+                    case_idx
+                )
+            })
+    }
 }

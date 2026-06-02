@@ -23,13 +23,33 @@ impl Transpiler {
         // If we're not in a function, store as module-level variable
         // These will be automatically initialized in the _cobble_init function
         if self.current_function.is_none() {
-            self.data_pack.track_objective("temp");
-            self.variable_objectives
-                .insert(assign.target.clone(), "temp".to_string());
-            self.scoreboard_variables.insert(assign.target.clone());
-            self.module_level_vars
-                .insert(assign.target.clone(), assign.value.clone());
+            // Storage types (Array, Map, String) use NBT storage, not scoreboard
+            match &assign.value {
+                Expression::Array(_) | Expression::Map(_) | Expression::String(_) => {
+                    let storage_path = format!("vars.{}", assign.target);
+                    self.variable_storage_paths
+                        .insert(assign.target.clone(), storage_path);
+                }
+                _ => {
+                    self.data_pack.track_objective("temp");
+                    self.variable_objectives
+                        .insert(assign.target.clone(), "temp".to_string());
+                    self.scoreboard_variables.insert(assign.target.clone());
+                }
+            }
+            self.module_level_vars.push((
+                assign.target.clone(),
+                assign.value.clone(),
+                self.current_statement_source.clone(),
+            ));
             return Ok(());
+        }
+
+        if !matches!(
+            &assign.value,
+            Expression::Array(_) | Expression::Map(_) | Expression::String(_)
+        ) {
+            self.variable_storage_paths.remove(&assign.target);
         }
 
         // Try to evaluate constant expressions first
@@ -74,20 +94,46 @@ impl Transpiler {
             return Ok(());
         }
 
+        if Self::is_runtime_condition_expression(&assign.value) {
+            self.data_pack.track_objective("temp");
+            self.variable_objectives
+                .insert(assign.target.clone(), "temp".to_string());
+            self.scoreboard_variables.insert(assign.target.clone());
+
+            let processed_condition = self.preprocess_condition(&assign.value)?;
+            let condition_cmd =
+                self.normalize_if_condition(self.translate_condition(&processed_condition)?)?;
+            let condition_execute_args = Self::condition_execute_args(&condition_cmd);
+
+            if let Some(ref mut commands) = self.current_function {
+                commands.push(format!("scoreboard players set {} temp 0", assign.target));
+                commands.push(format!(
+                    "execute {} run scoreboard players set {} temp 1",
+                    condition_execute_args, assign.target
+                ));
+            }
+            return Ok(());
+        }
+
         // Check if we need to use the complex expression evaluator
         // Do this before borrowing to avoid borrow checker issues
+        // 4. Handle Complex Expressions (Math, Binary, etc.)
         let needs_complex_eval = match &assign.value {
             Expression::Binary(left, _, right) => {
-                // Check if either side is a binary expression (nested) or unary expression
-                matches!(**left, Expression::Binary(_, _, _))
-                    || matches!(**right, Expression::Binary(_, _, _))
-                    || matches!(**left, Expression::Unary(_, _))
-                    || matches!(**right, Expression::Unary(_, _))
+                // Simple binary (atom op atom) handled by optimized code in assignment.rs
+                // Complex binary (nested expressions) need the expression evaluator
+                !matches!(
+                    (&**left, &**right),
+                    (
+                        Expression::Identifier(_) | Expression::Number(_),
+                        Expression::Identifier(_) | Expression::Number(_)
+                    )
+                )
             }
-            Expression::Unary(_, _) => {
-                // All unary expressions need the complex evaluator
-                true
-            }
+            Expression::Unary(_, _) | Expression::Call(_, _) => true,
+            // Attribute/Subscript falling through here means they failed storage resolution
+            // which likely means invalid base. `evaluate_expression_to_target` will handle error reporting.
+            Expression::Attribute(_, _) | Expression::Subscript(_, _) => true,
             _ => false,
         };
 
@@ -106,15 +152,57 @@ impl Transpiler {
             return Ok(());
         }
 
+        // Check for Storage assignments (Array, Map, String)
+        let storage_assignment = matches!(
+            &assign.value,
+            Expression::Array(_) | Expression::Map(_) | Expression::String(_)
+        );
+
+        if storage_assignment {
+            let storage_path = format!("vars.{}", assign.target);
+            self.variable_storage_paths
+                .insert(assign.target.clone(), storage_path.clone());
+
+            let snbt = self.serialize_to_snbt(&assign.value)?;
+
+            let cmd = format!(
+                "data modify storage {}:global {} set value {}",
+                self.data_pack.namespace, storage_path, snbt
+            );
+
+            if let Some(ref mut commands) = self.current_function {
+                commands.push(cmd);
+            }
+            return Ok(());
+        }
+
         // If it's a score assignment, generate scoreboard command
         if let Some(ref mut commands) = self.current_function {
             match &assign.value {
-                Expression::String(_) | Expression::Boolean(_) => {
-                    // String and Boolean values are stored in self.variables (line 20-21)
-                    // but don't generate scoreboard commands
-                    // They are used only for command substitution in tellraw/title commands
-                    // The CommandProcessor will replace {var} with the actual value
+                Expression::Array(_) | Expression::Map(_) | Expression::String(_) => {
+                    // Handled above
                     return Ok(());
+                }
+                Expression::Boolean(b) => {
+                    // Boolean assignment
+                    // Store as scoreboard (0/1) AND storage (byte) if needed?
+                    // For now, keep existing scoreboard behavior for boolean
+                    // But if we want to put it in storage:
+                    // Let's stick to scoreboard for consistency with existing code
+                    // unless explicitly requested?
+                    // Existing code does NOTHING for Boolean assignment!
+                    // See original code: "String and Boolean values ... don't generate scoreboard commands"
+                    // This means they were effectively compile-time only or broken.
+                    // Let's fix it by using scoreboard for boolean.
+                    self.data_pack.track_objective("temp");
+                    self.variable_objectives
+                        .insert(assign.target.clone(), "temp".to_string());
+                    self.scoreboard_variables.insert(assign.target.clone());
+                    let val = if *b { 1 } else { 0 };
+                    commands.push(format!(
+                        "scoreboard players set {} temp {}",
+                        assign.target, val
+                    ));
                 }
                 Expression::Number(n) => {
                     // Direct number assignment
@@ -155,22 +243,38 @@ impl Transpiler {
                     ));
                 }
                 Expression::Identifier(var) => {
-                    // Variable-to-variable assignment
-                    self.data_pack.track_objective("temp");
-                    self.variable_objectives
-                        .insert(assign.target.clone(), "temp".to_string());
-                    self.scoreboard_variables.insert(assign.target.clone());
+                    // Check if source is a storage variable (Array/Map)
+                    let src_path_opt = self.variable_storage_paths.get(var).cloned();
+                    if let Some(src_path) = src_path_opt {
+                        // Storage copy: target = src
+                        // Mark target as storage variable
+                        let target_path = format!("vars.{}", assign.target);
+                        self.variable_storage_paths
+                            .insert(assign.target.clone(), target_path.clone());
 
-                    let var_obj = self
-                        .variable_objectives
-                        .get(var)
-                        .unwrap_or(&"temp".to_string())
-                        .clone();
+                        let namespace = self.data_pack.namespace.clone();
+                        commands.push(format!(
+                            "data modify storage {}:global {} set from storage {}:global {}",
+                            namespace, target_path, namespace, src_path
+                        ));
+                    } else {
+                        // Variable-to-variable assignment (Scoreboard)
+                        self.data_pack.track_objective("temp");
+                        self.variable_objectives
+                            .insert(assign.target.clone(), "temp".to_string());
+                        self.scoreboard_variables.insert(assign.target.clone());
 
-                    commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        assign.target, var, var_obj
-                    ));
+                        let var_obj = self
+                            .variable_objectives
+                            .get(var)
+                            .unwrap_or(&"temp".to_string())
+                            .clone();
+
+                        commands.push(format!(
+                            "scoreboard players operation {} temp = {} {}",
+                            assign.target, var, var_obj
+                        ));
+                    }
                 }
                 Expression::Binary(left, op, right) => {
                     // Binary operation (already handled complex case above, so this is simple)
@@ -205,10 +309,17 @@ impl Transpiler {
                                             assign.target, var, var_obj
                                         ));
                                     }
-                                    commands.push(format!(
-                                        "scoreboard players add {} temp {}",
-                                        assign.target, value
-                                    ));
+                                    if value < 0 {
+                                        commands.push(format!(
+                                            "scoreboard players remove {} temp {}",
+                                            assign.target, -value
+                                        ));
+                                    } else {
+                                        commands.push(format!(
+                                            "scoreboard players add {} temp {}",
+                                            assign.target, value
+                                        ));
+                                    }
                                 }
                                 BinaryOp::Sub => {
                                     // Optimization: Skip self-assignment if target == var
@@ -218,10 +329,17 @@ impl Transpiler {
                                             assign.target, var, var_obj
                                         ));
                                     }
-                                    commands.push(format!(
-                                        "scoreboard players remove {} temp {}",
-                                        assign.target, value
-                                    ));
+                                    if value < 0 {
+                                        commands.push(format!(
+                                            "scoreboard players add {} temp {}",
+                                            assign.target, -value
+                                        ));
+                                    } else {
+                                        commands.push(format!(
+                                            "scoreboard players remove {} temp {}",
+                                            assign.target, value
+                                        ));
+                                    }
                                 }
                                 BinaryOp::Mul => {
                                     // Optimization: Skip self-assignment if target == var
@@ -232,11 +350,11 @@ impl Transpiler {
                                         ));
                                     }
                                     commands.push(format!(
-                                        "scoreboard players set multiplier temp {}",
+                                        "scoreboard players set #multiplier temp {}",
                                         value
                                     ));
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp *= multiplier temp",
+                                        "scoreboard players operation {} temp *= #multiplier temp",
                                         assign.target
                                     ));
                                 }
@@ -256,11 +374,11 @@ impl Transpiler {
                                         ));
                                     }
                                     commands.push(format!(
-                                        "scoreboard players set divisor temp {}",
+                                        "scoreboard players set #divisor temp {}",
                                         value
                                     ));
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp /= divisor temp",
+                                        "scoreboard players operation {} temp /= #divisor temp",
                                         assign.target
                                     ));
                                 }
@@ -280,11 +398,11 @@ impl Transpiler {
                                         ));
                                     }
                                     commands.push(format!(
-                                        "scoreboard players set modulus temp {}",
+                                        "scoreboard players set #modulus temp {}",
                                         value
                                     ));
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp %= modulus temp",
+                                        "scoreboard players operation {} temp %= #modulus temp",
                                         assign.target
                                     ));
                                 }
@@ -326,12 +444,12 @@ impl Transpiler {
                                         }
                                         if value > 1 {
                                             commands.push(format!(
-                                                "scoreboard players operation power_base temp = {} temp",
+                                                "scoreboard players operation #power_base temp = {} temp",
                                                 assign.target
                                             ));
                                             for _ in 0..(value - 1) {
                                                 commands.push(format!(
-                                                    "scoreboard players operation {} temp *= power_base temp",
+                                                    "scoreboard players operation {} temp *= #power_base temp",
                                                     assign.target
                                                 ));
                                             }
@@ -373,7 +491,16 @@ impl Transpiler {
                                             "Power exponent must be non-negative".to_string()
                                         );
                                     }
-                                    base.pow(exp as u32) as f64
+                                    match base.checked_pow(exp as u32) {
+                                        Some(result) => result as f64,
+                                        None => {
+                                            eprintln!(
+                                                "⚠️  Warning: Power operation {}^{} overflows i32, clamping to i32::MAX",
+                                                base, exp
+                                            );
+                                            i32::MAX as f64
+                                        }
+                                    }
                                 }
                                 _ => 0.0,
                             };
@@ -418,10 +545,17 @@ impl Transpiler {
                                         "scoreboard players operation {} temp = {} {}",
                                         assign.target, var, var_obj
                                     ));
-                                    commands.push(format!(
-                                        "scoreboard players add {} temp {}",
-                                        assign.target, value
-                                    ));
+                                    if value < 0 {
+                                        commands.push(format!(
+                                            "scoreboard players remove {} temp {}",
+                                            assign.target, -value
+                                        ));
+                                    } else {
+                                        commands.push(format!(
+                                            "scoreboard players add {} temp {}",
+                                            assign.target, value
+                                        ));
+                                    }
                                 }
                                 BinaryOp::Sub => {
                                     // score = value - var → score = value, score -= var
@@ -441,11 +575,11 @@ impl Transpiler {
                                         assign.target, var, var_obj
                                     ));
                                     commands.push(format!(
-                                        "scoreboard players set multiplier temp {}",
+                                        "scoreboard players set #multiplier temp {}",
                                         value
                                     ));
                                     commands.push(format!(
-                                        "scoreboard players operation {} temp *= multiplier temp",
+                                        "scoreboard players operation {} temp *= #multiplier temp",
                                         assign.target
                                     ));
                                 }
@@ -547,11 +681,11 @@ impl Transpiler {
                                             assign.target, var2, var_obj
                                         ));
                                         commands.push(format!(
-                                            "scoreboard players set multiplier temp {}",
+                                            "scoreboard players set #multiplier temp {}",
                                             num
                                         ));
                                         commands.push(format!(
-                                            "scoreboard players operation {} temp *= multiplier temp",
+                                            "scoreboard players operation {} temp *= #multiplier temp",
                                             assign.target
                                         ));
                                     }
@@ -597,24 +731,38 @@ impl Transpiler {
 
                                 match op {
                                     BinaryOp::Add => {
-                                        commands.push(format!(
-                                            "scoreboard players add {} temp {}",
-                                            assign.target, num
-                                        ));
+                                        if num < 0 {
+                                            commands.push(format!(
+                                                "scoreboard players remove {} temp {}",
+                                                assign.target, -num
+                                            ));
+                                        } else {
+                                            commands.push(format!(
+                                                "scoreboard players add {} temp {}",
+                                                assign.target, num
+                                            ));
+                                        }
                                     }
                                     BinaryOp::Sub => {
-                                        commands.push(format!(
-                                            "scoreboard players remove {} temp {}",
-                                            assign.target, num
-                                        ));
+                                        if num < 0 {
+                                            commands.push(format!(
+                                                "scoreboard players add {} temp {}",
+                                                assign.target, -num
+                                            ));
+                                        } else {
+                                            commands.push(format!(
+                                                "scoreboard players remove {} temp {}",
+                                                assign.target, num
+                                            ));
+                                        }
                                     }
                                     BinaryOp::Mul => {
                                         commands.push(format!(
-                                            "scoreboard players set multiplier temp {}",
+                                            "scoreboard players set #multiplier temp {}",
                                             num
                                         ));
                                         commands.push(format!(
-                                            "scoreboard players operation {} temp *= multiplier temp",
+                                            "scoreboard players operation {} temp *= #multiplier temp",
                                             assign.target
                                         ));
                                     }
@@ -625,11 +773,11 @@ impl Transpiler {
                                             );
                                         }
                                         commands.push(format!(
-                                            "scoreboard players set divisor temp {}",
+                                            "scoreboard players set #divisor temp {}",
                                             num
                                         ));
                                         commands.push(format!(
-                                            "scoreboard players operation {} temp /= divisor temp",
+                                            "scoreboard players operation {} temp /= #divisor temp",
                                             assign.target
                                         ));
                                     }
@@ -638,11 +786,11 @@ impl Transpiler {
                                             return Err("Modulo by zero in assignment".to_string());
                                         }
                                         commands.push(format!(
-                                            "scoreboard players set modulus temp {}",
+                                            "scoreboard players set #modulus temp {}",
                                             num
                                         ));
                                         commands.push(format!(
-                                            "scoreboard players operation {} temp %= modulus temp",
+                                            "scoreboard players operation {} temp %= #modulus temp",
                                             assign.target
                                         ));
                                     }
@@ -661,12 +809,12 @@ impl Transpiler {
                                             // nothing to do
                                         } else {
                                             commands.push(format!(
-                                                "scoreboard players operation power_base temp = {} temp",
+                                                "scoreboard players operation #power_base temp = {} temp",
                                                 assign.target
                                             ));
                                             for _ in 0..(num - 1) {
                                                 commands.push(format!(
-                                                    "scoreboard players operation {} temp *= power_base temp",
+                                                    "scoreboard players operation {} temp *= #power_base temp",
                                                     assign.target
                                                 ));
                                             }
@@ -715,7 +863,9 @@ impl Transpiler {
                                     }
                                     BinaryOp::Div => {
                                         // Check if var2 is a compile-time constant with value 0
-                                        if let Some(const_val) = self.compile_time_constants.get(var2) {
+                                        if let Some(const_val) =
+                                            self.compile_time_constants.get(var2)
+                                        {
                                             if *const_val == 0.0 {
                                                 return Err(format!(
                                                     "Division by zero: Variable '{}' has constant value 0.\n\
@@ -736,7 +886,9 @@ impl Transpiler {
                                     }
                                     BinaryOp::Mod => {
                                         // Check if var2 is a compile-time constant with value 0
-                                        if let Some(const_val) = self.compile_time_constants.get(var2) {
+                                        if let Some(const_val) =
+                                            self.compile_time_constants.get(var2)
+                                        {
                                             if *const_val == 0.0 {
                                                 return Err(format!(
                                                     "Modulo by zero: Variable '{}' has constant value 0.\n\
@@ -801,41 +953,12 @@ impl Transpiler {
                            # In the caller:\n\
                            {}()\n\
                            # Now 'result' variable can be used\n\n\
-                        3. Pass the target variable name as a parameter (for Minecraft 1.20.2+):\n\
+                        3. Pass the target variable name as a parameter:\n\
                            def set_value(target_var):\n\
                                /scoreboard players set {{target_var}} temp 42\n\
                            \n\
                            set_value(\"my_var\")",
                         assign.target, func_name, func_name, func_name, func_name
-                    ));
-                }
-                Expression::Attribute(obj, attr) => {
-                    // Attribute access in assignments (e.g., obj.field)
-                    let obj_name = match &**obj {
-                        Expression::Identifier(name) => name.clone(),
-                        _ => "object".to_string(),
-                    };
-
-                    return Err(format!(
-                        "Cannot assign attribute access result to variable.\n\n\
-                        Attempted: {} = {}.{}\n\n\
-                        Attribute access is not supported in assignments.\n\n\
-                        Solutions:\n\
-                        1. For stdlib constants (like event.LOAD), use them directly in function calls:\n\
-                           stdlib.addEventListener(event.LOAD, my_function)\n\n\
-                        2. For other attribute access, Cobble doesn't support object-oriented features yet.",
-                        assign.target, obj_name, attr
-                    ));
-                }
-                Expression::Subscript(_array, _index) => {
-                    // Array/subscript access (e.g., arr[0])
-                    return Err(format!(
-                        "Cannot assign subscript/array access result to variable.\n\n\
-                        Attempted: {} = array[index]\n\n\
-                        Arrays and subscript operations are not supported yet.\n\n\
-                        Note: This is a planned feature for future versions of Cobble.\n\
-                        For now, use separate scoreboard variables for each value.",
-                        assign.target
                     ));
                 }
                 Expression::None => {
@@ -878,5 +1001,95 @@ impl Transpiler {
         }
 
         Ok(())
+    }
+
+    fn is_runtime_condition_expression(expr: &Expression) -> bool {
+        match expr {
+            Expression::Binary(_, op, _) => matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::NotEq
+                    | BinaryOp::Lt
+                    | BinaryOp::LtEq
+                    | BinaryOp::Gt
+                    | BinaryOp::GtEq
+                    | BinaryOp::And
+                    | BinaryOp::Or
+            ),
+            Expression::Unary(UnaryOp::Not, _) => true,
+            _ => false,
+        }
+    }
+
+    pub(in crate::transpiler) fn serialize_to_snbt(
+        &self,
+        expr: &Expression,
+    ) -> Result<String, String> {
+        match expr {
+            Expression::Number(n) => {
+                if n.fract() == 0.0 {
+                    Ok(format!("{}", *n as i32))
+                } else {
+                    Ok(format!("{}f", n))
+                }
+            }
+            Expression::String(s) => {
+                let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                Ok(format!("\"{}\"", escaped))
+            }
+            Expression::Boolean(b) => Ok(if *b {
+                "1b".to_string()
+            } else {
+                "0b".to_string()
+            }),
+            Expression::Array(items) => {
+                let mut result = String::from("[");
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        result.push(',');
+                    }
+                    result.push_str(&self.serialize_to_snbt(item)?);
+                }
+                result.push(']');
+                Ok(result)
+            }
+            Expression::Map(entries) => {
+                let mut result = String::from("{");
+                for (i, (key, value)) in entries.iter().enumerate() {
+                    if i > 0 {
+                        result.push(',');
+                    }
+                    result.push_str(&Self::serialize_snbt_key(key));
+                    result.push(':');
+                    result.push_str(&self.serialize_to_snbt(value)?);
+                }
+                result.push('}');
+                Ok(result)
+            }
+            Expression::Identifier(name) => {
+                if let Some(val) = self.compile_time_constants.get(name) {
+                    Ok(format!("{}", val))
+                } else {
+                    Err(format!("Variables inside array/map literals are not yet supported in this context ('{}'). Use constants or literal values.", name))
+                }
+            }
+            _ => Err(format!(
+                "Unsupported expression in SNBT serialization: {:?}",
+                expr
+            )),
+        }
+    }
+
+    fn serialize_snbt_key(key: &str) -> String {
+        if !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '+')
+        {
+            return key.to_string();
+        }
+
+        let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{}\"", escaped)
     }
 }

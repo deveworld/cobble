@@ -3,28 +3,35 @@ use std::collections::{HashMap, HashSet};
 
 /// Process Minecraft command strings with variable substitution
 pub struct CommandProcessor<'a> {
+    pub namespace: String,
     pub current_params: &'a [String],
     pub scoreboard_variables: &'a HashSet<String>,
     pub variables: &'a HashMap<String, Expression>,
     pub variable_objectives: &'a HashMap<String, String>,
+    pub variable_storage_paths: &'a HashMap<String, String>,
     pub selector_aliases: &'a HashMap<String, String>,
     pub compile_time_constants: &'a HashMap<String, f64>,
 }
 
 impl<'a> CommandProcessor<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        namespace: String,
         current_params: &'a [String],
         scoreboard_variables: &'a HashSet<String>,
         variables: &'a HashMap<String, Expression>,
         variable_objectives: &'a HashMap<String, String>,
+        variable_storage_paths: &'a HashMap<String, String>,
         selector_aliases: &'a HashMap<String, String>,
         compile_time_constants: &'a HashMap<String, f64>,
     ) -> Self {
         Self {
+            namespace,
             current_params,
             scoreboard_variables,
             variables,
             variable_objectives,
+            variable_storage_paths,
             selector_aliases,
             compile_time_constants,
         }
@@ -125,6 +132,10 @@ impl<'a> CommandProcessor<'a> {
                             // Scoreboard variable found - collect for special handling
                             scoreboard_vars_found.push((i, j, var_name.to_string()));
                             i = j; // Skip past this variable
+                        } else if self.variable_storage_paths.contains_key(var_name) {
+                            // Storage variable found - collect for special handling
+                            scoreboard_vars_found.push((i, j, var_name.to_string()));
+                            i = j; // Skip past this variable
                         } else if let Some(value) = self.variables.get(var_name) {
                             // Constant variable - inline the value
                             let replacement = match value {
@@ -213,9 +224,17 @@ impl<'a> CommandProcessor<'a> {
         // Convert char indices to byte indices for UTF-8 safety
         for (char_start, char_end, replacement) in replacements.into_iter().rev() {
             // Convert character indices to byte indices
-            let byte_start = result.char_indices().nth(char_start).map(|(i, _)| i).unwrap_or(0);
+            let byte_start = result
+                .char_indices()
+                .nth(char_start)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             let byte_end = if char_end < chars.len() {
-                result.char_indices().nth(char_end).map(|(i, _)| i).unwrap_or(result.len())
+                result
+                    .char_indices()
+                    .nth(char_end)
+                    .map(|(i, _)| i)
+                    .unwrap_or(result.len())
             } else {
                 result.len()
             };
@@ -225,6 +244,10 @@ impl<'a> CommandProcessor<'a> {
         // Handle scoreboard variables - special processing for tellraw/title/say
         if !scoreboard_vars_found.is_empty() {
             result = self.handle_scoreboard_vars_in_command(&result, &scoreboard_vars_found)?;
+        }
+
+        if has_macro_vars && scoreboard_vars_found.is_empty() {
+            result = self.normalize_macro_text_component_command(&result)?;
         }
 
         // If the command has macro variables, prefix with $ for Minecraft 1.21.8+ macro system
@@ -284,6 +307,54 @@ impl<'a> CommandProcessor<'a> {
         Ok(result)
     }
 
+    fn normalize_macro_text_component_command(&self, cmd: &str) -> Result<String, String> {
+        let trimmed = cmd.trim();
+        if trimmed.starts_with("title ") {
+            let parts: Vec<&str> = trimmed.splitn(4, ' ').collect();
+            if parts.len() < 4 {
+                return Ok(cmd.to_string());
+            }
+            let message = parts[3].trim();
+            if Self::looks_like_text_component(message) {
+                return Ok(cmd.to_string());
+            }
+            return Ok(format!(
+                "{} {} {} {}",
+                parts[0],
+                parts[1],
+                parts[2],
+                Self::plain_text_component(message)
+            ));
+        }
+
+        if trimmed.starts_with("tellraw ") {
+            let parts: Vec<&str> = trimmed.splitn(3, ' ').collect();
+            if parts.len() < 3 {
+                return Ok(cmd.to_string());
+            }
+            let message = parts[2].trim();
+            if Self::looks_like_text_component(message) {
+                return Ok(cmd.to_string());
+            }
+            return Ok(format!(
+                "{} {} {}",
+                parts[0],
+                parts[1],
+                Self::plain_text_component(message)
+            ));
+        }
+
+        Ok(cmd.to_string())
+    }
+
+    fn looks_like_text_component(message: &str) -> bool {
+        message.starts_with('{') || message.starts_with('[') || message.starts_with('"')
+    }
+
+    fn plain_text_component(message: &str) -> String {
+        serde_json::json!({ "text": message }).to_string()
+    }
+
     fn handle_scoreboard_vars_in_command(
         &self,
         cmd: &str,
@@ -295,7 +366,7 @@ impl<'a> CommandProcessor<'a> {
         if trimmed.starts_with("tellraw ") || trimmed.starts_with("title ") {
             return self.convert_to_tellraw_json(cmd, vars);
         }
-        
+
         if let Some(say_message) = trimmed.strip_prefix("say ") {
             // Auto-convert /say to /tellraw @a
             let tellraw_cmd = format!("tellraw @a {}", say_message.trim());
@@ -306,9 +377,8 @@ impl<'a> CommandProcessor<'a> {
         // Macro parameters are allowed in any command, including say
         let is_macro_command = trimmed.starts_with('$') || {
             // Check if all variables are macro parameters (not scoreboard variables)
-            vars.iter().all(|(_, _, name)| {
-                self.current_params.contains(name)
-            })
+            vars.iter()
+                .all(|(_, _, name)| self.current_params.contains(name))
         };
 
         if is_macro_command {
@@ -397,7 +467,10 @@ impl<'a> CommandProcessor<'a> {
             } else {
                 // No variables - return JSON array as-is
                 if let Some(action_token) = action {
-                    return Ok(format!("{} {} {} {}", command, selector, action_token, message));
+                    return Ok(format!(
+                        "{} {} {} {}",
+                        command, selector, action_token, message
+                    ));
                 } else {
                     return Ok(format!("{} {} {}", command, selector, message));
                 }
@@ -411,9 +484,9 @@ impl<'a> CommandProcessor<'a> {
             if let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(message_trimmed) {
                 if let Some(text_value) = json_obj.get("text").and_then(|v| v.as_str()) {
                     // Check if text contains variables
-                    let has_vars = vars.iter().any(|(_, _, name)| {
-                        text_value.contains(&format!("{{{}}}", name))
-                    });
+                    let has_vars = vars
+                        .iter()
+                        .any(|(_, _, name)| text_value.contains(&format!("{{{}}}", name)));
 
                     if has_vars {
                         // Split the text field and create an array with preserved styling
@@ -438,23 +511,35 @@ impl<'a> CommandProcessor<'a> {
                                 // Add text before variable with original styling
                                 if pos > 0 {
                                     let mut text_component = json_obj.clone();
-                                    text_component["text"] = serde_json::Value::String(remaining[..pos].to_string());
+                                    text_component["text"] =
+                                        serde_json::Value::String(remaining[..pos].to_string());
                                     json_components.push(text_component);
                                 }
 
-                                // Add score component
-                                let objective = self
-                                    .variable_objectives
-                                    .get(&next_var_name)
-                                    .map(|s| s.as_str())
-                                    .unwrap_or("temp");
-                                let score_component = serde_json::json!({
-                                    "score": {
-                                        "name": next_var_name,
-                                        "objective": objective
-                                    }
-                                });
-                                json_components.push(score_component);
+                                // Check if it's a storage variable
+                                if let Some(storage_path) =
+                                    self.variable_storage_paths.get(&next_var_name)
+                                {
+                                    let nbt_component = serde_json::json!({
+                                        "nbt": storage_path,
+                                        "storage": format!("{}:global", self.namespace)
+                                    });
+                                    json_components.push(nbt_component);
+                                } else {
+                                    // Add score component
+                                    let objective = self
+                                        .variable_objectives
+                                        .get(&next_var_name)
+                                        .map(|s| s.as_str())
+                                        .unwrap_or("temp");
+                                    let score_component = serde_json::json!({
+                                        "score": {
+                                            "name": next_var_name,
+                                            "objective": objective
+                                        }
+                                    });
+                                    json_components.push(score_component);
+                                }
 
                                 // Move past this variable
                                 let pattern = format!("{{{}}}", next_var_name);
@@ -463,7 +548,8 @@ impl<'a> CommandProcessor<'a> {
                                 // No more variables, add remaining text with original styling
                                 if !remaining.is_empty() {
                                     let mut text_component = json_obj.clone();
-                                    text_component["text"] = serde_json::Value::String(remaining.to_string());
+                                    text_component["text"] =
+                                        serde_json::Value::String(remaining.to_string());
                                     json_components.push(text_component);
                                 }
                                 break;
@@ -472,17 +558,24 @@ impl<'a> CommandProcessor<'a> {
 
                         // Build the final command with the JSON array
                         let json_array = serde_json::Value::Array(json_components);
-                        let json_string = serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
+                        let json_string =
+                            serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
 
                         if let Some(action_token) = action {
-                            return Ok(format!("{} {} {} {}", command, selector, action_token, json_string));
+                            return Ok(format!(
+                                "{} {} {} {}",
+                                command, selector, action_token, json_string
+                            ));
                         } else {
                             return Ok(format!("{} {} {}", command, selector, json_string));
                         }
                     }
                     // If no variables in text, return as-is
                     if let Some(action_token) = action {
-                        return Ok(format!("{} {} {} {}", command, selector, action_token, message));
+                        return Ok(format!(
+                            "{} {} {} {}",
+                            command, selector, action_token, message
+                        ));
                     } else {
                         return Ok(format!("{} {} {}", command, selector, message));
                     }
@@ -547,16 +640,24 @@ impl<'a> CommandProcessor<'a> {
                     ));
                 }
 
-                // Add score component - use variable name as the score holder (fake player)
-                let objective = self
-                    .variable_objectives
-                    .get(&next_var_name)
-                    .map(|s| s.as_str())
-                    .unwrap_or("temp");
-                json_components.push(format!(
-                    "{{\"score\":{{\"name\":\"{}\",\"objective\":\"{}\"}}}}",
-                    next_var_name, objective
-                ));
+                // Check if it's a storage variable
+                if let Some(storage_path) = self.variable_storage_paths.get(&next_var_name) {
+                    json_components.push(format!(
+                        "{{\"nbt\":\"{}\",\"storage\":\"{}:global\"}}",
+                        storage_path, self.namespace
+                    ));
+                } else {
+                    // Add score component - use variable name as the score holder (fake player)
+                    let objective = self
+                        .variable_objectives
+                        .get(&next_var_name)
+                        .map(|s| s.as_str())
+                        .unwrap_or("temp");
+                    json_components.push(format!(
+                        "{{\"score\":{{\"name\":\"{}\",\"objective\":\"{}\"}}}}",
+                        next_var_name, objective
+                    ));
+                }
 
                 // Move past this variable
                 let pattern = format!("{{{}}}", next_var_name);

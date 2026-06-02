@@ -14,17 +14,18 @@ impl Transpiler {
             match modifier {
                 ExecuteModifier::As(selector) => {
                     // Check if selector contains a variable interpolation pattern {param}
-                    let mut processed_selector = if selector.starts_with('{') && selector.ends_with('}') {
-                        let param_name = &selector[1..selector.len()-1];
-                        if self.current_context.is_param(param_name) {
-                            has_macro_params = true;
-                            format!("$({})", param_name)
+                    let mut processed_selector =
+                        if selector.starts_with('{') && selector.ends_with('}') {
+                            let param_name = &selector[1..selector.len() - 1];
+                            if self.current_context.is_param(param_name) {
+                                has_macro_params = true;
+                                format!("$({})", param_name)
+                            } else {
+                                selector.clone()
+                            }
                         } else {
                             selector.clone()
-                        }
-                    } else {
-                        selector.clone()
-                    };
+                        };
 
                     // Replace selector aliases (@Name -> @a[...])
                     if processed_selector.starts_with('@') {
@@ -38,17 +39,18 @@ impl Transpiler {
                 }
                 ExecuteModifier::At(selector) => {
                     // Check if selector contains a variable interpolation pattern {param}
-                    let mut processed_selector = if selector.starts_with('{') && selector.ends_with('}') {
-                        let param_name = &selector[1..selector.len()-1];
-                        if self.current_context.is_param(param_name) {
-                            has_macro_params = true;
-                            format!("$({})", param_name)
+                    let mut processed_selector =
+                        if selector.starts_with('{') && selector.ends_with('}') {
+                            let param_name = &selector[1..selector.len() - 1];
+                            if self.current_context.is_param(param_name) {
+                                has_macro_params = true;
+                                format!("$({})", param_name)
+                            } else {
+                                selector.clone()
+                            }
                         } else {
                             selector.clone()
-                        }
-                    } else {
-                        selector.clone()
-                    };
+                        };
 
                     // Replace selector aliases (@Name -> @a[...])
                     if processed_selector.starts_with('@') {
@@ -101,7 +103,9 @@ impl Transpiler {
                     // Check if this is actually a Python expression that needs translation
                     if self.looks_like_python_expression(condition) {
                         // Try to parse and translate as Python expression
-                        if let Ok(translated) = self.try_translate_python_expression(condition, false) {
+                        if let Ok(translated) =
+                            self.try_translate_python_expression(condition, false)
+                        {
                             // Check if it's an OR condition marker
                             if translated.starts_with("OR(") {
                                 // Mark as OR condition for special handling
@@ -129,7 +133,10 @@ impl Transpiler {
                         if condition.contains(" or ") {
                             // OR conditions need special handling with temp variables
                             // Mark as OR condition for later processing
-                            execute_parts.push(format!("OR_CONDITION:OR({})", condition.replace(" or ", ";")));
+                            execute_parts.push(format!(
+                                "OR_CONDITION:OR({})",
+                                condition.replace(" or ", ";")
+                            ));
                         } else if condition.contains(" and ") {
                             // Split on " and " and create multiple if conditions
                             let parts: Vec<&str> = condition.split(" and ").collect();
@@ -149,7 +156,9 @@ impl Transpiler {
                             // Fix spacing for range operators in single conditions too
                             let fixed_condition = if condition.contains("matches..") {
                                 condition.replace("matches..", "matches ..")
-                            } else if condition.contains("matches-") && !condition.contains("matches -") {
+                            } else if condition.contains("matches-")
+                                && !condition.contains("matches -")
+                            {
                                 condition.replace("matches-", "matches -")
                             } else {
                                 condition.to_string()
@@ -198,7 +207,9 @@ impl Transpiler {
                     // Check if this is actually a Python expression that needs translation
                     if self.looks_like_python_expression(condition) {
                         // Try to parse and translate as Python expression
-                        if let Ok(translated) = self.try_translate_python_expression(condition, true) {
+                        if let Ok(translated) =
+                            self.try_translate_python_expression(condition, true)
+                        {
                             // Check if it's an OR condition marker
                             if translated.starts_with("OR(") {
                                 // unless (A or B) = unless A and unless B (De Morgan's law)
@@ -237,7 +248,9 @@ impl Transpiler {
                             // Fix spacing for range operators
                             let fixed_condition = if condition.contains("matches..") {
                                 condition.replace("matches..", "matches ..")
-                            } else if condition.contains("matches-") && !condition.contains("matches -") {
+                            } else if condition.contains("matches-")
+                                && !condition.contains("matches -")
+                            {
                                 condition.replace("matches-", "matches -")
                             } else {
                                 condition.to_string()
@@ -340,15 +353,28 @@ impl Transpiler {
                 // Generate a unique temp variable for unless AND result
                 self.data_pack.track_objective("temp");
                 let unless_var = format!("unless_temp_{}", self.get_unique_id());
-                let modifiers_prefix = other_modifiers.join(" ");
+                let modifier_args = Self::modifier_args(&other_modifiers);
+                let score_holder = if Self::has_as_modifier(&other_modifiers) {
+                    "@s".to_string()
+                } else {
+                    unless_var.clone()
+                };
 
                 // Initialize result to 0 (false)
                 if let Some(ref mut commands) = self.current_function {
-                    commands.push(format!("scoreboard players set {} temp 0", unless_var));
+                    if modifier_args.is_empty() && score_holder != "@s" {
+                        commands.push(format!("scoreboard players set {} temp 0", score_holder));
+                    } else {
+                        commands.push(Self::execute_with_modifiers(
+                            &modifier_args,
+                            &format!("run scoreboard players set {} temp 0", score_holder),
+                        ));
+                    }
 
                     // Set to 1 if ALL conditions are true (the AND check)
                     // Split the AND conditions and add "if" prefix to each
-                    let and_conditions: Vec<String> = and_str.split(" and ")
+                    let and_conditions: Vec<String> = and_str
+                        .split(" and ")
                         .map(|cond| {
                             let cond = cond.trim();
                             // Fix spacing for range operators
@@ -363,12 +389,13 @@ impl Transpiler {
 
                     let and_check = and_conditions.join(" ");
 
-                    let check_cmd = if modifiers_prefix.is_empty() {
-                        format!("execute {} run scoreboard players set {} temp 1", and_check, unless_var)
-                    } else {
-                        let prefix = modifiers_prefix.strip_prefix("execute ").unwrap_or(&modifiers_prefix);
-                        format!("execute {} {} run scoreboard players set {} temp 1", prefix, and_check, unless_var)
-                    };
+                    let check_cmd = Self::execute_with_modifiers(
+                        &modifier_args,
+                        &format!(
+                            "{} run scoreboard players set {} temp 1",
+                            and_check, score_holder
+                        ),
+                    );
 
                     if has_macro_params {
                         commands.push(format!("${}", check_cmd));
@@ -378,48 +405,35 @@ impl Transpiler {
                 }
 
                 // Now process body with the unless result check (unless the AND was true)
-                let execute_prefix = if modifiers_prefix.is_empty() {
-                    format!("execute unless score {} temp matches 1", unless_var)
-                } else {
-                    format!("{} unless score {} temp matches 1", modifiers_prefix, unless_var)
-                };
+                let execute_prefix = Self::execute_with_modifiers(
+                    &modifier_args,
+                    &format!("unless score {} temp matches 1", score_holder),
+                );
 
                 // Process body statements
                 for stmt in &exec_block.body {
-                    // Save current function
-                    let saved_function = self.current_function.take();
-                    self.current_function = Some(Vec::new());
+                    let capture = self.capture_statement(stmt)?;
+                    self.append_transformed_capture(capture, |cmd| {
+                        let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
+                            has_macro_params = true;
+                            stripped
+                        } else {
+                            cmd
+                        };
 
-                    self.process_statement(stmt)?;
+                        let final_cmd =
+                            if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
+                                format!("{} {}", execute_prefix, inner_parts)
+                            } else {
+                                format!("{} run {}", execute_prefix, inner_cmd)
+                            };
 
-                    // Get generated commands
-                    if let Some(stmt_commands) = self.current_function.take() {
-                        self.current_function = saved_function;
-
-                        // Prepend execute modifiers to each command
-                        for cmd in stmt_commands {
-                            if let Some(ref mut commands) = self.current_function {
-                                // Strip $ prefix from inner command if present (we'll add it at the start)
-                                let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
-                                    has_macro_params = true; // Inner command has macros
-                                    stripped // Strip the $
-                                } else {
-                                    &cmd
-                                };
-
-                                let final_cmd = format!("{} run {}", execute_prefix, inner_cmd);
-
-                                // Add $ prefix at START of entire command if any part needs macros
-                                if has_macro_params {
-                                    commands.push(format!("${}", final_cmd));
-                                } else {
-                                    commands.push(final_cmd);
-                                }
-                            }
+                        if has_macro_params {
+                            format!("${}", final_cmd)
+                        } else {
+                            final_cmd
                         }
-                    } else {
-                        self.current_function = saved_function;
-                    }
+                    })?;
                 }
             }
         } else if has_or_condition {
@@ -439,32 +453,45 @@ impl Transpiler {
             if let Some(or_str) = or_condition_str {
                 // Process OR condition
                 let or_conditions = Transpiler::flatten_or_conditions(or_str)?;
-                let modifiers_prefix = other_modifiers.join(" ");
+                let modifier_args = Self::modifier_args(&other_modifiers);
 
                 // Generate a unique temp variable for this OR result
                 self.data_pack.track_objective("temp");
                 let or_var = format!("or_temp_{}", self.get_unique_id());
+                let score_holder = if Self::has_as_modifier(&other_modifiers) {
+                    "@s".to_string()
+                } else {
+                    or_var.clone()
+                };
 
                 // Initialize OR result to 0
                 if let Some(ref mut commands) = self.current_function {
-                    commands.push(format!("scoreboard players set {} temp 0", or_var));
+                    if modifier_args.is_empty() && score_holder != "@s" {
+                        commands.push(format!("scoreboard players set {} temp 0", score_holder));
+                    } else {
+                        commands.push(Self::execute_with_modifiers(
+                            &modifier_args,
+                            &format!("run scoreboard players set {} temp 0", score_holder),
+                        ));
+                    }
 
                     // Check each OR condition
                     for cond in or_conditions {
-                        let cond_prefix = if cond.starts_with("if ") || cond.starts_with("unless ") {
+                        let cond_prefix = if cond.starts_with("if ") || cond.starts_with("unless ")
+                        {
                             cond.clone()
                         } else {
                             format!("if {}", cond)
                         };
 
                         // If any condition is true, set or_result to 1
-                        let check_cmd = if modifiers_prefix.is_empty() {
-                            format!("execute {} run scoreboard players set {} temp 1", cond_prefix, or_var)
-                        } else {
-                            // Check if modifiers_prefix already starts with "execute"
-                            let prefix = modifiers_prefix.strip_prefix("execute ").unwrap_or(&modifiers_prefix);
-                            format!("execute {} {} run scoreboard players set {} temp 1", prefix, cond_prefix, or_var)
-                        };
+                        let check_cmd = Self::execute_with_modifiers(
+                            &modifier_args,
+                            &format!(
+                                "{} run scoreboard players set {} temp 1",
+                                cond_prefix, score_holder
+                            ),
+                        );
 
                         if has_macro_params {
                             commands.push(format!("${}", check_cmd));
@@ -475,48 +502,35 @@ impl Transpiler {
                 }
 
                 // Now process body with the OR result check
-                let execute_prefix = if modifiers_prefix.is_empty() {
-                    format!("execute if score {} temp matches 1", or_var)
-                } else {
-                    format!("{} if score {} temp matches 1", modifiers_prefix, or_var)
-                };
+                let execute_prefix = Self::execute_with_modifiers(
+                    &modifier_args,
+                    &format!("if score {} temp matches 1", score_holder),
+                );
 
                 // Process body statements
                 for stmt in &exec_block.body {
-                    // Save current function
-                    let saved_function = self.current_function.take();
-                    self.current_function = Some(Vec::new());
+                    let capture = self.capture_statement(stmt)?;
+                    self.append_transformed_capture(capture, |cmd| {
+                        let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
+                            has_macro_params = true;
+                            stripped
+                        } else {
+                            cmd
+                        };
 
-                    self.process_statement(stmt)?;
+                        let final_cmd =
+                            if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
+                                format!("{} {}", execute_prefix, inner_parts)
+                            } else {
+                                format!("{} run {}", execute_prefix, inner_cmd)
+                            };
 
-                    // Get generated commands
-                    if let Some(stmt_commands) = self.current_function.take() {
-                        self.current_function = saved_function;
-
-                        // Prepend execute modifiers to each command
-                        for cmd in stmt_commands {
-                            if let Some(ref mut commands) = self.current_function {
-                                // Strip $ prefix from inner command if present (we'll add it at the start)
-                                let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
-                                    has_macro_params = true; // Inner command has macros
-                                    stripped // Strip the $
-                                } else {
-                                    &cmd
-                                };
-
-                                let final_cmd = format!("{} run {}", execute_prefix, inner_cmd);
-
-                                // Add $ prefix at START of entire command if any part needs macros
-                                if has_macro_params {
-                                    commands.push(format!("${}", final_cmd));
-                                } else {
-                                    commands.push(final_cmd);
-                                }
-                            }
+                        if has_macro_params {
+                            format!("${}", final_cmd)
+                        } else {
+                            final_cmd
                         }
-                    } else {
-                        self.current_function = saved_function;
-                    }
+                    })?;
                 }
             }
         } else {
@@ -525,43 +539,51 @@ impl Transpiler {
 
             // Process body statements
             for stmt in &exec_block.body {
-                // Save current function
-                let saved_function = self.current_function.take();
-                self.current_function = Some(Vec::new());
+                let capture = self.capture_statement(stmt)?;
+                self.append_transformed_capture(capture, |cmd| {
+                    let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
+                        has_macro_params = true;
+                        stripped
+                    } else {
+                        cmd
+                    };
 
-                self.process_statement(stmt)?;
+                    let final_cmd = if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
+                        format!("{} {}", execute_prefix, inner_parts)
+                    } else {
+                        format!("{} run {}", execute_prefix, inner_cmd)
+                    };
 
-                // Get generated commands
-                if let Some(stmt_commands) = self.current_function.take() {
-                    self.current_function = saved_function;
-
-                    // Prepend execute modifiers to each command
-                    for cmd in stmt_commands {
-                        if let Some(ref mut commands) = self.current_function {
-                            // Strip $ prefix from inner command if present (we'll add it at the start)
-                            let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
-                                has_macro_params = true; // Inner command has macros
-                                stripped // Strip the $
-                            } else {
-                                &cmd
-                            };
-
-                            let final_cmd = format!("{} run {}", execute_prefix, inner_cmd);
-
-                            // Add $ prefix at START of entire command if any part needs macros
-                            if has_macro_params {
-                                commands.push(format!("${}", final_cmd));
-                            } else {
-                                commands.push(final_cmd);
-                            }
-                        }
+                    if has_macro_params {
+                        format!("${}", final_cmd)
+                    } else {
+                        final_cmd
                     }
-                } else {
-                    self.current_function = saved_function;
-                }
+                })?;
             }
         }
 
         Ok(())
+    }
+
+    fn modifier_args(parts: &[String]) -> String {
+        parts
+            .iter()
+            .filter(|part| part.as_str() != "execute")
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn has_as_modifier(parts: &[String]) -> bool {
+        parts.iter().any(|part| part.starts_with("as "))
+    }
+
+    fn execute_with_modifiers(modifier_args: &str, tail: &str) -> String {
+        if modifier_args.is_empty() {
+            format!("execute {}", tail)
+        } else {
+            format!("execute {} {}", modifier_args, tail)
+        }
     }
 }

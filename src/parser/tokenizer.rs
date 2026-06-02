@@ -24,6 +24,9 @@ pub enum Token {
     Match,
     Case,
     Const,
+    Define,
+    Create,
+    End,
     To,
     By,
     Underscore,
@@ -43,7 +46,10 @@ pub enum Token {
     RParen,
     LBracket,
     RBracket,
+    LBrace,
+    RBrace,
     Colon,
+    SemiColon,
     Comma,
     Dot,
     Equals,
@@ -74,16 +80,23 @@ impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Token::Ident(s) => write!(f, "{}", s),
-            Token::String(s) => write!(f, "\"{}\"", s),
+            Token::String(s) => write!(
+                f,
+                "{}",
+                serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s))
+            ),
             Token::Number(n) => write!(f, "{}", n),
             Token::MinecraftCommand(s) => write!(f, "/{}", s),
             Token::Dot => write!(f, "."),
             Token::Colon => write!(f, ":"),
+            Token::SemiColon => write!(f, ";"),
             Token::Comma => write!(f, ","),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
             Token::LBracket => write!(f, "["),
             Token::RBracket => write!(f, "]"),
+            Token::LBrace => write!(f, "{{"),
+            Token::RBrace => write!(f, "}}"),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
             Token::Star => write!(f, "*"),
@@ -120,6 +133,9 @@ impl std::fmt::Display for Token {
             Token::Match => write!(f, "match"),
             Token::Case => write!(f, "case"),
             Token::Const => write!(f, "const"),
+            Token::Define => write!(f, "define"),
+            Token::Create => write!(f, "create"),
+            Token::End => write!(f, "end"),
             Token::To => write!(f, "to"),
             Token::By => write!(f, "by"),
             Token::Underscore => write!(f, "_"),
@@ -131,46 +147,11 @@ impl std::fmt::Display for Token {
     }
 }
 
-/// Find the position of a comment (#) that's not inside a string
-/// Returns None if no comment found, Some(position) otherwise
-fn find_comment_position(text: &str) -> Option<usize> {
-    let mut in_string = false;
-    let mut string_char = ' ';
-    let mut escaped = false;
-
-    for (i, ch) in text.chars().enumerate() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-
-        if ch == '\\' && in_string {
-            escaped = true;
-            continue;
-        }
-
-        if ch == '"' || ch == '\'' {
-            if !in_string {
-                in_string = true;
-                string_char = ch;
-            } else if ch == string_char {
-                in_string = false;
-            }
-            continue;
-        }
-
-        if ch == '#' && !in_string {
-            return Some(i);
-        }
-    }
-
-    None
-}
-
 /// Manual tokenizer that handles indentation
 pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
     let mut tokens = Vec::new();
     let mut indent_stack: Vec<usize> = vec![0];
+    let mut paren_depth = 0;
 
     for (line_idx, line) in source.lines().enumerate() {
         // Skip empty lines and comments
@@ -179,28 +160,35 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             continue;
         }
 
-        // Calculate indentation
-        let indent_level = line.len() - line.trim_start().len();
-        let current_indent = *indent_stack.last().unwrap();
+        // Only handle indentation if we are not inside parentheses/brackets/braces
+        if paren_depth == 0 {
+            // Calculate indentation
+            let indent_level = line.len() - line.trim_start().len();
+            let current_indent = *indent_stack.last().unwrap();
 
-        // Handle indentation changes
-        if indent_level > current_indent {
-            indent_stack.push(indent_level);
-            tokens.push(Token::Indent);
-        } else if indent_level < current_indent {
-            while indent_stack.len() > 1 && *indent_stack.last().unwrap() > indent_level {
-                indent_stack.pop();
-                tokens.push(Token::Dedent);
-            }
-            if *indent_stack.last().unwrap() != indent_level {
-                return Err(format!("Indentation error at line {}", line_idx + 1));
+            // Handle indentation changes
+            if indent_level > current_indent {
+                indent_stack.push(indent_level);
+                tokens.push(Token::Indent);
+            } else if indent_level < current_indent {
+                while indent_stack.len() > 1 && *indent_stack.last().unwrap() > indent_level {
+                    indent_stack.pop();
+                    tokens.push(Token::Dedent);
+                }
+                if *indent_stack.last().unwrap() != indent_level {
+                    return Err(format!("Indentation error at line {}", line_idx + 1));
+                }
             }
         }
 
         // Tokenize the line content
         let line_content = line.trim();
-        tokenize_line(line_content, &mut tokens)?;
-        tokens.push(Token::Newline);
+        tokenize_line(line_content, &mut tokens, &mut paren_depth)?;
+
+        // Only emit Newline if not inside parentheses/brackets/braces
+        if paren_depth == 0 {
+            tokens.push(Token::Newline);
+        }
     }
 
     // Add remaining dedents
@@ -257,7 +245,7 @@ fn should_be_power_operator(tokens: &[Token]) -> bool {
 }
 
 /// Tokenize a single line
-fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
+fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> Result<(), String> {
     let mut chars = line.chars().peekable();
 
     while let Some(&ch) = chars.peek() {
@@ -274,16 +262,7 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                     if next_ch.is_alphabetic() {
                         // Minecraft command - consume rest of line
                         let mut cmd: String = chars.collect();
-
-                        // Strip inline comments (# character and everything after)
-                        // Minecraft only supports comments at the beginning of lines
-                        // We need to respect strings in the command to avoid removing # inside strings
-                        let comment_pos = find_comment_position(&cmd);
-                        if let Some(pos) = comment_pos {
-                            cmd.truncate(pos);
-                        }
-
-                        // Trim trailing whitespace after comment removal
+                        cmd = strip_minecraft_inline_comment(&cmd).to_string();
                         cmd = cmd.trim_end().to_string();
 
                         tokens.push(Token::MinecraftCommand(cmd));
@@ -340,7 +319,10 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                 }
                 // Validate that the number can be parsed
                 if num.parse::<f64>().is_err() {
-                    return Err(format!("Invalid number literal: '{}' at line {}", num, line));
+                    return Err(format!(
+                        "Invalid number literal: '{}' at line {}",
+                        num, line
+                    ));
                 }
                 tokens.push(Token::Number(num));
             }
@@ -390,6 +372,9 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                     "match" => Token::Match,
                     "case" => Token::Case,
                     "const" => Token::Const,
+                    "define" => Token::Define,
+                    "create" => Token::Create,
+                    "end" => Token::End,
                     "to" => Token::To,
                     "by" => Token::By,
                     "_" => Token::Underscore,
@@ -404,7 +389,7 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                 // Selector (e.g., @a, @p, @s, @e[...], @Player)
                 let mut selector = String::new();
                 selector.push(chars.next().unwrap()); // @
-                // Collect all alphanumeric characters (for @Player, @Boss, etc.)
+                                                      // Collect all alphanumeric characters (for @Player, @Boss, etc.)
                 while let Some(&ch) = chars.peek() {
                     if ch.is_alphanumeric() || ch == '_' {
                         selector.push(chars.next().unwrap());
@@ -512,22 +497,30 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
             '(' => {
                 chars.next();
                 tokens.push(Token::LParen);
+                *paren_depth += 1;
             }
             ')' => {
                 chars.next();
                 tokens.push(Token::RParen);
+                *paren_depth -= 1;
             }
             '[' => {
                 chars.next();
                 tokens.push(Token::LBracket);
+                *paren_depth += 1;
             }
             ']' => {
                 chars.next();
                 tokens.push(Token::RBracket);
+                *paren_depth -= 1;
             }
             ':' => {
                 chars.next();
                 tokens.push(Token::Colon);
+            }
+            ';' => {
+                chars.next();
+                tokens.push(Token::SemiColon);
             }
             ',' => {
                 chars.next();
@@ -571,7 +564,10 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                         }
                         // Validate that the number can be parsed
                         if num.parse::<f64>().is_err() {
-                            return Err(format!("Invalid number literal: '{}' at line {}", num, line));
+                            return Err(format!(
+                                "Invalid number literal: '{}' at line {}",
+                                num, line
+                            ));
                         }
                         tokens.push(Token::Number(num));
                     } else {
@@ -590,30 +586,15 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
                 chars.next();
                 tokens.push(Token::Percent);
             }
-            '{' | '}' => {
-                // Part of JSON or NBT data - consume as identifier for now
-                let mut data = String::new();
-                let mut brace_depth = 0;
-                loop {
-                    match chars.peek() {
-                        Some(&'{') => {
-                            brace_depth += 1;
-                            data.push(chars.next().unwrap());
-                        }
-                        Some(&'}') => {
-                            data.push(chars.next().unwrap());
-                            brace_depth -= 1;
-                            if brace_depth == 0 {
-                                break;
-                            }
-                        }
-                        Some(_ch) => {
-                            data.push(chars.next().unwrap());
-                        }
-                        None => break,
-                    }
-                }
-                tokens.push(Token::Ident(data));
+            '{' => {
+                chars.next();
+                tokens.push(Token::LBrace);
+                *paren_depth += 1;
+            }
+            '}' => {
+                chars.next();
+                tokens.push(Token::RBrace);
+                *paren_depth -= 1;
             }
             '#' => {
                 // Comment - ignore rest of line
@@ -626,4 +607,51 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn strip_minecraft_inline_comment(command: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let chars: Vec<(usize, char)> = command.char_indices().collect();
+
+    for (position, (index, ch)) in chars.iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if *ch == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if let Some(active_quote) = quote {
+            if *ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        if *ch == '"' || *ch == '\'' {
+            quote = Some(*ch);
+            continue;
+        }
+
+        if *ch == '#' {
+            let prev_is_space = position == 0
+                || chars
+                    .get(position.wrapping_sub(1))
+                    .map(|(_, c)| c.is_whitespace())
+                    .unwrap_or(false);
+            let next_is_space_or_end = chars
+                .get(position + 1)
+                .map(|(_, c)| c.is_whitespace())
+                .unwrap_or(true);
+            if prev_is_space && next_is_space_or_end {
+                return command[..*index].trim_end();
+            }
+        }
+    }
+
+    command
 }

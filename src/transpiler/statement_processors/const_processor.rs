@@ -13,28 +13,21 @@ impl Transpiler {
         self.check_type_assignment(&const_assign.target, &value_type)?;
 
         // Record the variable's type
-        self.variable_types.insert(const_assign.target.clone(), value_type);
+        self.variable_types
+            .insert(const_assign.target.clone(), value_type);
 
         // Evaluate the expression at compile time
         let value = self.evaluate_const_expr(&const_assign.value)?;
 
         // Store the constant value
-        self.compile_time_constants.insert(const_assign.target.clone(), value);
+        self.compile_time_constants
+            .insert(const_assign.target.clone(), value);
 
         // Also store as a regular variable so it can be used in expressions
-        self.variables.insert(
-            const_assign.target.clone(),
-            Expression::Number(value),
-        );
+        self.variables
+            .insert(const_assign.target.clone(), Expression::Number(value));
 
-        // If we're at module level, also register for scoreboard initialization
-        if self.current_function.is_none() {
-            self.variable_objectives
-                .insert(const_assign.target.clone(), "temp".to_string());
-            self.scoreboard_variables.insert(const_assign.target.clone());
-            self.module_level_vars
-                .insert(const_assign.target.clone(), Expression::Number(value));
-        }
+        // Constants are compile-time only, no runtime initialization needed
 
         Ok(())
     }
@@ -50,10 +43,7 @@ impl Transpiler {
                     .get(name)
                     .copied()
                     .ok_or_else(|| {
-                        format!(
-                            "Const expression references non-const variable: {}",
-                            name
-                        )
+                        format!("Const expression references non-const variable: {}", name)
                     })
             }
             Expression::Binary(left, op, right) => {
@@ -79,8 +69,28 @@ impl Transpiler {
                             Ok(((left_val as i32) % (right_val as i32)) as f64)
                         }
                     }
-                    BinaryOp::Pow => Ok(left_val.powf(right_val)),
-                    _ => Err(format!("Operator {:?} not supported in const expressions", op)),
+                    BinaryOp::Pow => {
+                        let base = left_val as i32;
+                        let exp = right_val as i32;
+                        if exp < 0 {
+                            return Err("Power exponent must be non-negative in const expression"
+                                .to_string());
+                        }
+                        match base.checked_pow(exp as u32) {
+                            Some(result) => Ok(result as f64),
+                            None => {
+                                eprintln!(
+                                    "⚠️  Warning: Const power operation {}^{} overflows i32, clamping to i32::MAX",
+                                    base, exp
+                                );
+                                Ok(i32::MAX as f64)
+                            }
+                        }
+                    }
+                    _ => Err(format!(
+                        "Operator {:?} not supported in const expressions",
+                        op
+                    )),
                 }
             }
             Expression::Unary(op, operand) => {
@@ -89,13 +99,12 @@ impl Transpiler {
                     UnaryOp::Neg => Ok(-val),
                     UnaryOp::Pos => Ok(val),
                     UnaryOp::Not => Ok(if val == 0.0 { 1.0 } else { 0.0 }),
-                    _ => Err(format!("Operator {:?} not supported in const expressions", op)),
                 }
             }
-            _ => Err(format!(
-                "Expression {:?} cannot be evaluated at compile time",
-                expr
-            )),
+            Expression::String(_) | Expression::Array(_) | Expression::Map(_) => {
+                Err("Only numeric constants are supported at this time.".to_string())
+            }
+            _ => Err("Expression type cannot be evaluated at compile time".to_string()),
         }
     }
 }

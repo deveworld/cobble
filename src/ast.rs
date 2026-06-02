@@ -15,10 +15,12 @@ pub struct Import {
 /// Type system for Cobble variables
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CobbleType {
-    Integer,  // i32 - stored in scoreboard
-    Boolean,  // bool - stored as 0/1 in scoreboard
-    String,   // String - only in function params/macros
-    Unknown,  // Type not yet inferred
+    Integer, // i32 - stored in scoreboard
+    Boolean, // bool - stored as 0/1 in scoreboard
+    String,  // String - only in function params/macros
+    List,    // List/Array - stored in storage
+    Map,     // Dictionary/Object - stored in storage
+    Unknown, // Type not yet inferred
 }
 
 impl CobbleType {
@@ -28,6 +30,8 @@ impl CobbleType {
             CobbleType::Integer => "integer",
             CobbleType::Boolean => "boolean",
             CobbleType::String => "string",
+            CobbleType::List => "list",
+            CobbleType::Map => "map",
             CobbleType::Unknown => "unknown",
         }
     }
@@ -50,6 +54,15 @@ pub enum Statement {
     Global(Vec<String>),      // global var1, var2, ...
     Execute(ExecuteBlock),    // as @s at @s: ... or asat @s: ...
     SelectorDef(SelectorDef), // @Name = @a[...]
+    EntityDef(EntityDef),     // define @Name = @Selector ... create { ... }
+    CreateEntity(String),     // create @Name
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntityDef {
+    pub name: String,
+    pub selector: String,
+    pub nbt: Expression,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,9 +127,9 @@ pub struct MatchCase {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MatchPattern {
-    Literal(i32),                // case 5:
-    Range(i32, i32),             // case 1 to 10:
-    Wildcard,                    // case _:
+    Literal(i32),    // case 5:
+    Range(i32, i32), // case 1 to 10:
+    Wildcard,        // case _:
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -127,18 +140,18 @@ pub struct ExecuteBlock {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExecuteModifier {
-    As(String),           // as @a
-    At(String),           // at @s
-    If(Expression),       // if x > 0 (Python-style expression)
-    IfRaw(String),        // if block ~ ~ ~ stone (raw Minecraft syntax)
-    Unless(Expression),   // unless x > 0 (Python-style expression)
-    UnlessRaw(String),    // unless entity @a[tag=done] (raw Minecraft syntax)
-    Positioned(String),   // positioned ~ ~1 ~
-    Rotated(String),      // rotated ~ ~
-    In(String),           // in minecraft:the_nether
-    Anchored(String),     // anchored eyes
-    Align(String),        // align xyz
-    Store(String),        // store result score ...
+    As(String),         // as @a
+    At(String),         // at @s
+    If(Expression),     // if x > 0 (Python-style expression)
+    IfRaw(String),      // if block ~ ~ ~ stone (raw Minecraft syntax)
+    Unless(Expression), // unless x > 0 (Python-style expression)
+    UnlessRaw(String),  // unless entity @a[tag=done] (raw Minecraft syntax)
+    Positioned(String), // positioned ~ ~1 ~
+    Rotated(String),    // rotated ~ ~
+    In(String),         // in minecraft:the_nether
+    Anchored(String),   // anchored eyes
+    Align(String),      // align xyz
+    Store(String),      // store result score ...
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -154,6 +167,8 @@ pub enum Expression {
     String(String),
     Boolean(bool),
     None,
+    Array(Vec<Expression>),
+    Map(Vec<(String, Expression)>),
 
     // Identifiers and attributes
     Identifier(String),
@@ -179,7 +194,6 @@ pub enum BinaryOp {
     Div,
     Mod,
     Pow,
-    FloorDiv,
 
     // Comparison
     Eq,
@@ -192,19 +206,6 @@ pub enum BinaryOp {
     // Logical
     And,
     Or,
-
-    // Bitwise
-    BitAnd,
-    BitOr,
-    BitXor,
-    LeftShift,
-    RightShift,
-
-    // Special
-    In,
-    NotIn,
-    Is,
-    IsNot,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -212,5 +213,4 @@ pub enum UnaryOp {
     Not,
     Neg,
     Pos,
-    BitNot,
 }

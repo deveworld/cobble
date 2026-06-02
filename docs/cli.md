@@ -26,7 +26,7 @@ cobble init [OPTIONS]
 **Options:**
 - `--name <NAME>` - Set the project name (default: current directory name)
 - `--description <DESC>` - Set the project description
-- `--pack-format <NUM>` - Set the pack format version (default: 18 for Minecraft 1.20.2+, supports decimal like 88.0)
+- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.6.0 requires Minecraft Java Edition 26.1.2)
 
 **Example:**
 ```bash
@@ -47,15 +47,17 @@ cobble build [SOURCE] [OPTIONS]
 ```
 
 **Arguments:**
-- `SOURCE` - Source file or directory to compile (default: current directory)
+- `SOURCE` - Source file or directory to compile. When omitted, Cobble uses `build.source` and `build.entry_points` from `cobble.toml`.
 
 **Options:**
 - `-o, --output <DIR>` - Output directory for the data pack (default: `./output`)
 - `--namespace <NAME>` - Override the namespace (default: from cobble.toml or directory name)
-- `--pack-format <NUM>` - Override pack format version (supports decimal like 88.0 for Minecraft 1.21.9+)
+- `--pack-format <NUM>` - Override pack format version (currently must be `101.1`)
 - `--description <DESC>` - Override pack description
 - `-v, --verbose` - Show verbose output
 - `--zip` - Create a ZIP archive of the data pack
+- `--validate` - Validate generated `.mcfunction` files after building
+- `--commands-json <PATH>` - Path to `commands.json` for validation (default: `data/commands.json`)
 
 **Examples:**
 ```bash
@@ -74,11 +76,22 @@ cobble build examples/
 # Build and create ZIP file
 cobble build --zip
 
-# Build with all options
-cobble build src/ -o output/ --namespace mypack --pack-format 88 --zip --verbose
+# Build and validate generated commands
+cobble build --validate
 
-# Build with decimal pack format (Minecraft 1.21.9+)
-cobble build --pack-format 88.0
+# Build with all options
+cobble build src/ -o output/ --namespace mypack --pack-format 101.1 --zip --validate --verbose
+
+# Build with the supported pack format explicitly
+cobble build --pack-format 101.1
+```
+
+When `--validate` is enabled, Cobble fails the build if any generated command is
+invalid for Minecraft Java Edition 26.1.2. If `data/commands.json` is missing,
+generate it first:
+
+```bash
+scripts/setup_commands_json.sh 26.1.2
 ```
 
 ### `cobble check`
@@ -95,6 +108,35 @@ cobble check src/main.cbl
 cobble check examples/
 ```
 
+### `cobble validate`
+
+Validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2's command tree.
+
+```bash
+cobble validate <DATAPACK_DIR> [OPTIONS]
+```
+
+**Arguments:**
+- `DATAPACK_DIR` - Generated data pack directory to validate
+
+**Options:**
+- `--commands-json <PATH>` - Path to `commands.json` generated from the Minecraft server reports (default: `data/commands.json`)
+
+**Examples:**
+```bash
+# Generate the 26.1.2 command tree used by validation
+scripts/setup_commands_json.sh 26.1.2
+
+# Build and validate a data pack
+cobble build -o output
+cobble validate output
+
+# Use a custom command tree path
+cobble validate output --commands-json /tmp/commands.json
+```
+
+The validator uses Minecraft's exported Brigadier command tree, including 26.1.2 commands such as `dialog`, `fetchprofile`, `transfer`, `waypoint`, `stopwatch`, `version`, and `return run`.
+
 ### `cobble watch`
 
 Watch source files for changes and automatically rebuild.
@@ -104,7 +146,7 @@ cobble watch [SOURCE] [OPTIONS]
 ```
 
 **Arguments:**
-- `SOURCE` - Source file or directory to watch (default: current directory)
+- `SOURCE` - Source file or directory to watch. When omitted, Cobble uses `build.source` from `cobble.toml`.
 
 **Options:**
 - `-o, --output <DIR>` - Output directory for the data pack
@@ -113,6 +155,8 @@ cobble watch [SOURCE] [OPTIONS]
 - `--description <DESC>` - Override pack description
 - `-v, --verbose` - Show verbose output
 - `--zip` - Create a ZIP archive after each build
+- `--validate` - Validate generated `.mcfunction` files after each successful build
+- `--commands-json <PATH>` - Path to `commands.json` for validation (default: `data/commands.json`)
 
 **Examples:**
 ```bash
@@ -122,8 +166,11 @@ cobble watch
 # Watch with custom output
 cobble watch src/ -o ~/minecraft/saves/MyWorld/datapacks/my_pack
 
+# Watch and validate after each rebuild
+cobble watch src/ --validate
+
 # Watch with all options
-cobble watch src/ -o output/ --namespace mypack --zip --verbose
+cobble watch src/ -o output/ --namespace mypack --zip --validate --verbose
 ```
 
 This will:
@@ -145,7 +192,7 @@ name = "my_datapack"
 description = "My awesome data pack"
 namespace = "mypack"
 version = "1.0.0"
-pack_format = 88  # Minecraft 1.21.9+
+pack_format = "101.1"  # Minecraft Java Edition 26.1.2
 
 [build]
 source = "src"
@@ -162,26 +209,17 @@ entry_points = []
 - `project.pack_format` - Minecraft pack format version
 - `build.output` - Default output directory
 - `build.source` - Source directory (default: "src")
+- `build.entry_points` - Main files or directories to compile when using `cobble build` from config. Imported files are resolved from these entry points and are not compiled independently.
 
-## Pack Format Versions
+## Supported Minecraft Version
 
 | Minecraft Version | Pack Format |
 |-------------------|-------------|
-| 1.21.9+           | 88.0        |
-| 1.21.7 - 1.21.8   | 81          |
-| 1.21.6            | 80          |
-| 1.21.5            | 71          |
-| 1.21.4            | 61          |
-| 1.21.2 - 1.21.3   | 57          |
-| 1.21 - 1.21.1     | 48          |
-| 1.20.5 - 1.20.6   | 41          |
-| 1.20.3 - 1.20.4   | 26          |
-| 1.20.2            | 18 (default) |
-| 1.20 - 1.20.1     | 15          |
+| Java Edition 26.1.2 | 101.1 |
 
-Cobble requires Minecraft 1.20.2+ (minimum pack format 18) for function macro support and defaults to pack format 18 for maximum compatibility across Minecraft versions.
+Cobble v0.6.0 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
 
-**Note**: Starting from Minecraft 1.21.9, pack format includes minor versions (e.g., 88.0). Cobble uses integer pack format internally, which is compatible with both formats.
+**Note**: Pack format 101.1 is written to `pack.mcmeta` as `min_format` and `max_format` arrays: `[101, 1]`.
 
 ## Workflow
 
@@ -371,13 +409,10 @@ give {player} diamond 1
 **Solution:** Check pack format matches your Minecraft version
 
 ```bash
-cobble build --pack-format 48  # For Minecraft 1.21-1.21.1
-cobble build --pack-format 81  # For Minecraft 1.21.7-1.21.8
-cobble build --pack-format 88  # For Minecraft 1.21.9+
-cobble build --pack-format 88.0  # For Minecraft 1.21.9+ (decimal format)
+cobble build --pack-format 101.1
 ```
 
-Note: Cobble requires Minecraft 1.20.2+ (pack format 18 or higher) for macro function support
+Note: Cobble v0.6.0 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ### Issue: Functions not found
 

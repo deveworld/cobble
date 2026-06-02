@@ -13,8 +13,8 @@ def on_load():
     /tellraw @a {"text":"=========================","color":"gold"}
 
     # Initialize gamerules
-    /gamerule doDaylightCycle false
-    /gamerule doWeatherCycle false
+    /gamerule advance_time false
+    /gamerule advance_weather false
     /time set day
 
 def on_tick():

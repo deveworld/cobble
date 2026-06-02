@@ -6,20 +6,45 @@ mod expression_evaluator;
 mod statement_processors;
 
 // Public exports
-pub use data_pack::DataPack;
+pub use data_pack::{
+    DataPack, GeneratedCommand, GeneratedCommandKind, SourceLocation, SourceMap, SourceMapEntry,
+};
 
 use crate::ast::*;
 use crate::stdlib::EventType;
 use command_processor::CommandProcessor;
 use condition_translator::ConditionTranslator;
 use expression_evaluator::ExpressionEvaluator;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 /// Context for tracking function parameters and scope
 #[derive(Clone)]
 struct FunctionContext {
     params: Vec<String>,
+}
+
+pub(in crate::transpiler) struct FunctionCapture {
+    pub(in crate::transpiler) commands: Vec<String>,
+    pub(in crate::transpiler) metadata: HashMap<usize, GeneratedCommand>,
+}
+
+struct SavedFunctionCapture {
+    function: Option<Vec<String>>,
+    metadata: Option<HashMap<usize, GeneratedCommand>>,
+}
+
+struct SavedCompilerState {
+    current_context: FunctionContext,
+    variables: HashMap<String, Expression>,
+    variable_objectives: HashMap<String, String>,
+    scoreboard_variables: HashSet<String>,
+    global_variables: HashSet<String>,
+    compile_time_constants: HashMap<String, f64>,
+    selector_aliases: HashMap<String, String>,
+    entity_templates: HashMap<String, EntityDef>,
+    variable_storage_paths: HashMap<String, String>,
+    variable_types: HashMap<String, crate::ast::CobbleType>,
 }
 
 impl FunctionContext {
@@ -34,11 +59,28 @@ impl FunctionContext {
     fn is_param(&self, name: &str) -> bool {
         self.params.iter().any(|p| p == name)
     }
+
+    pub(in crate::transpiler) fn with_extra_param(&self, param: String) -> Vec<String> {
+        let mut params = self.params.clone();
+        if !params.contains(&param) {
+            params.push(param);
+        }
+        params
+    }
+}
+
+impl FunctionCapture {
+    pub(in crate::transpiler) fn requires_macro_context(&self) -> bool {
+        self.commands
+            .iter()
+            .any(|command| command.trim_start().starts_with('$'))
+    }
 }
 
 pub struct Transpiler {
     pub data_pack: DataPack,
     current_function: Option<Vec<String>>,
+    current_function_metadata: Option<HashMap<usize, GeneratedCommand>>,
     current_context: FunctionContext,
     variables: HashMap<String, Expression>,
     temp_counter: u32,
@@ -46,12 +88,18 @@ pub struct Transpiler {
     scoreboard_variables: HashSet<String>, // Track variables backed by scoreboard (not constants)
     function_params: HashMap<String, Vec<String>>, // Track function parameter names
     global_variables: HashSet<String>,     // Track global variables declared in current function
-    module_level_vars: HashMap<String, Expression>, // Store module-level assignments
+    module_level_vars: Vec<(String, Expression, Option<SourceLocation>)>, // Store module-level assignments (Vec for ordering)
     compile_time_constants: HashMap<String, f64>, // Store compile-time constant values
-    selector_aliases: HashMap<String, String>, // Store selector definitions (@Name -> @a[...])
-    imported_files: HashSet<PathBuf>,      // Track imported files to prevent circular dependencies
-    import_stack: Vec<PathBuf>,            // Track current import chain for circular detection
+    selector_aliases: HashMap<String, String>,    // Store selector definitions (@Name -> @a[...])
+    entity_templates: HashMap<String, EntityDef>, // Store entity templates
+    variable_storage_paths: HashMap<String, String>, // Track storage path for variables (e.g., "list" -> "vars.list")
+    imported_files: HashSet<PathBuf>, // Track imported files to prevent circular dependencies
+    import_stack: Vec<PathBuf>,       // Track current import chain for circular detection
+    current_file_path: Option<PathBuf>,
     current_file_dir: PathBuf, // Current file's directory for resolving relative imports
+    raw_command_locations: HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
+    statement_locations: HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
+    current_statement_source: Option<SourceLocation>,
     variable_types: HashMap<String, crate::ast::CobbleType>, // Track type of each variable for type checking
 }
 
@@ -60,6 +108,7 @@ impl Transpiler {
         Self {
             data_pack: DataPack::new(namespace, output_dir),
             current_function: None,
+            current_function_metadata: None,
             current_context: FunctionContext::new(),
             variables: HashMap::new(),
             temp_counter: 0,
@@ -67,12 +116,18 @@ impl Transpiler {
             scoreboard_variables: HashSet::new(),
             function_params: HashMap::new(),
             global_variables: HashSet::new(),
-            module_level_vars: HashMap::new(),
+            module_level_vars: Vec::new(),
             compile_time_constants: HashMap::new(),
             selector_aliases: HashMap::new(),
+            entity_templates: HashMap::new(),
+            variable_storage_paths: HashMap::new(),
             imported_files: HashSet::new(),
             import_stack: Vec::new(),
+            current_file_path: None,
             current_file_dir: PathBuf::from("."),
+            raw_command_locations: HashMap::new(),
+            statement_locations: HashMap::new(),
+            current_statement_source: None,
             variable_types: HashMap::new(),
         }
     }
@@ -89,7 +144,422 @@ impl Transpiler {
             .unwrap_or_else(|_| file_path.to_path_buf());
         if !self.import_stack.contains(&canonical_path) {
             self.import_stack.push(canonical_path.clone());
-            self.imported_files.insert(canonical_path);
+            self.imported_files.insert(canonical_path.clone());
+        }
+        self.current_file_path = Some(canonical_path);
+    }
+
+    pub fn set_current_file_with_source(&mut self, file_path: &Path, source: &str) {
+        self.set_current_file(file_path);
+        self.register_source_locations(file_path, source);
+    }
+
+    fn register_source_locations(&mut self, file_path: &Path, source: &str) {
+        let canonical_path = file_path
+            .canonicalize()
+            .unwrap_or_else(|_| file_path.to_path_buf());
+        let mut raw_locations: HashMap<String, VecDeque<SourceLocation>> = HashMap::new();
+        let mut statement_locations: HashMap<String, VecDeque<SourceLocation>> = HashMap::new();
+        let mut pending_statement: Option<(String, SourceLocation, i32)> = None;
+
+        for (line_index, line) in source.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            if let Some(command) = trimmed.strip_prefix('/') {
+                let column = line.find('/').map(|index| index + 1).unwrap_or(1);
+                raw_locations
+                    .entry(command.trim().to_string())
+                    .or_default()
+                    .push_back(SourceLocation {
+                        file: canonical_path.clone(),
+                        line: line_index + 1,
+                        column,
+                    });
+                continue;
+            }
+
+            let Some(statement_text) = Self::strip_inline_comment(trimmed) else {
+                continue;
+            };
+            let key = Self::source_line_key(statement_text.trim());
+            if key.is_empty() {
+                continue;
+            }
+
+            let column = line
+                .char_indices()
+                .find(|(_, c)| !c.is_whitespace())
+                .map(|(index, _)| index + 1)
+                .unwrap_or(1);
+            let source_location = SourceLocation {
+                file: canonical_path.clone(),
+                line: line_index + 1,
+                column,
+            };
+
+            let depth_delta = Self::bracket_depth_delta(statement_text);
+            if let Some((pending_source, pending_location, pending_depth)) =
+                pending_statement.as_mut()
+            {
+                pending_source.push(' ');
+                pending_source.push_str(statement_text);
+                *pending_depth += depth_delta;
+                if *pending_depth <= 0 {
+                    let key = Self::source_line_key(pending_source.trim());
+                    if !key.is_empty() {
+                        statement_locations
+                            .entry(key)
+                            .or_default()
+                            .push_back(pending_location.clone());
+                    }
+                    pending_statement = None;
+                }
+                continue;
+            }
+
+            if depth_delta > 0 {
+                pending_statement =
+                    Some((statement_text.to_string(), source_location, depth_delta));
+                continue;
+            }
+
+            statement_locations
+                .entry(key)
+                .or_default()
+                .push_back(source_location);
+        }
+
+        self.raw_command_locations
+            .insert(canonical_path.clone(), raw_locations);
+        self.statement_locations
+            .insert(canonical_path, statement_locations);
+    }
+
+    fn take_raw_command_source(&mut self, command: &str) -> Option<SourceLocation> {
+        let file_path = self.current_file_path.as_ref()?;
+        self.raw_command_locations
+            .get_mut(file_path)
+            .and_then(|commands| commands.get_mut(command))
+            .and_then(VecDeque::pop_front)
+    }
+
+    fn take_statement_source(&mut self, statement: &Statement) -> Option<SourceLocation> {
+        let key = Self::statement_source_key(statement)?;
+        let file_path = self.current_file_path.as_ref()?;
+        self.statement_locations
+            .get_mut(file_path)
+            .and_then(|statements| statements.get_mut(&key))
+            .and_then(VecDeque::pop_front)
+    }
+
+    fn strip_inline_comment(line: &str) -> Option<&str> {
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+
+        for (index, ch) in line.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+
+            if let Some(active_quote) = quote {
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                '#' => return Some(&line[..index]),
+                _ => {}
+            }
+        }
+
+        Some(line)
+    }
+
+    fn normalize_source_key(source: &str) -> String {
+        let mut normalized = String::new();
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+
+        for ch in source.chars() {
+            if escaped {
+                normalized.push(ch);
+                escaped = false;
+                continue;
+            }
+
+            if ch == '\\' {
+                normalized.push(ch);
+                escaped = true;
+                continue;
+            }
+
+            if let Some(active_quote) = quote {
+                normalized.push(ch);
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' | '\'' => {
+                    quote = Some(ch);
+                    normalized.push(ch);
+                }
+                c if c.is_whitespace() => {}
+                _ => normalized.push(ch),
+            }
+        }
+
+        normalized
+    }
+
+    fn bracket_depth_delta(source: &str) -> i32 {
+        let mut depth = 0;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+
+        for ch in source.chars() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+
+            if let Some(active_quote) = quote {
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                _ => {}
+            }
+        }
+
+        depth
+    }
+
+    fn source_line_key(source: &str) -> String {
+        match crate::parser::tokenize(source) {
+            Ok(tokens) => tokens
+                .into_iter()
+                .filter(|token| {
+                    !matches!(
+                        token,
+                        crate::parser::Token::Newline
+                            | crate::parser::Token::Indent
+                            | crate::parser::Token::Dedent
+                            | crate::parser::Token::Eof
+                    )
+                })
+                .map(|token| token.to_string())
+                .collect::<Vec<_>>()
+                .join(""),
+            Err(_) => Self::normalize_source_key(source),
+        }
+    }
+
+    fn statement_source_key(statement: &Statement) -> Option<String> {
+        let source = match statement {
+            Statement::Assignment(assign) => {
+                format!(
+                    "{}={}",
+                    assign.target,
+                    Self::expression_source_key(&assign.value)
+                )
+            }
+            Statement::ConstAssignment(assign) => {
+                format!(
+                    "const{}={}",
+                    assign.target,
+                    Self::expression_source_key(&assign.value)
+                )
+            }
+            Statement::Expression(expr) => Self::expression_source_key(expr),
+            Statement::If(if_stmt) => {
+                format!("if{}:", Self::expression_source_key(&if_stmt.condition))
+            }
+            Statement::For(for_loop) => {
+                let mut source = format!(
+                    "for{}in{}",
+                    for_loop.target,
+                    Self::expression_source_key(&for_loop.iter)
+                );
+                if let Some(step) = &for_loop.step {
+                    source.push_str("by");
+                    source.push_str(&Self::expression_source_key(step));
+                }
+                source.push(':');
+                source
+            }
+            Statement::While(while_loop) => {
+                format!(
+                    "while{}:",
+                    Self::expression_source_key(&while_loop.condition)
+                )
+            }
+            Statement::Match(match_stmt) => {
+                format!("match{}:", Self::expression_source_key(&match_stmt.value))
+            }
+            Statement::Return(Some(expr)) => format!("return{}", Self::expression_source_key(expr)),
+            Statement::Return(None) => "return".to_string(),
+            Statement::Global(vars) => format!("global{}", vars.join(",")),
+            Statement::MinecraftCommand(_) => return None,
+            Statement::Execute(exec_block) => {
+                let modifiers = exec_block
+                    .modifiers
+                    .iter()
+                    .map(Self::execute_modifier_source_key)
+                    .collect::<Vec<_>>()
+                    .join("");
+                format!("{}:", modifiers)
+            }
+            Statement::SelectorDef(selector_def) => {
+                format!("{}={}", selector_def.name, selector_def.selector)
+            }
+            Statement::EntityDef(entity_def) => {
+                format!(
+                    "define{}={}create{}",
+                    entity_def.name,
+                    entity_def.selector,
+                    Self::expression_source_key(&entity_def.nbt)
+                )
+            }
+            Statement::CreateEntity(name) => format!("create{}", name),
+            Statement::Import(_) | Statement::FunctionDef(_) | Statement::Pass => return None,
+        };
+
+        Some(Self::normalize_source_key(&source))
+    }
+
+    fn execute_modifier_source_key(modifier: &ExecuteModifier) -> String {
+        match modifier {
+            ExecuteModifier::As(selector) => format!("as{}", selector),
+            ExecuteModifier::At(selector) => format!("at{}", selector),
+            ExecuteModifier::If(expr) => format!("if{}", Self::expression_source_key(expr)),
+            ExecuteModifier::IfRaw(raw) => format!("if{}", raw),
+            ExecuteModifier::Unless(expr) => {
+                format!("unless{}", Self::expression_source_key(expr))
+            }
+            ExecuteModifier::UnlessRaw(raw) => format!("unless{}", raw),
+            ExecuteModifier::Positioned(pos) => format!("positioned{}", pos),
+            ExecuteModifier::Rotated(rot) => format!("rotated{}", rot),
+            ExecuteModifier::In(dimension) => format!("in{}", dimension),
+            ExecuteModifier::Anchored(anchor) => format!("anchored{}", anchor),
+            ExecuteModifier::Align(axes) => format!("align{}", axes),
+            ExecuteModifier::Store(store) => format!("store{}", store),
+        }
+    }
+
+    fn expression_source_key(expr: &Expression) -> String {
+        match expr {
+            Expression::Number(n) if n.fract() == 0.0 => (*n as i32).to_string(),
+            Expression::Number(n) => n.to_string(),
+            Expression::String(value) => serde_json::to_string(value)
+                .unwrap_or_else(|_| format!("\"{}\"", value.replace('"', "\\\""))),
+            Expression::Boolean(true) => "True".to_string(),
+            Expression::Boolean(false) => "False".to_string(),
+            Expression::None => "None".to_string(),
+            Expression::Array(items) => {
+                let items = items
+                    .iter()
+                    .map(Self::expression_source_key)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("[{}]", items)
+            }
+            Expression::Map(entries) => {
+                let entries = entries
+                    .iter()
+                    .map(|(key, value)| {
+                        let key = serde_json::to_string(key)
+                            .unwrap_or_else(|_| format!("\"{}\"", key.replace('"', "\\\"")));
+                        format!("{}:{}", key, Self::expression_source_key(value))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{{{}}}", entries)
+            }
+            Expression::Identifier(name) => name.clone(),
+            Expression::Attribute(obj, attr) => {
+                format!("{}.{}", Self::expression_source_key(obj), attr)
+            }
+            Expression::Binary(left, op, right) => format!(
+                "{}{}{}",
+                Self::expression_source_key(left),
+                Self::binary_op_source_key(op),
+                Self::expression_source_key(right)
+            ),
+            Expression::Unary(op, expr) => {
+                format!(
+                    "{}{}",
+                    Self::unary_op_source_key(op),
+                    Self::expression_source_key(expr)
+                )
+            }
+            Expression::Call(func, args) => {
+                let args = args
+                    .iter()
+                    .map(Self::expression_source_key)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{}({})", Self::expression_source_key(func), args)
+            }
+            Expression::Subscript(base, index) => {
+                format!(
+                    "{}[{}]",
+                    Self::expression_source_key(base),
+                    Self::expression_source_key(index)
+                )
+            }
+        }
+    }
+
+    fn binary_op_source_key(op: &BinaryOp) -> &'static str {
+        match op {
+            BinaryOp::Add => "+",
+            BinaryOp::Sub => "-",
+            BinaryOp::Mul => "*",
+            BinaryOp::Div => "/",
+            BinaryOp::Mod => "%",
+            BinaryOp::Pow => "^",
+            BinaryOp::Eq => "==",
+            BinaryOp::NotEq => "!=",
+            BinaryOp::Lt => "<",
+            BinaryOp::LtEq => "<=",
+            BinaryOp::Gt => ">",
+            BinaryOp::GtEq => ">=",
+            BinaryOp::And => "and",
+            BinaryOp::Or => "or",
+        }
+    }
+
+    fn unary_op_source_key(op: &UnaryOp) -> &'static str {
+        match op {
+            UnaryOp::Not => "not",
+            UnaryOp::Neg => "-",
+            UnaryOp::Pos => "+",
         }
     }
 
@@ -99,6 +569,7 @@ impl Transpiler {
         match expr {
             Expression::Number(n) => Some(*n),
             Expression::Identifier(name) => self.compile_time_constants.get(name).copied(),
+            Expression::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
             Expression::Binary(left, op, right) => {
                 let left_val = self.try_eval_const(left)?;
                 let right_val = self.try_eval_const(right)?;
@@ -138,7 +609,14 @@ impl Transpiler {
                             }
                         }
                     }
-                    _ => None,
+                    BinaryOp::Eq => Some((left_val == right_val) as i32 as f64),
+                    BinaryOp::NotEq => Some((left_val != right_val) as i32 as f64),
+                    BinaryOp::Lt => Some((left_val < right_val) as i32 as f64),
+                    BinaryOp::LtEq => Some((left_val <= right_val) as i32 as f64),
+                    BinaryOp::Gt => Some((left_val > right_val) as i32 as f64),
+                    BinaryOp::GtEq => Some((left_val >= right_val) as i32 as f64),
+                    BinaryOp::And => Some(((left_val != 0.0) && (right_val != 0.0)) as i32 as f64),
+                    BinaryOp::Or => Some(((left_val != 0.0) || (right_val != 0.0)) as i32 as f64),
                 }
             }
             _ => None,
@@ -152,6 +630,8 @@ impl Transpiler {
             Expression::Number(_) => CobbleType::Integer,
             Expression::Boolean(_) => CobbleType::Boolean,
             Expression::String(_) => CobbleType::String,
+            Expression::Array(_) => CobbleType::List,
+            Expression::Map(_) => CobbleType::Map,
             Expression::Identifier(name) => {
                 // Look up variable type
                 self.variable_types
@@ -184,9 +664,6 @@ impl Transpiler {
 
                     // Logical operations return booleans
                     BinaryOp::And | BinaryOp::Or => CobbleType::Boolean,
-
-                    // Other operations not yet supported - return Unknown
-                    _ => CobbleType::Unknown,
                 }
             }
             Expression::Unary(op, _) => {
@@ -194,7 +671,7 @@ impl Transpiler {
 
                 match op {
                     UnaryOp::Not => CobbleType::Boolean,
-                    UnaryOp::Neg | UnaryOp::Pos | UnaryOp::BitNot => CobbleType::Integer,
+                    UnaryOp::Neg | UnaryOp::Pos => CobbleType::Integer,
                 }
             }
             Expression::Call(_, _) => CobbleType::Unknown, // Function return types not tracked yet
@@ -285,9 +762,11 @@ impl Transpiler {
         // Then initialize module-level variables in the init function
         if !self.module_level_vars.is_empty() {
             let mut init_commands = Vec::new();
+            let mut init_metadata = HashMap::new();
 
-            for (var_name, value) in &self.module_level_vars {
-                if let Some(const_value) = self.try_eval_const(value) {
+            for (var_name, value, source) in self.module_level_vars.clone() {
+                let command_start = init_commands.len();
+                if let Some(const_value) = self.try_eval_const(&value) {
                     let truncated = const_value as i32;
 
                     if const_value > i32::MAX as f64 || const_value < i32::MIN as f64 {
@@ -317,31 +796,51 @@ impl Transpiler {
                         "scoreboard players set {} temp {}",
                         var_name, truncated
                     ));
+                    init_metadata.insert(
+                        command_start,
+                        GeneratedCommand::new(
+                            init_commands[command_start].clone(),
+                            source,
+                            GeneratedCommandKind::ControlFlow,
+                        ),
+                    );
                     continue;
                 }
 
-                match value {
-                    Expression::String(_s) => {
-                        // Strings can't be directly stored in scoreboards
-                        return Err(format!(
-                            "Module-level string variable '{}' is not supported.\n\
-                             \n\
-                             Minecraft scoreboards only support integer values.\n\
-                             \n\
-                             Solutions:\n\
-                             1. Use function parameters with macros:\n\
-                             \n\
-                             def my_function({}):\n\
-                                 /say {{{}}}\n\
-                             \n\
-                             2. Use string literals directly in commands:\n\
-                             \n\
-                             def my_function():\n\
-                                 /say Hello World\n\
-                             \n\
-                             3. Remove the string variable and use constants in your code",
-                            var_name, var_name, var_name
-                        ));
+                match &value {
+                    Expression::Array(_) | Expression::Map(_) | Expression::String(_) => {
+                        // Storage variable initialization
+                        let storage_path = format!("vars.{}", var_name);
+                        self.variable_storage_paths
+                            .insert(var_name.clone(), storage_path.clone());
+
+                        // We need to serialize the value.
+                        // self.serialize_to_snbt is defined in assignment.rs but available on Transpiler.
+                        // However, Rust might complain if it's not visible?
+                        // It is `pub(in crate::transpiler)`. `mod.rs` IS `crate::transpiler`.
+                        // So it should be visible.
+                        match self.serialize_to_snbt(&value) {
+                            Ok(snbt) => {
+                                init_commands.push(format!(
+                                    "data modify storage {}:global {} set value {}",
+                                    self.data_pack.namespace, storage_path, snbt
+                                ));
+                                init_metadata.insert(
+                                    command_start,
+                                    GeneratedCommand::new(
+                                        init_commands[command_start].clone(),
+                                        source,
+                                        GeneratedCommandKind::ControlFlow,
+                                    ),
+                                );
+                            }
+                            Err(e) => {
+                                return Err(format!(
+                                    "Failed to serialize module variable '{}': {}",
+                                    var_name, e
+                                ));
+                            }
+                        }
                     }
                     _ => {
                         // Other complex expressions at module level
@@ -352,7 +851,7 @@ impl Transpiler {
 
             // Add these commands after gamerule and objective creation
             if !init_commands.is_empty() {
-                if let Some(existing_init) = self.data_pack.functions.get_mut("_cobble_init") {
+                if let Some(existing_init) = self.data_pack.functions.get("_cobble_init") {
                     // Find the position after gamerule and all objectives
                     let setup_end = existing_init
                         .iter()
@@ -362,15 +861,17 @@ impl Transpiler {
                         })
                         .unwrap_or(existing_init.len());
 
-                    // Insert module vars after setup commands
-                    for (i, cmd) in init_commands.iter().enumerate() {
-                        existing_init.insert(setup_end + i, cmd.clone());
-                    }
+                    self.data_pack.insert_function_commands_with_metadata(
+                        "_cobble_init",
+                        setup_end,
+                        &init_commands,
+                        init_metadata,
+                    );
                 } else {
                     // Find the load handler function
                     let load_handlers = self.data_pack.stdlib.get_event_handlers(&EventType::Load);
                     if let Some(handler_name) = load_handlers.first() {
-                        if let Some(handler_func) = self.data_pack.functions.get_mut(handler_name) {
+                        if let Some(handler_func) = self.data_pack.functions.get(handler_name) {
                             // Find the position after gamerule and all objectives
                             let setup_end = handler_func
                                 .iter()
@@ -380,21 +881,28 @@ impl Transpiler {
                                 })
                                 .unwrap_or(handler_func.len());
 
-                            for (i, cmd) in init_commands.iter().enumerate() {
-                                handler_func.insert(setup_end + i, cmd.clone());
-                            }
+                            self.data_pack.insert_function_commands_with_metadata(
+                                handler_name,
+                                setup_end,
+                                &init_commands,
+                                init_metadata,
+                            );
                         }
                     } else {
                         // No _cobble_init and no load handler - create _cobble_init
-                        self.data_pack
-                            .functions
-                            .insert("_cobble_init".to_string(), init_commands);
+                        self.data_pack.add_function_with_metadata(
+                            "_cobble_init".to_string(),
+                            init_commands,
+                            init_metadata,
+                        );
                         self.data_pack
                             .stdlib
                             .add_event_listener(EventType::Load, "_cobble_init".to_string());
                     }
                 }
             }
+
+            self.module_level_vars.clear();
         }
 
         Ok(())
@@ -407,40 +915,53 @@ impl Transpiler {
             return Ok(());
         }
 
+        // Security: Validate module name to prevent path traversal
+        if import.module.contains("..")
+            || import.module.contains('/')
+            || import.module.contains('\\')
+        {
+            return Err(format!(
+                "Invalid module name '{}': Cannot contain path separators or '..'\n\
+                Module names must be simple identifiers (e.g., 'utils', 'helpers')",
+                import.module
+            ));
+        }
+
+        // Security: Limit import depth to prevent stack overflow
+        const MAX_IMPORT_DEPTH: usize = 50;
+        if self.import_stack.len() >= MAX_IMPORT_DEPTH {
+            return Err(format!(
+                "Maximum import depth exceeded ({}).\n\
+                This usually indicates a circular or excessively deep import chain.",
+                MAX_IMPORT_DEPTH
+            ));
+        }
+
         // Handle file imports
         let import_path = self.current_file_dir.join(format!("{}.cbl", import.module));
 
         // Canonicalize path for accurate comparison
         let canonical_path = import_path.canonicalize().unwrap_or(import_path.clone());
 
+        if self.import_stack.contains(&canonical_path) {
+            return Err(format!(
+                "Circular import detected: {}\n\
+                Import cycles are not supported because they make initialization order ambiguous.",
+                self.format_import_chain(&canonical_path)
+            ));
+        }
+
         // Check if already imported
         if self.imported_files.contains(&canonical_path) {
-            // Check if this creates a circular dependency
-            if self.import_stack.contains(&canonical_path) {
-                // Build the circular import chain message for warning
-                let mut chain = Vec::new();
-                for path in &self.import_stack {
-                    if let Some(name) = path.file_stem() {
-                        chain.push(name.to_string_lossy().to_string());
-                    }
-                }
-                chain.push(import.module.clone());
-
-                eprintln!(
-                    "⚠️  Warning: Circular import detected: {} → {}\n\
-                    Each file will only be processed once, but circular imports may indicate a design issue.",
-                    chain.join(" → "),
-                    chain.first().unwrap_or(&"<unknown>".to_string())
-                );
-            }
             return Ok(()); // Already imported, skip to avoid infinite loop
         }
 
         // Check if file exists
         if !canonical_path.exists() && !import_path.exists() {
             return Err(format!(
-                "Cannot import '{}': file '{}' not found",
+                "Cannot import '{}' from '{}': file '{}' not found",
                 import.module,
+                self.current_importer_display(),
                 import_path.display()
             ));
         }
@@ -482,11 +1003,14 @@ impl Transpiler {
 
         // Save current file dir
         let saved_dir = self.current_file_dir.clone();
+        let saved_file = self.current_file_path.clone();
 
         // Set directory for nested imports
         if let Some(parent) = import_path.parent() {
             self.current_file_dir = parent.to_path_buf();
         }
+        self.current_file_path = Some(canonical_path.clone());
+        self.register_source_locations(&import_path, &source);
 
         // Process nested imports first
         for import in &program.imports {
@@ -500,11 +1024,29 @@ impl Transpiler {
 
         // Restore previous directory
         self.current_file_dir = saved_dir;
+        self.current_file_path = saved_file;
 
         // Pop from import stack after processing
         self.import_stack.pop();
 
         Ok(())
+    }
+
+    fn current_importer_display(&self) -> String {
+        self.import_stack
+            .last()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| self.current_file_dir.display().to_string())
+    }
+
+    fn format_import_chain(&self, next_path: &Path) -> String {
+        let mut chain: Vec<String> = self
+            .import_stack
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        chain.push(next_path.display().to_string());
+        chain.join(" -> ")
     }
 
     fn strip_command_prefix(cmd: &str) -> String {
@@ -516,6 +1058,27 @@ impl Transpiler {
     }
 
     fn process_statement(&mut self, statement: &Statement) -> Result<(), String> {
+        let previous_statement_source = self.current_statement_source.clone();
+        let statement_source = self
+            .take_statement_source(statement)
+            .or_else(|| previous_statement_source.clone());
+        self.current_statement_source = statement_source.clone();
+
+        let start_index = self.current_function.as_ref().map(Vec::len);
+        let default_kind = Self::default_generated_kind_for_statement(statement);
+        let result = self.process_statement_inner(statement);
+
+        if result.is_ok() {
+            if let Some(start_index) = start_index {
+                self.annotate_recent_commands(start_index, statement_source, default_kind);
+            }
+        }
+
+        self.current_statement_source = previous_statement_source;
+        result
+    }
+
+    fn process_statement_inner(&mut self, statement: &Statement) -> Result<(), String> {
         match statement {
             Statement::Import(import) => {
                 self.process_import(import)?;
@@ -581,11 +1144,14 @@ impl Transpiler {
             Statement::MinecraftCommand(cmd) => {
                 // Strip leading slash and process variable/parameter substitution
                 let clean_cmd = Self::strip_command_prefix(cmd);
+                let source_location = self.take_raw_command_source(clean_cmd.trim());
                 let processor = CommandProcessor::new(
+                    self.data_pack.namespace.clone(),
                     &self.current_context.params,
                     &self.scoreboard_variables,
                     &self.variables,
                     &self.variable_objectives,
+                    &self.variable_storage_paths,
                     &self.selector_aliases,
                     &self.compile_time_constants,
                 );
@@ -593,7 +1159,18 @@ impl Transpiler {
                 let processed_cmd = processor.process_command_string(&clean_cmd)?;
 
                 if let Some(ref mut commands) = self.current_function {
+                    let command_index = commands.len();
                     commands.push(processed_cmd);
+                    if let Some(ref mut metadata) = self.current_function_metadata {
+                        metadata.insert(
+                            command_index,
+                            GeneratedCommand::new(
+                                commands[command_index].clone(),
+                                source_location,
+                                GeneratedCommandKind::UserCommand,
+                            ),
+                        );
+                    }
                 } else {
                     return Err("Minecraft command outside of function context".to_string());
                 }
@@ -604,13 +1181,305 @@ impl Transpiler {
             Statement::SelectorDef(selector_def) => {
                 self.process_selector_def(selector_def)?;
             }
+            Statement::EntityDef(entity_def) => {
+                self.process_entity_def(entity_def)?;
+            }
+            Statement::CreateEntity(name) => {
+                self.process_create_entity(name)?;
+            }
         }
+        Ok(())
+    }
+
+    fn default_generated_kind_for_statement(statement: &Statement) -> GeneratedCommandKind {
+        match statement {
+            Statement::MinecraftCommand(_) => GeneratedCommandKind::UserCommand,
+            Statement::Expression(expr) if Self::is_stdlib_expression(expr) => {
+                GeneratedCommandKind::StdLib
+            }
+            _ => GeneratedCommandKind::ControlFlow,
+        }
+    }
+
+    fn is_stdlib_expression(expr: &Expression) -> bool {
+        let Expression::Call(func, _) = expr else {
+            return false;
+        };
+
+        match &**func {
+            Expression::Attribute(obj, _) => {
+                matches!(
+                    &**obj,
+                    Expression::Identifier(module)
+                        if matches!(
+                            module.as_str(),
+                            "math" | "text" | "score" | "random" | "timer" | "storage" | "datapack"
+                        )
+                )
+            }
+            Expression::Identifier(name) => {
+                name == "addEventListener" || name == "stdlib.addEventListener"
+            }
+            _ => false,
+        }
+    }
+
+    fn annotate_recent_commands(
+        &mut self,
+        start_index: usize,
+        source: Option<SourceLocation>,
+        default_kind: GeneratedCommandKind,
+    ) {
+        let Some(ref commands) = self.current_function else {
+            return;
+        };
+        let Some(ref mut metadata) = self.current_function_metadata else {
+            return;
+        };
+        if start_index > commands.len() {
+            return;
+        }
+
+        for (index, command) in commands.iter().enumerate().skip(start_index) {
+            let command = command.clone();
+            metadata
+                .entry(index)
+                .and_modify(|generated| {
+                    generated.text = command.clone();
+                    if generated.source.is_none() {
+                        generated.source = source.clone();
+                    }
+                })
+                .or_insert_with(|| {
+                    GeneratedCommand::new(command, source.clone(), default_kind.clone())
+                });
+        }
+    }
+
+    pub(in crate::transpiler) fn capture_statement(
+        &mut self,
+        statement: &Statement,
+    ) -> Result<FunctionCapture, String> {
+        self.capture_statements(std::slice::from_ref(statement))
+    }
+
+    pub(in crate::transpiler) fn capture_statements(
+        &mut self,
+        statements: &[Statement],
+    ) -> Result<FunctionCapture, String> {
+        self.capture_commands(|transpiler| {
+            for statement in statements {
+                transpiler.process_statement(statement)?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(in crate::transpiler) fn capture_statements_isolated(
+        &mut self,
+        statements: &[Statement],
+    ) -> Result<FunctionCapture, String> {
+        let saved_state = self.save_compiler_state();
+        let result = self.capture_statements(statements);
+        self.restore_compiler_state(saved_state);
+        result
+    }
+
+    pub(in crate::transpiler) fn capture_commands<F>(
+        &mut self,
+        body: F,
+    ) -> Result<FunctionCapture, String>
+    where
+        F: FnOnce(&mut Self) -> Result<(), String>,
+    {
+        let saved = self.begin_function_capture();
+        if let Err(error) = body(self) {
+            self.restore_function_capture(saved);
+            return Err(error);
+        }
+        Ok(self.finish_function_capture(saved))
+    }
+
+    pub(in crate::transpiler) fn capture_commands_with_result<T, F>(
+        &mut self,
+        body: F,
+    ) -> Result<(T, FunctionCapture), String>
+    where
+        F: FnOnce(&mut Self) -> Result<T, String>,
+    {
+        let saved = self.begin_function_capture();
+        let result = match body(self) {
+            Ok(result) => result,
+            Err(error) => {
+                self.restore_function_capture(saved);
+                return Err(error);
+            }
+        };
+        let capture = self.finish_function_capture(saved);
+        Ok((result, capture))
+    }
+
+    fn begin_function_capture(&mut self) -> SavedFunctionCapture {
+        let saved = SavedFunctionCapture {
+            function: self.current_function.take(),
+            metadata: self.current_function_metadata.take(),
+        };
+        self.current_function = Some(Vec::new());
+        self.current_function_metadata = Some(HashMap::new());
+        saved
+    }
+
+    fn finish_function_capture(&mut self, saved: SavedFunctionCapture) -> FunctionCapture {
+        self.annotate_recent_commands(
+            0,
+            self.current_statement_source.clone(),
+            GeneratedCommandKind::ControlFlow,
+        );
+        let capture = FunctionCapture {
+            commands: self.current_function.take().unwrap_or_default(),
+            metadata: self.current_function_metadata.take().unwrap_or_default(),
+        };
+        self.restore_function_capture(saved);
+        capture
+    }
+
+    fn restore_function_capture(&mut self, saved: SavedFunctionCapture) {
+        self.current_function = saved.function;
+        self.current_function_metadata = saved.metadata;
+    }
+
+    fn save_compiler_state(&self) -> SavedCompilerState {
+        SavedCompilerState {
+            current_context: self.current_context.clone(),
+            variables: self.variables.clone(),
+            variable_objectives: self.variable_objectives.clone(),
+            scoreboard_variables: self.scoreboard_variables.clone(),
+            global_variables: self.global_variables.clone(),
+            compile_time_constants: self.compile_time_constants.clone(),
+            selector_aliases: self.selector_aliases.clone(),
+            entity_templates: self.entity_templates.clone(),
+            variable_storage_paths: self.variable_storage_paths.clone(),
+            variable_types: self.variable_types.clone(),
+        }
+    }
+
+    fn restore_compiler_state(&mut self, saved: SavedCompilerState) {
+        self.current_context = saved.current_context;
+        self.variables = saved.variables;
+        self.variable_objectives = saved.variable_objectives;
+        self.scoreboard_variables = saved.scoreboard_variables;
+        self.global_variables = saved.global_variables;
+        self.compile_time_constants = saved.compile_time_constants;
+        self.selector_aliases = saved.selector_aliases;
+        self.entity_templates = saved.entity_templates;
+        self.variable_storage_paths = saved.variable_storage_paths;
+        self.variable_types = saved.variable_types;
+    }
+
+    pub(in crate::transpiler) fn add_captured_function(
+        &mut self,
+        name: String,
+        capture: FunctionCapture,
+    ) {
+        self.data_pack
+            .add_function_with_metadata(name, capture.commands, capture.metadata);
+    }
+
+    pub(in crate::transpiler) fn function_call_command(
+        &self,
+        name: &str,
+        with_storage_args: bool,
+    ) -> String {
+        if with_storage_args {
+            format!(
+                "function {}:{} with storage {}:global args",
+                self.data_pack.namespace, name, self.data_pack.namespace
+            )
+        } else {
+            format!("function {}:{}", self.data_pack.namespace, name)
+        }
+    }
+
+    pub(in crate::transpiler) fn append_transformed_capture<F>(
+        &mut self,
+        capture: FunctionCapture,
+        mut transform: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&str) -> String,
+    {
+        let Some(ref mut commands) = self.current_function else {
+            return Err("Cannot append generated commands outside of function context".to_string());
+        };
+
+        for (source_index, command) in capture.commands.into_iter().enumerate() {
+            let transformed = transform(&command);
+            let target_index = commands.len();
+            commands.push(transformed.clone());
+
+            if let Some(ref mut metadata) = self.current_function_metadata {
+                let generated = capture
+                    .metadata
+                    .get(&source_index)
+                    .cloned()
+                    .map(|mut generated| {
+                        generated.text = transformed.clone();
+                        generated
+                    })
+                    .unwrap_or_else(|| {
+                        GeneratedCommand::new(transformed, None, GeneratedCommandKind::ControlFlow)
+                    });
+                metadata.insert(target_index, generated);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_create_entity(&mut self, name: &str) -> Result<(), String> {
+        if let Some(template) = self.entity_templates.get(name) {
+            // Extract type from selector (e.g., @e[type=zombie])
+            // This is a crude extraction, but sufficient for now
+            let type_str = if let Some(start) = template.selector.find("type=") {
+                let rest = &template.selector[start + 5..];
+                let end = rest.find([',', ']']).unwrap_or(rest.len());
+                &rest[..end]
+            } else {
+                "minecraft:armor_stand" // Default if no type specified? Or error?
+            };
+
+            let entity_type = if type_str.contains(':') {
+                type_str.to_string()
+            } else {
+                format!("minecraft:{}", type_str)
+            };
+
+            // Serialize NBT
+            let nbt_str = self.serialize_to_snbt(&template.nbt)?;
+
+            // Generate summon command
+            if let Some(ref mut commands) = self.current_function {
+                commands.push(format!("summon {} ~ ~ ~ {}", entity_type, nbt_str));
+            }
+        } else {
+            return Err(format!(
+                "Unknown entity template '{}'. Define it first using 'define {} = ...'",
+                name, name
+            ));
+        }
+        Ok(())
+    }
+
+    fn process_entity_def(&mut self, entity_def: &EntityDef) -> Result<(), String> {
+        self.entity_templates
+            .insert(entity_def.name.clone(), entity_def.clone());
         Ok(())
     }
 
     fn process_function_def(&mut self, func: &FunctionDef) -> Result<(), String> {
         // Save previous function context
         let previous_function = self.current_function.take();
+        let previous_metadata = self.current_function_metadata.take();
         let previous_context = self.current_context.clone();
         let previous_globals = self.global_variables.clone();
         let previous_variables = self.variables.clone();
@@ -622,6 +1491,7 @@ impl Transpiler {
         // Set up new function context
         self.current_context = FunctionContext::with_params(param_names.clone());
         self.current_function = Some(Vec::new());
+        self.current_function_metadata = Some(HashMap::new());
         self.global_variables.clear();
 
         // Store function parameters
@@ -634,11 +1504,14 @@ impl Transpiler {
 
         // Get the generated commands
         if let Some(commands) = self.current_function.take() {
-            self.data_pack.add_function(func.name.clone(), commands);
+            let metadata = self.current_function_metadata.take().unwrap_or_default();
+            self.data_pack
+                .add_function_with_metadata(func.name.clone(), commands, metadata);
         }
 
         // Restore previous context
         self.current_function = previous_function;
+        self.current_function_metadata = previous_metadata;
         self.current_context = previous_context;
         self.global_variables = previous_globals;
         self.variables = previous_variables;
@@ -657,6 +1530,7 @@ impl Transpiler {
         let mut evaluator = ExpressionEvaluator::new(
             &mut self.data_pack,
             &self.variable_objectives,
+            &self.variable_storage_paths,
             &self.compile_time_constants,
         );
         evaluator.evaluate_expression_to_target(expr, target)
@@ -692,6 +1566,20 @@ impl Transpiler {
                         if let Expression::Identifier(module_name) = &**obj {
                             if module_name == "stdlib" && method == "addEventListener" {
                                 self.process_add_event_listener(args)?;
+                            } else if module_name == "math" {
+                                self.process_math_intrinsic(method, args)?;
+                            } else if module_name == "text" {
+                                self.process_text_intrinsic(method, args)?;
+                            } else if module_name == "score" {
+                                self.process_score_intrinsic(method, args)?;
+                            } else if module_name == "random" {
+                                self.process_random_intrinsic(method, args)?;
+                            } else if module_name == "timer" {
+                                self.process_timer_intrinsic(method, args)?;
+                            } else if module_name == "storage" {
+                                self.process_storage_intrinsic(method, args)?;
+                            } else if module_name == "datapack" {
+                                self.process_datapack_intrinsic(method, args)?;
                             } else {
                                 return Err(format!(
                                     "Unknown module method: {}.{}",
@@ -712,6 +1600,469 @@ impl Transpiler {
             }
         }
         Ok(())
+    }
+
+    fn push_current_command(&mut self, command: String) -> Result<(), String> {
+        if let Some(ref mut commands) = self.current_function {
+            let command_index = commands.len();
+            commands.push(command);
+            if let Some(ref mut metadata) = self.current_function_metadata {
+                metadata.insert(
+                    command_index,
+                    GeneratedCommand::new(
+                        commands[command_index].clone(),
+                        None,
+                        GeneratedCommandKind::StdLib,
+                    ),
+                );
+            }
+            Ok(())
+        } else {
+            Err("Stdlib helper called outside of function context".to_string())
+        }
+    }
+
+    fn expr_to_plain_arg(&self, expr: &Expression, label: &str) -> Result<String, String> {
+        match expr {
+            Expression::String(s) | Expression::Identifier(s) => Ok(s.clone()),
+            Expression::Number(n) if n.fract() == 0.0 => Ok((*n as i32).to_string()),
+            Expression::Number(n) => Ok(n.to_string()),
+            _ => Err(format!("{} must be a string, identifier, or number", label)),
+        }
+    }
+
+    fn expr_to_i32(&self, expr: &Expression, label: &str) -> Result<i32, String> {
+        match expr {
+            Expression::Number(n) => Ok(*n as i32),
+            Expression::Identifier(name) => self
+                .compile_time_constants
+                .get(name)
+                .map(|value| *value as i32)
+                .ok_or_else(|| format!("{} must be a literal integer or const", label)),
+            _ => Err(format!("{} must be a literal integer or const", label)),
+        }
+    }
+
+    fn expr_to_json_value(&self, expr: &Expression) -> Result<serde_json::Value, String> {
+        match expr {
+            Expression::Number(n) if n.fract() == 0.0 => Ok(serde_json::json!(*n as i32)),
+            Expression::Number(n) => Ok(serde_json::json!(n)),
+            Expression::String(s) => Ok(serde_json::json!(s)),
+            Expression::Boolean(b) => Ok(serde_json::json!(b)),
+            Expression::None => Ok(serde_json::Value::Null),
+            Expression::Array(items) => items
+                .iter()
+                .map(|item| self.expr_to_json_value(item))
+                .collect::<Result<Vec<_>, _>>()
+                .map(serde_json::Value::Array),
+            Expression::Map(entries) => {
+                let mut object = serde_json::Map::new();
+                for (key, value) in entries {
+                    object.insert(key.clone(), self.expr_to_json_value(value)?);
+                }
+                Ok(serde_json::Value::Object(object))
+            }
+            Expression::Identifier(name) => {
+                if let Some(value) = self.compile_time_constants.get(name) {
+                    if value.fract() == 0.0 {
+                        Ok(serde_json::json!(*value as i32))
+                    } else {
+                        Ok(serde_json::json!(value))
+                    }
+                } else {
+                    Err(format!(
+                        "Identifier '{}' cannot be serialized to JSON here; use a literal or const",
+                        name
+                    ))
+                }
+            }
+            _ => Err(format!("Unsupported expression in JSON value: {:?}", expr)),
+        }
+    }
+
+    fn expr_to_text_component(&self, expr: &Expression) -> Result<String, String> {
+        let value = match expr {
+            Expression::String(s) => serde_json::json!({ "text": s }),
+            _ => self.expr_to_json_value(expr)?,
+        };
+        serde_json::to_string(&value).map_err(|e| format!("Failed to encode text component: {}", e))
+    }
+
+    fn process_text_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+        if args.len() != 2 {
+            return Err(format!("text.{}() takes 2 arguments", method));
+        }
+
+        let target = self.expr_to_plain_arg(&args[0], "text target")?;
+        let component = self.expr_to_text_component(&args[1])?;
+        let command = match method {
+            "tellraw" => format!("tellraw {} {}", target, component),
+            "title" | "subtitle" | "actionbar" => {
+                format!("title {} {} {}", target, method, component)
+            }
+            _ => return Err(format!("Unknown text function: text.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_score_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+        self.data_pack.track_objective("temp");
+        let command = match method {
+            "set" => {
+                if args.len() != 2 {
+                    return Err("score.set() takes 2 arguments".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "score name")?;
+                let value = self.expr_to_i32(&args[1], "score value")?;
+                format!("scoreboard players set {} temp {}", name, value)
+            }
+            "add" | "remove" => {
+                if args.len() != 2 {
+                    return Err(format!("score.{}() takes 2 arguments", method));
+                }
+                let name = self.expr_to_plain_arg(&args[0], "score name")?;
+                let value = self.expr_to_i32(&args[1], "score value")?;
+                format!("scoreboard players {} {} temp {}", method, name, value)
+            }
+            "reset" => {
+                if args.len() != 1 {
+                    return Err("score.reset() takes 1 argument".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "score name")?;
+                format!("scoreboard players reset {} temp", name)
+            }
+            "copy" => {
+                if args.len() != 2 {
+                    return Err("score.copy() takes 2 arguments".to_string());
+                }
+                let dst = self.expr_to_plain_arg(&args[0], "destination score")?;
+                let src = self.expr_to_plain_arg(&args[1], "source score")?;
+                format!("scoreboard players operation {} temp = {} temp", dst, src)
+            }
+            "operation" => {
+                if args.len() != 3 {
+                    return Err("score.operation() takes 3 arguments".to_string());
+                }
+                let dst = self.expr_to_plain_arg(&args[0], "destination score")?;
+                let op = self.expr_to_plain_arg(&args[1], "score operation")?;
+                let src = self.expr_to_plain_arg(&args[2], "source score")?;
+                const ALLOWED_OPS: &[&str] = &["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"];
+                if !ALLOWED_OPS.contains(&op.as_str()) {
+                    return Err(format!("Unsupported scoreboard operation '{}'", op));
+                }
+                format!(
+                    "scoreboard players operation {} temp {} {} temp",
+                    dst, op, src
+                )
+            }
+            _ => return Err(format!("Unknown score function: score.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_random_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        self.data_pack.track_objective("temp");
+        let command = match method {
+            "int" => {
+                if args.len() != 3 {
+                    return Err("random.int() takes 3 arguments".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "random target score")?;
+                let min = self.expr_to_i32(&args[1], "random min")?;
+                let max = self.expr_to_i32(&args[2], "random max")?;
+                if min > max {
+                    return Err("random.int() min cannot be greater than max".to_string());
+                }
+                format!(
+                    "execute store result score {} temp run random value {}..{}",
+                    name, min, max
+                )
+            }
+            "bool" => {
+                if args.len() != 1 {
+                    return Err("random.bool() takes 1 argument".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "random target score")?;
+                format!(
+                    "execute store result score {} temp run random value 0..1",
+                    name
+                )
+            }
+            _ => return Err(format!("Unknown random function: random.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_timer_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+        self.data_pack.track_objective("temp");
+        let command = match method {
+            "set" => {
+                if args.len() != 2 {
+                    return Err("timer.set() takes 2 arguments".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "timer name")?;
+                let ticks = self.expr_to_i32(&args[1], "timer ticks")?;
+                format!("scoreboard players set {} temp {}", name, ticks)
+            }
+            "tick" => {
+                if args.len() != 1 {
+                    return Err("timer.tick() takes 1 argument".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "timer name")?;
+                format!(
+                    "execute if score {} temp matches 1.. run scoreboard players remove {} temp 1",
+                    name, name
+                )
+            }
+            "done" => {
+                if args.len() != 1 {
+                    return Err("timer.done() takes 1 argument".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "timer name")?;
+                let flag = format!("{}_done", name);
+                self.push_current_command(format!("scoreboard players set {} temp 0", flag))?;
+                format!(
+                    "execute if score {} temp matches ..0 run scoreboard players set {} temp 1",
+                    name, flag
+                )
+            }
+            "reset" => {
+                if args.len() != 1 {
+                    return Err("timer.reset() takes 1 argument".to_string());
+                }
+                let name = self.expr_to_plain_arg(&args[0], "timer name")?;
+                format!("scoreboard players reset {} temp", name)
+            }
+            _ => return Err(format!("Unknown timer function: timer.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_storage_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        let command = match method {
+            "set" => {
+                if args.len() != 2 {
+                    return Err("storage.set() takes 2 arguments".to_string());
+                }
+                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
+                let value = self.serialize_to_snbt(&args[1])?;
+                format!(
+                    "data modify storage {}:global {} set value {}",
+                    self.data_pack.namespace, path, value
+                )
+            }
+            "merge" => {
+                if args.len() != 2 {
+                    return Err("storage.merge() takes 2 arguments".to_string());
+                }
+                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
+                let value = self.serialize_to_snbt(&args[1])?;
+                format!(
+                    "data modify storage {}:global {} merge value {}",
+                    self.data_pack.namespace, path, value
+                )
+            }
+            "remove" => {
+                if args.len() != 1 {
+                    return Err("storage.remove() takes 1 argument".to_string());
+                }
+                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
+                format!(
+                    "data remove storage {}:global {}",
+                    self.data_pack.namespace, path
+                )
+            }
+            "copy" => {
+                if args.len() != 2 {
+                    return Err("storage.copy() takes 2 arguments".to_string());
+                }
+                let dst = self.expr_to_plain_arg(&args[0], "destination storage path")?;
+                let src = self.expr_to_plain_arg(&args[1], "source storage path")?;
+                format!(
+                    "data modify storage {}:global {} set from storage {}:global {}",
+                    self.data_pack.namespace, dst, self.data_pack.namespace, src
+                )
+            }
+            _ => return Err(format!("Unknown storage function: storage.{}", method)),
+        };
+        self.push_current_command(command)
+    }
+
+    fn process_datapack_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        match method {
+            "function_tag" => self.add_datapack_tag_resource("function", args),
+            "block_tag" => self.add_datapack_tag_resource("block", args),
+            "item_tag" => self.add_datapack_tag_resource("item", args),
+            "entity_type_tag" => self.add_datapack_tag_resource("entity_type", args),
+            "predicate" => self.add_datapack_json_resource("predicate", args),
+            "advancement" => self.add_datapack_json_resource("advancement", args),
+            "loot_table" => self.add_datapack_json_resource("loot_table", args),
+            "recipe" => self.add_datapack_json_resource("recipe", args),
+            "item_modifier" => self.add_datapack_json_resource("item_modifier", args),
+            "dialog" => self.add_datapack_json_resource("dialog", args),
+            _ => Err(format!("Unknown datapack function: datapack.{}", method)),
+        }
+    }
+
+    fn add_datapack_tag_resource(
+        &mut self,
+        tag_type: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        if args.len() != 2 {
+            return Err(format!("datapack.{}_tag() takes 2 arguments", tag_type));
+        }
+
+        let name = self.expr_to_resource_name(&args[0], "tag name")?;
+        let values = self.expr_to_json_value(&args[1])?;
+        if !values.is_array() {
+            return Err("Tag values must be an array".to_string());
+        }
+
+        let json = serde_json::json!({ "values": values });
+        let content = serde_json::to_string_pretty(&json)
+            .map_err(|e| format!("Failed to encode tag JSON: {}", e))?;
+        self.data_pack
+            .add_json_resource(format!("tags/{}/{}", tag_type, name), content)
+    }
+
+    fn add_datapack_json_resource(
+        &mut self,
+        resource_type: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        if args.len() != 2 {
+            return Err(format!("datapack.{}() takes 2 arguments", resource_type));
+        }
+
+        let name = self.expr_to_resource_name(&args[0], "resource name")?;
+        let json = self.expr_to_json_value(&args[1])?;
+        let content = serde_json::to_string_pretty(&json)
+            .map_err(|e| format!("Failed to encode resource JSON: {}", e))?;
+        self.data_pack
+            .add_json_resource(format!("{}/{}", resource_type, name), content)
+    }
+
+    fn expr_to_resource_name(&self, expr: &Expression, label: &str) -> Result<String, String> {
+        let name = self.expr_to_plain_arg(expr, label)?;
+        let has_invalid_segment = name
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..");
+        let has_invalid_char = name.chars().any(|c| {
+            !(c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || c == '_'
+                || c == '-'
+                || c == '.'
+                || c == '/')
+        });
+        if name.is_empty() || name.contains('\\') || has_invalid_segment || has_invalid_char {
+            return Err(format!(
+                "Invalid {} '{}': use lowercase resource paths with letters, digits, '/', '_', '-', or '.', and no empty, '.', or '..' segments",
+                label, name
+            ));
+        }
+        Ok(name)
+    }
+
+    fn process_math_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+        match method {
+            "sqrt" => {
+                if args.len() != 1 {
+                    return Err("math.sqrt() takes 1 argument".to_string());
+                }
+                self.process_math_unary_op(args, "sqrt")
+            }
+            "abs" => {
+                if args.len() != 1 {
+                    return Err("math.abs() takes 1 argument".to_string());
+                }
+                self.process_math_unary_op(args, "abs")
+            }
+            "min" => {
+                if args.len() != 2 {
+                    return Err("math.min() takes 2 arguments".to_string());
+                }
+                self.process_math_binary_op(args, "min")
+            }
+            "max" => {
+                if args.len() != 2 {
+                    return Err("math.max() takes 2 arguments".to_string());
+                }
+                self.process_math_binary_op(args, "max")
+            }
+            _ => Err(format!("Unknown math function: math.{}", method)),
+        }
+    }
+
+    fn process_math_unary_op(&mut self, args: &[Expression], op: &str) -> Result<(), String> {
+        let input_var = "#math_input";
+        // output_var is implied to be "#math_result" by convention in helpers
+
+        self.data_pack.track_objective("math");
+        self.variable_objectives
+            .insert(input_var.to_string(), "math".to_string());
+        self.scoreboard_variables.insert(input_var.to_string());
+
+        // Evaluate argument
+        let eval_commands = self.evaluate_expression_to_target(&args[0], input_var)?;
+
+        // Ensure helper exists
+        self.ensure_math_helper(op);
+
+        if let Some(ref mut commands) = self.current_function {
+            commands.extend(eval_commands);
+            commands.push(format!(
+                "function {}:_cobble_math_{}",
+                self.data_pack.namespace, op
+            ));
+        }
+        Ok(())
+    }
+
+    fn process_math_binary_op(&mut self, args: &[Expression], op: &str) -> Result<(), String> {
+        let input1 = "#math_input";
+        let input2 = "#math_input2";
+
+        self.data_pack.track_objective("math");
+        self.variable_objectives
+            .insert(input1.to_string(), "math".to_string());
+        self.variable_objectives
+            .insert(input2.to_string(), "math".to_string());
+        self.scoreboard_variables.insert(input1.to_string());
+        self.scoreboard_variables.insert(input2.to_string());
+
+        // Evaluate arguments
+        let mut cmds = Vec::new();
+        cmds.extend(self.evaluate_expression_to_target(&args[0], input1)?);
+        cmds.extend(self.evaluate_expression_to_target(&args[1], input2)?);
+
+        self.ensure_math_helper(op);
+
+        if let Some(ref mut commands) = self.current_function {
+            commands.extend(cmds);
+            commands.push(format!(
+                "function {}:_cobble_math_{}",
+                self.data_pack.namespace, op
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_math_helper(&mut self, op: &str) {
+        self.data_pack.ensure_math_helper(op);
     }
 
     fn generate_function_call(
@@ -768,7 +2119,9 @@ impl Transpiler {
                                         "data modify storage {}:global args.{} set value \"{}\"",
                                         self.data_pack.namespace, param_name, var
                                     ));
-                                } else if self.scoreboard_variables.contains(var) || self.variable_objectives.contains_key(var) {
+                                } else if self.scoreboard_variables.contains(var)
+                                    || self.variable_objectives.contains_key(var)
+                                {
                                     // Scoreboard variable - read from scoreboard
                                     let obj = self
                                         .variable_objectives
@@ -815,7 +2168,8 @@ impl Transpiler {
 
                                 // Track the temp variable
                                 self.data_pack.track_objective("temp");
-                                self.variable_objectives.insert(temp_var.clone(), "temp".to_string());
+                                self.variable_objectives
+                                    .insert(temp_var.clone(), "temp".to_string());
                                 self.scoreboard_variables.insert(temp_var.clone());
 
                                 // Evaluate the expression into the temp variable
@@ -1057,15 +2411,18 @@ impl Transpiler {
         // Flatten all OR conditions into a single list
         let conditions = Self::flatten_or_conditions(or_expr)?;
 
-        // Track the temp objective for or_result
+        // Use unique variable name to prevent race conditions with multiple entities
+        let or_var = format!("or_temp_{}", self.get_unique_id());
+
+        // Track the temp objective for or result
         self.data_pack.track_objective("temp");
 
         // Generate commands for OR logic
         if let Some(ref mut commands) = self.current_function {
-            // Initialize or_result to 0
-            commands.push("scoreboard players set or_result temp 0".to_string());
+            // Initialize or variable to 0
+            commands.push(format!("scoreboard players set {} temp 0", or_var));
 
-            // For each condition, if true, set or_result to 1
+            // For each condition, if true, set or variable to 1
             for cond in &conditions {
                 let cond_prefix = if cond.starts_with("if ") || cond.starts_with("unless ") {
                     cond.clone()
@@ -1073,14 +2430,14 @@ impl Transpiler {
                     format!("if {}", cond)
                 };
                 commands.push(format!(
-                    "execute {} run scoreboard players set or_result temp 1",
-                    cond_prefix
+                    "execute {} run scoreboard players set {} temp 1",
+                    cond_prefix, or_var
                 ));
             }
         }
 
-        // Return the condition that checks if or_result is 1
-        Ok("score or_result temp matches 1".to_string())
+        // Return the condition that checks if or variable is 1
+        Ok(format!("score {} temp matches 1", or_var))
     }
 
     fn flatten_or_conditions(or_expr: &str) -> Result<Vec<String>, String> {
@@ -1092,9 +2449,10 @@ impl Transpiler {
         }
 
         // Extract inner content - be careful with the closing parenthesis
-        let end_pos = or_expr.rfind(')').ok_or("Missing closing parenthesis in OR expression")?;
+        let end_pos = or_expr
+            .rfind(')')
+            .ok_or("Missing closing parenthesis in OR expression")?;
         let inner = &or_expr[3..end_pos];
-
 
         // Split by semicolon, but only at the top level (not inside nested parentheses)
         let mut parts = Vec::new();
@@ -1222,36 +2580,66 @@ impl Transpiler {
 
     /// Check if a condition string looks like a Python expression
     fn looks_like_python_expression(&self, condition: &str) -> bool {
-        // Minecraft raw conditions usually start with these keywords
-        let minecraft_keywords = ["score", "entity", "block", "blocks", "biome", "dimension", "predicate", "data"];
-
-        // Check if it starts with a Minecraft keyword
-        for keyword in &minecraft_keywords {
-            if condition.starts_with(keyword) {
-                return false;
-            }
-        }
-
-        // Check for Python expression indicators
-        let python_indicators = [">", "<", "==", "!=", ">=", "<=", " and ", " or ", " not "];
+        // Check for Python expression indicators FIRST
+        // This must come before the Minecraft keyword check because a user variable
+        // might have the same name as a Minecraft keyword (e.g., `score >= 10`)
+        let python_indicators = [
+            " >= ", " <= ", " == ", " != ", " > ", " < ", " and ", " or ", " not ",
+        ];
         for indicator in &python_indicators {
             if condition.contains(indicator) {
                 return true;
             }
         }
 
+        // Minecraft raw conditions usually start with these keywords followed by
+        // specific syntax (e.g., "score x temp matches 5", "entity @a", "block ~ ~ ~ stone")
+        // Only treat as raw Minecraft if it matches the full pattern, not just the keyword
+        let minecraft_raw_patterns = [
+            "score ",     // "score <target> <objective> matches/</>/>=/<=/= ..."
+            "entity ",    // "entity <selector>"
+            "block ",     // "block <pos> <block>"
+            "blocks ",    // "blocks <start> <end> <dest> <mode>"
+            "biome ",     // "biome <pos> <biome>"
+            "dimension ", // "dimension <dimension>"
+            "predicate ", // "predicate <predicate>"
+            "data ",      // "data <source> <path>"
+        ];
+
+        for pattern in &minecraft_raw_patterns {
+            if condition.starts_with(pattern) {
+                // Extra check: if this looks like "score <target> <obj> matches/op",
+                // it's raw Minecraft. If it looks like "score >= 10", it's Python.
+                if pattern == &"score " {
+                    // Raw Minecraft score condition has at least 3 space-separated parts
+                    // e.g., "score x temp matches 5" or "score x temp = y temp"
+                    let parts: Vec<&str> = condition.splitn(4, ' ').collect();
+                    if parts.len() >= 4 {
+                        return false; // Looks like raw Minecraft: "score <target> <obj> ..."
+                    }
+                    // Otherwise it might be a Python expression with variable named "score"
+                    return true;
+                }
+                return false;
+            }
+        }
+
         // Check if it's a simple variable name (also a Python expression)
         if condition.chars().all(|c| c.is_alphanumeric() || c == '_') {
             // Check if it's a known variable
-            return self.variables.contains_key(condition) ||
-                   self.scoreboard_variables.contains(condition);
+            return self.variables.contains_key(condition)
+                || self.scoreboard_variables.contains(condition);
         }
 
         false
     }
 
     /// Try to translate a Python expression string to Minecraft condition
-    fn try_translate_python_expression(&self, condition: &str, _is_unless: bool) -> Result<String, String> {
+    fn try_translate_python_expression(
+        &self,
+        condition: &str,
+        _is_unless: bool,
+    ) -> Result<String, String> {
         // First check if this contains AND or OR operators
         if condition.contains(" and ") || condition.contains(" or ") {
             // Complex expression with logical operators
@@ -1279,18 +2667,25 @@ impl Transpiler {
                         translated_parts.push(format!("if {}", fixed_part));
                     } else {
                         // Try to translate as Python expression
-                        if let Ok(translated) = self.try_translate_python_expression(&fixed_part, false) {
+                        if let Ok(translated) =
+                            self.try_translate_python_expression(&fixed_part, false)
+                        {
                             // The translated part should already be in the form "score x temp matches ..."
                             // We just need to add "if " prefix
                             if translated.starts_with("score ") {
                                 translated_parts.push(format!("if {}", translated));
-                            } else if translated.starts_with("if ") || translated.starts_with("unless ") {
+                            } else if translated.starts_with("if ")
+                                || translated.starts_with("unless ")
+                            {
                                 translated_parts.push(translated);
                             } else {
                                 translated_parts.push(format!("if {}", translated));
                             }
                         } else {
-                            return Err(format!("Failed to translate condition part: {}", fixed_part));
+                            return Err(format!(
+                                "Failed to translate condition part: {}",
+                                fixed_part
+                            ));
                         }
                     }
                 }
@@ -1311,7 +2706,8 @@ impl Transpiler {
                     // Recursively translate each part
                     if let Ok(translated) = self.try_translate_python_expression(part, false) {
                         // Remove any "if" or "unless" prefix that might have been added
-                        let clean_translated = translated.strip_prefix("if ")
+                        let clean_translated = translated
+                            .strip_prefix("if ")
                             .or_else(|| translated.strip_prefix("unless "))
                             .unwrap_or(&translated);
                         translated_parts.push(clean_translated.to_string());
@@ -1331,9 +2727,14 @@ impl Transpiler {
 
         // Simple variable check: "varname" -> "score varname objective matches 1.."
         if condition.chars().all(|c| c.is_alphanumeric() || c == '_')
-            && (self.variables.contains_key(condition) || self.scoreboard_variables.contains(condition))
+            && (self.variables.contains_key(condition)
+                || self.scoreboard_variables.contains(condition))
         {
-            let objective = self.variable_objectives.get(condition).map(|s| s.as_str()).unwrap_or("temp");
+            let objective = self
+                .variable_objectives
+                .get(condition)
+                .map(|s| s.as_str())
+                .unwrap_or("temp");
             return Ok(format!("score {} {} matches 1..", condition, objective));
         }
 
@@ -1362,10 +2763,17 @@ impl Transpiler {
             let objective = if left.starts_with('{') && left.ends_with('}') {
                 "temp".to_string() // Use temp for macro params
             } else {
-                self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp").to_string()
+                self.variable_objectives
+                    .get(left)
+                    .map(|s| s.as_str())
+                    .unwrap_or("temp")
+                    .to_string()
             };
 
-            return Ok(format!("score {} {} matches {}", left_var, objective, right_value));
+            return Ok(format!(
+                "score {} {} matches {}",
+                left_var, objective, right_value
+            ));
         }
 
         if let Some(op_pos) = condition.find(" < ") {
@@ -1375,11 +2783,21 @@ impl Transpiler {
             let right = right.trim();
 
             if let Ok(value) = right.parse::<i32>() {
-                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                let objective = self
+                    .variable_objectives
+                    .get(left)
+                    .map(|s| s.as_str())
+                    .unwrap_or("temp");
                 if value == i32::MIN {
-                    return Ok("score 0 temp matches 1 unless score 0 temp matches 1".to_string()); // Always false
+                    return Ok("score 0 temp matches 1 unless score 0 temp matches 1".to_string());
+                    // Always false
                 }
-                return Ok(format!("score {} {} matches ..{}", left, objective, value - 1));
+                return Ok(format!(
+                    "score {} {} matches ..{}",
+                    left,
+                    objective,
+                    value - 1
+                ));
             }
         }
 
@@ -1390,7 +2808,11 @@ impl Transpiler {
             let right = right.trim();
 
             if let Ok(value) = right.parse::<i32>() {
-                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                let objective = self
+                    .variable_objectives
+                    .get(left)
+                    .map(|s| s.as_str())
+                    .unwrap_or("temp");
                 return Ok(format!("score {} {} matches {}", left, objective, value));
             }
         }
@@ -1415,10 +2837,17 @@ impl Transpiler {
             let objective = if left.starts_with('{') && left.ends_with('}') {
                 "temp".to_string()
             } else {
-                self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp").to_string()
+                self.variable_objectives
+                    .get(left)
+                    .map(|s| s.as_str())
+                    .unwrap_or("temp")
+                    .to_string()
             };
 
-            return Ok(format!("score {} {} matches {}", left_var, objective, right_value));
+            return Ok(format!(
+                "score {} {} matches {}",
+                left_var, objective, right_value
+            ));
         }
 
         if let Some(op_pos) = condition.find(" <= ") {
@@ -1428,7 +2857,11 @@ impl Transpiler {
             let right = right.trim();
 
             if let Ok(value) = right.parse::<i32>() {
-                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                let objective = self
+                    .variable_objectives
+                    .get(left)
+                    .map(|s| s.as_str())
+                    .unwrap_or("temp");
                 return Ok(format!("score {} {} matches ..{}", left, objective, value));
             }
         }
@@ -1440,9 +2873,16 @@ impl Transpiler {
             let right = right.trim();
 
             if let Ok(value) = right.parse::<i32>() {
-                let objective = self.variable_objectives.get(left).map(|s| s.as_str()).unwrap_or("temp");
+                let objective = self
+                    .variable_objectives
+                    .get(left)
+                    .map(|s| s.as_str())
+                    .unwrap_or("temp");
                 // != translates to "unless ... matches"
-                return Ok(format!("unless score {} {} matches {}", left, objective, value));
+                return Ok(format!(
+                    "unless score {} {} matches {}",
+                    left, objective, value
+                ));
             }
         }
 

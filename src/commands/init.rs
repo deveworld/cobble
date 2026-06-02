@@ -37,16 +37,18 @@ pub fn init(options: InitOptions) -> Result<(), String> {
         config.project.description = desc;
     }
     if let Some(format_str) = options.pack_format {
-        use crate::pack_format::PackFormat;
+        use crate::pack_format::{PackFormat, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
         let pack_fmt = PackFormat::parse_format(&format_str)?;
-        const MIN_PACK_FORMAT: u8 = 18;
 
-        if pack_fmt.major() < MIN_PACK_FORMAT {
+        if !pack_fmt.is_supported() {
             return Err(format!(
-                "pack_format must be at least {} (Minecraft 1.20.2+), got {}.\n\
-                Cobble requires Minecraft 1.20.2 or newer for macro function support.\n\
+                "pack_format must be {} (Minecraft Java Edition {}), got {}.\n\
+                Cobble v0.6.0 exclusively supports Minecraft Java Edition {}.\n\
                 See https://minecraft.wiki/w/Pack_format for version compatibility.",
-                MIN_PACK_FORMAT, pack_fmt
+                SUPPORTED_PACK_FORMAT,
+                SUPPORTED_MINECRAFT_VERSION,
+                pack_fmt,
+                SUPPORTED_MINECRAFT_VERSION
             ));
         }
 

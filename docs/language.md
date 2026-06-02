@@ -224,7 +224,7 @@ def greet():
     /tellraw @a {"text":"Hello!", "color":"green"}
 ```
 
-### Functions with Parameters (Minecraft 1.20.2+)
+### Functions with Parameters
 
 Cobble supports function parameters using Minecraft's macro system:
 
@@ -235,7 +235,7 @@ def give_reward(player, amount):
     /tellraw {player} {"text":"You received diamonds!", "color":"gold"}
 ```
 
-**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. This is Minecraft's macro syntax, available since 1.20.2 (pack format 18).
+**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. Cobble v0.6.0 targets Minecraft Java Edition 26.1.2, where this macro syntax is available.
 
 ### Calling Functions
 
@@ -641,12 +641,14 @@ def test():
 - Use `import filename` to import another `.cbl` file
 - Imported files are resolved relative to the importing file
 - All functions and selector definitions are merged
-- Circular imports are prevented automatically
+- Circular imports are compile errors and include the import chain
+- Missing imports include the importing file and expected path
 - Standard library imports (`import stdlib`) work as before
 
 ## Standard Library
 
-Import the standard library to access event handling:
+Cobble includes compiler intrinsics for common data pack tasks. Event handling
+uses `stdlib`, while helper modules can be called directly from functions.
 
 ```python
 import stdlib
@@ -657,6 +659,118 @@ from stdlib import event
 
 - `event.LOAD` - Runs when the data pack is loaded
 - `event.TICK` - Runs every game tick (20 times per second)
+
+### Text Helpers
+
+```python
+def notify():
+    text.tellraw("@a", {"text": "Loaded", "color": "green"})
+    text.title("@a", "Ready")
+    text.subtitle("@a", {"text": "Go", "bold": True})
+    text.actionbar("@a", "Running")
+```
+
+### Score Helpers
+
+```python
+def update_score():
+    score.set("points", 10)
+    score.add("points", 5)
+    score.remove("points", 2)
+    score.copy("backup", "points")
+    score.operation("points", "+=", "backup")
+    score.reset("backup")
+```
+
+Score helpers use the default Cobble `temp` objective.
+
+### Random Helpers
+
+```python
+def roll():
+    random.int("roll", 1, 6)
+    random.bool("coin")
+```
+
+Random helpers compile to Minecraft's 26.1.2 `random value` command and store
+the result in a scoreboard value.
+
+### Timer Helpers
+
+```python
+def cooldown():
+    timer.set("cooldown", 20)
+    timer.tick("cooldown")
+    timer.done("cooldown")   # writes cooldown_done as 0 or 1
+    timer.reset("cooldown")
+```
+
+### Storage Helpers
+
+```python
+def save_status():
+    storage.set("status", {"ready": True, "count": 3})
+    storage.merge("status", {"extra": "ok"})
+    storage.copy("status_copy", "status")
+    storage.remove("status.extra")
+```
+
+Storage helpers write to `<namespace>:global`.
+
+### Data Pack JSON Resources
+
+Top-level `datapack.*` declarations generate JSON resources in the pack's
+namespace using the modern 26.1.2 folder layout.
+
+```python
+datapack.function_tag("utility", ["mypack:setup"])
+datapack.block_tag("solid_blocks", ["minecraft:stone"])
+datapack.item_tag("reward_items", ["minecraft:diamond"])
+datapack.entity_type_tag("targets", ["minecraft:zombie"])
+
+datapack.predicate("is_sneaking", {
+    "condition": "minecraft:entity_properties",
+    "entity": "this",
+    "predicate": {
+        "flags": {
+            "is_sneaking": True
+        }
+    }
+})
+
+datapack.dialog("notice", {
+    "type": "minecraft:notice",
+    "title": {"text": "Notice"}
+})
+```
+
+Supported resource declarations:
+
+- `datapack.function_tag(name, values)`
+- `datapack.block_tag(name, values)`
+- `datapack.item_tag(name, values)`
+- `datapack.entity_type_tag(name, values)`
+- `datapack.predicate(name, json)`
+- `datapack.advancement(name, json)`
+- `datapack.loot_table(name, json)`
+- `datapack.recipe(name, json)`
+- `datapack.item_modifier(name, json)`
+- `datapack.dialog(name, json)`
+
+Duplicate resource IDs are compile errors.
+
+### Math Helpers
+
+```python
+def calculate():
+    root = math.sqrt(100)
+    magnitude = math.abs(-50)
+    low = math.min(10, 20)
+    high = math.max(10, 20)
+```
+
+`math.sqrt` uses a generated scoreboard helper and no longer emits placeholder
+runtime output.
 
 ## Events
 
@@ -826,19 +940,19 @@ stdlib.addEventListener(event.TICK, game_loop)
 
 ## Minecraft Version Compatibility
 
-Cobble requires **Minecraft 1.20.2+** (minimum pack format 18) and defaults to pack format 18 for maximum compatibility. Key features:
+Cobble v0.6.0 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
 
-- **Macros**: Function parameters use the macro system introduced in 1.20.2+
+- **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax
 - **Data packs**: Full data pack specification support
-- **Decimal pack formats**: Supports decimal formats (e.g., 88.0) introduced in Minecraft 1.21.9+
+- **Decimal pack formats**: Emits `pack.mcmeta` with `min_format` and `max_format` set to `[101, 1]`
 
 ## Limitations
 
 - No support for classes (yet)
 - No support for lists/arrays (yet)
 - Boolean `and`, `or`, and `not` operators are all fully supported
-- Function parameters require Minecraft 1.20.2+ for macro support
+- Function parameters require Minecraft's function macro support
 - For loops only support `range()` iterators
 - While loops compile to recursive functions (performance impact for very long loops)
 

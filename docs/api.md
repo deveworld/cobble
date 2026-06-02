@@ -341,6 +341,7 @@ Writes the data pack to disk.
 
 **Example:**
 ```rust
+use cobble::pack_format::PackFormat;
 use cobble::transpiler::Transpiler;
 use cobble::parser::parse;
 use std::path::PathBuf;
@@ -374,13 +375,15 @@ pub struct DataPack {
     pub recipes: HashMap<String, String>,
     pub predicates: HashMap<String, String>,
     pub item_modifiers: HashMap<String, String>,
-    pub pack_format: PackFormat,  // Supports both integer (18) and decimal (88.0) formats
+    pub json_resources: HashMap<String, String>,
+    pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
+    pub pack_format: PackFormat,  // Cobble v0.6.0 requires 101.1
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
 }
 ```
 
-**Note**: `pack_format` uses the `PackFormat` enum which supports both integer formats (e.g., 18, 48, 88) and decimal formats (e.g., 88.0, 88.1) introduced in Minecraft 1.21.9+. The decimal format is serialized as a JSON number (float), not a string.
+**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.6.0 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
 
 #### Methods
 
@@ -450,7 +453,7 @@ Handles project configuration.
 #### Struct: `Config`
 
 ```rust
-pub struct Config {
+pub struct CobbleConfig {
     pub project: ProjectConfig,
     pub build: BuildConfig,
 }
@@ -458,13 +461,15 @@ pub struct Config {
 pub struct ProjectConfig {
     pub name: String,
     pub description: String,
+    pub namespace: String,
     pub version: String,
-    pub pack_format: u8,
+    pub pack_format: String,
 }
 
 pub struct BuildConfig {
+    pub source: PathBuf,
     pub output: PathBuf,
-    pub namespace: String,
+    pub entry_points: Vec<String>,
 }
 ```
 
@@ -474,7 +479,7 @@ pub struct BuildConfig {
 
 Loads configuration from a `cobble.toml` file.
 
-##### `create_default_config(name: String) -> Config`
+##### `default_with_name(name: String) -> CobbleConfig`
 
 Creates a default configuration.
 
@@ -484,7 +489,7 @@ Creates a default configuration.
 
 Handles the `build` command.
 
-#### Function: `build_command(args: BuildArgs) -> Result<(), String>`
+#### Function: `build(options: BuildOptions) -> Result<(), String>`
 
 Executes the build command.
 
@@ -499,7 +504,7 @@ Executes the build command.
 
 Handles the `init` command.
 
-#### Function: `init_command(args: InitArgs) -> Result<(), String>`
+#### Function: `init(options: InitOptions) -> Result<(), String>`
 
 Initializes a new Cobble project.
 
@@ -507,7 +512,7 @@ Initializes a new Cobble project.
 
 Handles the `check` command.
 
-#### Function: `check_command(args: CheckArgs) -> Result<(), String>`
+#### Function: `check(input: Option<PathBuf>) -> Result<(), String>`
 
 Checks source files for syntax errors.
 
@@ -515,7 +520,7 @@ Checks source files for syntax errors.
 
 Handles the `watch` command.
 
-#### Function: `watch_command(args: WatchArgs) -> Result<(), String>`
+#### Function: `watch(...) -> Result<(), String>`
 
 Watches files for changes and rebuilds automatically.
 
@@ -579,7 +584,7 @@ let mut transpiler = Transpiler::new(
 
 // Customize pack settings
 transpiler.set_description("My Custom Data Pack".to_string());
-transpiler.set_pack_format(88);  // Minecraft 1.21.9+ (default)
+transpiler.set_pack_format(PackFormat::Decimal(101, 1));  // Minecraft Java Edition 26.1.2
 
 transpiler.transpile(&program)?;
 transpiler.write_data_pack()?;
@@ -632,7 +637,7 @@ Data Pack (.mcfunction files, pack.mcmeta, tags)
 2. **chumsky Parser Combinators**: Modern, composable parsing with excellent error handling
 3. **Operator Precedence**: Four-level precedence system matches standard mathematical conventions (pow > mul/div/mod > add/sub > comparisons)
 4. **Complex Expression Handling**: Recursive evaluation for nested binary expressions with temporary variables
-5. **Macro-based Parameters**: Uses Minecraft 1.20.2+ macro system for function parameters
+5. **Macro-based Parameters**: Uses Minecraft's function macro system for function parameters
 6. **Automatic Recursion**: For loops and while loops compile to recursive functions
 7. **Separate Functions for Complex Control Flow**: Nested if statements become separate functions to avoid command limit issues
 8. **Scoreboard Variables**: All variables are stored as scoreboard objectives with proper tracking

@@ -134,11 +134,15 @@ fn find_cobble_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
 
     for entry in WalkDir::new(dir)
-        .follow_links(true)
+        .follow_links(false) // Security: Don't follow symlinks to prevent attacks
         .into_iter()
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
+        if path.is_symlink() {
+            eprintln!("⚠️  Warning: Skipping symlink: {:?}", path);
+            continue;
+        }
         if path.is_file() {
             if let Some(ext) = path.extension() {
                 if ext == "cbl" || ext == "cobble" {

@@ -19,6 +19,8 @@ fn compile_source(source: &str) -> Result<(TempDir, PathBuf), String> {
         description: None,
         verbose: false,
         zip: false,
+        validate: false,
+        commands_json: PathBuf::from("data/commands.json"),
     })?;
 
     Ok((temp_dir, output_dir))
@@ -27,9 +29,139 @@ fn compile_source(source: &str) -> Result<(TempDir, PathBuf), String> {
 /// Helper to read a function file
 fn read_function(output_dir: &Path, function_name: &str) -> String {
     let function_path = output_dir
-        .join("data/cobble/functions")
+        .join("data/cobble/function")
         .join(format!("{}.mcfunction", function_name));
     fs::read_to_string(function_path).unwrap()
+}
+
+fn read_all_functions(output_dir: &Path) -> String {
+    let function_dir = output_dir.join("data/cobble/function");
+    let mut content = String::new();
+    for entry in fs::read_dir(function_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+    {
+        if entry.path().extension().and_then(|ext| ext.to_str()) == Some("mcfunction") {
+            content.push_str(&fs::read_to_string(entry.path()).unwrap());
+            content.push('\n');
+        }
+    }
+    content
+}
+
+#[test]
+fn test_boolean_comparison_assignment_sets_true_value() {
+    let source = r#"
+def test():
+    x = 1
+    flag = x == 1
+    if flag:
+        /say true
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(content.contains("scoreboard players set flag temp 0"));
+    assert!(content
+        .contains("execute if score x temp matches 1 run scoreboard players set flag temp 1"));
+    assert!(content.contains("execute if score flag temp matches 1.. run say true"));
+}
+
+#[test]
+fn test_storage_variable_reassignment_rejected_by_type_check() {
+    let source = r#"
+def test():
+    items = ["sword"]
+    items = 3
+    x = items[0]
+"#;
+
+    let error = compile_source(source).expect_err("list to integer reassignment should fail");
+    assert!(error.contains("Type mismatch for variable 'items'"));
+}
+
+#[test]
+fn test_raw_command_inline_comment_stripped_without_breaking_command() {
+    let source = r#"
+def test():
+    /give @s minecraft:diamond 1 # starter item
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(content.contains("give @s minecraft:diamond 1"));
+    assert!(!content.contains("starter item"));
+}
+
+#[test]
+fn test_snbt_map_keys_with_spaces_are_quoted() {
+    let source = r#"
+def test():
+    storage.set("bad", {"foo bar": 1})
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(content.contains("data modify storage cobble:global bad set value {\"foo bar\":1}"));
+}
+
+#[test]
+fn test_match_macro_case_uses_storage_backed_helper() {
+    let source = r#"
+def test(player):
+    x = 0
+    match x:
+        case 0:
+            /tellraw {player} {"text":"hit"}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let all_functions = read_all_functions(&output_dir);
+    let test_content = read_function(&output_dir, "test");
+
+    assert!(!all_functions.contains("run $tellraw"));
+    assert!(test_content.contains("with storage cobble:global args"));
+    assert!(all_functions.contains("$tellraw $(player) {\"text\":\"hit\"}"));
+}
+
+#[test]
+fn test_directory_build_does_not_duplicate_module_initializers() {
+    let temp_dir = TempDir::new().unwrap();
+    let source_dir = temp_dir.path().join("src");
+    let output_dir = temp_dir.path().join("out");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(source_dir.join("a.cbl"), "score = 1\n").unwrap();
+    fs::write(source_dir.join("b.cbl"), "energy = 2\n").unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        zip: false,
+        validate: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    let init_content = read_function(&output_dir, "_cobble_init");
+    assert_eq!(
+        init_content
+            .matches("scoreboard players set score temp 1")
+            .count(),
+        1
+    );
+    assert_eq!(
+        init_content
+            .matches("scoreboard players set energy temp 2")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -84,7 +216,7 @@ def test():
     assert!(main_content.contains("function cobble:while_temp_0"));
 
     // Check that while_body function exists (new behavior)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("while_body_"))
@@ -120,7 +252,7 @@ def test():
     assert!(main_content.contains("function cobble:loop_temp_"));
 
     // Check for loop body function (contains the actual command)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
@@ -132,7 +264,7 @@ def test():
     assert!(body_content.contains("say hello"));
 
     // Check loop control function
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
@@ -348,7 +480,7 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Find the loop body function (contains the arithmetic)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
@@ -411,7 +543,7 @@ def test():
         obj_idx < var_idx,
         "Objective must be created before variable initialization"
     );
-    assert!(init.contains("gamerule maxCommandChainLength"));
+    assert!(init.contains("gamerule max_command_sequence_length"));
     assert!(init.contains("scoreboard objectives add temp dummy"));
     assert!(init.contains("scoreboard players set score temp 10"));
     assert!(init.contains("scoreboard players set counter temp 5"));
@@ -471,12 +603,27 @@ def test():
     /say {message}
 "#;
 
-    // Should fail with helpful error message
-    let result = compile_source(source);
-    assert!(result.is_err());
-    let error = result.unwrap_err();
-    assert!(error.contains("Cannot use string variable 'message'"));
-    assert!(error.contains("Solutions"));
+    // String variables in /say are now auto-converted to /tellraw with nbt component
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    // String is stored in data storage
+    assert!(
+        content.contains("data modify storage"),
+        "String should be stored in data storage: {}",
+        content
+    );
+    // say is auto-converted to tellraw with nbt component
+    assert!(
+        content.contains("tellraw @a"),
+        "say should be auto-converted to tellraw: {}",
+        content
+    );
+    assert!(
+        content.contains("nbt") && content.contains("storage"),
+        "Should use nbt storage component: {}",
+        content
+    );
 }
 
 #[test]
@@ -487,14 +634,26 @@ def test():
     /tellraw @a {"text": "{message}"}
 "#;
 
-    // Should succeed because tellraw with JSON supports strings
+    // String variables in tellraw are converted to nbt storage components
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    // Verify the output is valid JSON with correct string replacement
-    assert!(content.contains("tellraw @a {\"text\": \"Hello\"}"));
-    // Should NOT have double quotes
-    assert!(!content.contains("\"\"Hello\"\""));
+    // String is stored in data storage and referenced via nbt component
+    assert!(
+        content.contains("data modify storage"),
+        "String should be stored in data storage: {}",
+        content
+    );
+    assert!(
+        content.contains("tellraw @a"),
+        "Should generate tellraw command: {}",
+        content
+    );
+    assert!(
+        content.contains("nbt") && content.contains("vars.message"),
+        "Should reference string via nbt storage path: {}",
+        content
+    );
 }
 
 #[test]
@@ -568,23 +727,19 @@ def test():
         "Generated code contains invalid OR(...) syntax"
     );
 
-    // Should use or_result variable
-    assert!(content.contains("or_result"), "Missing or_result variable");
-    assert!(
-        content.contains("scoreboard players set or_result temp 0"),
-        "Missing or_result initialization"
-    );
+    // Should use unique or_temp variable (not hardcoded or_result)
+    assert!(content.contains("or_temp_"), "Missing or_temp variable");
+    assert!(content.contains("temp 0"), "Missing or_temp initialization");
 
     // Should have three separate condition checks
-    assert!(content.contains(
-        "execute if score a temp matches 10 run scoreboard players set or_result temp 1"
-    ));
-    assert!(content.contains(
-        "execute if score b temp matches 30 run scoreboard players set or_result temp 1"
-    ));
-    assert!(content.contains(
-        "execute if score c temp matches 26.. run scoreboard players set or_result temp 1"
-    ));
+    assert!(
+        content.contains("execute if score a temp matches 10 run scoreboard players set or_temp_")
+    );
+    assert!(
+        content.contains("execute if score b temp matches 30 run scoreboard players set or_temp_")
+    );
+    assert!(content
+        .contains("execute if score c temp matches 26.. run scoreboard players set or_temp_"));
 }
 
 #[test]
@@ -606,8 +761,41 @@ def test():
         "Generated code contains invalid OR(...) syntax"
     );
 
-    // Should use or_result
-    assert!(content.contains("or_result"));
+    // Should use unique or_temp variable (not hardcoded or_result)
+    assert!(content.contains("or_temp_"));
+}
+
+#[test]
+fn test_elif_after_complex_if_and_or_condition() {
+    let source = r#"
+def test():
+    score = 7
+    energy = 5
+    if score > 20 and not energy == 0:
+        /say high
+    elif score == 10 or energy == 0:
+        /say threshold
+    else:
+        /say fallback
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(
+        !content.contains("execute unless if"),
+        "elif chain generated invalid execute syntax: {}",
+        content
+    );
+    assert!(
+        !content.contains("OR("),
+        "elif OR condition was not lowered: {}",
+        content
+    );
+    assert!(content.contains("if_branch_"));
+    assert!(content.contains("or_temp_"));
+    assert!(content.contains("say threshold"));
+    assert!(content.contains("say fallback"));
 }
 
 #[test]
@@ -634,13 +822,17 @@ def test():
     );
 
     // Should have chained unless for both ranges
-    assert!(content.contains("execute unless score x temp matches 0..50 unless score x temp matches 51..100 run say Other"),
-            "Wildcard case not properly conditioned");
+    assert!(
+        content.contains("execute unless score match_temp_")
+            && content.contains("temp matches 0..50 unless score match_temp_")
+            && content.contains("temp matches 51..100 run say Other"),
+        "Wildcard case not properly conditioned"
+    );
 
     // Must NOT have bare "say Other"
     let lines: Vec<&str> = content.lines().map(|l| l.trim()).collect();
     assert!(
-        !lines.iter().any(|line| *line == "say Other"),
+        !lines.contains(&"say Other"),
         "Wildcard case executed unconditionally"
     );
 }
@@ -664,8 +856,12 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should have single chained unless command
-    assert!(content.contains("execute unless score x temp matches 0..10 unless score x temp matches 50..100 run function cobble:match_default_"),
-            "Wildcard function not properly conditioned");
+    assert!(
+        content.contains("execute unless score match_temp_")
+            && content.contains("temp matches 0..10 unless score match_temp_")
+            && content.contains("temp matches 50..100 run function cobble:match_default_"),
+        "Wildcard function not properly conditioned"
+    );
 
     // Should only call the function once
     let unless_count = content.matches("execute unless").count();
@@ -691,7 +887,7 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Check that while_body function exists (new behavior)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("while_body_"))
@@ -721,6 +917,36 @@ def test():
 
     // Should use raw Minecraft syntax
     assert!(content.contains("execute as @a if entity @s[tag=special] run say Special player!"));
+}
+
+#[test]
+fn test_execute_or_condition_keeps_per_executor_state() {
+    let source = r#"
+def test():
+    as @a if entity @s[tag=red] or entity @s[tag=blue]:
+        /say selected
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(!content.contains("execute execute"), "{}", content);
+    assert!(
+        content.contains("execute as @a run scoreboard players set @s temp 0"),
+        "OR flag should reset per executor: {}",
+        content
+    );
+    assert!(
+        content
+            .contains("execute as @a if entity @s[tag=red] run scoreboard players set @s temp 1"),
+        "OR red branch should set per executor flag: {}",
+        content
+    );
+    assert!(
+        content.contains("execute as @a if score @s temp matches 1 run say selected"),
+        "body should be gated by per executor flag: {}",
+        content
+    );
 }
 
 #[test]
@@ -768,7 +994,7 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Find the loop body function (contains the tellraw)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
@@ -821,7 +1047,7 @@ stdlib.addEventListener(event.TICK, my_tick)
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Check that tick.json was created
-    let tick_tag = output_dir.join("data/minecraft/tags/functions/tick.json");
+    let tick_tag = output_dir.join("data/minecraft/tags/function/tick.json");
     assert!(
         tick_tag.exists(),
         "tick.json must be created when addEventListener(event.TICK) is called"
@@ -849,7 +1075,7 @@ stdlib.addEventListener(event.LOAD, my_init)
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Check that load.json was created
-    let load_tag = output_dir.join("data/minecraft/tags/functions/load.json");
+    let load_tag = output_dir.join("data/minecraft/tags/function/load.json");
     assert!(
         load_tag.exists(),
         "load.json must be created when addEventListener(event.LOAD) is called"
@@ -883,8 +1109,8 @@ stdlib.addEventListener(event.TICK, tick)
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Check that both tags were created
-    let load_tag = output_dir.join("data/minecraft/tags/functions/load.json");
-    let tick_tag = output_dir.join("data/minecraft/tags/functions/tick.json");
+    let load_tag = output_dir.join("data/minecraft/tags/function/load.json");
+    let tick_tag = output_dir.join("data/minecraft/tags/function/tick.json");
 
     assert!(load_tag.exists(), "load.json must be created");
     assert!(tick_tag.exists(), "tick.json must be created");
@@ -916,7 +1142,7 @@ def test():
     assert!(content.contains("function cobble:if_temp"));
 
     // Check the if function
-    let if_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let if_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("if_temp_"))
@@ -947,8 +1173,13 @@ def test():
 
     // Should use functions
     assert!(content.contains("function cobble:elif_temp"));
+    assert!(content.contains("scoreboard players set elif_taken_"));
+    assert!(content.contains("run scoreboard players set elif_taken_"));
+    assert!(content.contains("run scoreboard players set if_branch_"));
+    assert!(content.contains("execute if score elif_taken_"));
+    assert!(content.contains("run function cobble:elif_temp"));
 
-    let elif_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let elif_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("elif_temp_"))
@@ -979,7 +1210,7 @@ def test():
     // Should use a function for else
     assert!(content.contains("function cobble:else_temp"));
 
-    let else_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let else_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("else_temp_"))
@@ -1007,7 +1238,7 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Check that while_body function exists
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("while_body_"))
@@ -1022,7 +1253,7 @@ def test():
     assert!(!body_content.contains("execute if"));
 
     // Check while_temp function
-    let while_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let while_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("while_temp_"))
@@ -1037,6 +1268,159 @@ def test():
     // Should recursively call itself
     assert!(while_content
         .contains("execute if score i temp matches ..2 run function cobble:while_temp"));
+}
+
+#[test]
+fn test_while_recomputes_complex_condition_each_iteration() {
+    let source = r#"
+def test():
+    x = 0
+    while x + 1 < 3:
+        x = x + 1
+        /say tick
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let main_content = read_function(&output_dir, "test");
+    assert!(
+        !main_content.contains("expr_cond_temp_"),
+        "complex while condition should be evaluated inside the loop function"
+    );
+
+    let while_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("while_temp_"))
+        .collect();
+    let while_content = fs::read_to_string(while_files[0].path()).unwrap();
+    assert!(
+        while_content.matches("expr_cond_temp_").count() >= 4,
+        "while condition should be computed before body and before recursion: {}",
+        while_content
+    );
+    assert!(!while_content.contains("OR("));
+}
+
+#[test]
+fn test_while_lowers_or_condition_inside_loop_function() {
+    let source = r#"
+def test():
+    x = 1
+    y = 0
+    while x == 1 or y == 1:
+        x = 0
+        /say any
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let while_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("while_temp_"))
+        .collect();
+    let while_content = fs::read_to_string(while_files[0].path()).unwrap();
+    assert!(!while_content.contains("OR("));
+    assert!(while_content.contains("scoreboard players set or_temp_"));
+    assert!(while_content.contains("execute if score or_temp_"));
+}
+
+#[test]
+fn test_match_snapshots_identifier_before_running_cases() {
+    let source = r#"
+def test():
+    x = 0
+    match x:
+        case 0:
+            x = 1
+            /say zero
+        case 1:
+            /say one
+        case _:
+            /say default
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+    assert!(
+        content.contains("scoreboard players operation match_temp_"),
+        "match should snapshot identifier input: {}",
+        content
+    );
+    assert!(
+        content.contains("matches 0 run") && content.contains("match_temp_"),
+        "match cases should test the snapshot temp: {}",
+        content
+    );
+    assert!(
+        !content.contains("if score x temp matches 1 run say one"),
+        "later cases must not observe case body mutations: {}",
+        content
+    );
+}
+
+#[test]
+fn test_control_flow_helper_calls_preserve_macro_storage_args() {
+    let source = r#"
+def greet(player):
+    x = 1
+    if x == 1:
+        /tellraw {player} {"text":"a"}
+        /tellraw {player} {"text":"b"}
+    while x == 1:
+        /tellraw {player} {"text":"loop"}
+        x = 0
+    match x:
+        case 0:
+            /tellraw {player} {"text":"match"}
+            /say done
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "greet");
+    assert!(
+        content.contains("function cobble:if_temp_")
+            && content.contains("with storage cobble:global args"),
+        "if helper macro function should be called with storage: {}",
+        content
+    );
+
+    let while_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("while_temp_"))
+        .collect();
+    let while_content = fs::read_to_string(while_files[0].path()).unwrap();
+    assert!(
+        while_content.contains("function cobble:while_body_")
+            && while_content.contains("with storage cobble:global args"),
+        "while body macro function should be called with storage: {}",
+        while_content
+    );
+    assert!(
+        content.contains("function cobble:match_case_")
+            && content.contains("with storage cobble:global args"),
+        "match case macro function should be called with storage: {}",
+        content
+    );
+}
+
+#[test]
+fn test_for_loop_body_keeps_outer_function_params() {
+    let source = r#"
+def repeat(player):
+    for i in range(2):
+        /tellraw {player} {"text":"loop {i}"}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
+        .collect();
+    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
+    assert!(body_content.contains("$(player)"), "{}", body_content);
+    assert!(body_content.contains("$(i)"), "{}", body_content);
 }
 
 #[test]
@@ -1065,7 +1449,7 @@ stdlib.addEventListener(event.TICK, tick)
     assert!(content.contains("function cobble:if_temp"));
 
     // Find and check the if function
-    let if_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let if_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("if_temp_"))
@@ -1192,7 +1576,7 @@ def test():
     let _content = read_function(&output_dir, "test");
 
     // Should create a function for multi-statement case
-    let match_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let match_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("match_"))
@@ -1289,6 +1673,8 @@ def test():
         description: None,
         verbose: false,
         zip: false,
+        validate: false,
+        commands_json: PathBuf::from("data/commands.json"),
     })
     .unwrap();
 
@@ -1314,7 +1700,7 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Check that loop body is a macro function
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
@@ -1327,7 +1713,7 @@ def test():
     assert!(body_content.contains("$say Count: $(i)"));
 
     // Check loop control function stores variable to storage
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
@@ -1338,10 +1724,13 @@ def test():
     let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
     // After Bug 1 fix, loop_temp no longer stores - wrapper does that
     // Just verify it calls wrapper and recurses
-    assert!(loop_content.contains("function cobble:loop_wrapper_") || loop_content.contains("function cobble:loop_body_"));
+    assert!(
+        loop_content.contains("function cobble:loop_wrapper_")
+            || loop_content.contains("function cobble:loop_body_")
+    );
 
     // Check wrapper function exists (contains storage operations)
-    let wrapper_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let wrapper_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_wrapper_"))
@@ -1365,7 +1754,7 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
@@ -1495,12 +1884,12 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    // Should have power_base and multiplications
-    assert!(content.contains("power_base"));
+    // Should have #power_base and multiplications (# prefix for internal fake players)
+    assert!(content.contains("#power_base"));
 
     // For x^3, we need 2 multiplications (x * x * x = x * (x * x))
     let mult_count = content
-        .matches("scoreboard players operation result temp *= power_base temp")
+        .matches("scoreboard players operation result temp *= #power_base temp")
         .count();
     assert_eq!(
         mult_count, 2,
@@ -1604,7 +1993,7 @@ def show_actionbar():
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
-    
+
     let title_content = read_function(&output_dir, "show_title");
     let subtitle_content = read_function(&output_dir, "show_subtitle");
     let actionbar_content = read_function(&output_dir, "show_actionbar");
@@ -1612,35 +2001,64 @@ def show_actionbar():
     // Verify action token is preserved in correct position (after selector, before JSON array)
     assert!(
         title_content.contains("title @a title ["),
-        "title action should be preserved: got '{}'", title_content
+        "title action should be preserved: got '{}'",
+        title_content
     );
     assert!(
         subtitle_content.contains("title @a subtitle ["),
-        "subtitle action should be preserved: got '{}'", subtitle_content
+        "subtitle action should be preserved: got '{}'",
+        subtitle_content
     );
     assert!(
         actionbar_content.contains("title @a actionbar ["),
-        "actionbar action should be preserved: got '{}'", actionbar_content
+        "actionbar action should be preserved: got '{}'",
+        actionbar_content
     );
 
     // Verify action is NOT part of the JSON text
     assert!(
         !title_content.contains(r#"{"text":"title Score:"#),
-        "action should not be inside JSON text: got '{}'", title_content
+        "action should not be inside JSON text: got '{}'",
+        title_content
     );
     assert!(
         !subtitle_content.contains(r#"{"text":"subtitle Level:"#),
-        "action should not be inside JSON text: got '{}'", subtitle_content
+        "action should not be inside JSON text: got '{}'",
+        subtitle_content
     );
     assert!(
         !actionbar_content.contains(r#"{"text":"actionbar HP:"#),
-        "action should not be inside JSON text: got '{}'", actionbar_content
+        "action should not be inside JSON text: got '{}'",
+        actionbar_content
     );
 
     // Verify scoreboard variables are still correctly converted to JSON score components
     assert!(
         title_content.contains(r#"{"score":{"name":"score","objective":"temp"}}"#),
         "scoreboard variable should be converted to JSON score component"
+    );
+}
+
+#[test]
+fn test_macro_title_plain_text_becomes_json_component() {
+    let source = r#"
+def notify(player, count, message):
+    /title {player} actionbar Kit count: {count}
+    /tellraw {player} Notice: {message}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "notify");
+
+    assert!(
+        content.contains(r#"$title $(player) actionbar {"text":"Kit count: $(count)"}"#),
+        "title macro text should be emitted as a JSON text component: {}",
+        content
+    );
+    assert!(
+        content.contains(r#"$tellraw $(player) {"text":"Notice: $(message)"}"#),
+        "tellraw macro text should be emitted as a JSON text component: {}",
+        content
     );
 }
 
@@ -1661,15 +2079,36 @@ def test():
 
     // All three actions should be preserved
     let lines: Vec<&str> = content.lines().collect();
-    
-    let title_line = lines.iter().find(|l| l.contains("title @a title")).expect("title command not found");
-    let subtitle_line = lines.iter().find(|l| l.contains("title @a subtitle")).expect("subtitle command not found");
-    let actionbar_line = lines.iter().find(|l| l.contains("title @a actionbar")).expect("actionbar command not found");
+
+    let title_line = lines
+        .iter()
+        .find(|l| l.contains("title @a title"))
+        .expect("title command not found");
+    let subtitle_line = lines
+        .iter()
+        .find(|l| l.contains("title @a subtitle"))
+        .expect("subtitle command not found");
+    let actionbar_line = lines
+        .iter()
+        .find(|l| l.contains("title @a actionbar"))
+        .expect("actionbar command not found");
 
     // Verify format: title @a <action> [JSON]
-    assert!(title_line.starts_with("title @a title ["), "title format incorrect: {}", title_line);
-    assert!(subtitle_line.starts_with("title @a subtitle ["), "subtitle format incorrect: {}", subtitle_line);
-    assert!(actionbar_line.starts_with("title @a actionbar ["), "actionbar format incorrect: {}", actionbar_line);
+    assert!(
+        title_line.starts_with("title @a title ["),
+        "title format incorrect: {}",
+        title_line
+    );
+    assert!(
+        subtitle_line.starts_with("title @a subtitle ["),
+        "subtitle format incorrect: {}",
+        subtitle_line
+    );
+    assert!(
+        actionbar_line.starts_with("title @a actionbar ["),
+        "actionbar format incorrect: {}",
+        actionbar_line
+    );
 }
 
 // REGRESSION TESTS FOR BUG FIXES
@@ -1694,10 +2133,10 @@ def test():
     assert!(init_content.contains("scoreboard players set #true_const __internal__ 1"));
     assert!(init_content.contains("scoreboard players set #false_const __internal__ 0"));
 
-    // Check that conditions use __internal__
+    // Check that conditions use __internal__ with exact match
     let test_content = read_function(&output_dir, "test");
-    assert!(test_content.contains("score #true_const __internal__ matches 1.."));
-    assert!(test_content.contains("score #false_const __internal__ matches 1.."));
+    assert!(test_content.contains("score #true_const __internal__ matches 1"));
+    assert!(test_content.contains("score #false_const __internal__ matches 1"));
 }
 
 #[test]
@@ -1820,14 +2259,10 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Check that we have TWO distinct wrapper functions, not one
-    let wrapper_files: Vec<_> = std::fs::read_dir(output_dir.join("data/cobble/functions"))
+    let wrapper_files: Vec<_> = std::fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with("loop_wrapper_")
-        })
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_wrapper_"))
         .collect();
 
     assert_eq!(
@@ -1911,14 +2346,10 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Should have 3 wrapper functions
-    let wrapper_files: Vec<_> = std::fs::read_dir(output_dir.join("data/cobble/functions"))
+    let wrapper_files: Vec<_> = std::fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with("loop_wrapper_")
-        })
+        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_wrapper_"))
         .collect();
 
     assert_eq!(
@@ -1978,8 +2409,8 @@ def test():
 
 #[test]
 fn test_regression_decimal_pack_format() {
-    // Regression test for BUG #2: Decimal pack format support
-    // Previously: pack_format was u8, now supports decimals like "88.0"
+    // Regression test: Pack format validation now requires exactly 101.1 (MC Java 26.1.2)
+    // Old pack formats should be rejected
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
@@ -1988,22 +2419,79 @@ fn test_regression_decimal_pack_format() {
 
     fs::write(&input_file, "def test():\n    x = 1").unwrap();
 
-    // Build with decimal pack format
+    // Build with pack format 101.1 (required for MC Java 26.1.2)
     let result = cobble::commands::build::build(cobble::commands::build::BuildOptions {
-        input: Some(input_file),
+        input: Some(input_file.clone()),
         output: Some(output_dir.clone()),
         namespace: None,
-        pack_format: Some("88.0".to_string()),
+        pack_format: Some("101.1".to_string()),
         description: None,
         verbose: false,
         zip: false,
+        validate: false,
+        commands_json: PathBuf::from("data/commands.json"),
     });
 
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "Pack format 101.1 should be accepted: {:?}",
+        result.err()
+    );
 
-    // Check pack.mcmeta contains decimal format as JSON number, not string
+    // Check pack.mcmeta contains correct min_format/max_format array format
     let pack_meta = fs::read_to_string(output_dir.join("pack.mcmeta")).unwrap();
-    assert!(pack_meta.contains(r#""pack_format": 88.0"#));
+    assert!(
+        pack_meta.contains("min_format"),
+        "pack.mcmeta should use min_format for decimal pack formats"
+    );
+    assert!(
+        pack_meta.contains("max_format"),
+        "pack.mcmeta should use max_format for decimal pack formats"
+    );
+    assert!(
+        pack_meta.contains("101"),
+        "pack.mcmeta should contain major version 101"
+    );
+
+    // Old pack formats should be rejected
+    let temp_dir2 = TempDir::new().unwrap();
+    let input_file2 = temp_dir2.path().join("test.cbl");
+    let output_dir2 = temp_dir2.path().join("output");
+    fs::write(&input_file2, "def test():\n    x = 1").unwrap();
+
+    let result2 = cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file2),
+        output: Some(output_dir2),
+        namespace: None,
+        pack_format: Some("18".to_string()),
+        description: None,
+        verbose: false,
+        zip: false,
+        validate: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    });
+
+    assert!(result2.is_err(), "Old pack format 18 should be rejected");
+
+    // Same major version with the wrong minor version should also be rejected.
+    let temp_dir3 = TempDir::new().unwrap();
+    let input_file3 = temp_dir3.path().join("test.cbl");
+    let output_dir3 = temp_dir3.path().join("output");
+    fs::write(&input_file3, "def test():\n    x = 1").unwrap();
+
+    let result3 = cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file3),
+        output: Some(output_dir3),
+        namespace: None,
+        pack_format: Some("101.0".to_string()),
+        description: None,
+        verbose: false,
+        zip: false,
+        validate: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    });
+
+    assert!(result3.is_err(), "Pack format 101.0 should be rejected");
 }
 
 #[test]
@@ -2170,7 +2658,7 @@ def test():
 
 #[test]
 fn test_const_initialization_in_scoreboard() {
-    // Test that const variables are initialized in the scoreboard
+    // Test that const variables are compile-time only and NOT written to scoreboard
     let source = r#"
 const MY_CONST = 42
 const OTHER = 100
@@ -2186,25 +2674,20 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Check that constants are initialized in _cobble_init or on_load
-    let functions_dir = output_dir.join("data/cobble/functions");
-    let mut found_init = false;
+    // Constants should be compile-time substituted, not initialized at runtime
+    let content = read_function(&output_dir, "test");
 
-    for entry in fs::read_dir(functions_dir).unwrap() {
-        let entry = entry.unwrap();
-        let filename = entry.file_name();
-        let filename_str = filename.to_string_lossy();
+    // x = MY_CONST should be folded to x = 42
+    assert!(
+        content.contains("scoreboard players set x temp 42"),
+        "Const should be substituted at compile time"
+    );
 
-        if filename_str.contains("init") || filename_str.contains("load") {
-            let content = fs::read_to_string(entry.path()).unwrap();
-            if content.contains("scoreboard players set MY_CONST temp 42") {
-                found_init = true;
-                break;
-            }
-        }
-    }
-
-    assert!(found_init, "Const initialization not found in init functions");
+    // MY_CONST should NOT appear as a scoreboard variable
+    assert!(
+        !content.contains("scoreboard players set MY_CONST"),
+        "Const should not generate runtime scoreboard set"
+    );
 }
 
 #[test]
@@ -2223,8 +2706,10 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should contain i32::MAX (2147483647) instead of overflowed value
-    assert!(content.contains("2147483647") || content.contains("temp"),
-            "Should handle overflow properly");
+    assert!(
+        content.contains("2147483647") || content.contains("temp"),
+        "Should handle overflow properly"
+    );
 }
 
 #[test]
@@ -2240,8 +2725,10 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Check that the output contains styled JSON components
-    assert!(content.contains(r#""color":"gold""#) || content.contains("score"),
-            "Styling should be preserved in tellraw with variables");
+    assert!(
+        content.contains(r#""color":"gold""#) || content.contains("score"),
+        "Styling should be preserved in tellraw with variables"
+    );
 }
 
 #[test]
@@ -2261,7 +2748,7 @@ stdlib.addEventListener(event.LOAD, on_load)
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     // Check that load.json was created
-    let load_tag = output_dir.join("data/minecraft/tags/functions/load.json");
+    let load_tag = output_dir.join("data/minecraft/tags/function/load.json");
     assert!(load_tag.exists(), "Load tag should be created");
 }
 
@@ -2286,10 +2773,14 @@ def test():
     // Should fail with return not supported error
     assert!(result.is_err(), "Return statement should cause an error");
     let error = result.unwrap_err();
-    assert!(error.contains("Return statements are not supported"),
-            "Error should mention return statements are not supported");
-    assert!(error.contains("Minecraft functions cannot return early"),
-            "Error should explain Minecraft limitation");
+    assert!(
+        error.contains("Return statements are not supported"),
+        "Error should mention return statements are not supported"
+    );
+    assert!(
+        error.contains("Minecraft functions cannot return early"),
+        "Error should explain Minecraft limitation"
+    );
 }
 
 #[test]
@@ -2303,7 +2794,10 @@ def test():
 "#;
 
     let result = compile_source(source);
-    assert!(result.is_err(), "Return statement (no value) should cause an error");
+    assert!(
+        result.is_err(),
+        "Return statement (no value) should cause an error"
+    );
     let error = result.unwrap_err();
     assert!(error.contains("Return statements are not supported"));
 }
@@ -2324,12 +2818,16 @@ def test():
     let result = compile_source(source);
 
     // Should fail with function call assignment error
-    assert!(result.is_err(), "Function call assignment should cause an error");
+    assert!(
+        result.is_err(),
+        "Function call assignment should cause an error"
+    );
     let error = result.unwrap_err();
-    assert!(error.contains("Cannot assign function call result"),
-            "Error should mention function call assignment issue: {}", error);
-    assert!(error.contains("Minecraft functions don't return values"),
-            "Error should explain limitation: {}", error);
+    assert!(
+        error.contains("Function calls in expressions are not supported"),
+        "Error should mention function call issue: {}",
+        error
+    );
 }
 
 #[test]
@@ -2341,10 +2839,16 @@ def test():
 "#;
 
     let result = compile_source(source);
-    assert!(result.is_err(), "Attribute access assignment should cause an error");
+    assert!(
+        result.is_err(),
+        "Attribute access assignment should cause an error"
+    );
     let error = result.unwrap_err();
-    assert!(error.contains("Cannot assign attribute access"),
-            "Error should mention attribute access: {}", error);
+    assert!(
+        error.contains("Attribute base must resolve to a storage path"),
+        "Error should mention storage path resolution: {}",
+        error
+    );
 }
 
 #[test]
@@ -2358,10 +2862,13 @@ def test():
 
     let result = compile_source(source);
     assert!(result.is_err(), "Subscript syntax should cause an error");
-    // Parser error expected since subscript is not implemented yet
+    // Subscript is now parsed, but fails at transpile time if base is not a storage variable
     let error = result.unwrap_err();
-    assert!(error.contains("Parse failed") || error.contains("found '['"),
-            "Should get parse error for subscript syntax: {}", error);
+    assert!(
+        error.contains("Subscript base must resolve to a storage path"),
+        "Should get storage path error for subscript on non-storage variable: {}",
+        error
+    );
 }
 
 #[test]
@@ -2376,9 +2883,22 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    // String should be substituted in the command
-    assert!(content.contains("tellraw @a {\"text\":\"Hello World\"}"),
-            "String should be substituted correctly");
+    // String is stored in data storage and referenced via nbt component in tellraw
+    assert!(
+        content.contains("data modify storage"),
+        "String should be stored in data storage: {}",
+        content
+    );
+    assert!(
+        content.contains("tellraw @a"),
+        "Should generate tellraw command: {}",
+        content
+    );
+    assert!(
+        content.contains("nbt") && content.contains("vars.message"),
+        "Should reference string via nbt storage path: {}",
+        content
+    );
 }
 
 #[test]
@@ -2394,9 +2914,26 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    // Booleans should be substituted as "true" and "false"
-    assert!(content.contains("Enabled: true"),
-            "Boolean true should be substituted");
-    assert!(content.contains("Disabled: false"),
-            "Boolean false should be substituted");
+    // Booleans are stored as scoreboard values and displayed via score components
+    assert!(
+        content.contains("scoreboard players set enabled temp 1"),
+        "Boolean true should be set to 1: {}",
+        content
+    );
+    assert!(
+        content.contains("scoreboard players set disabled temp 0"),
+        "Boolean false should be set to 0: {}",
+        content
+    );
+    // Tellraw should use score components for boolean variables
+    assert!(
+        content.contains("tellraw @a"),
+        "Should generate tellraw command: {}",
+        content
+    );
+    assert!(
+        content.contains("score") && content.contains("enabled"),
+        "Should use score component for boolean: {}",
+        content
+    );
 }

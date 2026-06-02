@@ -1,6 +1,6 @@
+use super::tokenizer::{tokenize, Token};
 use crate::ast::*;
 use chumsky::prelude::*;
-use super::tokenizer::{Token, tokenize};
 
 /// Token parser using chumsky
 pub fn token_parser<'a>(
@@ -8,26 +8,73 @@ pub fn token_parser<'a>(
     recursive(|stmt| {
         // Expression parser
         let expr = recursive(|expr| {
-            let atom = select_ref! {
-                Token::Number(n) => Expression::Number(n.parse().unwrap_or(0.0)),
-                Token::String(s) => Expression::String(s.clone()),
-                Token::True_ => Expression::Boolean(true),
-                Token::False_ => Expression::Boolean(false),
-                Token::None_ => Expression::None,
-                Token::Ident(s) => Expression::Identifier(s.clone()),
-            }.or(
+            let array_literal = just(&Token::LBracket)
+                .ignore_then(
+                    expr.clone()
+                        .separated_by(just(&Token::Comma))
+                        .allow_trailing()
+                        .collect(),
+                )
+                .then_ignore(just(&Token::RBracket))
+                .map(Expression::Array);
+
+            let map_entry = choice((
+                select_ref! { Token::String(s) => s.clone() },
+                select_ref! { Token::Ident(s) => s.clone() },
+            ))
+            .then_ignore(just(&Token::Colon))
+            .then(expr.clone());
+
+            let map_literal = just(&Token::LBrace)
+                .ignore_then(
+                    map_entry
+                        .separated_by(just(&Token::Comma))
+                        .allow_trailing()
+                        .collect(),
+                )
+                .then_ignore(just(&Token::RBrace))
+                .map(Expression::Map);
+
+            let atom = choice((
+                select_ref! {
+                    Token::Number(n) => Expression::Number(n.parse().unwrap_or(0.0)),
+                    Token::String(s) => Expression::String(s.clone()),
+                    Token::True_ => Expression::Boolean(true),
+                    Token::False_ => Expression::Boolean(false),
+                    Token::None_ => Expression::None,
+                    Token::Ident(s) => Expression::Identifier(s.clone()),
+                },
+                array_literal,
+                map_literal,
                 // Parenthesized expression
                 just(&Token::LParen)
                     .ignore_then(expr.clone())
-                    .then_ignore(just(&Token::RParen))
-            );
+                    .then_ignore(just(&Token::RParen)),
+            ));
 
             // Attribute access (e.g., stdlib.event)
             let postfix = atom.foldl(
-                just(&Token::Dot)
-                    .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
-                    .repeated(),
-                |base, attr| Expression::Attribute(Box::new(base), attr),
+                choice((
+                    just(&Token::Dot)
+                        .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+                        .map(|attr| (true, Expression::Identifier(attr))), // true = dot access
+                    just(&Token::LBracket)
+                        .ignore_then(expr.clone())
+                        .then_ignore(just(&Token::RBracket))
+                        .map(|index| (false, index)), // false = bracket access
+                ))
+                .repeated(),
+                |base, (is_dot, accessor)| {
+                    if is_dot {
+                        if let Expression::Identifier(attr) = accessor {
+                            Expression::Attribute(Box::new(base), attr)
+                        } else {
+                            unreachable!()
+                        }
+                    } else {
+                        Expression::Subscript(Box::new(base), Box::new(accessor))
+                    }
+                },
             );
 
             // Function call
@@ -69,7 +116,13 @@ pub fn token_parser<'a>(
             // We parse left-to-right but fold right-to-left for right-associativity
             let power = unary
                 .clone()
-                .then(just(&Token::Caret).to(BinaryOp::Pow).then(unary.clone()).repeated().collect::<Vec<_>>())
+                .then(
+                    just(&Token::Caret)
+                        .to(BinaryOp::Pow)
+                        .then(unary.clone())
+                        .repeated()
+                        .collect::<Vec<_>>(),
+                )
                 .map(|(first, rest)| {
                     if rest.is_empty() {
                         first
@@ -220,8 +273,45 @@ pub fn token_parser<'a>(
             .then(select_ref! { Token::Ident(s) if s.starts_with('@') => s.clone() })
             .map(|(name_with_at, selector)| {
                 // Strip @ from name (e.g., "@Player" -> "Player")
-                let name = name_with_at.strip_prefix('@').unwrap_or(&name_with_at).to_string();
+                let name = name_with_at
+                    .strip_prefix('@')
+                    .unwrap_or(&name_with_at)
+                    .to_string();
                 Statement::SelectorDef(SelectorDef { name, selector })
+            });
+
+        // Entity definition: define @Name = @Selector create { ... } end
+        let entity_def = just(&Token::Define)
+            .ignore_then(select_ref! { Token::Ident(s) if s.starts_with('@') => s.clone() })
+            .then_ignore(just(&Token::Equals))
+            .then(select_ref! { Token::Ident(s) if s.starts_with('@') => s.clone() })
+            .then_ignore(just(&Token::Newline).or_not())
+            .then_ignore(just(&Token::Create))
+            .then(expr.clone())
+            .then_ignore(just(&Token::Newline).or_not())
+            .then_ignore(just(&Token::End))
+            .map(|((name_with_at, selector), nbt)| {
+                // Strip @ from name (e.g., "@Player" -> "Player")
+                let name = name_with_at
+                    .strip_prefix('@')
+                    .unwrap_or(&name_with_at)
+                    .to_string();
+                Statement::EntityDef(EntityDef {
+                    name,
+                    selector,
+                    nbt,
+                })
+            });
+
+        // Create entity statement: create @Name
+        let create_entity = just(&Token::Create)
+            .ignore_then(select_ref! { Token::Ident(s) if s.starts_with('@') => s.clone() })
+            .map(|name_with_at| {
+                let name = name_with_at
+                    .strip_prefix('@')
+                    .unwrap_or(&name_with_at)
+                    .to_string();
+                Statement::CreateEntity(name)
             });
 
         // Pass
@@ -304,15 +394,18 @@ pub fn token_parser<'a>(
             .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
             .then_ignore(just(&Token::In))
             .then(expr.clone())
-            .then(
-                just(&Token::By)
-                    .ignore_then(expr.clone())
-                    .or_not()
-            )
+            .then(just(&Token::By).ignore_then(expr.clone()).or_not())
             .then_ignore(just(&Token::Colon))
             .then_ignore(just(&Token::Newline).or_not())
             .then(block.clone())
-            .map(|(((target, iter), step), body)| Statement::For(ForLoop { target, iter, step, body }));
+            .map(|(((target, iter), step), body)| {
+                Statement::For(ForLoop {
+                    target,
+                    iter,
+                    step,
+                    body,
+                })
+            });
 
         // While loop
         let while_loop = just(&Token::While)
@@ -331,7 +424,7 @@ pub fn token_parser<'a>(
                 .then(
                     just(&Token::To)
                         .ignore_then(select_ref! { Token::Number(n) => n.parse::<i32>().unwrap() })
-                        .or_not()
+                        .or_not(),
                 )
                 .map(|(start, end)| {
                     if let Some(end) = end {
@@ -406,12 +499,21 @@ pub fn token_parser<'a>(
                 result
             });
 
+        // Helper: parse either an identifier or a macro parameter {name}
+        let selector_or_macro = choice((
+            select_ref! { Token::Ident(s) => s.clone() },
+            just(&Token::LBrace)
+                .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+                .then_ignore(just(&Token::RBrace))
+                .map(|name| format!("{{{}}}", name)),
+        ));
+
         let execute_modifier = choice((
             just(&Token::As)
-                .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+                .ignore_then(selector_or_macro)
                 .map(ExecuteModifier::As),
             just(&Token::At)
-                .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+                .ignore_then(selector_or_macro)
                 .map(ExecuteModifier::At),
             // if/unless in execute blocks:
             // For now, keep as raw and let transpiler determine if it's Python expression
@@ -503,6 +605,8 @@ pub fn token_parser<'a>(
             return_stmt,
             pass,
             selector_def,
+            entity_def,
+            create_entity,
             const_assignment,
             assignment,
             expr_stmt,
@@ -510,7 +614,14 @@ pub fn token_parser<'a>(
         .then_ignore(just(&Token::Newline).or_not());
 
         // Compound statement (has block)
-        let compound_stmt = choice((function, if_stmt, for_loop, while_loop, match_stmt, execute_block));
+        let compound_stmt = choice((
+            function,
+            if_stmt,
+            for_loop,
+            while_loop,
+            match_stmt,
+            execute_block,
+        ));
 
         choice((compound_stmt, simple_stmt))
     })

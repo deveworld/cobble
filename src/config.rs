@@ -1,3 +1,4 @@
+use crate::pack_format::{SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ pub struct ProjectConfig {
     #[serde(default = "default_version")]
     pub version: String,
     #[serde(default = "default_pack_format")]
-    pub pack_format: String,  // Changed from u8 to String to support decimal formats
+    pub pack_format: String, // Changed from u8 to String to support decimal formats
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -35,7 +36,7 @@ fn default_version() -> String {
 }
 
 fn default_pack_format() -> String {
-    "18".to_string() // Minecraft 1.20.2+ (macro support, maximum compatibility)
+    SUPPORTED_PACK_FORMAT.to_string()
 }
 
 fn default_source() -> String {
@@ -48,51 +49,43 @@ fn default_output() -> String {
 
 impl CobbleConfig {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        let config = Self::load_unvalidated(path)?;
+        config.validate_pack_format()?;
+        Ok(config)
+    }
+
+    pub fn load_unvalidated<P: AsRef<Path>>(path: P) -> Result<Self, String> {
         let contents =
             fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
-        let config: Self = toml::from_str(&contents)
-            .map_err(|e| format!("Failed to parse config file: {}", e))?;
+        toml::from_str(&contents).map_err(|e| format!("Failed to parse config file: {}", e))
+    }
 
+    pub fn validate_pack_format(&self) -> Result<(), String> {
         // Validate pack_format
-        let pack_format = crate::pack_format::PackFormat::parse_format(&config.project.pack_format)
-            .map_err(|e| format!("Invalid pack_format '{}': {}", config.project.pack_format, e))?;
+        let pack_format = crate::pack_format::PackFormat::parse_format(&self.project.pack_format)
+            .map_err(|e| {
+            format!("Invalid pack_format '{}': {}", self.project.pack_format, e)
+        })?;
 
-        if pack_format.major() < 18 {
+        if !pack_format.is_supported() {
             return Err(format!(
-                "Invalid pack_format: {}. Must be >= 18 (Minecraft 1.20.2+).\n\
+                "Invalid pack_format: {}. Must be {} (Minecraft Java Edition {}).\n\
                  \n\
-                 Cobble requires Minecraft 1.20.2+ for function macro support.\n\
-                 Recommended pack_format values:\n\
-                 - 1.20.2: pack_format = 18 (maximum compatibility)\n\
-                 - 1.21.7-1.21.8: pack_format = 81\n\
-                 - 1.21.9+: pack_format = 88 or 88.0\n\
+                 Cobble v0.6.0 exclusively supports Minecraft Java Edition {}.\n\
+                 See https://minecraft.wiki/w/Pack_format for version compatibility.\n\
                  \n\
                  Update your cobble.toml:\n\
                  [project]\n\
-                 pack_format = 18",
-                config.project.pack_format
+                 pack_format = \"{}\"",
+                self.project.pack_format,
+                SUPPORTED_PACK_FORMAT,
+                SUPPORTED_MINECRAFT_VERSION,
+                SUPPORTED_MINECRAFT_VERSION,
+                SUPPORTED_PACK_FORMAT
             ));
         }
 
-        // Warn about decimal pack_format compatibility
-        if let crate::pack_format::PackFormat::Decimal(major, minor) = pack_format {
-            eprintln!(
-                "⚠️  Warning: Using decimal pack_format {}.{}\n\
-                 Decimal pack formats were introduced in Minecraft 1.21.9.\n\
-                 This pack may not work in earlier Minecraft versions.\n\
-                 For maximum compatibility, use an integer pack_format.",
-                major, minor
-            );
-        }
-
-        if pack_format.major() > 100 {
-            eprintln!(
-                "⚠️  Warning: pack_format {} is unusually high. Current latest is 88 (1.21.9).",
-                config.project.pack_format
-            );
-        }
-
-        Ok(config)
+        Ok(())
     }
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {

@@ -6,3 +6,4 @@ pub mod pack_format;
 pub mod parser;
 pub mod stdlib;
 pub mod transpiler;
+pub mod validator;

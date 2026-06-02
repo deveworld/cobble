@@ -45,7 +45,7 @@ def main():
     greet("Player")
 
     # Direct Minecraft commands still work
-    /gamemode creative @a[m=survival]
+    /gamemode creative @a[gamemode=survival]
 
     # Python-style control structures
     for i in range(5):

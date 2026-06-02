@@ -1,12 +1,15 @@
 use serde::{Serialize, Serializer};
 
+pub const SUPPORTED_MINECRAFT_VERSION: &str = "26.1.2";
+pub const SUPPORTED_PACK_FORMAT: PackFormat = PackFormat::Decimal(101, 1);
+
 /// Pack format representation that supports both integer and decimal formats
-/// Minecraft 1.21.9+ introduced decimal pack formats (e.g., 88.0)
+/// Minecraft 1.21.9+ introduced decimal pack formats (e.g., 88.0).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PackFormat {
-    /// Integer format (e.g., 18, 48, 88)
+    /// Integer format used by older Minecraft releases (e.g., 18, 48, 88).
     Integer(u8),
-    /// Decimal format (e.g., 88.0)
+    /// Decimal format used by newer Minecraft releases (e.g., 88.0, 101.1).
     /// Represented as (major, minor) where format is "major.minor"
     Decimal(u8, u8),
 }
@@ -17,7 +20,7 @@ impl PackFormat {
         PackFormat::Integer(value)
     }
 
-    /// Create from a string like "88" or "88.0"
+    /// Create from a string like "101" or "101.1"
     pub fn parse_format(s: &str) -> Result<Self, String> {
         if let Some(dot_pos) = s.find('.') {
             // Decimal format
@@ -57,12 +60,17 @@ impl PackFormat {
             PackFormat::Decimal(major, _) => *major,
         }
     }
+
+    /// Whether this pack format is supported by this Cobble release.
+    pub fn is_supported(self) -> bool {
+        self == SUPPORTED_PACK_FORMAT
+    }
 }
 
 impl Default for PackFormat {
     fn default() -> Self {
-        // Default to pack format 18 for maximum compatibility (Minecraft 1.20.2+)
-        PackFormat::Integer(18)
+        // Default to pack format 101.1 (Minecraft Java Edition 26.1.2)
+        SUPPORTED_PACK_FORMAT
     }
 }
 
@@ -84,7 +92,7 @@ impl Serialize for PackFormat {
             PackFormat::Integer(v) => serializer.serialize_u8(*v),
             PackFormat::Decimal(major, minor) => {
                 // Serialize as JSON number (float), not string
-                // Example: Decimal(88, 0) → 88.0 (number), not "88.0" (string)
+                // Example: Decimal(101, 1) -> 101.1 (number), not "101.1" (string)
                 let value_str = format!("{}.{}", major, minor);
                 let value: f64 = value_str.parse().unwrap();
                 serializer.serialize_f64(value)

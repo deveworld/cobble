@@ -1,11 +1,9 @@
 use crate::ast::*;
-use crate::transpiler::Transpiler;
+use crate::transpiler::{GeneratedCommand, GeneratedCommandKind, Transpiler};
+use std::collections::HashMap;
 
 impl Transpiler {
-    pub(in crate::transpiler) fn process_for(
-        &mut self,
-        for_loop: &ForLoop,
-    ) -> Result<(), String> {
+    pub(in crate::transpiler) fn process_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
         let mut for_commands = Vec::new();
 
         // Handle range-based for loops
@@ -41,162 +39,181 @@ impl Transpiler {
                         }
                     };
 
-                        // Determine step value (default 1, or from for_loop.step)
-                        let step = if let Some(ref step_expr) = for_loop.step {
-                            match step_expr {
-                                Expression::Number(s) => *s as i32,
-                                _ => return Err("Step must be a constant number".to_string()),
-                            }
-                        } else {
-                            1
-                        };
-
-                        if step == 0 {
-                            return Err("Step cannot be zero".to_string());
+                    // Determine step value (default 1, or from for_loop.step)
+                    let step = if let Some(ref step_expr) = for_loop.step {
+                        match step_expr {
+                            Expression::Number(s) => *s as i32,
+                            _ => return Err("Step must be a constant number".to_string()),
                         }
+                    } else {
+                        1
+                    };
 
-                        // Generate a helper function for the loop
-                        let loop_func_name = format!("loop_temp_{}", self.temp_counter);
-                        self.temp_counter += 1;
+                    if step == 0 {
+                        return Err("Step cannot be zero".to_string());
+                    }
 
-                        // Track loop_counter objective
-                        self.data_pack.track_objective("loop_counter");
+                    // Generate a helper function for the loop
+                    let loop_func_name = format!("loop_temp_{}", self.temp_counter);
+                    self.temp_counter += 1;
 
-                        // Save previous state of loop variable (if it exists)
-                        let saved_var_objective = self.variable_objectives.get(&for_loop.target).cloned();
-                        let was_scoreboard_var = self.scoreboard_variables.contains(&for_loop.target);
+                    // Track loop_counter objective
+                    self.data_pack.track_objective("loop_counter");
 
-                        // Track this variable's objective AND mark as scoreboard variable
+                    // Save previous state of loop variable (if it exists)
+                    let saved_var_objective =
+                        self.variable_objectives.get(&for_loop.target).cloned();
+                    let was_scoreboard_var = self.scoreboard_variables.contains(&for_loop.target);
+
+                    // Track this variable's objective AND mark as scoreboard variable
+                    self.variable_objectives
+                        .insert(for_loop.target.clone(), "loop_counter".to_string());
+                    self.scoreboard_variables.insert(for_loop.target.clone());
+
+                    // Initialize loop counter based on step direction
+                    let start_value = if step > 0 {
+                        0
+                    } else {
+                        // For negative step, always start at count - 1
+                        // This ensures we iterate from (n-1) down to 0 regardless of step magnitude
+                        count - 1
+                    };
+
+                    for_commands.push(format!(
+                        "scoreboard players set {} loop_counter {}",
+                        for_loop.target, start_value
+                    ));
+
+                    // Create a macro function for the loop body
+                    // This allows loop variables to be used in commands like /say
+                    let body_func_name = format!("loop_body_{}", self.temp_counter - 1);
+
+                    // Process loop body as a macro function with loop variable as parameter
+                    let saved_context = self.current_context.clone();
+                    let saved_variable_types = self.variable_types.clone();
+
+                    // Set up function context with loop variable as a parameter
+                    self.current_context = crate::transpiler::FunctionContext::with_params(
+                        saved_context.with_extra_param(for_loop.target.clone()),
+                    );
+
+                    let capture = self.capture_statements(&for_loop.body)?;
+                    self.add_captured_function(body_func_name.clone(), capture);
+                    // Track this function as having parameters
+                    self.function_params
+                        .insert(body_func_name.clone(), vec![for_loop.target.clone()]);
+
+                    self.current_context = saved_context;
+                    self.variable_types = saved_variable_types;
+
+                    // Restore previous state of loop variable
+                    if let Some(obj) = saved_var_objective {
                         self.variable_objectives
-                            .insert(for_loop.target.clone(), "loop_counter".to_string());
-                        self.scoreboard_variables.insert(for_loop.target.clone());
+                            .insert(for_loop.target.clone(), obj);
+                    } else {
+                        self.variable_objectives.remove(&for_loop.target);
+                    }
+                    if !was_scoreboard_var {
+                        self.scoreboard_variables.remove(&for_loop.target);
+                    }
 
-                        // Initialize loop counter based on step direction
-                        let start_value = if step > 0 {
-                            0
-                        } else {
-                            // For negative step, always start at count - 1
-                            // This ensures we iterate from (n-1) down to 0 regardless of step magnitude
-                            count - 1
-                        };
+                    // Create loop control function
+                    let mut loop_commands = vec![];
 
-                        for_commands.push(format!(
-                            "scoreboard players set {} loop_counter {}",
-                            for_loop.target, start_value
-                        ));
+                    // Condition depends on step direction
+                    let condition = if step > 0 {
+                        // For positive step: continue while i < count
+                        format!("..{}", count - 1)
+                    } else {
+                        // For negative step: continue while i >= 0
+                        "0..".to_string()
+                    };
 
-                        // Create a macro function for the loop body
-                        // This allows loop variables to be used in commands like /say
-                        let body_func_name = format!("loop_body_{}", self.temp_counter - 1);
+                    // Create a wrapper function that stores variable and calls body
+                    // Use a separate counter increment to ensure unique wrapper names in nested loops
+                    let wrapper_id = self.temp_counter;
+                    self.temp_counter += 1;
+                    let wrapper_func_name = format!("loop_wrapper_{}", wrapper_id);
+                    let mut wrapper_commands = vec![];
+                    let mut wrapper_metadata = HashMap::new();
 
-                        // Process loop body as a macro function with loop variable as parameter
-                        let old_function = self.current_function.take();
-                        let saved_context = self.current_context.clone();
-                        let saved_variable_types = self.variable_types.clone();
-
-                        // Set up function context with loop variable as a parameter
-                        self.current_context = crate::transpiler::FunctionContext::with_params(vec![for_loop.target.clone()]);
-                        self.current_function = Some(Vec::new());
-
-                        for stmt in &for_loop.body {
-                            self.process_statement(stmt)?;
-                        }
-
-                        if let Some(body_commands) = self.current_function.take() {
-                            // Store as a macro function
-                            self.data_pack.add_function(body_func_name.clone(), body_commands);
-                            // Track this function as having parameters
-                            self.function_params.insert(body_func_name.clone(), vec![for_loop.target.clone()]);
-                        }
-
-                        self.current_function = old_function;
-                        self.current_context = saved_context;
-                        self.variable_types = saved_variable_types;
-
-                        // Restore previous state of loop variable
-                        if let Some(obj) = saved_var_objective {
-                            self.variable_objectives.insert(for_loop.target.clone(), obj);
-                        } else {
-                            self.variable_objectives.remove(&for_loop.target);
-                        }
-                        if !was_scoreboard_var {
-                            self.scoreboard_variables.remove(&for_loop.target);
-                        }
-
-                        // Create loop control function
-                        let mut loop_commands = vec![];
-
-                        // Condition depends on step direction
-                        let condition = if step > 0 {
-                            // For positive step: continue while i < count
-                            format!("..{}", count - 1)
-                        } else {
-                            // For negative step: continue while i >= 0
-                            "0..".to_string()
-                        };
-
-                        // Create a wrapper function that stores variable and calls body
-                        // Use a separate counter increment to ensure unique wrapper names in nested loops
-                        let wrapper_id = self.temp_counter;
-                        self.temp_counter += 1;
-                        let wrapper_func_name = format!("loop_wrapper_{}", wrapper_id);
-                        let mut wrapper_commands = vec![];
-
-                        // Store loop variable value into storage for macro function
-                        wrapper_commands.push(format!(
+                    // Store loop variable value into storage for macro function
+                    wrapper_commands.push(format!(
                             "execute store result storage {}:global args.{} int 1 run scoreboard players get {} loop_counter",
                             self.data_pack.namespace, for_loop.target, for_loop.target
                         ));
+                    wrapper_metadata.insert(
+                        0,
+                        GeneratedCommand::new(
+                            wrapper_commands[0].clone(),
+                            self.current_statement_source.clone(),
+                            GeneratedCommandKind::ControlFlow,
+                        ),
+                    );
 
-                        // Call the macro body function with the loop variable
-                        wrapper_commands.push(format!(
-                            "function {}:{} with storage {}:global args",
-                            self.data_pack.namespace, body_func_name, self.data_pack.namespace
-                        ));
+                    // Call the macro body function with the loop variable
+                    wrapper_commands.push(format!(
+                        "function {}:{} with storage {}:global args",
+                        self.data_pack.namespace, body_func_name, self.data_pack.namespace
+                    ));
+                    wrapper_metadata.insert(
+                        1,
+                        GeneratedCommand::new(
+                            wrapper_commands[1].clone(),
+                            self.current_statement_source.clone(),
+                            GeneratedCommandKind::ControlFlow,
+                        ),
+                    );
 
-                        self.data_pack.add_function(wrapper_func_name.clone(), wrapper_commands);
+                    self.data_pack.add_function_with_metadata(
+                        wrapper_func_name.clone(),
+                        wrapper_commands,
+                        wrapper_metadata,
+                    );
 
-                        // Check condition BEFORE executing body (to prevent zero-length loops from executing)
+                    // Check condition BEFORE executing body (to prevent zero-length loops from executing)
+                    loop_commands.push(format!(
+                        "execute if score {} loop_counter matches {} run function {}:{}",
+                        for_loop.target, condition, self.data_pack.namespace, wrapper_func_name
+                    ));
+
+                    // THEN add increment/decrement
+                    if step > 0 {
                         loop_commands.push(format!(
-                            "execute if score {} loop_counter matches {} run function {}:{}",
-                            for_loop.target,
-                            condition,
-                            self.data_pack.namespace,
-                            wrapper_func_name
+                            "scoreboard players add {} loop_counter {}",
+                            for_loop.target, step
                         ));
-
-                        // THEN add increment/decrement
-                        if step > 0 {
-                            loop_commands.push(format!(
-                                "scoreboard players add {} loop_counter {}",
-                                for_loop.target, step
-                            ));
-                        } else {
-                            // Use 'remove' for negative step (Java Edition compatibility)
-                            loop_commands.push(format!(
-                                "scoreboard players remove {} loop_counter {}",
-                                for_loop.target, step.abs()
-                            ));
-                        }
-
-                        // Recursive call (check condition again after increment)
+                    } else {
+                        // Use 'remove' for negative step (Java Edition compatibility)
                         loop_commands.push(format!(
-                            "execute if score {} loop_counter matches {} run function {}:{}",
+                            "scoreboard players remove {} loop_counter {}",
                             for_loop.target,
-                            condition,
-                            self.data_pack.namespace,
-                            loop_func_name
+                            step.abs()
                         ));
+                    }
 
-                        // Add the loop function to the data pack
-                        self.data_pack
-                            .add_function(loop_func_name.clone(), loop_commands);
+                    // Recursive call (check condition again after increment)
+                    loop_commands.push(format!(
+                        "execute if score {} loop_counter matches {} run function {}:{}",
+                        for_loop.target, condition, self.data_pack.namespace, loop_func_name
+                    ));
 
-                        // Start the loop in the main function
-                        for_commands.push(format!(
-                            "function {}:{}",
-                            self.data_pack.namespace, loop_func_name
-                        ));
+                    // Add the loop function to the data pack
+                    let loop_metadata = Self::metadata_for_commands(
+                        &loop_commands,
+                        self.current_statement_source.clone(),
+                    );
+                    self.data_pack.add_function_with_metadata(
+                        loop_func_name.clone(),
+                        loop_commands,
+                        loop_metadata,
+                    );
+
+                    // Start the loop in the main function
+                    for_commands.push(format!(
+                        "function {}:{}",
+                        self.data_pack.namespace, loop_func_name
+                    ));
                 } else {
                     return Err(format!(
                         "For loops with range() must have exactly one argument.\n\
@@ -204,7 +221,8 @@ impl Transpiler {
                          \n\
                          Solution: Use range(N) where N is a literal number:\n\
                          - for {} in range(10):",
-                        args.len(), for_loop.target
+                        args.len(),
+                        for_loop.target
                     ));
                 }
             } else {
@@ -213,7 +231,11 @@ impl Transpiler {
                      \n\
                      Solution: Use range(N) where N is a literal number:\n\
                      - for {} in range(10):",
-                    if let Expression::Identifier(n) = &**func { n } else { "unknown" },
+                    if let Expression::Identifier(n) = &**func {
+                        n
+                    } else {
+                        "unknown"
+                    },
                     for_loop.target
                 ));
             }
@@ -263,12 +285,15 @@ impl Transpiler {
         let loop_func_name = format!("while_temp_{}", self.temp_counter);
         self.temp_counter += 1;
 
-        // Create while loop function
-        let mut loop_commands = vec![];
-
-        // Add condition check and body execution
-        let processed_condition = self.preprocess_condition(&while_loop.condition)?;
-        let condition_cmd = self.translate_condition(&processed_condition)?;
+        // Capture condition setup so complex expressions and OR lowering are
+        // rerun on every recursive iteration instead of once before the loop.
+        let (condition_cmd, condition_capture) =
+            self.capture_commands_with_result(|transpiler| {
+                let processed_condition = transpiler.preprocess_condition(&while_loop.condition)?;
+                let translated = transpiler.translate_condition(&processed_condition)?;
+                transpiler.normalize_if_condition(translated)
+            })?;
+        let condition_execute_args = Self::condition_execute_args(&condition_cmd);
 
         // IMPORTANT: We need to wrap the body in a conditional function call
         // to prevent bugs where body statements modify condition variables.
@@ -279,51 +304,54 @@ impl Transpiler {
         self.temp_counter += 1;
 
         // Process loop body into the body function
-        let old_function = self.current_function.take();
         let saved_context = self.current_context.clone();
 
-        self.current_function = Some(Vec::new());
-        for stmt in &while_loop.body {
-            self.process_statement(stmt)?;
-        }
-
-        if let Some(body_commands) = self.current_function.take() {
-            // Add body function to data pack
-            self.data_pack.add_function(body_func_name.clone(), body_commands);
-        }
-
-        self.current_function = old_function;
+        let capture = self.capture_statements(&while_loop.body)?;
+        let body_needs_storage = capture.requires_macro_context();
+        self.add_captured_function(body_func_name.clone(), capture);
         self.current_context = saved_context;
 
-        // In the while loop function, check condition once and call body
-        if condition_cmd.starts_with("if ") || condition_cmd.starts_with("unless ") {
-            loop_commands.push(format!(
-                "execute {} run function {}:{}",
-                condition_cmd, self.data_pack.namespace, body_func_name
-            ));
-        } else {
-            loop_commands.push(format!(
-                "execute if {} run function {}:{}",
-                condition_cmd, self.data_pack.namespace, body_func_name
-            ));
-        }
+        let body_call = self.function_call_command(&body_func_name, body_needs_storage);
+        let mut loop_commands = Vec::new();
+        let mut loop_metadata = HashMap::new();
+        Self::append_capture_to_buffers(&mut loop_commands, &mut loop_metadata, &condition_capture);
+        loop_commands.push(format!(
+            "execute {} run {}",
+            condition_execute_args, body_call
+        ));
+        let body_call_index = loop_commands.len() - 1;
+        loop_metadata.insert(
+            body_call_index,
+            GeneratedCommand::new(
+                loop_commands[body_call_index].clone(),
+                self.current_statement_source.clone(),
+                GeneratedCommandKind::ControlFlow,
+            ),
+        );
 
-        // Add recursive call (check condition again after body execution)
-        if condition_cmd.starts_with("if ") || condition_cmd.starts_with("unless ") {
-            loop_commands.push(format!(
-                "execute {} run function {}:{}",
-                condition_cmd, self.data_pack.namespace, loop_func_name
-            ));
-        } else {
-            loop_commands.push(format!(
-                "execute if {} run function {}:{}",
-                condition_cmd, self.data_pack.namespace, loop_func_name
-            ));
-        }
+        // Re-evaluate the condition after the body before deciding whether to
+        // recurse. This keeps loops with mutated or computed conditions correct.
+        Self::append_capture_to_buffers(&mut loop_commands, &mut loop_metadata, &condition_capture);
+        loop_commands.push(format!(
+            "execute {} run function {}:{}",
+            condition_execute_args, self.data_pack.namespace, loop_func_name
+        ));
+        let recurse_index = loop_commands.len() - 1;
+        loop_metadata.insert(
+            recurse_index,
+            GeneratedCommand::new(
+                loop_commands[recurse_index].clone(),
+                self.current_statement_source.clone(),
+                GeneratedCommandKind::ControlFlow,
+            ),
+        );
 
         // Add the loop function to the data pack
-        self.data_pack
-            .add_function(loop_func_name.clone(), loop_commands);
+        self.data_pack.add_function_with_metadata(
+            loop_func_name.clone(),
+            loop_commands,
+            loop_metadata,
+        );
 
         // Start the loop
         while_commands.push(format!(
@@ -336,5 +364,37 @@ impl Transpiler {
         }
 
         Ok(())
+    }
+
+    fn metadata_for_commands(
+        commands: &[String],
+        source: Option<crate::transpiler::SourceLocation>,
+    ) -> HashMap<usize, GeneratedCommand> {
+        commands
+            .iter()
+            .enumerate()
+            .map(|(index, command)| {
+                (
+                    index,
+                    GeneratedCommand::new(
+                        command.clone(),
+                        source.clone(),
+                        GeneratedCommandKind::ControlFlow,
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    fn append_capture_to_buffers(
+        commands: &mut Vec<String>,
+        metadata: &mut HashMap<usize, GeneratedCommand>,
+        capture: &crate::transpiler::FunctionCapture,
+    ) {
+        let start = commands.len();
+        commands.extend(capture.commands.clone());
+        for (source_index, generated) in &capture.metadata {
+            metadata.insert(start + source_index, generated.clone());
+        }
     }
 }

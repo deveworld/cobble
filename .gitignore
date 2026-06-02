@@ -8,6 +8,9 @@
 /dist/
 *.zip
 
+# Verify folder
+/verify/
+
 # Test files
 test*.cbl
 test*.cobble
@@ -27,5 +30,11 @@ desktop.ini
 # Debug
 *.log
 *.prof
+
+# Minecraft sources for inspection
+/minecraft_sources/
+
+# Downloaded server data
+/data/
 
 .serena/

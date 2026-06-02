@@ -4,7 +4,7 @@
 // - Bug #4: Macro $ prefix detection
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Helper functions from integration_test.rs
 fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> {
@@ -23,8 +23,8 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
     Ok((temp_dir, output_dir))
 }
 
-fn read_function(output_dir: &PathBuf, name: &str) -> String {
-    let path = output_dir.join(format!("data/cobble/functions/{}.mcfunction", name));
+fn read_function(output_dir: &Path, name: &str) -> String {
+    let path = output_dir.join(format!("data/cobble/function/{}.mcfunction", name));
     fs::read_to_string(path).unwrap()
 }
 
@@ -41,11 +41,13 @@ def test():
 
     // Bug fix: Negative step loops should start at count - 1 (not count + step)
     // range(10) by -2 should start at 9 (not 8)
-    assert!(content.contains("scoreboard players set i loop_counter 9"),
-            "range(10) by -2 should start at 9 (count - 1), not 8 (count + step)");
+    assert!(
+        content.contains("scoreboard players set i loop_counter 9"),
+        "range(10) by -2 should start at 9 (count - 1), not 8 (count + step)"
+    );
 
     // Check loop control function exists and uses correct decrement
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
@@ -54,10 +56,14 @@ def test():
     assert!(!loop_files.is_empty(), "Loop temp functions should exist");
 
     let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
-    assert!(loop_content.contains("scoreboard players remove i loop_counter 2"),
-            "Loop should decrement by 2");
-    assert!(loop_content.contains("matches 0.."),
-            "Loop should continue while i >= 0");
+    assert!(
+        loop_content.contains("scoreboard players remove i loop_counter 2"),
+        "Loop should decrement by 2"
+    );
+    assert!(
+        loop_content.contains("matches 0.."),
+        "Loop should continue while i >= 0"
+    );
 }
 
 #[test]
@@ -74,18 +80,22 @@ def test():
     // Bug fix: range(10) by -3 should start at 9 (not 7)
     // Expected iterations: 9, 6, 3, 0 (4 times)
     // Previously buggy: 7, 4, 1 (3 times)
-    assert!(content.contains("scoreboard players set i loop_counter 9"),
-            "range(10) by -3 should start at 9 (count - 1), not 7 (count + step)");
+    assert!(
+        content.contains("scoreboard players set i loop_counter 9"),
+        "range(10) by -3 should start at 9 (count - 1), not 7 (count + step)"
+    );
 
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/functions"))
+    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
         .collect();
 
     let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
-    assert!(loop_content.contains("scoreboard players remove i loop_counter 3"),
-            "Loop should decrement by 3");
+    assert!(
+        loop_content.contains("scoreboard players remove i loop_counter 3"),
+        "Loop should decrement by 3"
+    );
 }
 
 #[test]
@@ -101,8 +111,10 @@ def test():
 
     // range(20) by -5 should start at 19 (not 15)
     // Expected iterations: 19, 14, 9, 4 (stops before -1)
-    assert!(content.contains("scoreboard players set i loop_counter 19"),
-            "range(20) by -5 should start at 19 (count - 1), not 15 (count + step)");
+    assert!(
+        content.contains("scoreboard players set i loop_counter 19"),
+        "range(20) by -5 should start at 19 (count - 1), not 15 (count + step)"
+    );
 }
 
 #[test]
@@ -116,10 +128,14 @@ def test(player):
     let content = read_function(&output_dir, "test");
 
     // Bug fix: Commands with $(param) should have $ line prefix
-    assert!(content.starts_with("$give"),
-            "Macro function with $(param) should have $ line prefix");
-    assert!(content.contains("$(player)"),
-            "Parameter should remain as $(player)");
+    assert!(
+        content.starts_with("$give"),
+        "Macro function with $(param) should have $ line prefix"
+    );
+    assert!(
+        content.contains("$(player)"),
+        "Parameter should remain as $(player)"
+    );
 }
 
 #[test]
@@ -136,6 +152,12 @@ def test(player, item):
     // Both lines should have $ prefix
     let lines: Vec<&str> = content.lines().collect();
     assert_eq!(lines.len(), 2, "Should have exactly 2 lines");
-    assert!(lines[0].starts_with("$give"), "First line should have $ prefix");
-    assert!(lines[1].starts_with("$tellraw"), "Second line should have $ prefix");
+    assert!(
+        lines[0].starts_with("$give"),
+        "First line should have $ prefix"
+    );
+    assert!(
+        lines[1].starts_with("$tellraw"),
+        "Second line should have $ prefix"
+    );
 }
