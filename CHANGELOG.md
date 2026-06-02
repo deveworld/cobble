@@ -5,7 +5,7 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.3-a1] - 2026-06-03
+## [0.6.3] - 2026-06-03
 
 ### Added
 - Generated data pack snapshot regression tests for representative fixture output trees.
@@ -20,10 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A repeatable QA checklist for snapshot updates, Rust release gates, web release gates, and optional Minecraft server smoke testing.
 - Browser E2E coverage for `/try` that loads the WebAssembly compiler, checks generated output, and verifies downloadable data pack ZIP contents.
 - GitHub Actions CI for Rust formatting, tests, clippy, package dry-run, and publish dry-run.
-- Documentation/web link checks and a 0.6.3 devlog outline for release preparation.
+- Documentation/web link checks and release QA documentation.
 
 ### Changed
-- Promoted active development version to `0.6.3-a1` while keeping 0.6.2 as the latest stable release.
+- Released `0.6.3` as the current stable version.
 - Wrote legacy typed JSON resources in sorted path order to make generated output deterministic for snapshot testing.
 - Web demo deployment now runs the WASM compiler parity tests before building the GitHub Pages artifact.
 - Web demo deployment checks now also run on pull requests that change the Rust compiler, WASM wrapper, or `web/` sources, while deployment remains limited to `main` pushes.

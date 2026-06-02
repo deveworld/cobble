@@ -14,8 +14,7 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Development version 0.6.3-a1** targets Minecraft Java Edition 26.1.2 and
-pack format 101.1. The latest stable release is 0.6.2.
+**Cobble 0.6.3** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ## Website And Web Demo
 
@@ -156,7 +155,6 @@ npm run dev
 - [CLI Documentation](docs/cli.md)
 - [API Reference](docs/api.md)
 - [QA Checklist](docs/qa.md)
-- [0.6.3 Devlog Outline](docs/devlog-0.6.3.md)
 - [Examples](examples/)
 - [Web Demo Source](https://github.com/deveworld/cobble/tree/main/web/)
 - [Roadmap](PLAN.md)

@@ -235,7 +235,7 @@ def give_reward(player, amount):
     /tellraw {player} {"text":"You received diamonds!", "color":"gold"}
 ```
 
-**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. Cobble v0.6.3-a1 targets Minecraft Java Edition 26.1.2, where this macro syntax is available.
+**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. Cobble v0.6.3 targets Minecraft Java Edition 26.1.2, where this macro syntax is available.
 
 ### Calling Functions
 
@@ -976,7 +976,7 @@ stdlib.addEventListener(event.TICK, game_loop)
 
 ## Minecraft Version Compatibility
 
-Cobble v0.6.3-a1 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this development release.
+Cobble v0.6.3 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
 
 - **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax

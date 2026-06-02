@@ -3,8 +3,8 @@
 ## Status
 
 - Planning date: 2026-06-02
-- Current stable release: `0.6.2`
-- Active development version: `0.6.3-a1`
+- Current stable release: `0.6.3`
+- Active development focus: `0.7.0 planning`
 - Current Minecraft target: Java Edition `26.1.2`
 - Current data pack format: `101.1`
 - Package name: `cobble-lang`
@@ -12,9 +12,10 @@
 - Website: <https://deveworld.github.io/cobble/>
 - Browser compiler: <https://deveworld.github.io/cobble/try/>
 
-This roadmap replaces the completed 0.6.2 implementation plan. Historical
+This roadmap records the completed 0.6.3 stabilization plan and the next
+post-0.6.3 direction. Historical
 release details belong in `CHANGELOG.md`; this file tracks what Cobble should
-become after 0.6.2.
+become after 0.6.3.
 
 ## North Star
 
@@ -351,7 +352,7 @@ Tasks:
   - Java requirement,
   - network/cache behavior,
   - what counts as a pass.
-- Add a short 0.6.3 devlog outline before release.
+- Finalize release QA notes before release.
 
 Acceptance criteria:
 
@@ -723,12 +724,11 @@ These decisions should be made deliberately before implementation starts.
 
 ## Current Priority Order
 
-1. Finish 0.6.3 stabilization fixes and run the final clean-tree release gate.
-2. Prepare final 0.6.3 release notes, version bump, crate publish, and GitHub
-   release only after the gate is clean.
+1. Publish and verify `0.6.3` artifacts if the final release commit has not
+   been published yet.
+2. Start 0.7.0 language-spec cleanup after 0.6.3 ships.
 3. Keep the website and `/try` demo aligned with the CLI through PR-gated web
    checks.
-4. Start 0.7.0 language-spec cleanup after 0.6.3 ships.
-5. Expand real-world examples before adding large new syntax.
-6. Defer plugin/package-manager work until the language and metadata contracts
+4. Expand real-world examples before adding large new syntax.
+5. Defer plugin/package-manager work until the language and metadata contracts
    are stable.
