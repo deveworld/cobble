@@ -7,6 +7,7 @@ This document describes the internal API for Cobble's compiler and tools.
 Cobble consists of several modules that work together to compile high-level code into Minecraft data packs:
 
 - **Parser** - Converts source code into an Abstract Syntax Tree (AST)
+- **Diagnostics** - Reports source-aware language-surface errors before parser/transpiler execution
 - **Transpiler** - Transforms AST into Minecraft commands
 - **Standard Library** - Provides event handling and utilities
 - **CLI** - Command-line interface for building projects
@@ -68,6 +69,92 @@ let program = parse(source)
 - Fixed division operator tokenization to correctly distinguish `a / b` from `/command`
 - Implemented proper operator precedence (multiplication and division before addition and subtraction)
 - Added support for chained multi-operator expressions like `a + b + c` and `x * y * z`
+
+## Module: Diagnostics
+
+### `diagnostics.rs`
+
+The diagnostics module provides a source-aware preflight pass used by the CLI
+and the web compiler before normal parsing/transpilation.
+
+#### Function: `parse_source(source: &str) -> Result<Program, Vec<SourceDiagnostic>>`
+
+Runs early language-surface diagnostics, then parses the source into an AST.
+Use this API for user-facing compiler entry points that should report line and
+column information for unsupported Python-like syntax.
+
+#### Function: `parse_source_file(path: &Path) -> Result<ParsedSourceFile, Vec<FileSourceDiagnostics>>`
+
+Runs `parse_source` for a source file and then preflights its local import
+tree. CLI entry points use this path to report missing imports, circular import
+chains, missing `from module import item` symbols, diagnostics that originate in
+imported `.cbl` files, cross-file function name collisions, and calls to
+imported functions with the wrong argument count before transpilation.
+
+#### Function: `parse_source_files(paths: &[PathBuf]) -> Result<Vec<ParsedSourceFile>, Vec<FileSourceDiagnostics>>`
+
+Runs `parse_source_file`-style import-tree preflight across multiple root
+files. Directory and project builds use this API so duplicate functions,
+selector aliases, and entity templates are rejected across independent root
+files as well as imported files before one generated function can overwrite
+another.
+
+#### Function: `analyze_in_memory_imports(source: &str, imports: &[Import]) -> Vec<SourceDiagnostic>`
+
+Reports non-stdlib imports for browser or editor entry points that compile a
+single in-memory source file. The CLI resolves local import files from disk,
+but the web compiler intentionally returns a structured `missing-import`
+diagnostic unless the import is `stdlib`.
+
+#### Function: `analyze_source(source: &str) -> Vec<SourceDiagnostic>`
+
+Returns diagnostics without parsing. This is useful for tests and future editor
+tooling.
+
+Current early diagnostics include unsupported default parameters, `*args` and
+`**kwargs`, decorators, compound assignment, list/dict comprehensions,
+`for ... else`, missing block colons, unexpected or inconsistent indentation,
+unclosed or unmatched delimiters, unterminated strings, dotted or relative
+imports, import aliases, wildcard imports, comma-separated module imports,
+unsupported Python keywords, non-identifier assignment targets, duplicate
+function parameters, duplicate function definitions, unsupported `return`
+statements, non-math function calls used as assignment values, standalone
+expressions that would otherwise be no-ops, and same-file user function calls
+with the wrong argument count or nested function-call expressions as arguments.
+The semantic preflight also reports undefined variables in expressions that
+require variable lookup, such as assignment RHS values, control-flow
+conditions, and standalone helper/function call arguments. Raw command `{name}`
+placeholders are checked against function parameters, loop variables, and
+defined Cobble variables, and invalid names such as `{bad-name}` are rejected
+while JSON/NBT braces and `{{name}}` literal braces are preserved. Multi-line
+docstring bodies are skipped by later semantic scans
+so documentation text is not treated as executable Cobble. File import
+preflight reports missing imports, circular imports, missing
+`from module import item` symbols, duplicate function definitions, duplicate
+selector/entity symbols, and calls to imported functions with the wrong
+argument count. Multi-root preflight applies the same duplicate checks to
+directory/project builds. Clearly inferred type changes, for example assigning
+a list and then reassigning the same variable to an integer, are reported
+before transpilation with source locations.
+`datapack.*` helper calls also report argument-shape diagnostics before
+transpilation when JSON resource values are not object literals or tag values
+are not arrays of string resource IDs. Literal datapack resource names and tag
+values are also checked for common ID mistakes such as `minecraft/load`,
+uppercase paths, invalid namespaces, and invalid path separators.
+
+File-level diagnostic formatting includes the compact
+`file:line:column: severity[kind] message` header plus the source line, caret
+marker, and optional help text. Byte offsets account for CRLF line endings so
+ariadne snippets stay aligned on Windows-authored files. The browser compiler
+keeps compact formatted strings for compatibility and exposes structured fields
+separately.
+
+### Web WASM Diagnostics
+
+The browser compiler response keeps `diagnostics: string[]` for existing UI
+code and also exposes `diagnostic_details`, a structured array with `file`,
+`line`, `column`, `severity`, `kind`, `message`, optional `help`, and formatted
+text. The `/try` page renders the structured fields when they are available.
 
 ## Module: AST
 
@@ -382,14 +469,14 @@ pub struct DataPack {
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
     pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
-    pub pack_format: PackFormat,  // Cobble v0.6.3 requires 101.1
+    pub pack_format: PackFormat,  // Cobble v0.7.0-rc.1 requires 101.1
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
     pub source_display_root: Option<PathBuf>,
 }
 ```
 
-**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.6.3 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
+**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.7.0-rc.1 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
 
 #### Methods
 
@@ -416,6 +503,8 @@ Sets the display root used to avoid unnecessary absolute source paths in
 ### Struct: `BuildManifest`
 
 Summary metadata written to `.cobble/build_manifest.json`.
+See [metadata.md](metadata.md) for the stable JSON field list used by tooling
+and tests.
 
 ```rust
 pub struct BuildManifest {
@@ -601,9 +690,13 @@ generated data pack directory and prints either a text summary or formatted JSON
 
 Handles the `check` command.
 
-#### Function: `check(input: Option<PathBuf>) -> Result<(), String>`
+#### Function: `check(options: CheckOptions) -> Result<(), String>`
 
-Checks source files for syntax errors.
+Checks source files with the shared source diagnostics and import-tree
+preflight path. The text mode prints per-file import/function/command counts.
+`CheckOptions::json` emits a machine-readable report with `ok`, `files`,
+`diagnostics`, and `error_count` while preserving a non-zero exit status for
+failed checks.
 
 ### `commands/watch.rs`
 

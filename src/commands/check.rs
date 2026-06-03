@@ -1,13 +1,50 @@
+use super::{find_cobble_files, resolve_entry_points};
 use crate::config::CobbleConfig;
-use crate::error::report_parse_errors;
-use crate::parser::parse;
-use std::fs;
+use crate::diagnostics::{
+    parse_source_files, FileSourceDiagnostics, ParsedSourceFile, SourceDiagnostic,
+};
+use crate::error::report_file_source_diagnostics;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
-pub fn check(input: Option<PathBuf>) -> Result<(), String> {
+pub struct CheckOptions {
+    pub input: Option<PathBuf>,
+    pub json: bool,
+}
+
+#[derive(Serialize)]
+struct CheckReport {
+    ok: bool,
+    source: String,
+    files_checked: usize,
+    files: Vec<CheckFileReport>,
+    diagnostics: Vec<CheckDiagnosticReport>,
+    error_count: usize,
+}
+
+#[derive(Serialize)]
+struct CheckFileReport {
+    file: String,
+    imports: usize,
+    functions: usize,
+    commands: usize,
+}
+
+#[derive(Serialize)]
+struct CheckDiagnosticReport {
+    file: String,
+    line: usize,
+    column: usize,
+    severity: String,
+    kind: String,
+    message: String,
+    help: Option<String>,
+    formatted: String,
+}
+
+pub fn check(options: CheckOptions) -> Result<(), String> {
     // Try to find cobble.toml
-    let (config, config_dir) = if let Some(config_path) = find_config(&input) {
+    let (config, config_dir) = if let Some(config_path) = find_config(&options.input) {
         let config = CobbleConfig::load(&config_path)?;
         let config_dir = config_path.parent().unwrap().to_path_buf();
         (Some(config), config_dir)
@@ -19,7 +56,7 @@ pub fn check(input: Option<PathBuf>) -> Result<(), String> {
     };
 
     // Determine source path
-    let source_path = if let Some(ref input_path) = input {
+    let source_path = if let Some(ref input_path) = options.input {
         input_path.clone()
     } else if let Some(ref cfg) = config {
         config_dir.join(&cfg.build.source)
@@ -27,91 +64,185 @@ pub fn check(input: Option<PathBuf>) -> Result<(), String> {
         return Err("No input specified and no cobble.toml found".to_string());
     };
 
+    let configured_entry_points = if options.input.is_none() {
+        config
+            .as_ref()
+            .map(|cfg| cfg.build.entry_points.clone())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
     // Check if source is a file or directory
     let files_to_check = if source_path.is_file() {
         vec![source_path.clone()]
     } else if source_path.is_dir() {
-        find_cobble_files(&source_path)?
+        if options.input.is_none() && !configured_entry_points.is_empty() {
+            resolve_entry_points(&source_path, &configured_entry_points)?
+        } else {
+            find_cobble_files(&source_path)?
+        }
     } else {
         return Err(format!("Source path does not exist: {:?}", source_path));
     };
 
     if files_to_check.is_empty() {
-        println!("No Cobble files found to check");
+        if options.json {
+            print_check_json(&CheckReport {
+                ok: true,
+                source: path_display(&source_path),
+                files_checked: 0,
+                files: Vec::new(),
+                diagnostics: Vec::new(),
+                error_count: 0,
+            })?;
+        } else {
+            println!("No Cobble files found to check");
+        }
         return Ok(());
     }
 
-    println!("Checking {} file(s)...", files_to_check.len());
+    if !options.json {
+        println!("Checking {} file(s)...", files_to_check.len());
+    }
 
-    let mut total_errors = 0;
-    let total_warnings = 0;
-    let mut failed_files = Vec::new();
-
-    for file_path in &files_to_check {
-        let relative_path = file_path.strip_prefix(&config_dir).unwrap_or(file_path);
-
-        let src = match fs::read_to_string(file_path) {
-            Ok(content) => content,
-            Err(e) => {
-                println!("  ✗ {:?}: Failed to read - {}", relative_path, e);
-                failed_files.push(file_path.clone());
-                total_errors += 1;
-                continue;
-            }
-        };
-
-        match parse(&src) {
-            Ok(program) => {
-                // File parsed successfully
-                let import_count = program.imports.len();
-
-                // Count functions and other elements
-                let mut func_count = 0;
-                let mut cmd_count = 0;
-
-                for stmt in &program.statements {
-                    match stmt {
-                        crate::ast::Statement::FunctionDef(_) => func_count += 1,
-                        crate::ast::Statement::MinecraftCommand(_) => cmd_count += 1,
-                        _ => {}
-                    }
+    let parsed_files = match parse_source_files(&files_to_check) {
+        Ok(parsed_files) => parsed_files,
+        Err(file_diagnostics) => {
+            let total_errors = file_diagnostics
+                .iter()
+                .map(|file| file.diagnostics.len())
+                .sum::<usize>();
+            if options.json {
+                print_check_json(&CheckReport {
+                    ok: false,
+                    source: path_display(&source_path),
+                    files_checked: files_to_check.len(),
+                    files: Vec::new(),
+                    diagnostics: diagnostic_reports(&file_diagnostics, &config_dir),
+                    error_count: total_errors,
+                })?;
+            } else {
+                for diagnostics in &file_diagnostics {
+                    let relative_path = diagnostics
+                        .path
+                        .strip_prefix(&config_dir)
+                        .unwrap_or(&diagnostics.path);
+                    println!("  ✗ {:?}:", relative_path);
                 }
+                report_file_source_diagnostics(&file_diagnostics);
 
+                println!();
                 println!(
-                    "  ✓ {:?}: {} imports, {} functions, {} commands",
-                    relative_path, import_count, func_count, cmd_count
+                    "✗ {} error(s) found in {} file(s)",
+                    total_errors,
+                    file_diagnostics.len()
                 );
             }
-            Err(errors) => {
-                // Parse failed - use ariadne for beautiful error reporting
-                println!("  ✗ {:?}:", relative_path);
-                let filename = file_path.to_string_lossy();
-                report_parse_errors(&filename, &src, &errors);
-                failed_files.push(file_path.clone());
-                total_errors += 1;
-            }
+            return Err(format!("Validation failed with {} error(s)", total_errors));
         }
+    };
+
+    let files = check_file_reports(&files_to_check, &parsed_files, &config_dir);
+    if options.json {
+        print_check_json(&CheckReport {
+            ok: true,
+            source: path_display(&source_path),
+            files_checked: files_to_check.len(),
+            files,
+            diagnostics: Vec::new(),
+            error_count: 0,
+        })?;
+        return Ok(());
+    }
+
+    for file in files {
+        println!(
+            "  ✓ {:?}: {} imports, {} functions, {} commands",
+            file.file, file.imports, file.functions, file.commands
+        );
     }
 
     // Summary
     println!();
-    if total_errors == 0 && total_warnings == 0 {
-        println!("✓ All files passed validation!");
-    } else {
-        if total_errors > 0 {
-            println!(
-                "✗ {} error(s) found in {} file(s)",
-                total_errors,
-                failed_files.len()
-            );
-        }
-        if total_warnings > 0 {
-            println!("⚠ {} warning(s) found", total_warnings);
-        }
-        return Err(format!("Validation failed with {} error(s)", total_errors));
-    }
+    println!("✓ All files passed validation!");
 
     Ok(())
+}
+
+fn check_file_reports(
+    files_to_check: &[PathBuf],
+    parsed_files: &[ParsedSourceFile],
+    config_dir: &Path,
+) -> Vec<CheckFileReport> {
+    files_to_check
+        .iter()
+        .zip(parsed_files.iter())
+        .map(|(file_path, parsed)| {
+            let relative_path = file_path.strip_prefix(config_dir).unwrap_or(file_path);
+            let mut function_count = 0;
+            let mut command_count = 0;
+
+            for statement in &parsed.program.statements {
+                match statement {
+                    crate::ast::Statement::FunctionDef(_) => function_count += 1,
+                    crate::ast::Statement::MinecraftCommand(_) => command_count += 1,
+                    _ => {}
+                }
+            }
+
+            CheckFileReport {
+                file: path_display(relative_path),
+                imports: parsed.program.imports.len(),
+                functions: function_count,
+                commands: command_count,
+            }
+        })
+        .collect()
+}
+
+fn diagnostic_reports(
+    file_diagnostics: &[FileSourceDiagnostics],
+    config_dir: &Path,
+) -> Vec<CheckDiagnosticReport> {
+    file_diagnostics
+        .iter()
+        .flat_map(|file| {
+            let relative_path = file.path.strip_prefix(config_dir).unwrap_or(&file.path);
+            let file_name = path_display(relative_path);
+            file.diagnostics
+                .iter()
+                .map(move |diagnostic| diagnostic_report(&file_name, diagnostic, &file.source))
+        })
+        .collect()
+}
+
+fn diagnostic_report(
+    file_name: &str,
+    diagnostic: &SourceDiagnostic,
+    source: &str,
+) -> CheckDiagnosticReport {
+    CheckDiagnosticReport {
+        file: file_name.to_string(),
+        line: diagnostic.line,
+        column: diagnostic.column,
+        severity: diagnostic.severity.as_str().to_string(),
+        kind: diagnostic.kind.clone(),
+        message: diagnostic.message.clone(),
+        help: diagnostic.help.clone(),
+        formatted: diagnostic.format_with_source(file_name, source),
+    }
+}
+
+fn print_check_json(report: &CheckReport) -> Result<(), String> {
+    let output = serde_json::to_string_pretty(report)
+        .map_err(|error| format!("Failed to format check JSON: {error}"))?;
+    println!("{output}");
+    Ok(())
+}
+
+fn path_display(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
@@ -128,30 +259,4 @@ fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
     }
     // Look in current directory
     CobbleConfig::find_in_path(".")
-}
-
-fn find_cobble_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-
-    for entry in WalkDir::new(dir)
-        .follow_links(false) // Security: Don't follow symlinks to prevent attacks
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if path.is_symlink() {
-            eprintln!("⚠️  Warning: Skipping symlink: {:?}", path);
-            continue;
-        }
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext == "cbl" || ext == "cobble" {
-                    files.push(path.to_path_buf());
-                }
-            }
-        }
-    }
-
-    files.sort();
-    Ok(files)
 }

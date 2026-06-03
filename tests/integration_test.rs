@@ -84,6 +84,41 @@ def test():
 }
 
 #[test]
+fn test_storage_backed_attribute_and_subscript_access() {
+    let source = r#"
+def test():
+    items = [1, 2, 3]
+    config = {"chance": 7}
+    first = items[0]
+    chance = config.chance
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(content.contains("data modify storage cobble:global vars.items set value [1,2,3]"));
+    assert!(content.contains("data modify storage cobble:global vars.config set value {chance:7}"));
+    assert!(content.contains(
+        "execute store result score first temp run data get storage cobble:global vars.items[0]"
+    ));
+    assert!(content
+        .contains("execute store result score chance temp run data get storage cobble:global vars.config.chance"));
+}
+
+#[test]
+fn test_none_is_rejected_in_storage_snbt_literals() {
+    let source = r#"
+def test():
+    storage.set("state", {"note": None})
+"#;
+
+    let error = compile_source(source).expect_err("SNBT storage null should fail");
+    assert!(error.contains("unsupported-none"));
+    assert!(error.contains("None/null is only supported in data pack JSON resource helper values"));
+    assert!(error.contains("SNBT/NBT storage has no null type"));
+}
+
+#[test]
 fn test_raw_command_inline_comment_stripped_without_breaking_command() {
     let source = r#"
 def test():
@@ -2857,28 +2892,32 @@ def test():
     );
     let error = result.unwrap_err();
     assert!(
-        error.contains("Attribute base must resolve to a storage path"),
-        "Error should mention storage path resolution: {}",
+        error.contains("unsupported-storage-access")
+            && error.contains("Cannot resolve storage-backed attribute access `obj.`"),
+        "Error should mention storage-backed attribute resolution: {}",
         error
     );
 }
 
 #[test]
 fn test_subscript_assignment_error() {
-    // Test that subscript/array syntax is not supported (parse error)
-    // Note: Subscript syntax is not yet implemented in the parser
+    // Subscript syntax is parsed, but non-storage bases cannot be resolved to
+    // Minecraft storage paths.
     let source = r#"
 def test():
     x = arr[0]
 "#;
 
     let result = compile_source(source);
-    assert!(result.is_err(), "Subscript syntax should cause an error");
-    // Subscript is now parsed, but fails at transpile time if base is not a storage variable
+    assert!(
+        result.is_err(),
+        "Subscript on a non-storage base should fail"
+    );
     let error = result.unwrap_err();
     assert!(
-        error.contains("Subscript base must resolve to a storage path"),
-        "Should get storage path error for subscript on non-storage variable: {}",
+        error.contains("unsupported-storage-access")
+            && error.contains("Cannot resolve storage-backed subscript access `arr[...]`"),
+        "Should get storage-backed subscript diagnostic: {}",
         error
     );
 }

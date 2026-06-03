@@ -23,7 +23,7 @@ cargo test --locked --test generated_snapshots_test
 Before accepting snapshot updates, inspect the changed `.snap` files and check
 that unstable paths, local cache paths, and package versions are redacted.
 
-## Rust Gate
+## Rust Release Gate
 
 Run the package and publish dry-runs from a clean working tree for a final
 release. During pre-commit stabilization work, `--allow-dirty` is acceptable
@@ -34,7 +34,8 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- --version
-cargo run --locked -- check examples
+scripts/check_examples.sh
+cargo run --locked -- check --json examples/26_smoke/src/main.cbl
 cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
 cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
 cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
@@ -45,6 +46,11 @@ cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
 cargo package --locked
 cargo publish --dry-run --locked
 ```
+
+`scripts/check_examples.sh` checks each standalone example independently.
+Running `cobble check examples` treats the whole gallery as one project and is
+expected to reject duplicate names such as `init` or `tick` across unrelated
+examples.
 
 ## Web Gate
 
@@ -72,10 +78,16 @@ cd web
 npm run test:web
 ```
 
-GitHub Actions runs the Rust gate on pushes and pull requests. The GitHub Pages
-workflow runs the web gate on pull requests that touch the compiler, WASM
-wrapper, or `web/` sources. It only uploads and deploys Pages artifacts on
-`main` pushes or manual dispatches.
+GitHub Actions runs the Rust package subset on pushes and pull requests:
+`cargo fmt --check`, `cargo test --locked`, `cargo clippy --locked
+--all-targets -- -D warnings`, `cargo package --locked`, and `cargo publish
+--dry-run --locked`. CI also runs a docs-only markdown link check on pushes and
+pull requests. The additional example, validation, doctor, inspect, full web,
+and optional server commands above are manual release gates.
+
+The GitHub Pages workflow runs the web gate on pull requests that touch the
+compiler, WASM wrapper, or `web/` sources. It only uploads and deploys Pages
+artifacts on `main` pushes or manual dispatches.
 
 ## Command Tree Live E2E
 

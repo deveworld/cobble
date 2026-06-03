@@ -42,6 +42,109 @@ test("try page loads WASM compiler output and downloads a data pack ZIP", async 
   );
 });
 
+test("try page renders structured diagnostics for invalid source", async ({ page }) => {
+  await page.goto("/cobble/try/");
+
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page
+    .getByLabel("Cobble source")
+    .fill("def reward(player, amount=1):\n    /say reward\n");
+  await page.getByRole("button", { name: /compile/i }).click();
+
+  await expect(page.getByText("1 diagnostic")).toBeVisible();
+  await expect(page.locator(".diagnostic-heading code")).toHaveText(
+    "unsupported-function-parameter"
+  );
+  await expect(page.locator(".diagnostic-card > p").first()).toHaveText(
+    "Default parameter values are not supported"
+  );
+  await expect(page.locator(".diagnostic-location")).toHaveText("demo.cbl:1:26");
+  await expect(page.locator(".diagnostic-snippet")).toContainText(
+    "1 | def reward(player, amount=1):"
+  );
+  await expect(page.locator(".diagnostic-snippet")).toContainText("^");
+});
+
+test("try page diagnostic sample reports placeholder errors", async ({ page }) => {
+  await page.goto("/cobble/try/");
+
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page.getByLabel("sample").selectOption({ label: "Diagnostic Example" });
+  await page.getByRole("button", { name: /compile/i }).click();
+
+  await expect(page.getByText("1 diagnostic")).toBeVisible();
+  await expect(page.locator(".diagnostic-heading code")).toHaveText("undefined-placeholder");
+  await expect(page.locator(".diagnostic-card > p").first()).toHaveText(
+    "Undefined command placeholder `message`"
+  );
+});
+
+test("try page renders resource sample outputs and ZIP entries", async ({ page }) => {
+  await page.goto("/cobble/try/");
+
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page.getByLabel("sample").selectOption({ label: "Resources" });
+  await page.getByRole("button", { name: /compile/i }).click();
+
+  await expect(page.getByText("3 resources")).toBeVisible();
+  await page.getByRole("button", { name: /resources/i }).click();
+  await expect(
+    page.getByRole("button", { name: "data/minecraft/tags/function/load.json" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "data/resource_demo/predicate/checks/always.json" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "data/resource_demo/dialog/notice.json" })
+  ).toBeVisible();
+  await expect(page.locator(".output-code")).toContainText("resource_demo:on_load");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "ZIP" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("resource_demo.zip");
+
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const entries = readStoredZipEntries(await readFile(downloadPath!));
+  expect(entries.map((entry) => entry.name)).toContain(
+    "data/resource_demo/predicate/checks/always.json"
+  );
+  expect(entries.map((entry) => entry.name)).toContain("data/resource_demo/dialog/notice.json");
+  expect(entries.map((entry) => entry.name)).toContain("data/minecraft/tags/function/load.json");
+});
+
+test("try page rejects invalid namespaces instead of sanitizing them", async ({ page }) => {
+  await page.goto("/cobble/try/");
+
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page.getByLabel("namespace").fill("Bad Namespace!");
+  await page.getByRole("button", { name: /compile/i }).click();
+
+  await expect(page.getByText("1 diagnostic")).toBeVisible();
+  await expect(page.locator(".diagnostic-heading code")).toHaveText("invalid-namespace");
+  await expect(page.locator(".diagnostic-card > p").first()).toContainText(
+    "Invalid namespace 'Bad Namespace!'"
+  );
+});
+
+test("try page reports browser-only import diagnostics", async ({ page }) => {
+  await page.goto("/cobble/try/");
+
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page.getByLabel("Cobble source").fill("import helper\n\ndef main():\n    pass\n");
+  await page.getByRole("button", { name: /compile/i }).click();
+
+  await expect(page.getByText("1 diagnostic")).toBeVisible();
+  await expect(page.locator(".diagnostic-heading code")).toHaveText("missing-import");
+  await expect(page.locator(".diagnostic-card > p").first()).toHaveText(
+    "Cannot import 'helper': no import file is available"
+  );
+  await expect(page.locator(".diagnostic-help")).toContainText(
+    "The browser compiler accepts one in-memory Cobble file"
+  );
+});
+
 function readStoredZipEntries(buffer: Buffer) {
   const bytes = new Uint8Array(buffer);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

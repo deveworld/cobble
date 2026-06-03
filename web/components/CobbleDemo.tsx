@@ -24,49 +24,16 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIEvent } from "react";
 import { createStoredZip, isDataPackZipFile } from "@/lib/datapackZip";
+import type {
+  CompileFile,
+  CompileResponse as CompileResult,
+  CompileSummary
+} from "@/src/wasm/pkg/cobble_web_wasm.js";
 import { GitHubMark } from "./BrandIcons";
 import { HighlightedCode } from "./SyntaxHighlighter";
 import type { HighlightLanguage } from "./SyntaxHighlighter";
 
-type CompileFile = {
-  path: string;
-  kind: string;
-  content: string;
-};
-
-type CompileSummary = {
-  namespace: string;
-  pack_format: string;
-  minecraft_version: string;
-  function_count: number;
-  command_count: number;
-  resource_count: number;
-  file_count: number;
-};
-
-type CompileResult = {
-  ok: boolean;
-  files: CompileFile[];
-  diagnostics: string[];
-  summary: CompileSummary;
-};
-
-type WasmModule = {
-  default: (
-    moduleOrPath?:
-      | { module_or_path: RequestInfo | URL | Response | BufferSource | WebAssembly.Module }
-      | RequestInfo
-      | URL
-      | Response
-      | BufferSource
-      | WebAssembly.Module
-  ) => Promise<unknown>;
-  compile_cobble: (
-    source: string,
-    namespace?: string,
-    description?: string
-  ) => unknown;
-};
+type WasmModule = typeof import("@/src/wasm/pkg/cobble_web_wasm.js");
 
 type OutputView = "functions" | "resources" | "metadata" | "manifest" | "diagnostics";
 
@@ -131,6 +98,15 @@ def on_load():
     /say resources ready`
   },
   {
+    name: "Diagnostic Example",
+    namespace: "diagnostic_demo",
+    source: `def greet(player):
+    /tellraw {player} {"text":"Hello {message}"}
+
+def on_load():
+    greet("@a")`
+  },
+  {
     name: "Validation Focus",
     namespace: "validation_demo",
     source: `def commands():
@@ -176,7 +152,7 @@ export function CobbleDemo() {
 
     async function loadWasm() {
       try {
-        const mod = (await import("@/src/wasm/pkg/cobble_web_wasm.js")) as WasmModule;
+        const mod = await import("@/src/wasm/pkg/cobble_web_wasm.js");
         await mod.default({ module_or_path: `${basePath}/wasm/cobble_web_wasm_bg.wasm` });
         if (active) {
           setWasm(mod);
@@ -189,6 +165,7 @@ export function CobbleDemo() {
             ok: false,
             files: [],
             diagnostics: [error instanceof Error ? error.message : String(error)],
+            diagnostic_details: [],
             summary: emptySummary(namespace)
           });
         }
@@ -237,6 +214,7 @@ export function CobbleDemo() {
     : result?.ok
       ? ["No diagnostics."]
       : ["Loading Cobble WASM compiler..."];
+  const diagnosticDetails = result?.diagnostic_details ?? [];
 
   function compile() {
     if (!wasm) {
@@ -247,7 +225,7 @@ export function CobbleDemo() {
     setCopied(null);
 
     window.setTimeout(() => {
-      const compiled = wasm.compile_cobble(source, namespace, description) as CompileResult;
+      const compiled = wasm.compile_cobble(source, namespace, description);
       setResult(compiled);
       setStatus(compiled.ok ? "ready" : "error");
       const nextView = compiled.ok ? activeView : "diagnostics";
@@ -466,7 +444,32 @@ export function CobbleDemo() {
             </div>
 
             {activeView === "diagnostics" || !result?.ok ? (
-              <pre className="diagnostics">{diagnostics.join("\n")}</pre>
+              diagnosticDetails.length ? (
+                <div className="diagnostics diagnostic-list">
+                  {diagnosticDetails.map((diagnostic, index) => (
+                    <article className="diagnostic-card" key={`${diagnostic.kind}-${index}`}>
+                      <div className="diagnostic-heading">
+                        <span className={`diagnostic-severity ${diagnostic.severity}`}>
+                          {diagnostic.severity}
+                        </span>
+                        <code>{diagnostic.kind}</code>
+                      </div>
+                      <p>{diagnostic.message}</p>
+                      <code className="diagnostic-location">
+                        {diagnostic.file}:{diagnostic.line}:{diagnostic.column}
+                      </code>
+                      {diagnostic.formatted ? (
+                        <pre className="diagnostic-snippet">{diagnostic.formatted}</pre>
+                      ) : null}
+                      {diagnostic.help ? (
+                        <p className="diagnostic-help">{diagnostic.help}</p>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <pre className="diagnostics">{diagnostics.join("\n")}</pre>
+              )
             ) : (
               <>
                 <div className="file-tabs" role="tablist" aria-label="Generated files">
@@ -539,9 +542,12 @@ function StatusStrip({
   }
 
   if (!result.ok) {
+    const diagnosticCount = result.diagnostic_details.length || result.diagnostics.length;
     return (
       <div className="status-strip failed">
-        <span>{result.diagnostics.length} diagnostic</span>
+        <span>
+          {diagnosticCount} diagnostic{diagnosticCount === 1 ? "" : "s"}
+        </span>
       </div>
     );
   }

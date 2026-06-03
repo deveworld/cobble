@@ -26,6 +26,16 @@ impl Transpiler {
             ));
         }
 
+        // Re-processing an imported file as a directory entry can encounter the
+        // same alias again. Identical definitions are idempotent.
+        if self
+            .selector_aliases
+            .get(&selector_def.name)
+            .is_some_and(|selector| selector == &selector_def.selector)
+        {
+            return Ok(());
+        }
+
         // Check for duplicate definition (warning only)
         if self.selector_aliases.contains_key(&selector_def.name) {
             eprintln!(

@@ -1,7 +1,129 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
 use cobble::transpiler::{GeneratedCommandKind, SourceMap};
+use serde_json::Value;
+
+fn assert_object_keys(value: &Value, expected: &[&str]) {
+    let actual = value
+        .as_object()
+        .expect("value should be an object")
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let expected = expected
+        .iter()
+        .map(|key| key.to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn metadata_json_schema_shape_is_stable() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.cbl");
+    let output_dir = temp_dir.path().join("output");
+    fs::write(
+        &input_file,
+        r#"
+datapack.predicate("always", {
+    "condition": "minecraft:random_chance",
+    "chance": 1
+})
+
+def schema():
+    /say schema
+"#,
+    )
+    .unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file),
+        output: Some(output_dir.clone()),
+        namespace: Some("source_map".to_string()),
+        pack_format: None,
+        description: Some("Schema test".to_string()),
+        verbose: false,
+        quiet: false,
+        zip: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_object_keys(
+        &manifest,
+        &[
+            "version",
+            "cobble_version",
+            "minecraft_version",
+            "pack_format",
+            "pack_format_text",
+            "namespace",
+            "description",
+            "input",
+            "generated_namespaces",
+            "generated",
+            "resources",
+            "validation",
+        ],
+    );
+    assert_object_keys(
+        &manifest["input"],
+        &["source", "entry_points", "compiled_files"],
+    );
+    assert_object_keys(
+        &manifest["generated"],
+        &[
+            "functions",
+            "commands",
+            "source_map_entries",
+            "function_tags",
+            "stdlib_function_tags",
+            "custom_function_tags",
+            "json_function_tags",
+            "advancements",
+            "loot_tables",
+            "recipes",
+            "predicates",
+            "item_modifiers",
+            "json_resources",
+            "total_json_resources",
+        ],
+    );
+    let resources = manifest["resources"].as_array().unwrap();
+    assert_eq!(resources.len(), 1);
+    assert_object_keys(&resources[0], &["kind", "namespace", "path"]);
+
+    let source_map: Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/source_map.json")).unwrap(),
+    )
+    .unwrap();
+    assert_object_keys(&source_map, &["version", "entries"]);
+    let entry = source_map["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["command"] == "say schema")
+        .expect("schema command should be present in source map");
+    assert_object_keys(
+        entry,
+        &[
+            "generated_path",
+            "generated_line",
+            "command",
+            "source",
+            "kind",
+        ],
+    );
+    assert_object_keys(&entry["source"], &["file", "line", "column"]);
+}
 
 #[test]
 fn source_map_tracks_user_raw_command_locations() {

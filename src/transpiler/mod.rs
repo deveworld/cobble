@@ -2491,6 +2491,17 @@ impl Transpiler {
         if !values.is_array() {
             return Err("Tag values must be an array".to_string());
         }
+        if let Some(values) = values.as_array() {
+            for value in values {
+                let Some(id) = value.as_str() else {
+                    return Err(
+                        "Tag values must be string resource IDs such as \"minecraft:stone\""
+                            .to_string(),
+                    );
+                };
+                self.plain_resource_id_to_parts(id, "tag value")?;
+            }
+        }
 
         let json = serde_json::json!({ "values": values });
         let content = serde_json::to_string_pretty(&json)
@@ -2538,6 +2549,14 @@ impl Transpiler {
         label: &str,
     ) -> Result<(Option<String>, String), String> {
         let id = self.expr_to_plain_arg(expr, label)?;
+        self.plain_resource_id_to_parts(&id, label)
+    }
+
+    fn plain_resource_id_to_parts(
+        &self,
+        id: &str,
+        label: &str,
+    ) -> Result<(Option<String>, String), String> {
         let (namespace, path) = if let Some((namespace, path)) = id.split_once(':') {
             if path.contains(':') {
                 return Err(format!(
@@ -2547,7 +2566,7 @@ impl Transpiler {
             }
             (Some(namespace.to_string()), path.to_string())
         } else {
-            (None, id.clone())
+            (None, id.to_string())
         };
 
         if let Some(namespace) = &namespace {
@@ -2569,7 +2588,7 @@ impl Transpiler {
 
         if namespace.is_none() {
             if let Some((prefix, suffix)) = path.split_once('/') {
-                if matches!(prefix, "minecraft") || prefix == self.data_pack.namespace {
+                if matches!(prefix, "minecraft") {
                     return Err(format!(
                         "Invalid {} '{}': '{}' looks like a namespace. Use '{}:{}' instead of a slash-separated namespace prefix.",
                         label, id, prefix, prefix, suffix

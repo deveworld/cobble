@@ -21,4 +21,4 @@ def call_functions():
     # Note: To call these functions with arguments,
     # you would need to pass them from another context
     greet(@a)
-    give_items(@a, diamond, 5)
+    give_items(@a, "diamond", 5)

@@ -28,7 +28,7 @@ cobble init [OPTIONS]
 **Options:**
 - `--name <NAME>` - Set the project name (default: current directory name)
 - `--description <DESC>` - Set the project description
-- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.6.3 requires Minecraft Java Edition 26.1.2)
+- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.7.0-rc.1 requires Minecraft Java Edition 26.1.2)
 - `--template <NAME>` - Starter template: `minimal`, `stdlib`, or `validation` (default: `stdlib`)
 
 **Example:**
@@ -147,20 +147,35 @@ counts, generated resource entries, and validation summary when validation ran.
 map generated commands back to Cobble source. Source-map file paths are written
 relative to the project/source root when Cobble can determine one, avoiding
 unnecessary absolute paths in generated metadata.
+See [`metadata.md`](metadata.md) for the stable field list.
 
 ### `cobble check`
 
-Check Cobble source files for syntax errors without building.
+Check Cobble source files for language-surface and syntax errors without
+building. The check command reports source file, line, and column for early
+diagnostics such as unsupported Python-like syntax, missing imports, circular
+imports, import item mistakes, indentation mistakes, duplicate imported or
+directory-compiled symbols, undefined variables in standalone helper call
+arguments, undefined Cobble function names, unknown helper module calls, and
+language diagnostics in imported files.
 
 ```bash
-cobble check [SOURCE]
+cobble check [SOURCE] [OPTIONS]
 ```
+
+**Options:**
+- `--json` - Print a machine-readable report with `ok`, `files`, `diagnostics`, and `error_count`
 
 **Example:**
 ```bash
 cobble check src/main.cbl
 cobble check examples/
+cobble check --json src/main.cbl
 ```
+
+JSON output is written to stdout. On failure the process still exits non-zero;
+human-oriented error text may be written to stderr while stdout remains valid
+JSON.
 
 ### `cobble doctor`
 
@@ -326,7 +341,7 @@ entry_points = []
 |-------------------|-------------|
 | Java Edition 26.1.2 | 101.1 |
 
-Cobble v0.6.3 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
+Cobble v0.7.0-rc.1 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
 
 **Note**: Pack format 101.1 is written to `pack.mcmeta` as `min_format` and `max_format` arrays: `[101, 1]`.
 
@@ -521,7 +536,7 @@ give {player} diamond 1
 cobble build --pack-format 101.1
 ```
 
-Note: Cobble v0.6.3 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
+Note: Cobble v0.7.0-rc.1 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ### Issue: Functions not found
 

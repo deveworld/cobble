@@ -1,9 +1,10 @@
+use super::{find_cobble_files, resolve_entry_points};
 use crate::commands::validate::{print_validation_report, run_validation};
 use crate::config::CobbleConfig;
+use crate::diagnostics::{format_file_diagnostics, parse_source_files};
 use crate::pack_format::{
     PackFormat, COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT,
 };
-use crate::parser::parse;
 use crate::transpiler::{BuildManifestInput, BuildManifestValidation, Transpiler};
 use crate::validator::ValidationReport;
 use std::fs;
@@ -179,8 +180,15 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         return Err("No Cobble files found to compile".to_string());
     }
 
+    let parsed_files = parse_source_files(&files_to_compile).map_err(|diagnostics| {
+        format!(
+            "Language diagnostics failed:\n{}",
+            format_file_diagnostics(&diagnostics)
+        )
+    })?;
+
     // Compile all files
-    for file_path in &files_to_compile {
+    for (file_path, parsed) in files_to_compile.iter().zip(parsed_files.iter()) {
         if !options.quiet {
             println!(
                 "  • Compiling: {:?}",
@@ -188,22 +196,11 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
             );
         }
 
-        let src = fs::read_to_string(file_path)
-            .map_err(|e| format!("Failed to read {:?}: {}", file_path, e))?;
-
-        let program = parse(&src).map_err(|errors| {
-            format!(
-                "Parse failed for {:?}:\n  {}",
-                file_path,
-                errors.join("\n  ")
-            )
-        })?;
-
         // Set current file for import resolution and source tracking
-        transpiler.set_current_file_with_source(file_path, &src);
+        transpiler.set_current_file_with_source(file_path, &parsed.source);
 
         transpiler
-            .transpile(&program)
+            .transpile(&parsed.program)
             .map_err(|e| format!("Transpilation failed for {:?}: {}", file_path, e))?;
     }
 
@@ -481,58 +478,6 @@ fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
     }
     // Look in current directory
     CobbleConfig::find_in_path(".")
-}
-
-fn resolve_entry_points(
-    source_dir: &Path,
-    entry_points: &[String],
-) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-
-    for entry_point in entry_points {
-        let entry_path = Path::new(entry_point);
-        let path = if entry_path.is_absolute() {
-            entry_path.to_path_buf()
-        } else {
-            source_dir.join(entry_path)
-        };
-
-        if path.is_file() {
-            files.push(path);
-        } else if path.is_dir() {
-            files.extend(find_cobble_files(&path)?);
-        } else {
-            return Err(format!("Entry point does not exist: {}", path.display()));
-        }
-    }
-
-    Ok(files)
-}
-
-fn find_cobble_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-
-    for entry in WalkDir::new(dir)
-        .follow_links(false) // Security: Don't follow symlinks to prevent attacks
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if path.is_symlink() {
-            eprintln!("⚠️  Warning: Skipping symlink: {:?}", path);
-            continue;
-        }
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext == "cbl" || ext == "cobble" {
-                    files.push(path.to_path_buf());
-                }
-            }
-        }
-    }
-
-    files.sort();
-    Ok(files)
 }
 
 #[cfg(test)]
@@ -894,6 +839,68 @@ mod tests {
         assert!(error.contains("Circular import detected"));
         assert!(error.contains(&main_file.display().to_string()));
         assert!(error.contains(&helper_file.display().to_string()));
+    }
+
+    #[test]
+    fn build_fails_on_cross_file_duplicate_function_without_writing_output() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let main_file = temp_dir.path().join("main.cbl");
+        let helper_file = temp_dir.path().join("helper.cbl");
+        let output_dir = temp_dir.path().join("output");
+        fs::write(
+            &main_file,
+            "import helper\n\ndef greet():\n    /say from main\n",
+        )
+        .unwrap();
+        fs::write(&helper_file, "def greet():\n    /say from helper\n").unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(main_file),
+            output: Some(output_dir.clone()),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Language diagnostics failed"));
+        assert!(error.contains("duplicate-function"));
+        assert!(error.contains("Duplicate function definition `greet` across imported files"));
+        assert!(!output_dir.exists());
+    }
+
+    #[test]
+    fn build_fails_on_language_diagnostic_without_writing_output() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("main.cbl");
+        let output_dir = temp_dir.path().join("output");
+        fs::write(&input_file, "def main():\n    score += 1\n").unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir.clone()),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Language diagnostics failed"));
+        assert!(error.contains("unsupported-assignment"));
+        assert!(error.contains("Compound assignment `+=` is not supported"));
+        assert!(!output_dir.exists());
     }
 
     #[test]

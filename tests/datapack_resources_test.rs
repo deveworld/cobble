@@ -159,6 +159,30 @@ def setup():
 }
 
 #[test]
+fn datapack_json_resources_serialize_none_as_json_null() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+datapack.predicate("maybe", {
+    "condition": "minecraft:random_chance",
+    "chance": 1,
+    "comment": None
+})
+
+def setup():
+    /say setup
+"#,
+    )
+    .unwrap();
+
+    let predicate: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("data/resources/predicate/maybe.json")).unwrap(),
+    )
+    .unwrap();
+
+    assert!(predicate["comment"].is_null());
+}
+
+#[test]
 fn datapack_function_tags_merge_with_stdlib_event_tags() {
     let (_temp, output_dir) = compile_source(
         r#"
@@ -338,6 +362,25 @@ datapack.function_tag("minecraft/load", ["resources:setup"])
 
     assert!(namespace_error.contains("'minecraft' looks like a namespace"));
     assert!(namespace_error.contains("minecraft:load"));
+
+    let tag_value_error = compile_source(
+        r#"
+datapack.item_tag("rewards", ["minecraft/diamond"])
+"#,
+    )
+    .unwrap_err();
+
+    assert!(tag_value_error.contains("Invalid tag value"));
+    assert!(tag_value_error.contains("minecraft:diamond"));
+
+    let non_string_tag_value_error = compile_source(
+        r#"
+datapack.item_tag("rewards", [1])
+"#,
+    )
+    .unwrap_err();
+
+    assert!(non_string_tag_value_error.contains("Tag values must be string resource IDs"));
 }
 
 #[test]

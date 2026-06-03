@@ -1042,6 +1042,9 @@ impl Transpiler {
             } else {
                 "0b".to_string()
             }),
+            Expression::None => Err(
+                "None/null values are not supported in Minecraft SNBT storage literals because NBT has no null type. Use a data pack JSON resource helper when you need JSON null, or choose an explicit sentinel value for storage.".to_string(),
+            ),
             Expression::Array(items) => {
                 let mut result = String::from("[");
                 for (i, item) in items.iter().enumerate() {

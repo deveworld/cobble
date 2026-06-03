@@ -1,5 +1,5 @@
 use cobble::commands;
-use cobble::commands::{DoctorOptions, InspectOptions};
+use cobble::commands::{CheckOptions, DoctorOptions, InspectOptions};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -122,6 +122,10 @@ enum Commands {
     Check {
         /// Input file or directory to check
         input: Option<PathBuf>,
+
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Report Cobble project and validation environment status
@@ -216,7 +220,7 @@ fn main() {
             validate,
             commands_json,
         ),
-        Commands::Check { input } => commands::check(input),
+        Commands::Check { input, json } => commands::check(CheckOptions { input, json }),
         Commands::Doctor {
             path,
             commands_json,

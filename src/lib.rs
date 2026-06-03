@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod commands;
 pub mod config;
+pub mod diagnostics;
 pub mod error;
 pub mod pack_format;
 pub mod parser;

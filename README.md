@@ -14,7 +14,8 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Cobble 0.6.3** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
+**Release candidate 0.7.0-rc.1** targets Minecraft Java Edition 26.1.2 and
+pack format 101.1. The latest stable release is 0.6.3.
 
 ## Website And Web Demo
 

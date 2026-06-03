@@ -5,6 +5,50 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0-rc.1] - 2026-06-04
+
+### Added
+- Added a language support matrix documenting supported Cobble syntax and intentionally unsupported Python-like syntax.
+- Added parser-level language surface regression tests for representative supported and unsupported constructs.
+- Added a shared source diagnostic API with line/column reporting for early language-surface errors.
+- Added CLI and WASM diagnostics for unsupported Python-like constructs such as default parameters, varargs, decorators, compound assignment, comprehensions, dotted/relative imports, import aliases, wildcard imports, `break`, `continue`, `raise`, `assert`, `del`, `nonlocal`, `for ... else`, and non-identifier assignment targets.
+- Added source-aware diagnostics for duplicate function parameter names.
+- Added source-aware diagnostics for common missing block-colon, unexpected/inconsistent indentation, unclosed delimiter, unmatched delimiter, and unterminated string syntax mistakes before parser fallback.
+- Added semantic preflight diagnostics for duplicate function definitions, unsupported `return` statements, and non-math function calls used as assignment values.
+- Added semantic preflight diagnostics for same-file user function call argument counts, including calls that appear before the function definition.
+- Added semantic preflight diagnostics for nested function-call expressions passed to same-file user functions.
+- Added source-aware diagnostics for standalone expressions that would otherwise be no-ops.
+- Added semantic preflight diagnostics for undefined variables in variable-dependent expressions such as assignments, control-flow conditions, and standalone helper/function call arguments.
+- Added source-aware diagnostics for undefined, invalid, or unclosed raw command `{name}` placeholders while preserving JSON/NBT braces and `{{name}}` literals.
+- Added source-aware type mismatch diagnostics for clearly inferred variable reassignments before transpilation.
+- Added source-aware datapack helper argument diagnostics for non-object JSON resources and invalid tag value arrays.
+- Added source-aware datapack resource ID diagnostics for invalid literal names and tag values such as `minecraft/load` and uppercase paths.
+- Added CLI import-tree preflight diagnostics for missing imports, circular import chains, and imported-file language diagnostics before transpilation.
+- Added CLI import-tree diagnostics for `from module import item` names that do not exist in the imported file.
+- Added import-wide and directory-wide diagnostics for duplicate function definitions, duplicate selector/entity symbols, and calls to imported functions with the wrong argument count.
+- Added browser compiler diagnostics for non-stdlib imports in single-file WASM compilation.
+- Added CRLF-aware diagnostic byte offsets so source snippets stay aligned on Windows-authored files.
+- Added source-line snippets and caret markers to file-level language diagnostic formatting used by build failures.
+- Added a `scripts/check_examples.sh` QA helper that checks independent examples one at a time.
+- Added `cobble check --json` for machine-readable file summaries and structured diagnostics.
+- Added metadata schema documentation for `.cobble/build_manifest.json` and `.cobble/source_map.json`.
+- Added schema-shape regression coverage for stable metadata JSON fields.
+- Added structured WASM diagnostic details for the web compiler response, while retaining legacy formatted diagnostic strings.
+- Added `/try` browser E2E coverage for invalid Cobble source and structured diagnostic rendering.
+- Added a `/try` diagnostic sample that demonstrates raw command placeholder errors.
+
+### Changed
+- Promoted the 0.7.0 development line to the first release candidate,
+  `0.7.0-rc.1`.
+- Started the 0.7.0 language specification and diagnostics planning cycle.
+- Clarified the language reference around Cobble-vs-Python compatibility, raw command placeholders, unsupported constructs, and shared diagnostics.
+- `cobble check`, `cobble build`, and the web compiler now share the same early language-surface diagnostic pass before parser/transpiler execution.
+- Existing successful examples continue to accept math intrinsics such as `math.sqrt()` in assignment values while rejecting Cobble function calls as expression values.
+- Same-file user function argument checking ignores module/stdlib calls so resource and helper APIs continue to use their existing transpiler validation paths.
+- `cobble check` now follows file imports for local source diagnostics, while WASM continues to compile a single in-memory file.
+- Import-tree and directory build diagnostics now reject cross-file function name collisions before generated functions can be overwritten.
+- Later semantic scans now ignore multi-line docstring bodies after parser-level docstring handling.
+
 ## [0.6.3] - 2026-06-03
 
 ### Added

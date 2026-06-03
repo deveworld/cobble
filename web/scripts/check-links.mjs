@@ -22,6 +22,7 @@ const expectedStaticFiles = [
   "out/cobble-workshop.jpg",
   "out/icon.svg"
 ];
+const checkWebExport = process.env.COBBLE_LINK_CHECK_WEB_EXPORT !== "0";
 
 const errors = [];
 
@@ -29,10 +30,12 @@ for (const file of markdownFiles) {
   await checkMarkdownFile(file);
 }
 
-for (const expected of expectedStaticFiles) {
-  const target = path.join(webRoot, expected);
-  if (!existsSync(target)) {
-    errors.push(`Missing web export file: web/${expected}`);
+if (checkWebExport) {
+  for (const expected of expectedStaticFiles) {
+    const target = path.join(webRoot, expected);
+    if (!existsSync(target)) {
+      errors.push(`Missing web export file: web/${expected}`);
+    }
   }
 }
 
@@ -42,7 +45,9 @@ if (errors.length > 0) {
 }
 
 console.log(
-  `Checked ${markdownFiles.length} markdown files and ${expectedStaticFiles.length} web export files.`
+  checkWebExport
+    ? `Checked ${markdownFiles.length} markdown files and ${expectedStaticFiles.length} web export files.`
+    : `Checked ${markdownFiles.length} markdown files.`
 );
 
 async function checkMarkdownFile(file) {

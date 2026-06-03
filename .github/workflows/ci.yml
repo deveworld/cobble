@@ -13,6 +13,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  links:
+    name: Documentation Links
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check markdown links
+        working-directory: web
+        run: npm run test:docs-links
+
   rust:
     name: Rust
     runs-on: ubuntu-latest

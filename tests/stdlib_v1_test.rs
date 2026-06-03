@@ -221,7 +221,9 @@ def standalone():
 "#,
     )
     .unwrap_err();
-    assert!(standalone_error.contains("text.plain() returns a JSON text component"));
+    assert!(standalone_error.contains("unsupported-function-call-expression"));
+    assert!(standalone_error
+        .contains("`text.plain` returns a value and cannot be used as a standalone statement"));
 }
 
 #[test]

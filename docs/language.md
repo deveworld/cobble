@@ -1,9 +1,15 @@
 # Cobble Language Reference
 
-Cobble is a high-level, Python-inspired language that compiles to Minecraft data packs. It brings modern programming features to Minecraft command development.
+Cobble is a high-level, Python-inspired language that compiles to Minecraft
+data packs. Cobble is not Python-compatible; this reference describes the
+syntax and behavior that Cobble intentionally supports.
+
+For the implementation-facing support matrix, see
+[Language Support Matrix](language-support.md).
 
 ## Table of Contents
 
+- [Language Support Matrix](language-support.md)
 - [Basic Syntax](#basic-syntax)
 - [Data Types](#data-types)
 - [Type System](#type-system)
@@ -13,10 +19,15 @@ Cobble is a high-level, Python-inspired language that compiles to Minecraft data
 - [Minecraft Commands](#minecraft-commands)
 - [Standard Library](#standard-library)
 - [Events](#events)
+- [Unsupported Python-Like Constructs](#unsupported-python-like-constructs)
+- [Diagnostics](#diagnostics)
 
 ## Basic Syntax
 
-Cobble uses Python-style indentation for code blocks. No braces or semicolons required!
+Cobble uses indentation-based blocks after `:`. No braces or semicolons are
+required.
+Unexpected indentation and dedents that do not match a previous block level are
+diagnostics before parser fallback.
 
 ```python
 # This is a comment
@@ -47,6 +58,30 @@ is_disabled = False
 
 Booleans are stored as integers in Minecraft scoreboards (0 for False, 1 for True).
 
+### Lists, Maps, and None
+```python
+items = ["minecraft:diamond", "minecraft:emerald"]
+config = {"chance": 1, "note": "missing"}
+first_item = items[0]
+chance = config.chance
+
+datapack.predicate("maybe", {
+    "condition": "minecraft:random_chance",
+    "chance": 1,
+    "comment": None
+})
+```
+
+Lists and maps are storage-backed values. Cobble supports attribute and
+subscript access when the base value resolves to a storage path, including
+literal or constant subscript segments. Arbitrary Python-style indexing is not a
+general runtime feature yet.
+
+`None` is supported where Cobble serializes data pack JSON resources. It is
+emitted as JSON `null`; it is not a scoreboard value and should not be used as a
+numeric or boolean expression. Minecraft NBT/SNBT storage has no null type, so
+storage literals reject `None`; use an explicit sentinel value for storage.
+
 ## Type System
 
 Cobble has a **static, immutable type system**. Once a variable is assigned a value, its type is fixed and cannot change.
@@ -58,7 +93,7 @@ Variable types are automatically inferred from their first assignment:
 ```python
 x = 5        # x is type: integer
 y = True     # y is type: boolean
-name = "Bob" # name is type: string (only in function parameters)
+name = "Bob" # name is type: string
 ```
 
 ### Immutable Types
@@ -235,7 +270,12 @@ def give_reward(player, amount):
     /tellraw {player} {"text":"You received diamonds!", "color":"gold"}
 ```
 
-**Important**: Use `{param_name}` syntax to use `$(param_name)` in commands for function parameters. Cobble v0.6.3 targets Minecraft Java Edition 26.1.2, where this macro syntax is available.
+**Important**: Use `{param_name}` in Cobble source. Cobble compiles it to
+Minecraft's `$(param_name)` macro syntax when needed. Cobble v0.7.0-rc.1 targets
+Minecraft Java Edition 26.1.2, where function macros are available.
+
+Parameter names must be unique. Default parameter values, `*args`, and
+`**kwargs` are intentionally unsupported.
 
 ### Calling Functions
 
@@ -358,7 +398,7 @@ def check_players():
     as @a if entity @s[tag=special]:
         /say Special player!
 
-    # Use regular if statements for Python boolean expressions
+    # Use regular if statements for Cobble boolean expressions
     x = 5
     if x > 0 and not x == 10:
         as @a:
@@ -579,13 +619,18 @@ def announce():
 
 ### Variable Substitution in Commands
 
-Use Minecraft's macro syntax `{name}` for function parameters:
+Use `{name}` for function parameters, loop variables, and defined Cobble
+variables inside raw commands:
 
 ```python
 def teleport_player(player, x, y, z):
     /tp {player} {x} {y} {z}
     /tellraw {player} {"text":"Teleported!", "color":"green"}
 ```
+
+Unknown, invalid, and unclosed placeholders are diagnostics. Use identifier
+names such as `{player_name}`, define the value, pass it as a function
+parameter, or escape literal braces as `{{name}}`.
 
 ## Entity Selector Definitions
 
@@ -641,8 +686,14 @@ def test():
 - Use `import filename` to import another `.cbl` file
 - Imported files are resolved relative to the importing file
 - All functions and selector definitions are merged
+- Duplicate function names, selector aliases, and entity template names across
+  imported files are compile errors
 - Circular imports are compile errors and include the import chain
 - Missing imports include the importing file and expected path
+- `from module import item` verifies that each requested item exists in the
+  imported file
+- Import aliases, wildcard imports, and comma-separated `import a, b` module
+  lists are not supported; use one explicit import per line
 - Standard library imports (`import stdlib`) work as before
 
 ## Standard Library
@@ -840,13 +891,13 @@ Function parameters use macro syntax:
 ```python
 def complex_give(player, amount):
     # Give to the parameter player
-    /give $(player) minecraft:diamond $(amount)
+    /give {player} minecraft:diamond {amount}
 
     # Give to a literal player named "Steve"
     /give Steve minecraft:gold_ingot 1
 
     # Use in JSON with parameters
-    /tellraw $(player) {"text":"You got items!", "color":"gold"}
+    /tellraw {player} {"text":"You got items!", "color":"gold"}
 ```
 
 ### Arithmetic Operations
@@ -858,6 +909,8 @@ def calculate():
     a = 10
     b = 5
     c = 3
+    d = 8
+    e = 2
 
     # Basic operations
     sum = a + b          # Addition: 15
@@ -907,7 +960,7 @@ x = 10 / 0  # ✅ Compile error: Division by zero
 Division/modulo by a **variable** that may be zero at runtime is **not checked**:
 ```python
 a = 10
-b = get_value()  # Could be 0 at runtime
+b = 0  # Could come from earlier scoreboard/storage state at runtime
 c = a / b  # ⚠️ No compile-time check - undefined behavior in Minecraft
 ```
 
@@ -976,18 +1029,69 @@ stdlib.addEventListener(event.TICK, game_loop)
 
 ## Minecraft Version Compatibility
 
-Cobble v0.6.3 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
+Cobble v0.7.0-rc.1 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this development release.
 
 - **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax
 - **Data packs**: Selected modern data pack resources through `datapack.*` helpers
 - **Decimal pack formats**: Emits `pack.mcmeta` with `min_format` and `max_format` set to `[101, 1]`
 
+## Unsupported Python-Like Constructs
+
+Cobble is Python-inspired, but it is not a Python runtime. Unsupported
+constructs fail before transpilation when practical.
+
+- Classes, decorators, `try`/`except`/`finally`, `with`, `lambda`, `yield`,
+  `async`, `await`, `break`, `continue`, `raise`, `assert`, `del`, and
+  `nonlocal` are not supported.
+- Runtime `return` statements and return values are not supported.
+- Default parameters, duplicate parameter names, `*args`, and `**kwargs` are not
+  supported.
+- List and dict comprehensions are not supported.
+- `for ... else` is not supported.
+- Dotted or relative imports are not supported. Use simple local module names.
+- Assignment targets must be simple identifiers.
+- Cobble function calls are standalone statements. Assignment expressions may
+  use math intrinsics such as `math.sqrt(...)`, but arbitrary function calls in
+  expressions are rejected.
+- Standalone value expressions such as `score + 1` do not generate commands and
+  are rejected. Use an assignment, function/helper call, raw command, or `pass`.
+- The browser compiler accepts a single in-memory file. Non-`stdlib` imports
+  should be checked with the CLI so Cobble can resolve local files from disk.
+
+## Diagnostics
+
+`cobble check`, `cobble build`, and the browser compiler share early
+source-aware diagnostics for common mistakes:
+
+- unsupported Python-like syntax,
+- missing `:` after block headers,
+- unclosed delimiters or strings,
+- duplicate functions and duplicate parameters, including duplicate functions
+  across imported or directory-compiled files,
+- standalone no-op expressions,
+- missing/circular imports and imported-file diagnostics,
+- browser diagnostics for non-`stdlib` imports in single-file compilation,
+- undefined variables in expressions and standalone helper/function call
+  arguments,
+- undefined Cobble function names and unknown helper module calls,
+- undefined, invalid, unsupported imported-symbol, or unclosed raw command
+  `{name}` placeholders,
+- clearly inferred type mismatches,
+- malformed `datapack.*` helper argument shapes, literal resource IDs, and tag
+  value IDs, including non-string tag entries.
+
+CLI diagnostics include file, line, column, source snippets, caret markers, and
+actionable help text where available. Source snippets account for CRLF line
+endings, and semantic scans ignore docstring bodies after parsing. The browser
+compiler exposes the same line, column, kind, message, and help fields in
+structured diagnostics.
+
 ## Limitations
 
-- No support for classes (yet)
-- No support for lists/arrays (yet)
-- Boolean `and`, `or`, and `not` operators are all fully supported
+- No Python class, exception, decorator, or runtime return-value semantics
+- Lists and maps are storage-backed values; access works only when the base
+  resolves to storage, and dynamic indexing remains limited
 - Function parameters require Minecraft's function macro support
 - For loops only support `range()` iterators
 - While loops compile to recursive functions (performance impact for very long loops)

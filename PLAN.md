@@ -4,7 +4,7 @@
 
 - Planning date: 2026-06-02
 - Current stable release: `0.6.3`
-- Active development focus: `0.7.0 planning`
+- Active release candidate: `0.7.0-rc.1`
 - Current Minecraft target: Java Edition `26.1.2`
 - Current data pack format: `101.1`
 - Package name: `cobble-lang`
@@ -12,10 +12,10 @@
 - Website: <https://deveworld.github.io/cobble/>
 - Browser compiler: <https://deveworld.github.io/cobble/try/>
 
-This roadmap records the completed 0.6.3 stabilization plan and the next
-post-0.6.3 direction. Historical
-release details belong in `CHANGELOG.md`; this file tracks what Cobble should
-become after 0.6.3.
+This roadmap records the completed 0.6.3 stabilization plan and the active
+0.7.0 language-specification and diagnostics plan. Historical release details
+belong in `CHANGELOG.md`; this file tracks what Cobble should become after
+0.6.3.
 
 ## North Star
 
@@ -145,7 +145,7 @@ surface.
 - `cargo fmt --check` passes.
 - `cargo test --locked` passes.
 - `cargo clippy --locked --all-targets -- -D warnings` passes.
-- `cargo run --locked -- check examples` passes.
+- `scripts/check_examples.sh` passes.
 - `cargo run --locked -- build examples/26_smoke --validate` passes.
 - `cargo run --locked -- build examples/26_feature_matrix --validate` passes.
 - `cargo package --locked` passes before publishing.
@@ -381,7 +381,7 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- --version
-cargo run --locked -- check examples
+scripts/check_examples.sh
 cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
 cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
 cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
@@ -444,7 +444,7 @@ Theme: make Cobble's language rules explicit and improve compiler feedback.
 
 #### Candidate Work
 
-- Write `docs/language.md` as a spec rather than only a feature tour:
+- Rewrite `docs/language.md` as a spec rather than only a feature tour:
   - lexical rules
   - indentation rules
   - expression support
@@ -475,6 +475,293 @@ Theme: make Cobble's language rules explicit and improve compiler feedback.
   - `.cobble/build_manifest.json`
   - future editor tooling
 - Expand negative tests for unsupported language constructs.
+
+#### Detailed 0.7.0 Plan
+
+0.7.0 should clarify what Cobble is, not make it look more like Python by
+accident. The release should draw a clean line between supported Cobble syntax,
+compile-time conveniences, raw Minecraft command passthrough, and intentionally
+unsupported Python-like constructs.
+
+##### Implemented So Far In 0.7.0-rc.1
+
+- Promoted the active 0.7.0 line to release candidate `0.7.0-rc.1`.
+- Added `docs/language-support.md` as the implementation-facing language
+  support matrix.
+- Clarified `docs/language.md` around Cobble-vs-Python compatibility, raw
+  command placeholders, unsupported constructs, and shared diagnostics.
+- Added parser-level language surface regression tests for representative
+  supported and unsupported constructs.
+- Added a shared source diagnostic API for early language-surface errors.
+- Wired the early diagnostic pass into `cobble check`, `cobble build`, and the
+  web WASM compiler.
+- Added regression coverage for unsupported Python-like constructs including
+  default parameters, varargs, decorators, compound assignment, comprehensions,
+  dotted/relative imports, import aliases, wildcard imports,
+  comma-separated module imports, `break`, `continue`, `raise`, `assert`,
+  `del`, `nonlocal`, `for ... else`, and non-identifier assignment targets.
+- Added source-aware diagnostics for duplicate function parameter names.
+- Added source-aware diagnostics for common missing block-colon,
+  unexpected/inconsistent indentation, unclosed delimiter, unmatched delimiter,
+  and unterminated string syntax mistakes before parser fallback.
+- Added the first semantic preflight checks for duplicate function definitions,
+  unsupported `return` statements, and non-math function calls used as
+  assignment values.
+- Added same-file user function call argument-count diagnostics, including
+  forward calls, while leaving module/stdlib call validation on the existing
+  transpiler paths.
+- Added same-file user function argument diagnostics for nested function-call
+  expressions such as `user_func(other_func())`.
+- Added source-aware diagnostics for standalone expressions that would
+  otherwise be no-ops.
+- Added undefined-variable diagnostics for variable-dependent expressions such
+  as assignment RHS values, control-flow conditions, and standalone
+  helper/function call arguments.
+- Added source-aware diagnostics for undefined, invalid, or unclosed raw
+  command `{name}` placeholders while preserving JSON/NBT braces and `{{name}}`
+  literals.
+- Added source-aware type mismatch diagnostics for clearly inferred variable
+  reassignments before transpilation.
+- Added source-aware datapack helper argument diagnostics for non-object JSON
+  resources and invalid tag value arrays in single-line and multi-line calls.
+- Added source-aware datapack resource ID diagnostics for invalid literal names
+  and tag values such as `minecraft/load`, uppercase paths, invalid namespaces,
+  and invalid path separators.
+- Added CLI import-tree preflight for missing imports, circular imports, and
+  imported-file language diagnostics before transpilation.
+- Added CLI import-tree diagnostics for `from module import item` names that do
+  not exist in the imported file.
+- Added import-wide function diagnostics for duplicate function definitions,
+  duplicate selector/entity symbols, and calls to imported functions with the
+  wrong argument count.
+- Added multi-root CLI preflight so directory/project builds reject duplicate
+  functions and duplicate named symbols across independent root files.
+- Added browser compiler diagnostics for non-stdlib imports in single-file WASM
+  compilation.
+- Hardened semantic diagnostics to skip multi-line docstring bodies after
+  parser-level docstring handling.
+- Fixed CRLF-aware diagnostic byte offsets so rendered snippets stay aligned on
+  Windows-authored files.
+- Added source-line snippets and caret markers to file-level language diagnostic
+  formatting used by build failures.
+- Added `cobble check --json` for machine-readable file summaries and
+  structured diagnostics while preserving non-zero exits on failed checks.
+- Added metadata schema documentation and schema-shape regression coverage for
+  `.cobble/build_manifest.json` and `.cobble/source_map.json`.
+- Added structured WASM diagnostic details for the web compiler response while
+  preserving legacy formatted diagnostic strings for compatibility.
+- Added `/try` browser E2E coverage for invalid Cobble source and structured
+  diagnostic rendering.
+- Added a `/try` diagnostic sample that demonstrates raw command placeholder
+  errors.
+
+##### 1. Language Specification Audit
+
+Tasks:
+
+- Inventory the parser and current tests into a support matrix:
+  - literals: numbers, strings, booleans, arrays, maps, SNBT-like objects,
+  - expressions: arithmetic, comparisons, boolean operators, unary operators,
+    power/modulo, indexing where supported,
+  - statements: assignments, constants, globals, functions, imports,
+    `if`/`elif`/`else`, `while`, `for`, `match`, raw commands,
+  - command interpolation: `{param}` macros, selector aliases, JSON values,
+  - compile-time declarations: `datapack.*`, stdlib imports, event listeners.
+- Split `docs/language.md` into clear sections:
+  - supported grammar,
+  - semantic rules,
+  - command interpolation rules,
+  - resource declaration rules,
+  - unsupported Python features,
+  - examples with generated output where useful.
+- Add a short compatibility note that Cobble is Python-like but not Python.
+
+Acceptance criteria:
+
+- Every documented language feature has at least one parser/transpiler test or
+  example snapshot.
+- Every explicitly unsupported feature has a documented reason or alternative.
+- The language reference avoids vague terms such as "Python-style" without
+  defining the exact supported behavior.
+
+##### 2. Semantic Diagnostics Pass
+
+Tasks:
+
+- Add a lightweight semantic-analysis layer before transpilation where it can
+  catch errors without changing generated output.
+- Start with high-signal checks:
+  - undefined variables in expressions,
+  - assignment to unsupported targets,
+  - unsupported function-call positions,
+  - duplicate function names in one module,
+  - unsupported `return` values,
+  - type mismatches already inferred later in transpilation,
+  - non-object JSON passed to resource helpers,
+  - impossible or no-op constructs when detection is straightforward.
+- Preserve existing transpiler behavior while moving diagnostic ownership to the
+  semantic pass gradually.
+- Make diagnostics source-aware across imported files.
+
+Acceptance criteria:
+
+- Semantic errors produce source file, line, column, and actionable message.
+- Existing successful examples compile to the same generated output unless an
+  intentional diagnostic catches a previously accepted bug.
+- Negative tests cover each new semantic diagnostic.
+
+##### 3. Diagnostic Rendering And Import Context
+
+Tasks:
+
+- Standardize error message shape across parser, semantic, transpiler, and
+  validator failures.
+- Include import-chain context when an imported file fails.
+- Improve suggestions for common mistakes:
+  - using `minecraft/load` instead of `minecraft:load`,
+  - uppercase resource paths,
+  - unsupported Python syntax,
+  - accidental string/scoreboard type mismatch,
+  - invalid function macro placeholders.
+- Keep generated-command validation diagnostics tied to source-map entries.
+- Make `--quiet` and JSON-oriented workflows remain script-friendly.
+
+Acceptance criteria:
+
+- CLI regression tests cover representative diagnostics from each compiler
+  stage.
+- Error messages are stable enough for users to understand, but tests avoid
+  asserting brittle decorative formatting.
+- Import failures identify both importing file and failed target.
+
+##### 4. Parser And AST Boundary Cleanup
+
+Tasks:
+
+- Document parser ownership for syntax only; do not let parser behavior imply
+  semantic support by accident.
+- Review AST variants for unsupported or ambiguous constructs.
+- Add helper APIs for span/source ownership so semantic checks and transpiler
+  diagnostics do not duplicate line lookup logic.
+- Keep parser grammar changes minimal unless a diagnostic requires it.
+
+Acceptance criteria:
+
+- Parser tests describe syntax acceptance separately from semantic acceptance.
+- Source span collection is shared by parser/semantic/transpiler paths where
+  practical.
+- No broad grammar refactor lands without snapshot and integration coverage.
+
+##### 5. Metadata Schema Stabilization
+
+Tasks:
+
+- Document `.cobble/source_map.json` schema:
+  - version,
+  - generated path,
+  - generated line,
+  - command text,
+  - source location,
+  - generated command kind.
+- Document `.cobble/build_manifest.json` schema:
+  - package/Minecraft/pack-format metadata,
+  - source input metadata,
+  - generated counts,
+  - resource entries,
+  - validation summary.
+- Add schema-focused snapshot or JSON-shape tests that tolerate count changes
+  where appropriate but catch accidental field removal.
+- Decide which fields are stable for 0.x and which remain experimental.
+
+Acceptance criteria:
+
+- Docs and snapshots agree on metadata fields.
+- `cobble inspect --json` remains compatible with documented manifest fields.
+- Any schema version bump has a migration note.
+
+##### 6. Web And Docs Parity
+
+Tasks:
+
+- Keep `/try` examples aligned with the 0.7.0 language reference.
+- Add at least one web sample that demonstrates a new or clarified diagnostic.
+- Ensure WASM structured diagnostics expose enough data for the web UI to show
+  file/line context.
+- Keep web build/test gates in sync with compiler changes.
+
+Acceptance criteria:
+
+- `npm run test:web` passes after language/diagnostic changes.
+- The web compiler and CLI agree on accepted source and key diagnostics for
+  selected fixtures.
+- The web response exposes both formatted diagnostic strings and structured
+  file/line/column/kind/message/help details.
+- README links remain small and current.
+
+##### 7. Suggested Implementation Order
+
+1. Add a language support matrix test/documentation inventory.
+2. Rewrite `docs/language.md` around supported syntax and semantics.
+3. Add negative fixtures for unsupported Python-like constructs.
+4. Introduce the first semantic-analysis checks with source-aware diagnostics.
+5. Move duplicate/simple semantic errors out of transpiler paths where safe.
+6. Standardize diagnostic rendering and import-chain context.
+7. Document source-map and build-manifest schemas.
+8. Add web parity tests for structured diagnostics.
+9. Run full Rust, web, command-tree, package, and optional server gates.
+
+##### 8. 0.7.0 Release Gate
+
+Required:
+
+```bash
+cargo fmt --check
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+cargo run --locked -- --version
+scripts/check_examples.sh
+cargo run --locked -- check --json examples/26_smoke/src/main.cbl
+cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
+cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
+cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
+cargo run --locked -- doctor
+cargo run --locked -- build examples/26_smoke --dry-run --validate
+cargo run --locked -- inspect /tmp/cobble-qa-26-smoke
+cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
+cargo package --locked
+cargo publish --dry-run --locked
+```
+
+Use `scripts/check_examples.sh` instead of `cobble check examples` because the
+example gallery contains unrelated projects that intentionally reuse names such
+as `init`, `tick`, and `hello`.
+Run `cargo package --locked` and `cargo publish --dry-run --locked` from a clean
+working tree for the final release. During alpha development, use
+`--allow-dirty` only to verify packaging before the release commit exists.
+
+Required if language docs, WASM compiler, web examples, or routes changed:
+
+```bash
+cd web
+npm run test:web
+```
+
+Optional but preferred before final release:
+
+```bash
+COBBLE_MINECRAFT_EULA_ACCEPTED=1 scripts/test_minecraft_server.sh
+```
+
+##### 9. Deferral Rules
+
+Move work out of 0.7.0 if it requires:
+
+- new Minecraft target version support,
+- broad stdlib v2 redesign,
+- formatting or LSP implementation beyond diagnostic data prep,
+- plugin/package manager architecture,
+- runtime return values or hidden execution framework,
+- resource-pack authoring outside schema documentation.
 
 #### Acceptance Criteria
 
@@ -676,7 +963,8 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- --version
-cargo run --locked -- check examples
+scripts/check_examples.sh
+cargo run --locked -- check --json examples/26_smoke/src/main.cbl
 cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
 cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
 cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
@@ -687,6 +975,10 @@ cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
 cargo package --locked
 cargo publish --dry-run --locked
 ```
+
+`scripts/check_examples.sh` checks each example as an independent source entry.
+Checking the entire `examples/` directory as one project should reject duplicate
+function names across unrelated examples.
 
 If web build inputs changed:
 
@@ -724,9 +1016,8 @@ These decisions should be made deliberately before implementation starts.
 
 ## Current Priority Order
 
-1. Publish and verify `0.6.3` artifacts if the final release commit has not
-   been published yet.
-2. Start 0.7.0 language-spec cleanup after 0.6.3 ships.
+1. Expand the language support matrix into the full language reference rewrite.
+2. Add source-aware semantic diagnostics before expanding syntax.
 3. Keep the website and `/try` demo aligned with the CLI through PR-gated web
    checks.
 4. Expand real-world examples before adding large new syntax.
