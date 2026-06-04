@@ -5,6 +5,25 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-06-04
+
+### Changed
+- Released Cobble 0.7.0 as the current stable release for Minecraft Java
+  Edition 26.1.2 and data pack format 101.1.
+
+### Fixed
+- Allowed numeric compile-time constants in storage-backed subscript diagnostics,
+  so `items[INDEX]` now matches the transpiler when `INDEX` is a known const.
+- Preserved macro argument values when a parameterized Cobble function forwards
+  its own parameters to another parameterized function, instead of passing
+  parameter names as string literals.
+- Reported unknown or incorrectly-called `math.*` intrinsics during
+  `cobble check`, `cobble build`, and browser compilation instead of letting
+  `check` pass and failing later during transpilation.
+- Updated README installation commands for the final 0.7.0 stable release.
+- Pointed website documentation links to repository docs so users land on
+  current 0.7.0 documentation while docs.rs catches up.
+
 ## [0.7.0-rc.1] - 2026-06-04
 
 ### Added

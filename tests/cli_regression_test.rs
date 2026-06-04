@@ -416,6 +416,38 @@ def main():
 }
 
 #[test]
+fn cli_check_json_reports_unknown_math_helper_diagnostics() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"
+def main():
+    value = math.nope(1)
+"#,
+    );
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Validation failed with 1 error"));
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error_count"], 1);
+    assert_eq!(value["diagnostics"][0]["kind"], "undefined-function");
+    assert_eq!(value["diagnostics"][0]["line"], 3);
+    assert!(value["diagnostics"][0]["formatted"]
+        .as_str()
+        .unwrap()
+        .contains("Unknown math function `math.nope`"));
+}
+
+#[test]
 fn cli_check_reports_undefined_standalone_call_arguments() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(
@@ -511,6 +543,30 @@ def main():
     assert!(!output.status.success());
     assert!(stderr.contains("unsupported-storage-access"));
     assert!(stderr.contains("Dynamic storage-backed subscript indexes are not supported"));
+}
+
+#[test]
+fn cli_check_allows_numeric_const_storage_subscript() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"
+const INDEX = 0
+
+def main():
+    items = [1, 2, 3]
+    first = items[INDEX]
+"#,
+    );
+
+    let output = cobble().arg("check").arg(&input).output().unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("All files passed validation"));
 }
 
 #[test]

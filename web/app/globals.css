@@ -226,6 +226,27 @@ h1 {
   line-height: 1.55;
 }
 
+.home-hero-copy .release-install {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: min(720px, 100%);
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid rgba(228, 247, 215, 0.28);
+  border-radius: 8px;
+  background: rgba(9, 13, 10, 0.48);
+  color: #d9e6cf;
+  font-size: 0.9rem;
+}
+
+.release-install code {
+  overflow-wrap: anywhere;
+  color: #f2ffe9;
+  font-size: 0.86rem;
+}
+
 .hero-actions {
   display: flex;
   flex-wrap: wrap;

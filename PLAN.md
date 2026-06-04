@@ -3,8 +3,8 @@
 ## Status
 
 - Planning date: 2026-06-02
-- Current stable release: `0.6.3`
-- Active release candidate: `0.7.0-rc.1`
+- Current stable release: `0.7.0`
+- Active release candidate: none
 - Current Minecraft target: Java Edition `26.1.2`
 - Current data pack format: `101.1`
 - Package name: `cobble-lang`
@@ -12,10 +12,10 @@
 - Website: <https://deveworld.github.io/cobble/>
 - Browser compiler: <https://deveworld.github.io/cobble/try/>
 
-This roadmap records the completed 0.6.3 stabilization plan and the active
+This roadmap records the completed 0.6.3 stabilization plan and completed
 0.7.0 language-specification and diagnostics plan. Historical release details
 belong in `CHANGELOG.md`; this file tracks what Cobble should become after
-0.6.3.
+0.7.0.
 
 ## North Star
 
@@ -483,9 +483,9 @@ accident. The release should draw a clean line between supported Cobble syntax,
 compile-time conveniences, raw Minecraft command passthrough, and intentionally
 unsupported Python-like constructs.
 
-##### Implemented So Far In 0.7.0-rc.1
+##### Completed In 0.7.0
 
-- Promoted the active 0.7.0 line to release candidate `0.7.0-rc.1`.
+- Released the active 0.7.0 line as stable `0.7.0`.
 - Added `docs/language-support.md` as the implementation-facing language
   support matrix.
 - Clarified `docs/language.md` around Cobble-vs-Python compatibility, raw

@@ -755,6 +755,10 @@ impl Transpiler {
         self.data_pack.set_pack_format(format);
     }
 
+    fn is_current_macro_param(&self, name: &str) -> bool {
+        self.current_context.is_param(name)
+    }
+
     pub fn set_build_input(&mut self, input: BuildManifestInput) {
         self.data_pack.set_build_input(input);
     }
@@ -2744,10 +2748,37 @@ impl Transpiler {
 
             // If function has parameters, use macro system
             if !param_names.is_empty() && !args.is_empty() {
+                let preserve_caller_args = !self.current_context.params.is_empty();
+                let staged_args_path = if preserve_caller_args {
+                    let id = self.temp_counter;
+                    self.temp_counter += 1;
+                    let caller_path = format!("_caller_args_{}", id);
+                    let call_path = format!("_call_args_{}", id);
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        self.data_pack.namespace, caller_path
+                    ));
+                    commands.push(format!(
+                        "data modify storage {}:global {} set from storage {}:global args",
+                        self.data_pack.namespace, caller_path, self.data_pack.namespace
+                    ));
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        self.data_pack.namespace, call_path
+                    ));
+                    Some((call_path, caller_path))
+                } else {
+                    None
+                };
+
                 // Store arguments in storage for macro substitution
                 for (i, arg) in args.iter().enumerate() {
                     if i < param_names.len() {
                         let param_name = &param_names[i];
+                        let target_path = staged_args_path
+                            .as_ref()
+                            .map(|(path, _)| format!("{}.{}", path, param_name))
+                            .unwrap_or_else(|| format!("args.{}", param_name));
                         match arg {
                             Expression::String(s) => {
                                 // Escape quotes, backslashes, and special characters in the string
@@ -2758,14 +2789,14 @@ impl Transpiler {
                                     .replace('\r', "\\r")
                                     .replace('\t', "\\t");
                                 commands.push(format!(
-                                    "data modify storage {}:global args.{} set value \"{}\"",
-                                    self.data_pack.namespace, param_name, escaped
+                                    "data modify storage {}:global {} set value \"{}\"",
+                                    self.data_pack.namespace, target_path, escaped
                                 ));
                             }
                             Expression::Number(n) => {
                                 commands.push(format!(
-                                    "data modify storage {}:global args.{} set value {}",
-                                    self.data_pack.namespace, param_name, *n as i32
+                                    "data modify storage {}:global {} set value {}",
+                                    self.data_pack.namespace, target_path, *n as i32
                                 ));
                             }
                             Expression::Identifier(var) => {
@@ -2773,8 +2804,16 @@ impl Transpiler {
                                 if var.starts_with('@') {
                                     // Selector - store as string
                                     commands.push(format!(
-                                        "data modify storage {}:global args.{} set value \"{}\"",
-                                        self.data_pack.namespace, param_name, var
+                                        "data modify storage {}:global {} set value \"{}\"",
+                                        self.data_pack.namespace, target_path, var
+                                    ));
+                                } else if self.is_current_macro_param(var) {
+                                    commands.push(format!(
+                                        "data modify storage {}:global {} set from storage {}:global args.{}",
+                                        self.data_pack.namespace,
+                                        target_path,
+                                        self.data_pack.namespace,
+                                        var
                                     ));
                                 } else if self.scoreboard_variables.contains(var)
                                     || self.variable_objectives.contains_key(var)
@@ -2786,28 +2825,28 @@ impl Transpiler {
                                         .unwrap_or(&"temp".to_string())
                                         .clone();
                                     commands.push(format!(
-                                        "execute store result storage {}:global args.{} int 1 run scoreboard players get {} {}",
-                                        self.data_pack.namespace, param_name, var, obj
+                                        "execute store result storage {}:global {} int 1 run scoreboard players get {} {}",
+                                        self.data_pack.namespace, target_path, var, obj
                                     ));
                                 } else if let Some(_const_val) = self.variables.get(var) {
                                     // Constant variable - try to get compile-time constant value
                                     if let Some(&val) = self.compile_time_constants.get(var) {
                                         commands.push(format!(
-                                            "data modify storage {}:global args.{} set value {}",
-                                            self.data_pack.namespace, param_name, val
+                                            "data modify storage {}:global {} set value {}",
+                                            self.data_pack.namespace, target_path, val
                                         ));
                                     } else {
                                         // Const variable but not a simple constant - treat as identifier string
                                         commands.push(format!(
-                                            "data modify storage {}:global args.{} set value \"{}\"",
-                                            self.data_pack.namespace, param_name, var
+                                            "data modify storage {}:global {} set value \"{}\"",
+                                            self.data_pack.namespace, target_path, var
                                         ));
                                     }
                                 } else {
                                     // Unknown identifier - treat as string literal (for items, etc.)
                                     commands.push(format!(
-                                        "data modify storage {}:global args.{} set value \"{}\"",
-                                        self.data_pack.namespace, param_name, var
+                                        "data modify storage {}:global {} set value \"{}\"",
+                                        self.data_pack.namespace, target_path, var
                                     ));
                                 }
                             }
@@ -2815,8 +2854,8 @@ impl Transpiler {
                                 // Boolean literal - store as 1 (true) or 0 (false)
                                 let value = if *b { 1 } else { 0 };
                                 commands.push(format!(
-                                    "data modify storage {}:global args.{} set value {}",
-                                    self.data_pack.namespace, param_name, value
+                                    "data modify storage {}:global {} set value {}",
+                                    self.data_pack.namespace, target_path, value
                                 ));
                             }
                             Expression::Binary(_, _, _) | Expression::Unary(_, _) => {
@@ -2838,8 +2877,8 @@ impl Transpiler {
 
                                 // Now store the temp variable value into storage
                                 commands.push(format!(
-                                    "execute store result storage {}:global args.{} int 1 run scoreboard players get {} temp",
-                                    self.data_pack.namespace, param_name, temp_var
+                                    "execute store result storage {}:global {} int 1 run scoreboard players get {} temp",
+                                    self.data_pack.namespace, target_path, temp_var
                                 ));
                             }
                             _ => {
@@ -2865,12 +2904,33 @@ impl Transpiler {
                         }
                     }
                 }
+                if let Some((staged_args_path, _)) = staged_args_path.as_ref() {
+                    commands.push(format!(
+                        "data modify storage {}:global args set from storage {}:global {}",
+                        self.data_pack.namespace, self.data_pack.namespace, staged_args_path
+                    ));
+                }
 
                 // Generate macro call with storage (only when parameters are provided)
                 commands.push(format!(
                     "function {}:{} with storage {}:global args",
                     self.data_pack.namespace, func_name, self.data_pack.namespace
                 ));
+
+                if let Some((staged_args_path, caller_args_path)) = staged_args_path {
+                    commands.push(format!(
+                        "data modify storage {}:global args set from storage {}:global {}",
+                        self.data_pack.namespace, self.data_pack.namespace, caller_args_path
+                    ));
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        self.data_pack.namespace, caller_args_path
+                    ));
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        self.data_pack.namespace, staged_args_path
+                    ));
+                }
             } else {
                 // Function has no parameters or no arguments provided - regular call
                 commands.push(format!(

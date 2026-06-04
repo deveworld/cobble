@@ -2030,6 +2030,19 @@ fn check_assignment_function_calls(
     let rhs = &trimmed[equals_index + 1..];
 
     for call in function_calls_in_expression(rhs) {
+        if let Some(diagnostic) = invalid_math_value_function_call(&call) {
+            diagnostics.push(
+                SourceDiagnostic::error(
+                    diagnostic.kind,
+                    line_number,
+                    column_from_byte(line, indent + equals_index + 1 + call.offset),
+                    diagnostic.message,
+                )
+                .with_help(diagnostic.help),
+            );
+            return;
+        }
+
         if is_allowed_value_function_call(&call.name) {
             continue;
         }
@@ -2517,7 +2530,8 @@ fn starts_datapack_json_resource_call(trimmed: &str) -> bool {
 
 fn check_storage_backed_access(source: &str, diagnostics: &mut Vec<SourceDiagnostic>) {
     let mut module_types: HashMap<String, CobbleType> = HashMap::new();
-    let mut current_function: Option<(usize, HashMap<String, CobbleType>)> = None;
+    let mut module_constants: HashMap<String, f64> = HashMap::new();
+    let mut current_function: Option<DiagnosticFunctionScope> = None;
     let mut active_docstring_quote = None;
 
     for (line_index, line) in source.lines().enumerate() {
@@ -2536,13 +2550,17 @@ fn check_storage_backed_access(source: &str, diagnostics: &mut Vec<SourceDiagnos
         let indent = masked.len() - trimmed.len();
         if current_function
             .as_ref()
-            .is_some_and(|(function_indent, _)| indent <= *function_indent)
+            .is_some_and(|scope| indent <= scope.indent)
         {
             current_function = None;
         }
 
         if starts_with_keyword(trimmed, "def") {
-            current_function = Some((indent, module_types.clone()));
+            current_function = Some(DiagnosticFunctionScope {
+                indent,
+                types: module_types.clone(),
+                constants: module_constants.clone(),
+            });
             continue;
         }
 
@@ -2550,13 +2568,13 @@ fn check_storage_backed_access(source: &str, diagnostics: &mut Vec<SourceDiagnos
             continue;
         };
 
-        let type_env = current_function
-            .as_mut()
-            .map(|(_, types)| types)
-            .unwrap_or(&mut module_types);
+        let (type_env, constant_env) = match current_function.as_mut() {
+            Some(scope) => (&mut scope.types, &mut scope.constants),
+            None => (&mut module_types, &mut module_constants),
+        };
 
         if let Some(diagnostic) =
-            unsupported_storage_access_in_expression(&assignment.value, type_env)
+            unsupported_storage_access_in_expression(&assignment.value, type_env, constant_env)
         {
             diagnostics.push(
                 SourceDiagnostic::error(
@@ -2570,6 +2588,18 @@ fn check_storage_backed_access(source: &str, diagnostics: &mut Vec<SourceDiagnos
             continue;
         }
 
+        if assignment.is_const {
+            if let Some(value) =
+                evaluate_numeric_const_for_diagnostics(&assignment.value, constant_env)
+            {
+                constant_env.insert(assignment.target.clone(), value);
+            } else {
+                constant_env.remove(&assignment.target);
+            }
+        } else {
+            constant_env.remove(&assignment.target);
+        }
+
         if let Some(new_type) = infer_expression_type_for_diagnostics(&assignment.value, type_env) {
             match type_env.get(&assignment.target) {
                 Some(existing_type) if *existing_type != new_type => {}
@@ -2579,6 +2609,13 @@ fn check_storage_backed_access(source: &str, diagnostics: &mut Vec<SourceDiagnos
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DiagnosticFunctionScope {
+    indent: usize,
+    types: HashMap<String, CobbleType>,
+    constants: HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2591,10 +2628,11 @@ struct StorageAccessDiagnostic {
 fn unsupported_storage_access_in_expression(
     expression: &str,
     type_env: &HashMap<String, CobbleType>,
+    constant_env: &HashMap<String, f64>,
 ) -> Option<StorageAccessDiagnostic> {
     let masked = mask_non_code(expression);
 
-    if let Some(diagnostic) = unsupported_subscript_access(&masked, type_env) {
+    if let Some(diagnostic) = unsupported_subscript_access(&masked, type_env, constant_env) {
         return Some(diagnostic);
     }
 
@@ -2604,6 +2642,7 @@ fn unsupported_storage_access_in_expression(
 fn unsupported_subscript_access(
     expression: &str,
     type_env: &HashMap<String, CobbleType>,
+    constant_env: &HashMap<String, f64>,
 ) -> Option<StorageAccessDiagnostic> {
     let bytes = expression.as_bytes();
     let mut index = 0usize;
@@ -2650,11 +2689,13 @@ fn unsupported_subscript_access(
             });
         }
 
-        if !is_literal_storage_index(index_expression) {
+        if !is_literal_storage_index(index_expression)
+            && !is_constant_storage_index(index_expression, constant_env)
+        {
             return Some(StorageAccessDiagnostic {
                 offset: index + 1,
                 message: "Dynamic storage-backed subscript indexes are not supported".to_string(),
-                help: "Use a numeric or string literal index such as `items[0]` or `config[\"chance\"]`.".to_string(),
+                help: "Use a numeric/string literal index or a numeric compile-time constant such as `items[0]`, `config[\"chance\"]`, or `items[INDEX]`.".to_string(),
             });
         }
 
@@ -2777,6 +2818,123 @@ fn is_literal_storage_index(index_expression: &str) -> bool {
                 .is_some_and(|last| *last == index_expression.as_bytes()[0]))
 }
 
+fn is_constant_storage_index(index_expression: &str, constant_env: &HashMap<String, f64>) -> bool {
+    let index_expression = index_expression.trim();
+    is_simple_module_name(index_expression) && constant_env.contains_key(index_expression)
+}
+
+fn evaluate_numeric_const_for_diagnostics(
+    expression: &str,
+    constant_env: &HashMap<String, f64>,
+) -> Option<f64> {
+    let expression = strip_balanced_outer_parens(expression.trim());
+    if expression.is_empty() {
+        return None;
+    }
+
+    if let Ok(value) = expression.parse::<f64>() {
+        return Some(value);
+    }
+    if is_simple_module_name(expression) {
+        return constant_env.get(expression).copied();
+    }
+
+    if let Some(rest) = expression.strip_prefix('+') {
+        return evaluate_numeric_const_for_diagnostics(rest, constant_env);
+    }
+    if let Some(rest) = expression.strip_prefix('-') {
+        return evaluate_numeric_const_for_diagnostics(rest, constant_env).map(|value| -value);
+    }
+
+    let operator_groups: [&[&str]; 3] = [&["+", "-"], &["*", "/", "%"], &["^"]];
+    for operators in operator_groups {
+        if let Some((left, operator, right)) =
+            split_top_level_binary_operator(expression, operators)
+        {
+            let left = evaluate_numeric_const_for_diagnostics(left, constant_env)?;
+            let right = evaluate_numeric_const_for_diagnostics(right, constant_env)?;
+            return match operator {
+                "+" => Some(left + right),
+                "-" => Some(left - right),
+                "*" => Some(left * right),
+                "/" if right != 0.0 => Some(left / right),
+                "%" if right != 0.0 => Some(((left as i32) % (right as i32)) as f64),
+                "^" => Some((left as i32).checked_pow(right as u32)? as f64),
+                _ => None,
+            };
+        }
+    }
+
+    None
+}
+
+fn strip_balanced_outer_parens(expression: &str) -> &str {
+    let mut expression = expression.trim();
+    loop {
+        if !expression.starts_with('(') || !expression.ends_with(')') {
+            return expression;
+        }
+        let Some(close_index) = matching_close_paren(expression, 0) else {
+            return expression;
+        };
+        if close_index != expression.len() - 1 {
+            return expression;
+        }
+        expression = expression[1..expression.len() - 1].trim();
+    }
+}
+
+fn split_top_level_binary_operator<'a>(
+    expression: &'a str,
+    operators: &[&'static str],
+) -> Option<(&'a str, &'static str, &'a str)> {
+    let bytes = expression.as_bytes();
+    let mut delimiter_depth = 0usize;
+
+    for index in (0..bytes.len()).rev() {
+        match bytes[index] {
+            b')' | b']' | b'}' => {
+                delimiter_depth += 1;
+                continue;
+            }
+            b'(' | b'[' | b'{' => {
+                delimiter_depth = delimiter_depth.saturating_sub(1);
+                continue;
+            }
+            _ => {}
+        }
+
+        if delimiter_depth != 0 {
+            continue;
+        }
+
+        for operator in operators {
+            if !expression[index..].starts_with(operator) {
+                continue;
+            }
+            if matches!(*operator, "+" | "-") && is_unary_sign(expression, index) {
+                continue;
+            }
+            let right_start = index + operator.len();
+            if expression[..index].trim().is_empty() || expression[right_start..].trim().is_empty()
+            {
+                continue;
+            }
+            return Some((&expression[..index], *operator, &expression[right_start..]));
+        }
+    }
+
+    None
+}
+
+fn is_unary_sign(expression: &str, index: usize) -> bool {
+    expression[..index]
+        .chars()
+        .rev()
+        .find(|ch| !ch.is_whitespace())
+        .is_none_or(|ch| matches!(ch, '(' | '[' | '{' | '+' | '-' | '*' | '/' | '%' | '^'))
+}
+
 fn check_type_mismatches(source: &str, diagnostics: &mut Vec<SourceDiagnostic>) {
     let mut module_types: HashMap<String, CobbleType> = HashMap::new();
     let mut current_function: Option<(usize, HashMap<String, CobbleType>)> = None;
@@ -2851,6 +3009,7 @@ struct TypeAssignmentSpan {
     value: String,
     value_offset: usize,
     column: usize,
+    is_const: bool,
 }
 
 fn assignment_span_for_type_check(
@@ -2864,6 +3023,7 @@ fn assignment_span_for_type_check(
 
     let equals_index = single_equals_index(masked_trimmed)?;
     let raw_target = masked_trimmed[..equals_index].trim();
+    let is_const = raw_target.starts_with("const ");
     let target = raw_target
         .strip_prefix("const ")
         .unwrap_or(raw_target)
@@ -2886,6 +3046,7 @@ fn assignment_span_for_type_check(
         value,
         value_offset: equals_index + 1 + trim_start,
         column: column_from_byte(line, indent + raw_target.find(target).unwrap_or(0)),
+        is_const,
     })
 }
 
@@ -2910,11 +3071,14 @@ fn infer_expression_type_for_diagnostics(
     if expression.starts_with('{') {
         return Some(CobbleType::Map);
     }
-    if expression.starts_with("math.")
-        && function_calls_in_expression(expression).len() == 1
-        && expression_references_are_known(expression, type_env)
-    {
-        return Some(CobbleType::Integer);
+    let function_calls = function_calls_in_expression(expression);
+    if expression.starts_with("math.") && function_calls.len() == 1 {
+        let call = &function_calls[0];
+        if math_value_function_arity(&call.name).is_some_and(|arity| arity == call.arg_count)
+            && expression_references_are_known(expression, type_env)
+        {
+            return Some(CobbleType::Integer);
+        }
     }
     if is_numeric_literal(expression) {
         return Some(CobbleType::Integer);
@@ -5007,8 +5171,63 @@ fn function_name_before_open_paren(expression: &str, open_index: usize) -> Optio
     Some((name, start))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MathValueFunctionDiagnostic {
+    kind: &'static str,
+    message: String,
+    help: &'static str,
+}
+
+fn invalid_math_value_function_call(
+    call: &FunctionCallSpan,
+) -> Option<MathValueFunctionDiagnostic> {
+    if !call.name.starts_with("math.") {
+        return None;
+    }
+
+    let Some(arity) = math_value_function_arity(&call.name) else {
+        return Some(MathValueFunctionDiagnostic {
+            kind: "undefined-function",
+            message: format!("Unknown math function `{}`", call.name),
+            help: "Use one of the supported math intrinsics: math.sqrt, math.abs, math.min, or math.max.",
+        });
+    };
+
+    if call.arg_count != arity {
+        return Some(MathValueFunctionDiagnostic {
+            kind: "function-argument-count",
+            message: format!(
+                "{}() takes {} {}, but {} provided",
+                call.name,
+                arity,
+                argument_word(arity),
+                call.arg_count
+            ),
+            help: "Use math.sqrt(value), math.abs(value), math.min(left, right), or math.max(left, right).",
+        });
+    }
+
+    None
+}
+
+fn math_value_function_arity(name: &str) -> Option<usize> {
+    match name {
+        "math.sqrt" | "math.abs" => Some(1),
+        "math.min" | "math.max" => Some(2),
+        _ => None,
+    }
+}
+
+fn argument_word(count: usize) -> &'static str {
+    if count == 1 {
+        "argument"
+    } else {
+        "arguments"
+    }
+}
+
 fn is_allowed_value_function_call(name: &str) -> bool {
-    name.starts_with("math.") && name["math.".len()..].chars().all(is_ident_char)
+    math_value_function_arity(name).is_some()
 }
 
 fn is_control_word(name: &str) -> bool {
@@ -6366,6 +6585,32 @@ def main():
     }
 
     #[test]
+    fn allows_storage_backed_subscript_with_numeric_const_index() {
+        let diagnostics = analyze_source(
+            r#"
+const INDEX = 0
+
+def main():
+    items = [1, 2, 3]
+    first = items[INDEX]
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+        let diagnostics = analyze_source(
+            r#"
+def main():
+    const INDEX = 1
+    items = [1, 2, 3]
+    second = items[INDEX]
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
     fn reports_storage_access_and_later_type_mismatch_together() {
         let diagnostics = analyze_source(
             r#"
@@ -6380,6 +6625,35 @@ def main():
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].kind, "unsupported-storage-access");
         assert_eq!(diagnostics[1].kind, "type-mismatch");
+    }
+
+    #[test]
+    fn reports_invalid_math_value_function_calls() {
+        let diagnostics = analyze_source(
+            r#"
+def main():
+    value = math.nope(1)
+"#,
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, "undefined-function");
+        assert!(diagnostics[0]
+            .message
+            .contains("Unknown math function `math.nope`"));
+
+        let diagnostics = analyze_source(
+            r#"
+def main():
+    value = math.sqrt(1, 2)
+"#,
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, "function-argument-count");
+        assert!(diagnostics[0]
+            .message
+            .contains("math.sqrt() takes 1 argument, but 2 provided"));
     }
 
     #[test]

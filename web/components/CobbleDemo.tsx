@@ -299,7 +299,7 @@ export function CobbleDemo() {
               <House size={16} />
               <span>Home</span>
             </Link>
-            <a className="nav-link" href="https://docs.rs/cobble-lang/latest/cobble/">
+            <a className="nav-link" href="https://github.com/deveworld/cobble/tree/main/docs">
               <BookOpen size={16} />
               <span>Docs</span>
             </a>

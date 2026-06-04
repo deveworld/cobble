@@ -59,7 +59,7 @@ export function CobbleHome() {
               <Terminal size={16} />
               <span>Try</span>
             </Link>
-            <a className="nav-link" href="https://docs.rs/cobble-lang/latest/cobble/">
+            <a className="nav-link" href="https://github.com/deveworld/cobble/tree/main/docs">
               <BookOpen size={16} />
               <span>Docs</span>
             </a>
@@ -76,6 +76,9 @@ export function CobbleHome() {
           <p>
             A modern, Python-like language for creating Minecraft data packs with
             functions, events, resources, validation, and generated metadata.
+          </p>
+          <p className="release-install">
+            0.7.0 stable · <code>cargo install cobble-lang --locked</code>
           </p>
           <div className="hero-actions">
             <Link className="command-button hero-command" href="/try">

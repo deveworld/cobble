@@ -1,13 +1,13 @@
 # Cobble Language Support Matrix
 
-This document records the language surface that Cobble 0.7.0-rc.1 should treat as
+This document records the language surface that Cobble 0.7.0 should treat as
 intentional. It is a planning and QA companion to `docs/language.md`; the
 language reference should explain user-facing behavior, while this matrix keeps
 implementation coverage explicit.
 
 Cobble is Python-inspired, not Python-compatible. Syntax listed as unsupported
-should fail with an actionable diagnostic before 0.7.0 is considered complete.
-The 0.7.0-rc.1 implementation already runs a shared CLI/WASM preflight diagnostic
+should fail with an actionable diagnostic.
+The 0.7.0 implementation already runs a shared CLI/WASM preflight diagnostic
 pass for the unsupported constructs listed below when they can be detected from
 source text before parsing.
 
@@ -63,7 +63,7 @@ source text before parsing.
 5. Keep CLI diagnostics and WASM structured diagnostics aligned.
 
 The first three priorities and CLI/WASM alignment for early language-surface
-diagnostics are covered in 0.7.0-rc.1. The first semantic preflight checks also
+diagnostics are covered in 0.7.0. The first semantic preflight checks also
 cover duplicate function definitions, unsupported `return` statements, and
 function calls used as assignment values except supported math intrinsics.
 They also check same-file user function call argument counts, including calls

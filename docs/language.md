@@ -17,6 +17,9 @@ For the implementation-facing support matrix, see
 - [Functions](#functions)
 - [Control Flow](#control-flow)
 - [Minecraft Commands](#minecraft-commands)
+- [Entity Selector Definitions](#entity-selector-definitions)
+- [Entity Templates](#entity-templates)
+- [File Imports](#file-imports)
 - [Standard Library](#standard-library)
 - [Events](#events)
 - [Unsupported Python-Like Constructs](#unsupported-python-like-constructs)
@@ -271,7 +274,7 @@ def give_reward(player, amount):
 ```
 
 **Important**: Use `{param_name}` in Cobble source. Cobble compiles it to
-Minecraft's `$(param_name)` macro syntax when needed. Cobble v0.7.0-rc.1 targets
+Minecraft's `$(param_name)` macro syntax when needed. Cobble v0.7.0 targets
 Minecraft Java Edition 26.1.2, where function macros are available.
 
 Parameter names must be unique. Default parameter values, `*args`, and
@@ -283,6 +286,18 @@ Parameter names must be unique. Default parameter values, `*args`, and
 def main():
     greet()
     give_reward("Steve", 5)
+```
+
+Parameterized functions can call other parameterized functions and forward their
+own parameters:
+
+```python
+def give_reward(player, item, count):
+    /give {player} minecraft:{item} {count}
+
+def reward_nearby(player, item, count):
+    give_reward(player, item, count)
+    /tag {player} add rewarded
 ```
 
 ## Control Flow
@@ -660,6 +675,44 @@ def admin_command():
 - Works in execute blocks and commands
 - Helps avoid repeating complex selectors
 
+## Entity Templates
+
+Entity templates name a reusable summon shape. Define a template with
+`define @Name = @selector[...]`, provide the NBT payload after `create`, and end
+the declaration with `end`. Create an entity from the template with
+`create @Name` inside a function or execute block.
+
+```python
+define @ShopKeeper = @e[type=villager,tag=shop_keeper]
+create {
+    "VillagerData": {
+        "profession": "minecraft:librarian",
+        "level": 5,
+        "type": "minecraft:plains"
+    },
+    "CustomName": '{"text":"Shop Keeper","color":"gold"}',
+    "PersistenceRequired": True,
+    "NoAI": True
+}
+end
+
+def spawn_shop():
+    as @a[tag=spawn_shop] at @s:
+        create @ShopKeeper
+```
+
+Cobble lowers `create @ShopKeeper` to a `summon` command at the current execute
+position. The entity type is taken from the template selector's `type=`
+argument, so templates should include an explicit selector type. The template
+name is part of the named symbol table, which means duplicate entity template
+names across imports or directory builds are diagnostics.
+
+**Key Points:**
+- Template definitions use `define @Name = @selector[...] create {...} end`
+- `create @Name` must reference a template that has been defined or imported
+- The NBT payload uses Cobble map/list literals and is serialized as SNBT
+- Use an execute block around `create @Name` to control spawn position
+
 ## File Imports
 
 Import functions and definitions from other files:
@@ -1029,7 +1082,7 @@ stdlib.addEventListener(event.TICK, game_loop)
 
 ## Minecraft Version Compatibility
 
-Cobble v0.7.0-rc.1 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this development release.
+Cobble v0.7.0 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this development release.
 
 - **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax

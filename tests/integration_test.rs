@@ -106,6 +106,24 @@ def test():
 }
 
 #[test]
+fn test_storage_backed_subscript_access_with_const_index() {
+    let source = r#"
+const INDEX = 1
+
+def test():
+    items = [4, 5, 6]
+    selected = items[INDEX]
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(content.contains(
+        "execute store result score selected temp run data get storage cobble:global vars.items[1]"
+    ));
+}
+
+#[test]
 fn test_none_is_rejected_in_storage_snbt_literals() {
     let source = r#"
 def test():
@@ -330,6 +348,50 @@ def greet(player, message):
     // Parameters should be converted to macro syntax
     assert!(content.contains("$tellraw $(player)"));
     assert!(content.contains("$(message)"));
+}
+
+#[test]
+fn test_parameter_forwarding_to_parameterized_function() {
+    let source = r#"
+def inner(player, item, count):
+    /give {player} minecraft:{item} {count}
+
+def outer(player, item, count):
+    inner(player, item, count)
+    inner(item, player, count)
+    /tag {player} add forwarded
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let outer = read_function(&output_dir, "outer");
+
+    assert!(
+        !outer.contains("set value \"player\"")
+            && !outer.contains("set value \"item\"")
+            && !outer.contains("set value \"count\""),
+        "function parameter forwarding should not become string literals: {}",
+        outer
+    );
+    assert!(outer.contains(
+        "data modify storage cobble:global _call_args_0.player set from storage cobble:global args.player"
+    ));
+    assert!(outer.contains(
+        "data modify storage cobble:global _caller_args_0 set from storage cobble:global args"
+    ));
+    assert!(outer.contains(
+        "data modify storage cobble:global _call_args_1.player set from storage cobble:global args.item"
+    ));
+    assert!(outer.contains(
+        "data modify storage cobble:global _call_args_1.item set from storage cobble:global args.player"
+    ));
+    assert!(outer.contains(
+        "data modify storage cobble:global args set from storage cobble:global _call_args_"
+    ));
+    assert!(outer.contains(
+        "data modify storage cobble:global args set from storage cobble:global _caller_args_"
+    ));
+    assert!(outer.contains("function cobble:inner with storage cobble:global args"));
+    assert!(outer.contains("$tag $(player) add forwarded"));
 }
 
 #[test]

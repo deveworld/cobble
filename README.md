@@ -14,8 +14,7 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Release candidate 0.7.0-rc.1** targets Minecraft Java Edition 26.1.2 and
-pack format 101.1. The latest stable release is 0.6.3.
+**Cobble 0.7.0** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ## Website And Web Demo
 
@@ -48,8 +47,17 @@ metadata, diagnostics, and data pack ZIP output without installing the CLI.
 
 ## Installation
 
+For the latest stable release:
+
 ```bash
-cargo install cobble-lang
+cargo install cobble-lang --locked
+cobble --version
+```
+
+For an exact version:
+
+```bash
+cargo install cobble-lang --version 0.7.0 --locked
 cobble --help
 ```
 
@@ -152,10 +160,10 @@ npm run dev
 
 ## Documentation
 
-- [Language Reference](docs/language.md)
-- [CLI Documentation](docs/cli.md)
-- [API Reference](docs/api.md)
-- [QA Checklist](docs/qa.md)
+- [Language Reference](https://github.com/deveworld/cobble/blob/main/docs/language.md)
+- [CLI Documentation](https://github.com/deveworld/cobble/blob/main/docs/cli.md)
+- [API Reference](https://github.com/deveworld/cobble/blob/main/docs/api.md)
+- [QA Checklist](https://github.com/deveworld/cobble/blob/main/docs/qa.md)
 - [Examples](examples/)
 - [Web Demo Source](https://github.com/deveworld/cobble/tree/main/web/)
 - [Roadmap](PLAN.md)
