@@ -469,14 +469,14 @@ pub struct DataPack {
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
     pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
-    pub pack_format: PackFormat,  // Cobble v0.7.0 requires 101.1
+    pub pack_format: PackFormat,  // Cobble v0.7.1 requires 101.1
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
     pub source_display_root: Option<PathBuf>,
 }
 ```
 
-**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.7.0 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
+**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.7.1 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
 
 #### Methods
 
@@ -658,6 +658,9 @@ Handles the `init` command.
 #### Function: `init(options: InitOptions) -> Result<(), String>`
 
 Initializes a new Cobble project.
+`InitOptions::list_templates` prints the known template names and descriptions
+without creating project files. Built-in templates are `minimal`, `stdlib`,
+`validation`, `resource-heavy`, `game-mechanic`, and `web-demo`.
 
 ### `commands/validate.rs`
 
@@ -675,7 +678,32 @@ Handles project and environment diagnostics.
 
 Reports Cobble version, Minecraft target, pack format, Java/curl availability,
 project config status, and command-tree fingerprint status without contacting
-the network.
+the network. `DoctorOptions::json` emits the same checks as formatted JSON with
+a stable `schema_version` and top-level `status`. `experimental_link` reports
+project-local link state and linked-pack marker status when a `cobble.toml` is
+available.
+
+### `commands/clean.rs`
+
+Handles generated-output cleanup.
+
+#### Function: `clean(options: CleanOptions) -> Result<(), String>`
+
+Removes a configured or explicit output directory only when Cobble can verify
+the `.cobble/build_manifest.json`, `pack.mcmeta`, and `data/` safety markers.
+`CleanOptions::dry_run` reports the cleanup plan without deleting files.
+`CleanOptions::linked` reads `.cobble/link_state.json`; real linked cleanup
+requires `CleanOptions::yes`.
+
+### `commands/link.rs`
+
+Handles local data pack target linking.
+
+#### Function: `link(options: LinkOptions) -> Result<(), String>`
+
+Writes, reports, or clears project-local `.cobble/link_state.json`. Link state
+records the target `datapacks/` directory, pack name, and final pack path used
+by `watch --link`; clearing link state does not delete generated output.
 
 ### `commands/inspect.rs`
 
@@ -694,9 +722,11 @@ Handles the `check` command.
 
 Checks source files with the shared source diagnostics and import-tree
 preflight path. The text mode prints per-file import/function/command counts.
-`CheckOptions::json` emits a machine-readable report with `ok`, `files`,
-`diagnostics`, and `error_count` while preserving a non-zero exit status for
-failed checks.
+`CheckOptions::json` emits a schema-versioned machine-readable report with
+`ok`, `files`, `diagnostics`, and `error_count` while preserving a non-zero exit
+status for failed checks. `CheckOptions::symbols` requires JSON output and adds
+an `experimental_symbols` array derived from the same source files used by the
+diagnostic path.
 
 ### `commands/watch.rs`
 
@@ -704,7 +734,10 @@ Handles the `watch` command.
 
 #### Function: `watch(...) -> Result<(), String>`
 
-Watches files for changes and rebuilds automatically.
+Watches files for changes and rebuilds automatically. The watch loop debounces
+rapid filesystem events, ignores generated output and editor temporary files,
+reloads valid `cobble.toml` changes, and keeps previous watch paths when config
+reload fails. `watch --link` resolves output from `.cobble/link_state.json`.
 
 ## Error Handling
 

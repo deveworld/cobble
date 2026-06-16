@@ -14,7 +14,8 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Cobble 0.7.0** targets Minecraft Java Edition 26.1.2 and pack format 101.1.
+**Cobble 0.7.1** targets Minecraft Java Edition 26.1.2 and pack format
+101.1. It is the current stable crates.io release.
 
 ## Website And Web Demo
 
@@ -41,8 +42,8 @@ metadata, diagnostics, and data pack ZIP output without installing the CLI.
   validation
 - Standard library helpers for events, text, scoreboards, storage, schedules,
   bossbars, teams, and entities
-- CLI workflow for project templates, build, check, watch, validation, and ZIP
-  output
+- CLI workflow for project templates, formatting, build, check, watch,
+  validation, and ZIP output
 - Browser playground powered by Rust and WebAssembly
 
 ## Installation
@@ -57,7 +58,7 @@ cobble --version
 For an exact version:
 
 ```bash
-cargo install cobble-lang --version 0.7.0 --locked
+cargo install cobble-lang --version 0.7.1 --locked
 cobble --help
 ```
 
@@ -111,9 +112,16 @@ Copy the generated output to your world's `datapacks` directory:
 | Command | Purpose |
 | ------- | ------- |
 | `cobble init` | Create a new project |
+| `cobble init --list-templates` | List starter templates |
 | `cobble build` | Build source files into a data pack |
 | `cobble check` | Check Cobble syntax without building |
+| `cobble check --json --symbols` | Emit diagnostic JSON with experimental editor symbols |
+| `cobble fmt` | Format Cobble source files |
+| `cobble fmt --diff` | Preview formatter changes without writing files |
 | `cobble doctor` | Inspect project and validation environment status |
+| `cobble doctor --json` | Emit machine-readable project health status |
+| `cobble clean` | Remove marked Cobble-generated output |
+| `cobble link` | Configure a local datapacks target |
 | `cobble inspect` | Summarize generated build metadata |
 | `cobble validate` | Validate generated `.mcfunction` files |
 | `cobble watch` | Rebuild when source files change |

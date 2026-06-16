@@ -1,9 +1,12 @@
 # Cobble Metadata Files
 
-Cobble writes metadata under `.cobble/` in every non-dry-run build output.
-These files are intended for inspection, validation diagnostics, and future
-editor tooling. Schema `version` values are per-file schema versions, not the
-Cobble package version.
+Cobble writes generated-pack metadata under `.cobble/` in every non-dry-run
+build output. These files are intended for inspection, validation diagnostics,
+and future editor tooling. Cobble also writes project-local workflow metadata
+under the project's `.cobble/` directory for commands such as `link`.
+
+Schema `version` values are per-file schema versions, not the Cobble package
+version.
 
 ## `.cobble/build_manifest.json`
 
@@ -21,11 +24,22 @@ Stable top-level fields for schema version `1`:
 | `pack_format_text` | string | Human-readable pack-format value such as `101.1`. |
 | `namespace` | string | Generated data pack namespace. |
 | `description` | string | Pack description written to `pack.mcmeta`. |
+| `project_root` | string | Canonical project/source root used for ownership diagnostics. |
+| `project_id` | string | Stable SHA-1 identity derived from `project_root`. |
+| `generated_at_unix_epoch_ms` | number | Generation timestamp in Unix epoch milliseconds. |
 | `input` | object or null | Source input summary. |
 | `generated_namespaces` | array | Namespaces generated in `data/`. |
 | `generated` | object | Generated output counts. |
 | `resources` | array | Generated JSON resource entries. |
 | `validation` | object or null | Validation summary when validation ran. |
+
+Native CLI builds set `project_root` to the canonical project/source root and
+`project_id` to the SHA-1 identity derived from that path. Browser/WASM
+compilation has no local project root, so its manifest leaves `project_root` and
+`project_id` empty. Browser/WASM output also uses `0` for
+`generated_at_unix_epoch_ms`; native CLI builds use the current system time.
+Only local CLI link, watch, doctor, and clean workflows use `project_id` for
+ownership checks.
 
 `input` fields:
 
@@ -104,6 +118,55 @@ Each entry has:
 | `file` | string | Source path, usually relative to the project/source root. |
 | `line` | number | 1-based Cobble source line. |
 | `column` | number | 1-based Cobble source column. |
+
+## Experimental Doctor Output Status
+
+`doctor --json` reports configured build output status under
+`experimental_output`. This field is not part of the stable metadata contract
+yet; it lets CI and editor tooling distinguish an unbuilt project from an
+existing Cobble-generated output directory without running a build.
+
+The report includes the resolved configured output path, whether that path
+exists, and marker information for `.cobble/build_manifest.json`. A missing
+configured output is reported as `not_present` and does not make the top-level
+doctor status a warning. Existing output with no Cobble marker, a stale marker,
+a mismatched namespace, or a mismatched `project_id` is reported as `warning`.
+Symlink traversal, symlink descendants, non-directory output paths, or
+unreadable marker state are reported as `error`.
+
+## Project-local `.cobble/link_state.json`
+
+`cobble link` writes this file in the project directory, not in generated data
+pack output. It records the explicit local target used by `watch --link`,
+`clean --linked`, and `doctor --json`.
+
+Stable fields for schema version `1`:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `version` | number | Link-state schema version. Currently `1`. |
+| `target_kind` | string | One of `datapacks`, `world`, or `minecraft`. |
+| `target_path` | string | Resolved target `datapacks/` directory. |
+| `pack_name` | string | Directory name of the linked data pack. |
+| `pack_path` | string | Final linked data pack directory. |
+
+`doctor --json` reports link state under `experimental_link`. That field is not
+part of the stable metadata contract yet; it is labeled experimental so editor
+and CI tooling can try it before 1.0 schema commitments.
+
+Commands that consume link state validate that `pack_path` remains under
+`target_path`, still ends with `pack_name`, and does not rely on an existing
+target symlink. Tampered link state is reported as an error by `doctor --json`,
+shown as invalid by `link --status`, and refused by `watch --link` and
+`clean --linked`.
+
+The linked pack is considered Cobble-owned only when its output directory
+contains a valid `.cobble/build_manifest.json` alongside normal data pack files
+such as `pack.mcmeta` and `data/`. For linked workflows, the manifest
+`namespace` must match the current project namespace and `project_id` must match
+the current project root identity. Copied, stale, or namespace-only forged
+manifests are reported as invalid and are not cleaned or replaced by
+`watch --link`.
 
 ## Compatibility
 

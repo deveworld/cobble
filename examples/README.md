@@ -24,6 +24,7 @@ This directory contains example Cobble programs demonstrating various language f
 
 - **26_smoke/** - Minecraft Java Edition 26.1.2 command smoke project with imports, events, macros, and latest commands.
 - **26_feature_matrix/** - Full project fixture covering control flow, storage, stdlib v1.1 helpers, explicit namespaced JSON resources, and build validation.
+- **resource_authoring/** - Resource-heavy project fixture covering tags, predicates, advancements, loot tables, recipes, item modifiers, dialogs, imports, and generated-output snapshots.
 
 ## Running Examples
 
@@ -38,6 +39,9 @@ cobble build counter.cbl -o output/counter --zip
 
 # Project fixtures use cobble.toml; run from the fixture directory
 cd 26_feature_matrix
+cobble build --validate
+
+cd ../resource_authoring
 cobble build --validate
 ```
 

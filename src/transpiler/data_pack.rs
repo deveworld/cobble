@@ -79,6 +79,9 @@ pub struct BuildManifest {
     pub pack_format_text: String,
     pub namespace: String,
     pub description: String,
+    pub project_root: String,
+    pub project_id: String,
+    pub generated_at_unix_epoch_ms: u64,
     pub input: Option<BuildManifestInput>,
     pub generated_namespaces: Vec<String>,
     pub generated: BuildManifestGenerated,
@@ -149,6 +152,8 @@ pub struct DataPack {
     pub used_objectives: HashSet<String>,
     pub source_display_root: Option<PathBuf>,
     pub build_input: Option<BuildManifestInput>,
+    pub project_root: Option<String>,
+    pub project_id: Option<String>,
     pub validation_summary: Option<BuildManifestValidation>,
 }
 
@@ -173,6 +178,8 @@ impl DataPack {
             used_objectives: HashSet::new(),
             source_display_root: None,
             build_input: None,
+            project_root: None,
+            project_id: None,
             validation_summary: None,
         }
     }
@@ -187,6 +194,11 @@ impl DataPack {
 
     pub fn set_build_input(&mut self, input: BuildManifestInput) {
         self.build_input = Some(input);
+    }
+
+    pub fn set_project_identity(&mut self, project_root: String, project_id: String) {
+        self.project_root = Some(project_root);
+        self.project_id = Some(project_id);
     }
 
     pub fn set_source_display_root(&mut self, root: PathBuf) {
@@ -734,11 +746,29 @@ impl DataPack {
             pack_format_text: self.pack_format.to_string(),
             namespace: self.namespace.clone(),
             description: self.description.clone(),
+            project_root: self.project_root.clone().unwrap_or_default(),
+            project_id: self.project_id.clone().unwrap_or_default(),
+            generated_at_unix_epoch_ms: Self::generated_at_unix_epoch_ms(),
             input: self.build_input.clone(),
             generated_namespaces: generated_namespaces.to_vec(),
             generated,
             resources,
             validation: self.validation_summary.clone(),
+        }
+    }
+
+    fn generated_at_unix_epoch_ms() -> u64 {
+        #[cfg(target_arch = "wasm32")]
+        {
+            0
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+                .unwrap_or(0)
         }
     }
 

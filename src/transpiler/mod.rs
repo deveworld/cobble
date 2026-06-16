@@ -763,6 +763,11 @@ impl Transpiler {
         self.data_pack.set_build_input(input);
     }
 
+    pub fn set_project_identity(&mut self, project_root: String, project_id: String) {
+        self.data_pack
+            .set_project_identity(project_root, project_id);
+    }
+
     pub fn set_source_display_root(&mut self, root: PathBuf) {
         self.data_pack.set_source_display_root(root);
     }

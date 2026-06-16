@@ -7,9 +7,15 @@ pub struct InitOptions {
     pub description: Option<String>,
     pub pack_format: Option<String>,
     pub template: String,
+    pub list_templates: bool,
 }
 
 pub fn init(options: InitOptions) -> Result<(), String> {
+    if options.list_templates {
+        print_templates();
+        return Ok(());
+    }
+
     let sample_code = sample_code_for_template(&options.template)?;
     let requested_name = options.name.clone();
     let has_name = requested_name.is_some();
@@ -124,11 +130,54 @@ Thumbs.db
 }
 
 fn sample_code_for_template(template: &str) -> Result<&'static str, String> {
-    match template {
-        "minimal" => Ok(r#"def main():
+    templates()
+        .iter()
+        .find(|candidate| candidate.name == template)
+        .map(|candidate| candidate.source)
+        .ok_or_else(|| {
+            format!(
+                "Unknown template '{}'. Expected one of: {}",
+                template,
+                templates()
+                    .iter()
+                    .map(|template| template.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+fn print_templates() {
+    println!("Available templates:");
+    for template in templates() {
+        let suffix = if template.default { " (default)" } else { "" };
+        println!("  {:<15} {}{}", template.name, template.description, suffix);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InitTemplate {
+    name: &'static str,
+    description: &'static str,
+    default: bool,
+    source: &'static str,
+}
+
+fn templates() -> &'static [InitTemplate] {
+    &[
+        InitTemplate {
+            name: "minimal",
+            description: "Small single-function pack with no imports",
+            default: false,
+            source: r#"def main():
     /say Hello from Cobble
-"#),
-        "stdlib" => Ok(r#"import stdlib
+"#,
+        },
+        InitTemplate {
+            name: "stdlib",
+            description: "Event-ready starter using stdlib load and tick hooks",
+            default: true,
+            source: r#"import stdlib
 from stdlib import event
 
 def init():
@@ -147,8 +196,13 @@ def hello(player):
 # Register event handlers
 stdlib.addEventListener(event.LOAD, init)
 stdlib.addEventListener(event.TICK, tick)
-"#),
-        "validation" => Ok(r#"import stdlib
+"#,
+        },
+        InitTemplate {
+            name: "validation",
+            description: "Validation-ready pack that exercises common helpers",
+            default: false,
+            source: r#"import stdlib
 from stdlib import event
 
 def init():
@@ -165,12 +219,80 @@ def tick():
 
 stdlib.addEventListener(event.LOAD, init)
 stdlib.addEventListener(event.TICK, tick)
-"#),
-        other => Err(format!(
-            "Unknown template '{}'. Expected one of: minimal, stdlib, validation",
-            other
-        )),
-    }
+"#,
+        },
+        InitTemplate {
+            name: "resource-heavy",
+            description: "Starter with tags, predicates, recipes, loot, and dialogs",
+            default: false,
+            source: r#"import stdlib
+from stdlib import event
+
+datapack.item_tag("reward_items", ["minecraft:diamond", "minecraft:emerald"])
+datapack.block_tag("building_blocks", ["minecraft:stone", "minecraft:deepslate"])
+datapack.entity_type_tag("hostile_targets", ["minecraft:zombie", "minecraft:skeleton"])
+datapack.predicate("always", {
+    "condition": "minecraft:random_chance",
+    "chance": 1
+})
+datapack.advancement("root", {"criteria": {"tick": {"trigger": "minecraft:tick"}}})
+datapack.loot_table("empty_reward", {"type": "minecraft:empty"})
+datapack.recipe("stonecutting/polished_granite", {
+    "type": "minecraft:stonecutting",
+    "ingredient": "minecraft:granite",
+    "result": {"id": "minecraft:polished_granite"}
+})
+datapack.item_modifier("reward_name", {
+    "function": "minecraft:set_name",
+    "name": {"text": "Cobble Reward"}
+})
+datapack.dialog("notice", {
+    "type": "minecraft:notice",
+    "title": {"text": "Resource Pack Ready"}
+})
+
+def init():
+    /tellraw @a {"text":"Resource-heavy Cobble pack loaded","color":"green"}
+
+stdlib.addEventListener(event.LOAD, init)
+"#,
+        },
+        InitTemplate {
+            name: "game-mechanic",
+            description: "Small score loop with selectors, events, and actionbar feedback",
+            default: false,
+            source: r#"import stdlib
+from stdlib import event
+
+@Players = @a[gamemode=!spectator]
+
+def init():
+    /scoreboard objectives add cobble_points dummy "Cobble Points"
+    /tellraw @a {"text":"Game mechanic starter loaded","color":"green"}
+
+def tick():
+    /execute as @Players run scoreboard players add @s cobble_points 1
+    /execute as @a[scores={cobble_points=100..}] run title @s actionbar {"text":"Goal reached","color":"gold"}
+
+stdlib.addEventListener(event.LOAD, init)
+stdlib.addEventListener(event.TICK, tick)
+"#,
+        },
+        InitTemplate {
+            name: "web-demo",
+            description: "Compact starter matching the browser /try default sample",
+            default: false,
+            source: r#"def on_load():
+    /tellraw @a {"text":"Cobble demo loaded","color":"green"}
+    /scoreboard objectives add demo dummy
+    reward_player()
+
+def reward_player():
+    /give @p minecraft:diamond 1
+    /title @p title {"text":"Reward unlocked","color":"aqua"}
+"#,
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -187,6 +309,7 @@ mod tests {
             description: None,
             pack_format: None,
             template: "minimal".to_string(),
+            list_templates: false,
         })
         .unwrap();
 
@@ -205,6 +328,7 @@ mod tests {
             description: None,
             pack_format: None,
             template: "unknown".to_string(),
+            list_templates: false,
         })
         .unwrap_err();
 
@@ -222,11 +346,71 @@ mod tests {
             description: None,
             pack_format: None,
             template: "minimal".to_string(),
+            list_templates: false,
         })
         .unwrap();
 
         let config = fs::read_to_string(project_dir.join("cobble.toml")).unwrap();
         assert!(config.contains(r#"name = "pack_name""#));
         assert!(config.contains(r#"namespace = "pack_name""#));
+    }
+
+    #[test]
+    fn templates_have_unique_names_and_one_default() {
+        let templates = templates();
+        let default_count = templates.iter().filter(|template| template.default).count();
+
+        assert_eq!(default_count, 1);
+        for (index, template) in templates.iter().enumerate() {
+            assert!(!template.name.is_empty());
+            assert!(!template.description.is_empty());
+            assert!(!template.source.is_empty());
+            assert!(
+                templates[index + 1..]
+                    .iter()
+                    .all(|other| other.name != template.name),
+                "duplicate template name: {}",
+                template.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_template_initializes_and_builds() {
+        for template in templates() {
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            let project_dir = temp_dir.path().join(template.name);
+
+            init(InitOptions {
+                name: Some(project_dir.display().to_string()),
+                description: None,
+                pack_format: None,
+                template: template.name.to_string(),
+                list_templates: false,
+            })
+            .unwrap();
+
+            crate::commands::check::check(crate::commands::check::CheckOptions {
+                input: Some(project_dir.join("src")),
+                json: false,
+                symbols: false,
+            })
+            .unwrap();
+
+            crate::commands::build::build(crate::commands::build::BuildOptions {
+                input: Some(project_dir.join("src")),
+                output: Some(temp_dir.path().join("output")),
+                namespace: None,
+                pack_format: None,
+                description: None,
+                verbose: false,
+                quiet: true,
+                zip: false,
+                validate: false,
+                dry_run: false,
+                commands_json: PathBuf::from("data/commands.json"),
+            })
+            .unwrap();
+        }
     }
 }

@@ -1,16 +1,23 @@
 pub mod build;
 pub mod check;
+pub mod clean;
 pub mod doctor;
+pub mod fmt;
 pub mod init;
 pub mod inspect;
+pub mod link;
+pub(crate) mod output_safety;
 pub mod validate;
 pub mod watch;
 
 pub use build::build;
 pub use check::{check, CheckOptions};
+pub use clean::{clean, CleanOptions};
 pub use doctor::{doctor, DoctorOptions};
+pub use fmt::{format as format_sources, FmtOptions};
 pub use init::init;
 pub use inspect::{inspect, InspectOptions};
+pub use link::{link, LinkOptions};
 pub use validate::validate;
 pub use watch::watch;
 

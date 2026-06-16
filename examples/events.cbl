@@ -41,7 +41,7 @@ def on_tick():
 def every_second():
     """Called every second"""
     global is_day
-    
+
     # Day/night cycle every 10 seconds
     if is_day:
         /time set night

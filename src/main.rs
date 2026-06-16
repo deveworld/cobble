@@ -1,5 +1,7 @@
 use cobble::commands;
-use cobble::commands::{CheckOptions, DoctorOptions, InspectOptions};
+use cobble::commands::{
+    CheckOptions, CleanOptions, DoctorOptions, FmtOptions, InspectOptions, LinkOptions,
+};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -29,9 +31,13 @@ enum Commands {
         #[arg(long)]
         pack_format: Option<String>,
 
-        /// Project template: minimal, stdlib, or validation
+        /// Project template: minimal, stdlib, validation, resource-heavy, game-mechanic, or web-demo
         #[arg(long, default_value = "stdlib")]
         template: String,
+
+        /// List available project templates and exit
+        #[arg(long)]
+        list_templates: bool,
     },
 
     /// Build the data pack
@@ -109,6 +115,10 @@ enum Commands {
         #[arg(long)]
         zip: bool,
 
+        /// Build to the configured linked data pack target
+        #[arg(long)]
+        link: bool,
+
         /// Validate generated .mcfunction files after each successful build
         #[arg(long)]
         validate: bool,
@@ -126,6 +136,24 @@ enum Commands {
         /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
+
+        /// Include experimental editor symbol metadata in JSON output
+        #[arg(long)]
+        symbols: bool,
+    },
+
+    /// Format Cobble source files
+    Fmt {
+        /// Input file or directory to format
+        input: Option<PathBuf>,
+
+        /// Check formatting without writing changes
+        #[arg(long)]
+        check: bool,
+
+        /// Print formatting differences without writing changes
+        #[arg(long)]
+        diff: bool,
     },
 
     /// Report Cobble project and validation environment status
@@ -136,6 +164,66 @@ enum Commands {
         /// Path to commands.json to inspect
         #[arg(long, default_value = "data/commands.json")]
         commands_json: PathBuf,
+
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Remove Cobble-generated project output after safety checks
+    Clean {
+        /// Project path to read cobble.toml from
+        path: Option<PathBuf>,
+
+        /// Output directory to clean
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Show what would be removed without deleting files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Clean the configured linked data pack output
+        #[arg(long)]
+        linked: bool,
+
+        /// Confirm destructive linked cleanup
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Configure or inspect a linked Minecraft datapacks target
+    Link {
+        /// Project path to read cobble.toml from
+        path: Option<PathBuf>,
+
+        /// Direct path to a Minecraft datapacks directory
+        #[arg(long)]
+        datapacks: Option<PathBuf>,
+
+        /// Path to a Minecraft world directory containing datapacks/
+        #[arg(long)]
+        world: Option<PathBuf>,
+
+        /// Path to a .minecraft directory; uses saves/<pack-name>/datapacks
+        #[arg(long)]
+        minecraft: Option<PathBuf>,
+
+        /// Directory name for the linked data pack (default: project namespace)
+        #[arg(long)]
+        pack_name: Option<String>,
+
+        /// Show what would be configured without writing link state
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Remove saved link state without deleting the linked data pack
+        #[arg(long)]
+        clear: bool,
+
+        /// Report saved link state and marker status
+        #[arg(long)]
+        status: bool,
     },
 
     /// Inspect Cobble metadata in a generated data pack directory
@@ -168,11 +256,13 @@ fn main() {
             description,
             pack_format,
             template,
+            list_templates,
         } => commands::init(commands::init::InitOptions {
             name,
             description,
             pack_format,
             template,
+            list_templates,
         }),
         Commands::Build {
             input,
@@ -207,6 +297,7 @@ fn main() {
             description,
             verbose,
             zip,
+            link,
             validate,
             commands_json,
         } => commands::watch(
@@ -217,16 +308,62 @@ fn main() {
             description,
             verbose,
             zip,
+            link,
             validate,
             commands_json,
         ),
-        Commands::Check { input, json } => commands::check(CheckOptions { input, json }),
+        Commands::Check {
+            input,
+            json,
+            symbols,
+        } => commands::check(CheckOptions {
+            input,
+            json,
+            symbols,
+        }),
+        Commands::Fmt { input, check, diff } => {
+            commands::format_sources(FmtOptions { input, check, diff })
+        }
         Commands::Doctor {
             path,
             commands_json,
+            json,
         } => commands::doctor(DoctorOptions {
             path,
             commands_json,
+            json,
+        }),
+        Commands::Clean {
+            path,
+            output,
+            dry_run,
+            linked,
+            yes,
+        } => commands::clean(CleanOptions {
+            path,
+            output,
+            dry_run,
+            linked,
+            yes,
+        }),
+        Commands::Link {
+            path,
+            datapacks,
+            world,
+            minecraft,
+            pack_name,
+            dry_run,
+            clear,
+            status,
+        } => commands::link(LinkOptions {
+            project_path: path,
+            datapacks,
+            world,
+            minecraft,
+            pack_name,
+            dry_run,
+            clear,
+            status,
         }),
         Commands::Inspect { input, json } => commands::inspect(InspectOptions { input, json }),
         Commands::Validate {

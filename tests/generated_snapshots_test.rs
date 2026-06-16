@@ -145,6 +145,10 @@ fn normalized_file_content(relative_path: &str, file: &Path) -> String {
     if relative_path == ".cobble/build_manifest.json" {
         let mut value: Value = serde_json::from_str(&content).unwrap();
         value["cobble_version"] = Value::String("<cobble-version>".to_string());
+        value["project_root"] = Value::String("<project-root>".to_string());
+        value["project_id"] = Value::String("<project-id>".to_string());
+        value["generated_at_unix_epoch_ms"] =
+            Value::String("<generated-at-unix-epoch-ms>".to_string());
         if let Some(validation) = value.get_mut("validation").and_then(Value::as_object_mut) {
             if validation.contains_key("commands_json") {
                 validation.insert(
@@ -173,6 +177,15 @@ fn snapshot_26_feature_matrix_generated_pack_tree() {
     let (_temp, output_dir) = build_project_fixture("examples/26_feature_matrix", false);
     insta::assert_snapshot!(
         "snapshot_26_feature_matrix_generated_pack_tree",
+        datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
+fn snapshot_resource_authoring_generated_pack_tree() {
+    let (_temp, output_dir) = build_project_fixture("examples/resource_authoring", false);
+    insta::assert_snapshot!(
+        "snapshot_resource_authoring_generated_pack_tree",
         datapack_tree_snapshot(&output_dir)
     );
 }

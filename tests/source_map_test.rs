@@ -67,6 +67,9 @@ def schema():
             "pack_format_text",
             "namespace",
             "description",
+            "project_root",
+            "project_id",
+            "generated_at_unix_epoch_ms",
             "input",
             "generated_namespaces",
             "generated",
@@ -74,6 +77,13 @@ def schema():
             "validation",
         ],
     );
+    assert!(manifest["project_root"]
+        .as_str()
+        .is_some_and(|s| !s.is_empty()));
+    assert!(manifest["project_id"]
+        .as_str()
+        .is_some_and(|s| !s.is_empty()));
+    assert!(manifest["generated_at_unix_epoch_ms"].as_u64().is_some());
     assert_object_keys(
         &manifest["input"],
         &["source", "entry_points", "compiled_files"],

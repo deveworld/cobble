@@ -110,6 +110,1052 @@ fn cli_doctor_reports_missing_command_tree_without_download() {
 }
 
 #[test]
+fn cli_doctor_json_reports_stable_core_shape() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let commands_json = write_say_commands_json(temp_dir.path());
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "doctor_json_project"
+description = "Doctor JSON regression project"
+namespace = "doctor_json_project"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .arg("doctor")
+        .arg("--json")
+        .arg(temp_dir.path())
+        .arg("--commands-json")
+        .arg(&commands_json)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "doctor --json failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "doctor --json should keep stderr quiet on success: {stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert!(matches!(
+        value["status"].as_str(),
+        Some("ok" | "warning" | "error")
+    ));
+    assert_eq!(value["cobble"]["pack_format"], "101.1");
+    assert_eq!(value["config"]["id"], "config");
+    assert_eq!(value["config"]["status"], "ok");
+    assert_eq!(
+        value["config"]["project"]["namespace"],
+        "doctor_json_project"
+    );
+    assert_eq!(value["commands_json"]["id"], "commands_json");
+    assert_eq!(value["commands_json"]["status"], "ok");
+    assert_eq!(
+        value["commands_json"]["path"],
+        commands_json.to_string_lossy().as_ref()
+    );
+    assert_eq!(value["experimental_output"]["id"], "output");
+    assert_eq!(value["experimental_output"]["status"], "not_present");
+    assert_eq!(value["experimental_output"]["configured"], true);
+    assert_eq!(value["experimental_output"]["exists"], false);
+    assert_eq!(value["experimental_link"]["id"], "link");
+    assert_eq!(value["experimental_link"]["status"], "not_configured");
+    assert_eq!(value["experimental_link"]["configured"], false);
+    assert!(value["commands_json"]["sha1"].as_str().is_some());
+    assert!(value["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| { tool["id"] == "tool.java" && tool["status"].as_str().is_some() }));
+}
+
+#[test]
+fn cli_doctor_json_reports_configured_output_marker_status() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("doctor_output_project");
+    let commands_json = write_say_commands_json(temp_dir.path());
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let build = cobble().arg("build").arg(&project_dir).output().unwrap();
+    let (build_stdout, build_stderr) = output_text(&build);
+    assert!(
+        build.status.success(),
+        "build failed\nstdout:\n{build_stdout}\nstderr:\n{build_stderr}"
+    );
+
+    let doctor = cobble()
+        .arg("doctor")
+        .arg("--json")
+        .arg(&project_dir)
+        .arg("--commands-json")
+        .arg(&commands_json)
+        .output()
+        .unwrap();
+    let (doctor_stdout, doctor_stderr) = output_text(&doctor);
+    assert!(
+        doctor.status.success(),
+        "doctor --json failed\nstdout:\n{doctor_stdout}\nstderr:\n{doctor_stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&doctor_stdout).unwrap();
+    assert_eq!(value["experimental_output"]["id"], "output");
+    assert_eq!(value["experimental_output"]["status"], "ok");
+    assert_eq!(value["experimental_output"]["configured"], true);
+    assert_eq!(value["experimental_output"]["exists"], true);
+    assert_eq!(value["experimental_output"]["marker"]["present"], true);
+    assert_eq!(
+        value["experimental_output"]["marker"]["namespace"],
+        "doctor_output_project"
+    );
+    assert_eq!(
+        value["experimental_output"]["path"],
+        project_dir.join("output").to_string_lossy().as_ref()
+    );
+}
+
+#[test]
+fn cli_doctor_json_reports_link_status_and_marker() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+    let pack_dir = datapacks_dir.join("linked_pack");
+    let commands_json = write_say_commands_json(temp_dir.path());
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+
+    let missing_marker = cobble()
+        .arg("doctor")
+        .arg("--json")
+        .arg(&project_dir)
+        .arg("--commands-json")
+        .arg(&commands_json)
+        .output()
+        .unwrap();
+    let (missing_stdout, missing_stderr) = output_text(&missing_marker);
+    assert!(
+        missing_marker.status.success(),
+        "doctor --json failed\nstdout:\n{missing_stdout}\nstderr:\n{missing_stderr}"
+    );
+    let missing: serde_json::Value = serde_json::from_str(&missing_stdout).unwrap();
+    assert_eq!(missing["experimental_link"]["id"], "link");
+    assert_eq!(missing["experimental_link"]["status"], "warning");
+    assert_eq!(missing["experimental_link"]["configured"], true);
+    assert_eq!(missing["experimental_link"]["target_kind"], "datapacks");
+    assert_eq!(missing["experimental_link"]["marker"]["present"], false);
+
+    let build = cobble()
+        .arg("build")
+        .arg(project_dir.join("src"))
+        .arg("--output")
+        .arg(&pack_dir)
+        .output()
+        .unwrap();
+    let (build_stdout, build_stderr) = output_text(&build);
+    assert!(
+        build.status.success(),
+        "build failed\nstdout:\n{build_stdout}\nstderr:\n{build_stderr}"
+    );
+
+    let present_marker = cobble()
+        .arg("doctor")
+        .arg("--json")
+        .arg(&project_dir)
+        .arg("--commands-json")
+        .arg(&commands_json)
+        .output()
+        .unwrap();
+    let (present_stdout, present_stderr) = output_text(&present_marker);
+    assert!(
+        present_marker.status.success(),
+        "doctor --json failed\nstdout:\n{present_stdout}\nstderr:\n{present_stderr}"
+    );
+    let present: serde_json::Value = serde_json::from_str(&present_stdout).unwrap();
+    assert_eq!(present["experimental_link"]["status"], "ok");
+    assert_eq!(present["experimental_link"]["marker"]["present"], true);
+    assert_eq!(
+        present["experimental_link"]["marker"]["path"],
+        pack_dir
+            .join(".cobble/build_manifest.json")
+            .to_string_lossy()
+            .as_ref()
+    );
+}
+
+#[test]
+fn cli_init_lists_templates_without_creating_project_files() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("listed_pack");
+
+    let output = cobble()
+        .arg("init")
+        .arg("--list-templates")
+        .arg("--name")
+        .arg(&project_dir)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "init --list-templates failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("Available templates"));
+    assert!(stdout.contains("minimal"));
+    assert!(stdout.contains("stdlib"));
+    assert!(stdout.contains("(default)"));
+    assert!(stdout.contains("validation"));
+    assert!(stdout.contains("resource-heavy"));
+    assert!(stdout.contains("game-mechanic"));
+    assert!(stdout.contains("web-demo"));
+    assert!(!project_dir.exists());
+}
+
+#[test]
+fn cli_clean_dry_run_reports_marked_output_without_deleting() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say clean dry run\n");
+    let output_dir = temp_dir.path().join("output");
+
+    let build = cobble()
+        .arg("build")
+        .arg(&input)
+        .arg("--namespace")
+        .arg("clean_dry_run")
+        .arg("--output")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+    let (build_stdout, build_stderr) = output_text(&build);
+    assert!(
+        build.status.success(),
+        "build failed\nstdout:\n{build_stdout}\nstderr:\n{build_stderr}"
+    );
+
+    let output = cobble()
+        .arg("clean")
+        .arg("--dry-run")
+        .arg("--output")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "clean --dry-run failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("Would remove Cobble output"));
+    assert!(stdout.contains("clean_dry_run"));
+    assert!(output_dir.exists());
+}
+
+#[test]
+fn cli_clean_removes_marked_output() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say clean\n");
+    let output_dir = temp_dir.path().join("output");
+
+    let build = cobble()
+        .arg("build")
+        .arg(&input)
+        .arg("--namespace")
+        .arg("clean_remove")
+        .arg("--output")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+    let (build_stdout, build_stderr) = output_text(&build);
+    assert!(
+        build.status.success(),
+        "build failed\nstdout:\n{build_stdout}\nstderr:\n{build_stderr}"
+    );
+
+    let output = cobble()
+        .arg("clean")
+        .arg("--output")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "clean failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("Removed Cobble output"));
+    assert!(!output_dir.exists());
+}
+
+#[test]
+fn cli_clean_refuses_unmarked_output() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let output_dir = temp_dir.path().join("output");
+    fs::create_dir_all(&output_dir).unwrap();
+    fs::write(output_dir.join("important.txt"), "keep me").unwrap();
+
+    let output = cobble()
+        .arg("clean")
+        .arg("--output")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Refusing to clean"));
+    assert!(output_dir.join("important.txt").exists());
+}
+
+#[test]
+fn cli_clean_linked_requires_confirmation_and_removes_marked_linked_output() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+    let pack_dir = datapacks_dir.join("linked_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+
+    let build = cobble()
+        .arg("build")
+        .arg(project_dir.join("src"))
+        .arg("--output")
+        .arg(&pack_dir)
+        .output()
+        .unwrap();
+    let (build_stdout, build_stderr) = output_text(&build);
+    assert!(
+        build.status.success(),
+        "build failed\nstdout:\n{build_stdout}\nstderr:\n{build_stderr}"
+    );
+    assert!(pack_dir.join(".cobble/build_manifest.json").exists());
+
+    let dry_run = cobble()
+        .arg("clean")
+        .arg(&project_dir)
+        .arg("--linked")
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    let (dry_stdout, dry_stderr) = output_text(&dry_run);
+    assert!(
+        dry_run.status.success(),
+        "clean --linked --dry-run failed\nstdout:\n{dry_stdout}\nstderr:\n{dry_stderr}"
+    );
+    assert!(dry_stdout.contains("Would remove Cobble output"));
+    assert!(pack_dir.exists());
+
+    let unconfirmed = cobble()
+        .arg("clean")
+        .arg(&project_dir)
+        .arg("--linked")
+        .output()
+        .unwrap();
+    let (_stdout, stderr) = output_text(&unconfirmed);
+    assert!(!unconfirmed.status.success());
+    assert!(stderr.contains("requires --yes"));
+    assert!(pack_dir.exists());
+
+    let confirmed = cobble()
+        .arg("clean")
+        .arg(&project_dir)
+        .arg("--linked")
+        .arg("--yes")
+        .output()
+        .unwrap();
+    let (confirmed_stdout, confirmed_stderr) = output_text(&confirmed);
+    assert!(
+        confirmed.status.success(),
+        "clean --linked --yes failed\nstdout:\n{confirmed_stdout}\nstderr:\n{confirmed_stderr}"
+    );
+    assert!(confirmed_stdout.contains("Removed Cobble output"));
+    assert!(!pack_dir.exists());
+}
+
+#[test]
+fn cli_link_dry_run_does_not_write_link_state() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let output = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "link --dry-run failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("Would configure Cobble link"));
+    assert!(stdout.contains(datapacks_dir.to_string_lossy().as_ref()));
+    assert!(!project_dir.join(".cobble/link_state.json").exists());
+    assert!(!datapacks_dir.exists());
+}
+
+#[test]
+fn cli_link_configures_status_and_clear() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+    assert!(datapacks_dir.exists());
+    assert!(project_dir.join(".cobble/link_state.json").exists());
+
+    let status = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--status")
+        .output()
+        .unwrap();
+    let (status_stdout, status_stderr) = output_text(&status);
+    assert!(
+        status.status.success(),
+        "link --status failed\nstdout:\n{status_stdout}\nstderr:\n{status_stderr}"
+    );
+    assert!(status_stdout.contains("Cobble link configured"));
+    assert!(status_stdout.contains(datapacks_dir.to_string_lossy().as_ref()));
+    assert!(status_stdout.contains("Marker: missing"));
+
+    let clear = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--clear")
+        .output()
+        .unwrap();
+    let (clear_stdout, clear_stderr) = output_text(&clear);
+    assert!(
+        clear.status.success(),
+        "link --clear failed\nstdout:\n{clear_stdout}\nstderr:\n{clear_stderr}"
+    );
+    assert!(clear_stdout.contains("Cleared Cobble link state"));
+    assert!(!project_dir.join(".cobble/link_state.json").exists());
+}
+
+#[test]
+fn cli_link_world_writes_resolved_datapacks_state() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let world_dir = temp_dir.path().join("world");
+    let datapacks_dir = world_dir.join("datapacks");
+    let pack_dir = datapacks_dir.join("world_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--world")
+        .arg(&world_dir)
+        .arg("--pack-name")
+        .arg("world_pack")
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link --world failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+    assert!(datapacks_dir.exists());
+
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project_dir.join(".cobble/link_state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["target_kind"], "world");
+    assert_eq!(
+        state["target_path"],
+        datapacks_dir.to_string_lossy().as_ref()
+    );
+    assert_eq!(state["pack_name"], "world_pack");
+    assert_eq!(state["pack_path"], pack_dir.to_string_lossy().as_ref());
+}
+
+#[test]
+fn cli_link_minecraft_dry_run_resolves_save_datapacks_path() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let minecraft_dir = temp_dir.path().join(".minecraft");
+    let expected_datapacks = minecraft_dir
+        .join("saves")
+        .join("dev_pack")
+        .join("datapacks");
+    let expected_pack = expected_datapacks.join("dev_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let output = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--minecraft")
+        .arg(&minecraft_dir)
+        .arg("--pack-name")
+        .arg("dev_pack")
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "link --minecraft --dry-run failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("Target kind: minecraft"));
+    assert!(stdout.contains(expected_datapacks.to_string_lossy().as_ref()));
+    assert!(stdout.contains(expected_pack.to_string_lossy().as_ref()));
+    assert!(!project_dir.join(".cobble/link_state.json").exists());
+    assert!(!expected_datapacks.exists());
+}
+
+#[test]
+fn cli_link_status_doctor_and_clean_reject_tampered_pack_path() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+    let outside_dir = temp_dir.path().join("outside").join("linked_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+
+    fs::create_dir_all(&outside_dir).unwrap();
+    fs::write(outside_dir.join("important.txt"), "keep me").unwrap();
+    let state_path = project_dir.join(".cobble/link_state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).unwrap();
+    state["pack_path"] = serde_json::Value::String(outside_dir.display().to_string());
+    fs::write(
+        &state_path,
+        serde_json::to_string_pretty(&state).unwrap() + "\n",
+    )
+    .unwrap();
+
+    let status = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--status")
+        .output()
+        .unwrap();
+    let (status_stdout, status_stderr) = output_text(&status);
+    assert!(
+        status.status.success(),
+        "link --status failed\nstdout:\n{status_stdout}\nstderr:\n{status_stderr}"
+    );
+    assert!(status_stdout.contains("Link state: invalid"));
+    assert!(status_stdout.contains("outside target datapacks directory"));
+    assert!(status_stdout.contains("Marker: not checked"));
+
+    let doctor = cobble()
+        .arg("doctor")
+        .arg("--json")
+        .arg(&project_dir)
+        .arg("--commands-json")
+        .arg(write_say_commands_json(temp_dir.path()))
+        .output()
+        .unwrap();
+    let (doctor_stdout, doctor_stderr) = output_text(&doctor);
+    assert!(
+        doctor.status.success(),
+        "doctor --json failed\nstdout:\n{doctor_stdout}\nstderr:\n{doctor_stderr}"
+    );
+    let doctor_json: serde_json::Value = serde_json::from_str(&doctor_stdout).unwrap();
+    assert_eq!(doctor_json["status"], "error");
+    assert_eq!(doctor_json["experimental_link"]["status"], "error");
+    assert!(doctor_json["experimental_link"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("outside target datapacks directory"));
+
+    let clean = cobble()
+        .arg("clean")
+        .arg(&project_dir)
+        .arg("--linked")
+        .arg("--yes")
+        .output()
+        .unwrap();
+    let (_clean_stdout, clean_stderr) = output_text(&clean);
+    assert!(!clean.status.success());
+    assert!(clean_stderr.contains("outside target datapacks directory"));
+    assert!(outside_dir.join("important.txt").exists());
+}
+
+#[test]
+fn cli_watch_link_requires_configured_link_state() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let output = cobble()
+        .arg("watch")
+        .arg(project_dir.join("src"))
+        .arg("--link")
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("No Cobble link configured"));
+}
+
+#[test]
+fn cli_watch_link_rejects_output_override() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let output = cobble()
+        .arg("watch")
+        .arg(project_dir.join("src"))
+        .arg("--link")
+        .arg("--output")
+        .arg(temp_dir.path().join("output"))
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("--link cannot be combined with --output"));
+}
+
+#[test]
+fn cli_watch_link_rejects_namespace_override() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let output = cobble()
+        .arg("watch")
+        .arg(project_dir.join("src"))
+        .arg("--link")
+        .arg("--namespace")
+        .arg("other_pack")
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("--link cannot be combined with --namespace"));
+}
+
+#[test]
+fn cli_watch_link_refuses_unmarked_existing_pack() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+    let pack_dir = datapacks_dir.join("linked_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+
+    fs::create_dir_all(&pack_dir).unwrap();
+    fs::write(pack_dir.join("important.txt"), "keep me").unwrap();
+
+    let output = cobble()
+        .arg("watch")
+        .arg(project_dir.join("src"))
+        .arg("--link")
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Refusing to build linked output"));
+    assert!(pack_dir.join("important.txt").exists());
+}
+
+#[test]
+fn cli_watch_link_refuses_mismatched_marker_namespace() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+    let pack_dir = datapacks_dir.join("linked_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+
+    fs::create_dir_all(pack_dir.join(".cobble")).unwrap();
+    fs::create_dir_all(pack_dir.join("data/other_pack/function")).unwrap();
+    fs::write(pack_dir.join("pack.mcmeta"), "{}").unwrap();
+    fs::write(
+        pack_dir.join(".cobble/build_manifest.json"),
+        r#"{
+  "version": 1,
+  "cobble_version": "0.7.1",
+  "namespace": "other_pack"
+}"#,
+    )
+    .unwrap();
+
+    let status = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--status")
+        .output()
+        .unwrap();
+    let (status_stdout, status_stderr) = output_text(&status);
+    assert!(
+        status.status.success(),
+        "link --status failed\nstdout:\n{status_stdout}\nstderr:\n{status_stderr}"
+    );
+    assert!(status_stdout.contains("Marker: invalid"));
+    assert!(status_stdout.contains("marker namespace `other_pack`"));
+
+    let output = cobble()
+        .arg("watch")
+        .arg(project_dir.join("src"))
+        .arg("--link")
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("marker namespace `other_pack`"));
+    assert!(stderr.contains("project namespace `linked_pack`"));
+}
+
+#[test]
+fn cli_link_watch_and_clean_reject_forged_same_namespace_marker() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+    let pack_dir = datapacks_dir.join("linked_pack");
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+
+    fs::create_dir_all(pack_dir.join(".cobble")).unwrap();
+    fs::create_dir_all(pack_dir.join("data/linked_pack/function")).unwrap();
+    fs::write(pack_dir.join("pack.mcmeta"), "{}").unwrap();
+    fs::write(pack_dir.join("SENTINEL_DO_NOT_DELETE.txt"), "keep me").unwrap();
+    fs::write(
+        pack_dir.join(".cobble/build_manifest.json"),
+        r#"{
+  "version": 1,
+  "cobble_version": "0.7.1",
+  "namespace": "linked_pack",
+  "generated_namespaces": ["linked_pack"]
+}"#,
+    )
+    .unwrap();
+
+    let status = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--status")
+        .output()
+        .unwrap();
+    let (status_stdout, status_stderr) = output_text(&status);
+    assert!(
+        status.status.success(),
+        "link --status failed\nstdout:\n{status_stdout}\nstderr:\n{status_stderr}"
+    );
+    assert!(status_stdout.contains("Marker: invalid"));
+    assert!(status_stdout.contains("missing project_id"));
+
+    let watch = cobble()
+        .arg("watch")
+        .arg(project_dir.join("src"))
+        .arg("--link")
+        .output()
+        .unwrap();
+    let (_watch_stdout, watch_stderr) = output_text(&watch);
+    assert!(!watch.status.success());
+    assert!(watch_stderr.contains("missing project_id"));
+
+    let clean = cobble()
+        .arg("clean")
+        .arg(&project_dir)
+        .arg("--linked")
+        .arg("--yes")
+        .output()
+        .unwrap();
+    let (_clean_stdout, clean_stderr) = output_text(&clean);
+    assert!(!clean.status.success());
+    assert!(clean_stderr.contains("missing project_id"));
+    assert!(pack_dir.join("SENTINEL_DO_NOT_DELETE.txt").exists());
+}
+
+#[test]
 fn cli_build_dry_run_does_not_write_final_output() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(temp_dir.path(), "def main():\n    /say dry run\n");
@@ -189,6 +1235,93 @@ fn cli_build_rejects_dry_run_with_zip() {
     let (_stdout, stderr) = output_text(&output);
     assert!(!output.status.success());
     assert!(stderr.contains("--dry-run cannot be combined with --zip"));
+}
+
+#[test]
+fn cli_build_validate_refuses_existing_file_output_without_deleting_it() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say preserve file\n");
+    let output_path = temp_dir.path().join("output-file");
+    fs::write(&output_path, "important\n").unwrap();
+
+    let output = cobble()
+        .arg("build")
+        .arg(&input)
+        .arg("--namespace")
+        .arg("cli_regression")
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--validate")
+        .arg("--commands-json")
+        .arg(write_say_commands_json(temp_dir.path()))
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Refusing to build data pack over non-directory output path"));
+    assert!(output_path.is_file());
+    assert_eq!(fs::read_to_string(&output_path).unwrap(), "important\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_build_refuses_symlink_output_parent_component() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let source_dir = temp_dir.path().join("src");
+    let real_parent = temp_dir.path().join("real-datapacks");
+    let symlink_parent = temp_dir.path().join("symlink-datapacks");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(source_dir.join("main.cbl"), "def main():\n    /say safe\n").unwrap();
+    fs::create_dir_all(&real_parent).unwrap();
+    symlink(&real_parent, &symlink_parent).unwrap();
+
+    let output = cobble()
+        .arg("build")
+        .arg(&source_dir)
+        .arg("-o")
+        .arg(symlink_parent.join("build_pack"))
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Refusing to build through symlink"));
+    assert!(!real_parent.join("build_pack").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_build_refuses_symlink_descendant_in_existing_output() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say safe\n");
+    let output_dir = temp_dir.path().join("output");
+    let outside_dir = temp_dir.path().join("outside");
+    fs::create_dir_all(&output_dir).unwrap();
+    fs::create_dir_all(&outside_dir).unwrap();
+    fs::write(outside_dir.join("important.txt"), "keep\n").unwrap();
+    symlink(&outside_dir, output_dir.join("data")).unwrap();
+
+    let output = cobble()
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Refusing to build through symlink"));
+    assert_eq!(
+        fs::read_to_string(outside_dir.join("important.txt")).unwrap(),
+        "keep\n"
+    );
+    assert!(!outside_dir.join("cobble").exists());
 }
 
 #[test]
@@ -382,6 +1515,80 @@ fn cli_check_json_reports_success_summary() {
 }
 
 #[test]
+fn cli_check_json_symbols_reports_experimental_editor_symbols() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"
+import stdlib
+
+const INDEX = 0
+@Players = @a[type=player]
+define @Marker = @e[type=marker]
+create {"Tags": ["marker"]}
+end
+
+datapack.predicate("always", {"condition": "minecraft:random_chance", "chance": 1})
+
+def setup():
+    /say ok
+"#,
+    );
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg("--symbols")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json --symbols failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    let symbols = value["experimental_symbols"].as_array().unwrap();
+    assert!(symbols.iter().any(|symbol| {
+        symbol["kind"] == "import" && symbol["name"] == "stdlib" && symbol["line"] == 2
+    }));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol["kind"] == "const" && symbol["name"] == "INDEX"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol["kind"] == "selector_alias" && symbol["name"] == "@Players"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol["kind"] == "entity_template" && symbol["name"] == "@Marker"));
+    assert!(symbols.iter().any(|symbol| {
+        symbol["kind"] == "datapack_resource" && symbol["name"] == "predicate:always"
+    }));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol["kind"] == "function" && symbol["name"] == "setup"));
+}
+
+#[test]
+fn cli_check_symbols_requires_json() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say ok\n");
+
+    let output = cobble()
+        .arg("check")
+        .arg("--symbols")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("--symbols requires --json"));
+}
+
+#[test]
 fn cli_check_json_reports_structured_diagnostics() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(
@@ -445,6 +1652,112 @@ def main():
         .as_str()
         .unwrap()
         .contains("Unknown math function `math.nope`"));
+}
+
+#[test]
+fn cli_fmt_check_reports_unformatted_file_without_writing() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():  \r\n  /say check  \r\n");
+
+    let output = cobble()
+        .arg("fmt")
+        .arg("--check")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stdout.contains("Would reformat"));
+    assert!(stderr.contains("file(s) need formatting"));
+    assert_eq!(
+        fs::read_to_string(&input).unwrap(),
+        "def main():  \r\n  /say check  \r\n"
+    );
+}
+
+#[test]
+fn cli_fmt_diff_reports_changes_without_writing() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let original = "def main():  \r\n  /say diff  \r\n";
+    let input = write_source(temp_dir.path(), original);
+
+    let output = cobble()
+        .arg("fmt")
+        .arg("--diff")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stdout.contains("--- "));
+    assert!(stdout.contains("+++ "));
+    assert!(stdout.contains("-def main():  "));
+    assert!(stdout.contains("+def main():"));
+    assert!(stdout.contains("-  /say diff  "));
+    assert!(stdout.contains("+    /say diff"));
+    assert!(stderr.contains("file(s) differ from formatter output"));
+    assert_eq!(fs::read_to_string(&input).unwrap(), original);
+}
+
+#[test]
+fn cli_fmt_formats_file_conservatively() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        "def main():  \n  # setup  \n  /tellraw @a {\"text\":\"Hi\",\"color\":\"green\"}  \n",
+    );
+
+    let output = cobble().arg("fmt").arg(&input).output().unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "fmt failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("Formatted 1 file"));
+    assert_eq!(
+        fs::read_to_string(&input).unwrap(),
+        "def main():\n    # setup\n    /tellraw @a {\"text\":\"Hi\",\"color\":\"green\"}\n"
+    );
+}
+
+#[test]
+fn cli_fmt_rejects_invalid_source_without_writing() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let original = "def main():\n  value = (1 + 2\n";
+    let input = write_source(temp_dir.path(), original);
+
+    let output = cobble().arg("fmt").arg(&input).output().unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Formatting aborted"));
+    assert!(stderr.contains("unclosed-delimiter"));
+    assert_eq!(fs::read_to_string(&input).unwrap(), original);
+}
+
+#[test]
+fn cli_fmt_directory_failure_writes_no_files() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let source_dir = temp_dir.path().join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    let good = source_dir.join("good.cbl");
+    let bad = source_dir.join("bad.cbl");
+    let good_original = "def main():  \r\n  /say keep original until all files pass  \r\n";
+    let bad_original = "def broken():\n  value = (1 + 2\n";
+    fs::write(&good, good_original).unwrap();
+    fs::write(&bad, bad_original).unwrap();
+
+    let output = cobble().arg("fmt").arg(&source_dir).output().unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Formatting aborted"));
+    assert!(stderr.contains("bad.cbl"));
+    assert_eq!(fs::read_to_string(&good).unwrap(), good_original);
+    assert_eq!(fs::read_to_string(&bad).unwrap(), bad_original);
 }
 
 #[test]
@@ -797,6 +2110,26 @@ def main():
     assert!(!output.status.success());
     assert!(stderr.contains("invalid-placeholder"));
     assert!(stderr.contains("Invalid command placeholder `bad-name`"));
+}
+
+#[test]
+fn cli_check_allows_selector_score_maps_in_raw_commands() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"
+def tick():
+    /execute as @a[scores={demo=1..}] run title @s actionbar {"text":"Running","color":"yellow"}
+"#,
+    );
+
+    let output = cobble().arg("check").arg(&input).output().unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
 }
 
 #[test]

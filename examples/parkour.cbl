@@ -18,7 +18,7 @@ def on_checkpoint():
     /playsound minecraft:entity.player.levelup master @s
     /title @s subtitle {"text":"Checkpoint Saved!","color":"green"}
     /title @s title ""
-    
+
     # Give effects
     /effect give @s minecraft:instant_health 1 10 true
     /effect give @s minecraft:saturation 1 10 true

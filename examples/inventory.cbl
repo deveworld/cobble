@@ -57,19 +57,19 @@ def organize_chest():
     """Create an organized storage chest"""
     asat @s:
         /setblock ~ ~ ~ minecraft:chest{CustomName:'{"text":"Storage","color":"dark_green"}'}
-        
+
         # Fill with categorized items
         /item replace block ~ ~ ~ container.0 with minecraft:iron_ingot 64
         /item replace block ~ ~ ~ container.1 with minecraft:gold_ingot 32
         /item replace block ~ ~ ~ container.2 with minecraft:diamond 16
         /item replace block ~ ~ ~ container.3 with minecraft:emerald 8
-        
+
         # Tools section
         /item replace block ~ ~ ~ container.9 with minecraft:iron_pickaxe
         /item replace block ~ ~ ~ container.10 with minecraft:iron_axe
         /item replace block ~ ~ ~ container.11 with minecraft:iron_shovel
         /item replace block ~ ~ ~ container.12 with minecraft:iron_hoe
-        
+
         # Food section
         /item replace block ~ ~ ~ container.18 with minecraft:bread 64
         /item replace block ~ ~ ~ container.19 with minecraft:cooked_beef 64

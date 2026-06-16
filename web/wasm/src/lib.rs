@@ -113,11 +113,7 @@ fn compile(
         .map_err(|diagnostics| source_diagnostics("demo.cbl", source, diagnostics))?;
     let import_diagnostics = diagnostics::analyze_in_memory_imports(source, &program.imports);
     if !import_diagnostics.is_empty() {
-        return Err(source_diagnostics(
-            "demo.cbl",
-            source,
-            import_diagnostics,
-        ));
+        return Err(source_diagnostics("demo.cbl", source, import_diagnostics));
     }
 
     let mut transpiler = Transpiler::new(namespace.to_string(), PathBuf::from("cobble-web-demo"));
@@ -326,10 +322,7 @@ fn is_tag_path(path: &str) -> bool {
     path.starts_with("data/") && path.contains("/tags/") && path.ends_with(".json")
 }
 
-fn merge_tag_json(
-    existing_json: &str,
-    new_json: &str,
-) -> Result<String, Vec<CompileDiagnostic>> {
+fn merge_tag_json(existing_json: &str, new_json: &str) -> Result<String, Vec<CompileDiagnostic>> {
     let Ok(mut merged_value) = serde_json::from_str::<serde_json::Value>(existing_json) else {
         return Ok(new_json.to_string());
     };
@@ -507,6 +500,16 @@ mod tests {
         assert_eq!(manifest["minecraft_version"], "26.1.2");
         assert_eq!(manifest["pack_format_text"], "101.1");
         assert_eq!(manifest["namespace"], "web_test");
+        assert_eq!(manifest["project_root"], "");
+        assert_eq!(manifest["project_id"], "");
+
+        let generated_at = manifest["generated_at_unix_epoch_ms"]
+            .as_i64()
+            .expect("generated_at_unix_epoch_ms is numeric");
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!(generated_at, 0);
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(generated_at > 0);
     }
 
     #[test]
@@ -543,6 +546,32 @@ stdlib.addEventListener(event.LOAD, load)
             tag["values"],
             serde_json::json!(["web_test:load", "web_test:extra_load"])
         );
+    }
+
+    #[test]
+    fn compile_stdlib_events_sample_with_selector_score_map() {
+        let response = compile(
+            r#"
+import stdlib
+from stdlib import event
+
+def load():
+    /tellraw @a {"text":"Events ready","color":"green"}
+
+def tick():
+    /execute as @a[scores={demo=1..}] run title @s actionbar {"text":"Running","color":"yellow"}
+
+stdlib.addEventListener(event.LOAD, load)
+stdlib.addEventListener(event.TICK, tick)
+"#,
+            "events_demo",
+            "Events demo",
+        )
+        .unwrap();
+
+        assert_eq!(response.diagnostics.len(), 0);
+        file(&response, "data/minecraft/tags/function/load.json");
+        file(&response, "data/minecraft/tags/function/tick.json");
     }
 
     #[test]
@@ -600,18 +629,12 @@ stdlib.addEventListener(event.LOAD, load)
         assert_eq!(diagnostics[0].line, 1);
         assert_eq!(diagnostics[0].column, 8);
         assert_eq!(diagnostics[0].kind, "missing-import");
-        assert!(diagnostics[0]
-            .message
-            .contains("Cannot import 'helper'"));
+        assert!(diagnostics[0].message.contains("Cannot import 'helper'"));
     }
 
     #[test]
     fn compile_returns_semantic_preflight_diagnostics() {
-        let diagnostics = match compile(
-            "def main():\n    return\n",
-            "web_test",
-            "Web test",
-        ) {
+        let diagnostics = match compile("def main():\n    return\n", "web_test", "Web test") {
             Ok(_) => panic!("unsupported source should fail"),
             Err(diagnostics) => diagnostics,
         };

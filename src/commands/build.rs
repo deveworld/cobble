@@ -1,4 +1,7 @@
 use super::{find_cobble_files, resolve_entry_points};
+use crate::commands::output_safety::{
+    ensure_no_symlink_components, ensure_no_symlink_descendants, project_marker_identity,
+};
 use crate::commands::validate::{print_validation_report, run_validation};
 use crate::config::CobbleConfig;
 use crate::diagnostics::{format_file_diagnostics, parse_source_files};
@@ -135,8 +138,16 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     } else {
         return Err(format!("Source path does not exist: {:?}", source_path));
     };
+    if !options.dry_run || (options.validate && !files_to_compile.is_empty()) {
+        ensure_build_output_path_safe(&output_dir)?;
+    }
 
     let source_display_root = source_display_root(&source_path, &config_dir);
+    let project_root_for_marker = config
+        .as_ref()
+        .map(|_| config_dir.clone())
+        .unwrap_or_else(|| source_display_root.clone());
+    let (project_root_marker, project_id) = project_marker_identity(&project_root_for_marker);
 
     if options.verbose {
         println!("Building {} file(s)...", files_to_compile.len());
@@ -162,6 +173,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     transpiler.set_description(description);
     transpiler.set_pack_format(pack_format);
     transpiler.set_source_display_root(source_display_root.clone());
+    transpiler.set_project_identity(project_root_marker, project_id);
     transpiler.set_build_input(BuildManifestInput {
         source: path_display_relative(&source_path, &source_display_root),
         entry_points: configured_entry_points,
@@ -423,6 +435,21 @@ fn validate_namespace(namespace: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_build_output_path_safe(output_dir: &Path) -> Result<(), String> {
+    ensure_no_symlink_components(output_dir, "build")?;
+    if output_dir.exists() {
+        let metadata = fs::symlink_metadata(output_dir)
+            .map_err(|e| format!("Failed to inspect build output {:?}: {}", output_dir, e))?;
+        if !metadata.is_dir() {
+            return Err(format!(
+                "Refusing to build data pack over non-directory output path: {}",
+                output_dir.display()
+            ));
+        }
+    }
+    ensure_no_symlink_descendants(output_dir, "build")
+}
+
 fn staging_output_dir(output_dir: &Path) -> Result<PathBuf, String> {
     let parent = output_dir.parent().unwrap_or_else(|| Path::new("."));
     let name = output_dir
@@ -447,21 +474,79 @@ fn staging_output_dir(output_dir: &Path) -> Result<PathBuf, String> {
 }
 
 fn replace_output_dir(staging_dir: &Path, output_dir: &Path) -> Result<(), String> {
-    if output_dir.exists() {
-        if output_dir.is_dir() {
-            fs::remove_dir_all(output_dir)
-                .map_err(|e| format!("Failed to replace output {:?}: {}", output_dir, e))?;
-        } else {
-            fs::remove_file(output_dir)
-                .map_err(|e| format!("Failed to replace output {:?}: {}", output_dir, e))?;
+    let backup_dir = if output_dir.exists() {
+        let metadata = fs::symlink_metadata(output_dir)
+            .map_err(|e| format!("Failed to inspect existing output {:?}: {}", output_dir, e))?;
+        if !metadata.is_dir() {
+            return Err(format!(
+                "Refusing to replace non-directory output path: {}",
+                output_dir.display()
+            ));
+        }
+        let backup_dir = replacement_backup_dir(output_dir)?;
+        fs::rename(output_dir, &backup_dir).map_err(|e| {
+            format!(
+                "Failed to move existing output {:?} to backup {:?}: {}",
+                output_dir, backup_dir, e
+            )
+        })?;
+        Some(backup_dir)
+    } else {
+        None
+    };
+
+    if let Err(error) = fs::rename(staging_dir, output_dir) {
+        if let Some(backup_dir) = &backup_dir {
+            let _ = fs::rename(backup_dir, output_dir);
+        }
+        return Err(format!(
+            "Failed to move validated data pack from {:?} to {:?}: {}",
+            staging_dir, output_dir, error
+        ));
+    }
+
+    if let Some(backup_dir) = backup_dir {
+        if backup_dir.is_dir() {
+            fs::remove_dir_all(&backup_dir).map_err(|e| {
+                format!(
+                    "Failed to clean previous output backup {:?}: {}",
+                    backup_dir, e
+                )
+            })?;
+        } else if backup_dir.exists() {
+            fs::remove_file(&backup_dir).map_err(|e| {
+                format!(
+                    "Failed to clean previous output backup {:?}: {}",
+                    backup_dir, e
+                )
+            })?;
         }
     }
-    fs::rename(staging_dir, output_dir).map_err(|e| {
-        format!(
-            "Failed to move validated data pack from {:?} to {:?}: {}",
-            staging_dir, output_dir, e
-        )
-    })
+
+    Ok(())
+}
+
+fn replacement_backup_dir(output_dir: &Path) -> Result<PathBuf, String> {
+    let parent = output_dir.parent().unwrap_or_else(|| Path::new("."));
+    let name = output_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("output");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("System clock error while creating output backup: {}", e))?
+        .as_nanos();
+    let backup_dir = parent.join(format!(
+        ".{}.cobble-backup-{}-{}",
+        name,
+        std::process::id(),
+        stamp
+    ));
+    if backup_dir.exists() {
+        fs::remove_dir_all(&backup_dir)
+            .map_err(|e| format!("Failed to clean output backup {:?}: {}", backup_dir, e))?;
+    }
+    Ok(backup_dir)
 }
 
 fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
@@ -634,6 +719,59 @@ mod tests {
     }
 
     #[test]
+    fn replace_output_dir_restores_previous_output_when_staging_move_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let output_dir = temp_dir.path().join("output");
+        let missing_staging = temp_dir.path().join("missing-staging");
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::write(output_dir.join("sentinel.txt"), "keep\n").unwrap();
+
+        let error = replace_output_dir(&missing_staging, &output_dir).unwrap_err();
+
+        assert!(error.contains("Failed to move validated data pack"));
+        assert_eq!(
+            fs::read_to_string(output_dir.join("sentinel.txt")).unwrap(),
+            "keep\n"
+        );
+        assert!(!temp_dir
+            .path()
+            .read_dir()
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .contains(".output.cobble-backup-")));
+    }
+
+    #[test]
+    fn build_rejects_existing_non_directory_output_path() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_path = temp_dir.path().join("output-file");
+        fs::write(&input_file, "def test():\n    /say safe\n").unwrap();
+        fs::write(&output_path, "important\n").unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_path.clone()),
+            namespace: Some("file_output".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: true,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Refusing to build data pack over non-directory output path"));
+        assert_eq!(fs::read_to_string(&output_path).unwrap(), "important\n");
+    }
+
+    #[test]
     fn dry_run_does_not_write_output() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let input_file = temp_dir.path().join("test.cbl");
@@ -656,6 +794,111 @@ mod tests {
         .unwrap();
 
         assert!(!output_dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_rejects_symlink_output_parent_component() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let real_parent = temp_dir.path().join("real-parent");
+        let symlink_parent = temp_dir.path().join("symlink-parent");
+        let output_dir = symlink_parent.join("output");
+        fs::write(&input_file, "def test():\n    /say safe\n").unwrap();
+        fs::create_dir_all(&real_parent).unwrap();
+        symlink(&real_parent, &symlink_parent).unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir),
+            namespace: Some("symlink_build".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Refusing to build through symlink"));
+        assert!(!real_parent.join("output").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_directory_input_rejects_symlink_output_parent_component() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let source_dir = temp_dir.path().join("src");
+        let real_parent = temp_dir.path().join("real-parent");
+        let symlink_parent = temp_dir.path().join("symlink-parent");
+        let output_dir = symlink_parent.join("output");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("main.cbl"), "def main():\n    /say safe\n").unwrap();
+        fs::create_dir_all(&real_parent).unwrap();
+        symlink(&real_parent, &symlink_parent).unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(source_dir),
+            output: Some(output_dir),
+            namespace: Some("symlink_build".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Refusing to build through symlink"));
+        assert!(!real_parent.join("output").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_rejects_existing_output_tree_with_symlink_descendant() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("test.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let outside_dir = temp_dir.path().join("outside");
+        fs::write(&input_file, "def test():\n    /say safe\n").unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::create_dir_all(&outside_dir).unwrap();
+        fs::write(outside_dir.join("important.txt"), "keep\n").unwrap();
+        symlink(&outside_dir, output_dir.join("data")).unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir),
+            namespace: Some("symlink_build".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Refusing to build through symlink"));
+        assert_eq!(
+            fs::read_to_string(outside_dir.join("important.txt")).unwrap(),
+            "keep\n"
+        );
+        assert!(!outside_dir.join("symlink_build").exists());
     }
 
     #[test]

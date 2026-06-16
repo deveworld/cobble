@@ -78,7 +78,7 @@ export function CobbleHome() {
             functions, events, resources, validation, and generated metadata.
           </p>
           <p className="release-install">
-            0.7.0 stable · <code>cargo install cobble-lang --locked</code>
+            0.7.1 stable · Minecraft Java Edition 26.1.2
           </p>
           <div className="hero-actions">
             <Link className="command-button hero-command" href="/try">

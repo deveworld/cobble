@@ -1,0 +1,11 @@
+[project]
+name = "cobble_resource_authoring"
+description = "Cobble resource authoring fixture"
+namespace = "cobble_resource_authoring"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = ["main.cbl"]

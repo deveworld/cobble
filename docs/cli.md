@@ -28,13 +28,18 @@ cobble init [OPTIONS]
 **Options:**
 - `--name <NAME>` - Set the project name (default: current directory name)
 - `--description <DESC>` - Set the project description
-- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.7.0 requires Minecraft Java Edition 26.1.2)
-- `--template <NAME>` - Starter template: `minimal`, `stdlib`, or `validation` (default: `stdlib`)
+- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.7.1 requires Minecraft Java Edition 26.1.2)
+- `--template <NAME>` - Starter template: `minimal`, `stdlib`,
+  `validation`, `resource-heavy`, `game-mechanic`, or `web-demo`
+  (default: `stdlib`)
+- `--list-templates` - List available templates and exit without writing files
 
 **Example:**
 ```bash
 cobble init --name my_datapack --description "My awesome data pack"
 cobble init --name smoke_pack --template validation
+cobble init --name demo_pack --template web-demo
+cobble init --list-templates
 ```
 
 After creation, Cobble prints the exact next commands for the selected target
@@ -105,6 +110,11 @@ cobble build src/ -o output/ --namespace mypack --pack-format 101.1 --zip --vali
 cobble build --pack-format 101.1
 ```
 
+When a build would write files, Cobble refuses output paths that are existing
+non-directories, traverse an existing symlink component, or contain existing
+symlink descendants. This applies to normal builds, validated builds, and
+`--dry-run --validate` staging output. A pure `--dry-run` does not write output.
+
 When `--validate` is enabled, Cobble fails the build if any generated command is
 invalid for Minecraft Java Edition 26.1.2. If the default `data/commands.json`
 is missing, Cobble downloads the Minecraft server jar and generates it
@@ -164,18 +174,56 @@ cobble check [SOURCE] [OPTIONS]
 ```
 
 **Options:**
-- `--json` - Print a machine-readable report with `ok`, `files`, `diagnostics`, and `error_count`
+- `--json` - Print a machine-readable report with `schema_version`, `ok`, `files`, `diagnostics`, and `error_count`
+- `--symbols` - Include experimental document-symbol metadata; requires `--json`
 
 **Example:**
 ```bash
 cobble check src/main.cbl
 cobble check examples/
 cobble check --json src/main.cbl
+cobble check --json --symbols src/main.cbl
 ```
 
 JSON output is written to stdout. On failure the process still exits non-zero;
 human-oriented error text may be written to stderr while stdout remains valid
-JSON.
+JSON. `--symbols` adds an `experimental_symbols` array for editor prototypes;
+that field is explicitly experimental even though the top-level JSON report has
+a stable `schema_version`.
+
+### `cobble fmt`
+
+Format Cobble source files.
+
+```bash
+cobble fmt [SOURCE] [OPTIONS]
+```
+
+**Arguments:**
+- `SOURCE` - Source file or directory to format. When omitted, Cobble uses
+  `build.source` from `cobble.toml`. Formatting a directory formats all
+  `.cbl` and `.cobble` files below it.
+
+**Options:**
+- `--check` - Check formatting without writing changes. The command exits
+  non-zero when any file would be reformatted.
+- `--diff` - Print formatter differences without writing changes. The command
+  exits non-zero when any file would be reformatted.
+
+**Examples:**
+```bash
+cobble fmt src/
+cobble fmt --check examples/
+cobble fmt --diff src/main.cbl
+cobble fmt src/main.cbl
+```
+
+The formatter is conservative. It normalizes indentation, line endings,
+trailing whitespace, a UTF-8 BOM, blank EOF padding, and the final newline
+while preserving raw Minecraft command payloads, string contents, multiline
+docstring bodies, inline JSON/SNBT-looking text, and comments. Cobble validates
+the formatted candidate before writing; if any target file still has language
+or syntax diagnostics, formatting aborts and no files are written.
 
 ### `cobble doctor`
 
@@ -191,16 +239,110 @@ cobble doctor [PROJECT_PATH] [OPTIONS]
 
 **Options:**
 - `--commands-json <PATH>` - Command tree path to inspect (default: `data/commands.json`)
+- `--json` - Print a machine-readable report with `schema_version`, top-level
+  `status`, Cobble target metadata, config status, experimental output status,
+  command tree status, experimental link status, and tool checks
 
 **Examples:**
 ```bash
 cobble doctor
 cobble doctor examples/26_smoke --commands-json data/commands.json
+cobble doctor --json
 ```
 
 The report includes the Cobble version, Minecraft target, pack format, Java and
-`curl` availability, `cobble.toml` status, and the default command tree SHA-1
-match when `data/commands.json` exists.
+`curl` availability, `cobble.toml` status, configured output status, and the
+default command tree SHA-1 match when `data/commands.json` exists.
+
+JSON output is written to stdout. `doctor --json` never downloads validation
+data; missing tools, missing config, and missing command trees are reported as
+status fields so CI and editor integrations can decide how strict to be.
+Configured output status is reported under `experimental_output`; it includes
+the resolved output path, whether the directory exists, and whether it has a
+Cobble build marker for the current project namespace and project identity. Link
+status is reported under `experimental_link`; it includes saved link state,
+whether the linked pack currently has Cobble build metadata, and whether that
+metadata matches the project namespace and `project_id`.
+
+### `cobble clean`
+
+Remove Cobble-generated output after safety checks.
+
+```bash
+cobble clean [PROJECT_PATH] [OPTIONS]
+```
+
+**Arguments:**
+- `PROJECT_PATH` - Project directory or file used to find `cobble.toml`
+  (default: current directory)
+
+**Options:**
+- `-o, --output <DIR>` - Output directory to clean. When omitted, Cobble uses
+  `build.output` from `cobble.toml`.
+- `--dry-run` - Print what would be removed without deleting files
+- `--linked` - Clean the pack path configured by `cobble link`
+- `--yes` - Confirm destructive linked cleanup
+
+**Examples:**
+```bash
+cobble clean --dry-run
+cobble clean --output output
+cobble clean --linked --dry-run
+cobble clean --linked --yes
+```
+
+`clean` only removes directories that look like Cobble-generated data pack
+output. The target must be a directory and contain `.cobble/build_manifest.json`,
+`pack.mcmeta`, and `data/`. Cobble refuses symlink outputs, existing symlink
+parent components, symlink descendants, non-directories, unmarked directories,
+and a configured output that resolves to the project root.
+Linked cleanup also requires the saved link state to resolve under the saved
+`datapacks/` target and the linked pack manifest namespace and `project_id` to
+match the current project. Linked cleanup requires `--yes` for real deletion;
+`--dry-run` does not require confirmation.
+
+### `cobble link`
+
+Configure a local Minecraft `datapacks/` target for watch workflows.
+
+```bash
+cobble link [PROJECT_PATH] [OPTIONS]
+```
+
+**Arguments:**
+- `PROJECT_PATH` - Project directory or file used to find `cobble.toml`
+  (default: current directory)
+
+**Options:**
+- `--datapacks <DIR>` - Direct path to a world `datapacks/` directory
+- `--world <DIR>` - Path to a world directory; Cobble uses `<DIR>/datapacks`
+- `--minecraft <DIR>` - Path to `.minecraft`; Cobble uses
+  `<DIR>/saves/<pack-name>/datapacks`
+- `--pack-name <NAME>` - Directory name for the linked data pack
+  (default: project namespace)
+- `--dry-run` - Show the resolved target without writing link state
+- `--status` - Show saved link state and whether generated Cobble metadata is
+  present at the linked pack path
+- `--clear` - Remove saved link state without deleting the linked data pack
+
+**Examples:**
+```bash
+cobble link --datapacks ~/minecraft/saves/TestWorld/datapacks
+cobble link --world ~/minecraft/saves/TestWorld
+cobble link --status
+cobble link --clear
+```
+
+`link` writes project-local state to `.cobble/link_state.json`. It creates the
+target `datapacks/` directory when configuring a real link, but it does not
+delete or replace existing data packs. `link --status`, `doctor --json`,
+`watch --link`, and `clean --linked` all reject a saved `pack_path` that is not
+under the saved `target_path` or would traverse an existing target symlink. Use
+`cobble watch --link` to build into the configured pack path. If that pack path
+already exists, `watch --link` requires a valid `.cobble/build_manifest.json`,
+`pack.mcmeta`, and `data/`; the manifest namespace and `project_id` must match
+the current project. Copied, stale, or namespace-only forged markers are refused
+until the path is moved aside or rebuilt by the owning Cobble project.
 
 ### `cobble inspect`
 
@@ -279,6 +421,7 @@ cobble watch [SOURCE] [OPTIONS]
 - `--description <DESC>` - Override pack description
 - `-v, --verbose` - Show verbose output
 - `--zip` - Create a ZIP archive after each build
+- `--link` - Build into the pack path configured by `cobble link`
 - `--validate` - Validate generated `.mcfunction` files after each successful build
 - `--commands-json <PATH>` - Path to `commands.json` for validation (default: `data/commands.json`)
 
@@ -293,16 +436,32 @@ cobble watch src/ -o ~/minecraft/saves/MyWorld/datapacks/my_pack
 # Watch and validate after each rebuild
 cobble watch src/ --validate
 
+# Watch into a configured linked datapack
+cobble link --datapacks ~/minecraft/saves/TestWorld/datapacks
+cobble watch --link --validate
+
 # Watch with all options
 cobble watch src/ -o output/ --namespace mypack --zip --validate --verbose
 ```
 
+`--link` cannot be combined with `--output` or `--namespace`. Linked outputs use
+the project namespace from `cobble.toml` so `link --status`, `doctor --json`,
+`watch --link`, and `clean --linked` can validate the same manifest ownership
+marker.
+
 This will:
 1. Perform an initial build
-2. Watch for changes in `.cbl` files
-3. Automatically rebuild when files are modified
-4. Show build status and any errors
-5. Continue watching until Ctrl+C is pressed
+2. Watch for changes in `.cbl`, `.cobble`, and `cobble.toml` files
+3. Coalesce rapid editor save events into one rebuild
+4. Ignore generated output, `.cobble/`, staging directories, ZIP files, and
+   common editor temporary files
+5. Reload valid `cobble.toml` changes and update the watched source directory
+6. Show timestamped build status and any errors
+7. Continue watching until Ctrl+C is pressed
+
+When `--validate` is enabled, watch uses the same staging behavior as
+`cobble build --validate`: a failed rebuild or validation failure does not
+replace the last valid output.
 
 ## Project Configuration
 
@@ -341,7 +500,7 @@ entry_points = []
 |-------------------|-------------|
 | Java Edition 26.1.2 | 101.1 |
 
-Cobble v0.7.0 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
+Cobble v0.7.1 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
 
 **Note**: Pack format 101.1 is written to `pack.mcmeta` as `min_format` and `max_format` arrays: `[101, 1]`.
 
@@ -536,7 +695,7 @@ give {player} diamond 1
 cobble build --pack-format 101.1
 ```
 
-Note: Cobble v0.7.0 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
+Note: Cobble v0.7.1 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ### Issue: Functions not found
 

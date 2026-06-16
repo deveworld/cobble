@@ -21,6 +21,7 @@ expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json
     "stdlib_function_tags": 0,
     "total_json_resources": 0
   },
+  "generated_at_unix_epoch_ms": "<generated-at-unix-epoch-ms>",
   "generated_namespaces": [
     "minecraft",
     "validated_snapshot"
@@ -36,6 +37,8 @@ expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json
   "namespace": "validated_snapshot",
   "pack_format": 101.1,
   "pack_format_text": "101.1",
+  "project_id": "<project-id>",
+  "project_root": "<project-root>",
   "resources": [],
   "validation": {
     "commands_checked": 1,

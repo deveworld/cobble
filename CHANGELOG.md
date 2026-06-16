@@ -5,6 +5,51 @@ All notable changes to Cobble will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-06-16
+
+### Added
+- Released Cobble 0.7.1 as a stable workflow and tooling hardening release for
+  Minecraft Java Edition 26.1.2 and data pack format 101.1.
+- Added workflow tooling for formatting, template discovery, link state,
+  linked cleanup, machine-readable doctor output, focused workflow QA scripts,
+  and experimental `check --json --symbols` metadata.
+- Added `cobble fmt --diff` to preview formatter changes without writing files.
+- Added `doctor --json` configured-output reporting under
+  `experimental_output`, including resolved output path, existence, and Cobble
+  marker status.
+- Added an aggregate 0.7.1 release-gate QA script for the Rust gate, examples,
+  workflow QA, full-gallery validated builds, JSON smoke checks, linked cleanup,
+  the full web gate, optional server smoke, and Cargo package dry-runs.
+- Extended bounded watch QA to cover failed validated rebuild preservation and
+  recovery after a later valid edit.
+- Added stricter linked-output safety checks so tampered link state is rejected
+  by `watch --link`, `clean --linked`, `doctor --json`, and `link --status`.
+- Added build-manifest `project_root`, `project_id`, and generation timestamp
+  fields, and require linked workflows to match both namespace and project
+  identity before replacing or cleaning an existing pack.
+- Added rollback protection for validated output replacement so a failed final
+  move restores the previous output when possible.
+- Added symlink-component refusal for link and clean safety checks.
+- Added symlink-component refusal for data-pack build outputs when a build would
+  write generated files or validation staging output.
+- Added symlink-descendant refusal for existing build and clean output trees.
+- Added non-directory output refusal for data-pack builds so existing files are
+  not replaced by generated pack directories.
+- Hardened formatter preservation and QA for BOM/CRLF normalization,
+  multiline docstrings, trailing comments, and directory-level failure
+  atomicity.
+
+### Changed
+- Made `watch --link` reject `--namespace` overrides because linked cleanup,
+  status, and doctor checks validate the project namespace from `cobble.toml`.
+- The aggregate release gate now records an explicit skip for the optional
+  Minecraft server smoke unless `COBBLE_MINECRAFT_EULA_ACCEPTED=1` is provided.
+
+### QA
+- Passed the full 0.7.1 release gate, full web gate, installed-binary smoke,
+  live command-tree E2E, and optional Minecraft/Purpur server smoke before
+  release.
+
 ## [0.7.0] - 2026-06-04
 
 ### Changed

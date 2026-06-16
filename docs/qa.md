@@ -31,26 +31,123 @@ only as an interim check.
 
 ```bash
 cargo fmt --check
+git diff --check
+cargo check --locked
 cargo test --locked
+cargo test --locked commands::watch
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- --version
 scripts/check_examples.sh
+scripts/qa_07_templates.sh
+scripts/qa_07_link_clean_safety.sh
+scripts/qa_07_watch_smoke.sh
+cargo run --locked -- fmt --check examples
 cargo run --locked -- check --json examples/26_smoke/src/main.cbl
+cargo run --locked -- check --json --symbols examples/resource_authoring/src/main.cbl
+cargo run --locked -- init --list-templates
+cargo run --locked -- init --name /tmp/cobble-qa-init-resource --template resource-heavy
+cargo run --locked -- init --name /tmp/cobble-qa-init-game --template game-mechanic
+cargo run --locked -- init --name /tmp/cobble-qa-init-web --template web-demo
+cargo run --locked -- build /tmp/cobble-qa-init-resource -o /tmp/cobble-qa-init-resource-output
+cargo run --locked -- build /tmp/cobble-qa-init-game -o /tmp/cobble-qa-init-game-output
+cargo run --locked -- build /tmp/cobble-qa-init-web -o /tmp/cobble-qa-init-web-output
 cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
 cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
+cargo run --locked -- build examples/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
 cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
 cargo run --locked -- doctor
+cargo run --locked -- doctor --json
+rm -rf /tmp/cobble-qa-linked /tmp/cobble-qa-linked-world
+cargo run --locked -- init --name /tmp/cobble-qa-linked --template minimal
+cargo run --locked -- link /tmp/cobble-qa-linked --datapacks /tmp/cobble-qa-linked-world/datapacks --pack-name qa_linked
+cargo run --locked -- build /tmp/cobble-qa-linked/src -o /tmp/cobble-qa-linked-world/datapacks/qa_linked
+cargo run --locked -- clean /tmp/cobble-qa-linked --linked --dry-run
+cargo run --locked -- clean /tmp/cobble-qa-linked --linked --yes
 cargo run --locked -- build examples/26_smoke --dry-run --validate
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
+cargo run --locked -- clean --dry-run --output /tmp/cobble-qa-26-smoke
+cargo run --locked -- clean --output /tmp/cobble-qa-26-smoke
 cargo package --locked
 cargo publish --dry-run --locked
+```
+
+The 0.7.1 line also has an aggregate release gate that runs the Rust gate,
+example checks, focused workflow QA scripts, representative validated builds,
+the full example gallery as validated builds, doctor/inspect JSON checks, linked
+cleanup, the full web gate, optional server smoke when EULA acceptance is
+provided, and package dry-runs:
+
+```bash
+scripts/qa_07_release_gate.sh
+```
+
+For final release verification, run it from a clean working tree. During
+pre-commit stabilization, this interim form allows Cargo package dry-runs to run
+against local changes:
+
+```bash
+COBBLE_QA_ALLOW_DIRTY=1 scripts/qa_07_release_gate.sh
 ```
 
 `scripts/check_examples.sh` checks each standalone example independently.
 Running `cobble check examples` treats the whole gallery as one project and is
 expected to reject duplicate names such as `init` or `tick` across unrelated
 examples.
+
+## Focused 0.7.1 Workflow QA
+
+These scripts run the workflow-specific checks added for the 0.7.1 line. They
+create temporary projects and linked world directories under `/tmp` by default
+and delete them on success. Set `COBBLE_QA_KEEP=1` to keep their temporary
+directories for debugging.
+
+```bash
+scripts/qa_07_templates.sh
+scripts/qa_07_link_clean_safety.sh
+scripts/qa_07_watch_smoke.sh
+scripts/qa_07_release_gate.sh
+```
+
+Coverage:
+
+- `qa_07_templates.sh` initializes every template, runs `fmt --check`, `check`,
+  `build --validate`, `inspect`, `inspect --json`, and marked-output cleanup.
+  Formatter regression tests also cover BOM/CRLF normalization, multiline
+  docstring preservation, trailing comments, and no-write behavior when one
+  file in a formatted directory fails diagnostics.
+- `qa_07_link_clean_safety.sh` covers link dry-run, link state, `link --status`,
+  `doctor --json` link marker states, unmarked linked-output refusal, tampered
+  link-state refusal across `link --status`, `doctor --json`, `watch --link`,
+  and `clean --linked`, mismatched marker namespace refusal, namespace-only
+  forged marker refusal, validated rebuild failure preserving the previous
+  linked pack, linked cleanup confirmation, unmarked cleanup refusal, build
+  symlink-output refusal, and link/clean symlink output, symlink-parent, or
+  symlink-descendant refusal.
+- `qa_07_watch_smoke.sh` runs a bounded linked `watch --validate`, verifies the
+  initial build, confirms a failed validated rebuild preserves the previous
+  linked pack, confirms a later valid edit recovers, writes generated-output
+  noise, and confirms it does not trigger another rebuild.
+- `qa_07_release_gate.sh` composes the Rust, example, workflow, validated-build,
+  full example gallery, formatter diff, JSON, doctor output-marker, link/clean,
+  full web, optional server, and package dry-run checks into one
+  release-candidate gate.
+
+## Watch Smoke
+
+Run this manually before a workflow-focused release candidate:
+
+```bash
+rm -rf /tmp/cobble-watch-smoke /tmp/cobble-watch-smoke-output
+cargo run --locked -- init --name /tmp/cobble-watch-smoke --template validation
+cargo run --locked -- link /tmp/cobble-watch-smoke --datapacks /tmp/cobble-watch-smoke-world/datapacks
+cargo run --locked -- watch /tmp/cobble-watch-smoke/src --link --validate
+```
+
+While watch is running, edit `/tmp/cobble-watch-smoke/src/main.cbl` and confirm
+that one save burst produces one rebuild. Then edit the generated output under
+`/tmp/cobble-watch-smoke-world/datapacks/` and confirm it does not trigger another
+rebuild. Stop watch with Ctrl+C.
 
 ## Web Gate
 
@@ -60,6 +157,7 @@ web assets changed:
 ```bash
 cd web
 npm run test:wasm
+cargo check --manifest-path wasm/Cargo.toml --locked
 npm run test:zip
 npm run lint
 npm run build:github
@@ -77,6 +175,9 @@ The full web gate can also be run as:
 cd web
 npm run test:web
 ```
+
+`npm run test:web` includes the WASM unit tests, WASM `cargo check`, data-pack
+ZIP test, typecheck/build, Playwright E2E, and markdown/export link check.
 
 GitHub Actions runs the Rust package subset on pushes and pull requests:
 `cargo fmt --check`, `cargo test --locked`, `cargo clippy --locked

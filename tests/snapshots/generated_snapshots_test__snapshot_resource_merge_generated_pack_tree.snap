@@ -22,6 +22,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "stdlib_function_tags": 1,
     "total_json_resources": 2
   },
+  "generated_at_unix_epoch_ms": "<generated-at-unix-epoch-ms>",
   "generated_namespaces": [
     "minecraft",
     "snapshot_merge"
@@ -37,6 +38,8 @@ expression: datapack_tree_snapshot(&output_dir)
   "namespace": "snapshot_merge",
   "pack_format": 101.1,
   "pack_format_text": "101.1",
+  "project_id": "<project-id>",
+  "project_root": "<project-root>",
   "resources": [
     {
       "kind": "function_tag",

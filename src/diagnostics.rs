@@ -3571,6 +3571,7 @@ fn is_potential_command_placeholder(content: &str) -> bool {
         && !content.contains(',')
         && !content.contains('{')
         && !content.contains('}')
+        && !content.contains('=')
         && !content.contains('"')
         && !content.contains('\'')
 }
@@ -6243,6 +6244,18 @@ def main():
         assert!(diagnostics[0]
             .message
             .contains("Invalid command placeholder `bad-name`"));
+    }
+
+    #[test]
+    fn allows_selector_score_maps_in_raw_commands() {
+        let diagnostics = analyze_source(
+            r#"
+def tick():
+    /execute as @a[scores={demo=1..}] run title @s actionbar {"text":"Running","color":"yellow"}
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]

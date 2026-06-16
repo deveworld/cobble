@@ -55,3 +55,8 @@ fn example_26_smoke_builds_and_validates_when_command_tree_exists() {
 fn example_26_feature_matrix_builds_and_validates_when_command_tree_exists() {
     build_fixture("examples/26_feature_matrix");
 }
+
+#[test]
+fn example_resource_authoring_builds_and_validates_when_command_tree_exists() {
+    build_fixture("examples/resource_authoring");
+}

@@ -1,0 +1,327 @@
+---
+source: tests/generated_snapshots_test.rs
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "cobble_version": "<cobble-version>",
+  "description": "Cobble resource authoring fixture",
+  "generated": {
+    "advancements": 1,
+    "commands": 8,
+    "custom_function_tags": 1,
+    "function_tags": 3,
+    "functions": 3,
+    "item_modifiers": 1,
+    "json_function_tags": 1,
+    "json_resources": 10,
+    "loot_tables": 1,
+    "predicates": 1,
+    "recipes": 1,
+    "source_map_entries": 8,
+    "stdlib_function_tags": 2,
+    "total_json_resources": 10
+  },
+  "generated_at_unix_epoch_ms": "<generated-at-unix-epoch-ms>",
+  "generated_namespaces": [
+    "cobble_resource_authoring",
+    "minecraft"
+  ],
+  "input": {
+    "compiled_files": [
+      "src/main.cbl"
+    ],
+    "entry_points": [
+      "main.cbl"
+    ],
+    "source": "src"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "cobble_resource_authoring",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "project_id": "<project-id>",
+  "project_root": "<project-root>",
+  "resources": [
+    {
+      "kind": "advancement",
+      "namespace": "cobble_resource_authoring",
+      "path": "story/root"
+    },
+    {
+      "kind": "block_tag",
+      "namespace": "cobble_resource_authoring",
+      "path": "building_blocks"
+    },
+    {
+      "kind": "dialog",
+      "namespace": "cobble_resource_authoring",
+      "path": "notice"
+    },
+    {
+      "kind": "entity_type_tag",
+      "namespace": "cobble_resource_authoring",
+      "path": "hostile_targets"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "cobble_resource_authoring",
+      "path": "utility"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "load"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "tick"
+    },
+    {
+      "kind": "item_modifier",
+      "namespace": "cobble_resource_authoring",
+      "path": "items/reward_name"
+    },
+    {
+      "kind": "item_tag",
+      "namespace": "cobble_resource_authoring",
+      "path": "reward_items"
+    },
+    {
+      "kind": "loot_table",
+      "namespace": "cobble_resource_authoring",
+      "path": "chests/empty_reward"
+    },
+    {
+      "kind": "predicate",
+      "namespace": "cobble_resource_authoring",
+      "path": "checks/always"
+    },
+    {
+      "kind": "recipe",
+      "namespace": "cobble_resource_authoring",
+      "path": "stonecutting/polished_granite"
+    }
+  ],
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "cobble_resource_authoring",
+  "minecraft"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/cobble_resource_authoring/function/grant_reward.mcfunction",
+      "generated_line": 1,
+      "command": "$give $(target) minecraft:diamond 1",
+      "source": {
+        "file": "src/rewards.cbl",
+        "line": 2,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/function/grant_reward.mcfunction",
+      "generated_line": 2,
+      "command": "$tellraw $(target) {\"text\":\"Generated resource reward granted\",\"color\":\"gold\"}",
+      "source": {
+        "file": "src/rewards.cbl",
+        "line": 3,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
+      "generated_line": 1,
+      "command": "gamerule max_command_sequence_length 1000000000",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
+      "generated_line": 2,
+      "command": "tellraw @a {\"text\":\"Resource authoring fixture loaded\",\"color\":\"green\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 33,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
+      "generated_line": 3,
+      "command": "dialog clear @a",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 34,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
+      "generated_line": 4,
+      "command": "dialog show @a cobble_resource_authoring:notice",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 35,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
+      "generated_line": 5,
+      "command": "data modify storage cobble_resource_authoring:global args.target set value \"@a\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 36,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
+      "generated_line": 6,
+      "command": "function cobble_resource_authoring:grant_reward with storage cobble_resource_authoring:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 36,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    }
+  ]
+}
+
+===== data/cobble_resource_authoring/advancement/story/root.json =====
+{
+  "criteria": {
+    "load": {
+      "trigger": "minecraft:tick"
+    }
+  }
+}
+
+===== data/cobble_resource_authoring/dialog/notice.json =====
+{
+  "title": {
+    "text": "Resources Ready"
+  },
+  "type": "minecraft:notice"
+}
+
+===== data/cobble_resource_authoring/function/grant_reward.mcfunction =====
+$give $(target) minecraft:diamond 1
+$tellraw $(target) {"text":"Generated resource reward granted","color":"gold"}
+
+===== data/cobble_resource_authoring/function/init.mcfunction =====
+gamerule max_command_sequence_length 1000000000
+tellraw @a {"text":"Resource authoring fixture loaded","color":"green"}
+dialog clear @a
+dialog show @a cobble_resource_authoring:notice
+data modify storage cobble_resource_authoring:global args.target set value "@a"
+function cobble_resource_authoring:grant_reward with storage cobble_resource_authoring:global args
+
+===== data/cobble_resource_authoring/function/tick.mcfunction =====
+
+
+===== data/cobble_resource_authoring/item_modifier/items/reward_name.json =====
+{
+  "function": "minecraft:set_name",
+  "name": {
+    "color": "gold",
+    "text": "Cobble Reward"
+  }
+}
+
+===== data/cobble_resource_authoring/loot_table/chests/empty_reward.json =====
+{
+  "type": "minecraft:empty"
+}
+
+===== data/cobble_resource_authoring/predicate/checks/always.json =====
+{
+  "chance": 1,
+  "condition": "minecraft:random_chance"
+}
+
+===== data/cobble_resource_authoring/recipe/stonecutting/polished_granite.json =====
+{
+  "ingredient": "minecraft:granite",
+  "result": {
+    "id": "minecraft:polished_granite"
+  },
+  "type": "minecraft:stonecutting"
+}
+
+===== data/cobble_resource_authoring/tags/block/building_blocks.json =====
+{
+  "values": [
+    "minecraft:stone",
+    "minecraft:deepslate"
+  ]
+}
+
+===== data/cobble_resource_authoring/tags/entity_type/hostile_targets.json =====
+{
+  "values": [
+    "minecraft:zombie",
+    "minecraft:skeleton"
+  ]
+}
+
+===== data/cobble_resource_authoring/tags/function/utility.json =====
+{
+  "values": [
+    "cobble_resource_authoring:init"
+  ]
+}
+
+===== data/cobble_resource_authoring/tags/item/reward_items.json =====
+{
+  "values": [
+    "minecraft:diamond",
+    "minecraft:emerald"
+  ]
+}
+
+===== data/minecraft/tags/function/load.json =====
+{
+  "values": [
+    "cobble_resource_authoring:init"
+  ]
+}
+
+===== data/minecraft/tags/function/tick.json =====
+{
+  "values": [
+    "cobble_resource_authoring:tick"
+  ]
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Cobble resource authoring fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}
