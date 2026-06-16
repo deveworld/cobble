@@ -399,6 +399,12 @@ fn cli_clean_dry_run_reports_marked_output_without_deleting() {
         "clean --dry-run failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(stdout.contains("Would remove Cobble output"));
+    assert!(stdout.contains("Safety checks:"));
+    assert!(stdout.contains(".cobble/build_manifest.json"));
+    assert!(stdout.contains("Namespace: clean_dry_run"));
+    assert!(stdout.contains("Required files: pack.mcmeta, data/"));
+    assert!(stdout.contains("Symlinks: none found"));
+    assert!(stdout.contains("Next step: rerun without --dry-run"));
     assert!(stdout.contains("clean_dry_run"));
     assert!(output_dir.exists());
 }
@@ -521,6 +527,10 @@ fn cli_clean_linked_requires_confirmation_and_removes_marked_linked_output() {
         "clean --linked --dry-run failed\nstdout:\n{dry_stdout}\nstderr:\n{dry_stderr}"
     );
     assert!(dry_stdout.contains("Would remove Cobble output"));
+    assert!(dry_stdout.contains("Safety checks:"));
+    assert!(dry_stdout.contains("Namespace: linked_pack"));
+    assert!(dry_stdout.contains("Project id:"));
+    assert!(dry_stdout.contains("Next step: run `cobble clean --linked --yes`"));
     assert!(pack_dir.exists());
 
     let unconfirmed = cobble()
@@ -639,6 +649,7 @@ fn cli_link_configures_status_and_clear() {
     assert!(status_stdout.contains("Cobble link configured"));
     assert!(status_stdout.contains(datapacks_dir.to_string_lossy().as_ref()));
     assert!(status_stdout.contains("Marker: missing"));
+    assert!(status_stdout.contains("Recovery: run `cobble watch --link`"));
 
     let clear = cobble()
         .arg("link")
@@ -653,6 +664,20 @@ fn cli_link_configures_status_and_clear() {
     );
     assert!(clear_stdout.contains("Cleared Cobble link state"));
     assert!(!project_dir.join(".cobble/link_state.json").exists());
+
+    let status_after_clear = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--status")
+        .output()
+        .unwrap();
+    let (status_after_clear_stdout, status_after_clear_stderr) = output_text(&status_after_clear);
+    assert!(
+        status_after_clear.status.success(),
+        "link --status after clear failed\nstdout:\n{status_after_clear_stdout}\nstderr:\n{status_after_clear_stderr}"
+    );
+    assert!(status_after_clear_stdout.contains("No Cobble link configured"));
+    assert!(status_after_clear_stdout.contains("Recovery: run `cobble link --datapacks <DIR>`"));
 }
 
 #[test]
@@ -813,6 +838,7 @@ fn cli_link_status_doctor_and_clean_reject_tampered_pack_path() {
     assert!(status_stdout.contains("Link state: invalid"));
     assert!(status_stdout.contains("outside target datapacks directory"));
     assert!(status_stdout.contains("Marker: not checked"));
+    assert!(status_stdout.contains("Recovery: run `cobble link --clear`"));
 
     let doctor = cobble()
         .arg("doctor")
@@ -1055,6 +1081,7 @@ fn cli_watch_link_refuses_mismatched_marker_namespace() {
     );
     assert!(status_stdout.contains("Marker: invalid"));
     assert!(status_stdout.contains("marker namespace `other_pack`"));
+    assert!(status_stdout.contains("Recovery: move the existing pack aside"));
 
     let output = cobble()
         .arg("watch")
@@ -1131,6 +1158,7 @@ fn cli_link_watch_and_clean_reject_forged_same_namespace_marker() {
     );
     assert!(status_stdout.contains("Marker: invalid"));
     assert!(status_stdout.contains("missing project_id"));
+    assert!(status_stdout.contains("Recovery: move the existing pack aside"));
 
     let watch = cobble()
         .arg("watch")

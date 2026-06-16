@@ -155,6 +155,7 @@ fn print_link_status(config: &CobbleConfig, config_dir: &Path) -> Result<(), Str
             if let Err(error) = validate_link_state_paths(&state) {
                 println!("  Link state: invalid; {error}");
                 println!("  Marker: not checked");
+                println!("  Recovery: run `cobble link --clear` and configure the link again.");
                 return Ok(());
             }
             let pack_path = PathBuf::from(&state.pack_path);
@@ -173,11 +174,20 @@ fn print_link_status(config: &CobbleConfig, config_dir: &Path) -> Result<(), Str
                         "  Marker: missing; run `cobble watch --link` or build to the linked path"
                     );
                     println!("  Marker detail: {error}");
+                    println!("  Recovery: run `cobble watch --link` to create the linked pack.");
                 }
-                Err(error) => println!("  Marker: invalid; {error}"),
+                Err(error) => {
+                    println!("  Marker: invalid; {error}");
+                    println!(
+                        "  Recovery: move the existing pack aside or rebuild it from the owning Cobble project."
+                    );
+                }
             }
         }
-        None => println!("No Cobble link configured"),
+        None => {
+            println!("No Cobble link configured");
+            println!("  Recovery: run `cobble link --datapacks <DIR>` to configure one.");
+        }
     }
     Ok(())
 }

@@ -82,11 +82,26 @@ pub fn clean(options: CleanOptions) -> Result<(), String> {
             plan.entry_count,
             if plan.entry_count == 1 { "y" } else { "ies" }
         );
+        println!("Safety checks:");
+        println!("  Marker: {}", plan.marker_path.display());
+        if let Some(namespace) = &plan.marker_namespace {
+            println!("  Namespace: {namespace}");
+        }
+        if let Some(project_id) = &plan.marker_project_id {
+            println!("  Project id: {project_id}");
+        }
+        println!("  Required files: pack.mcmeta, data/");
+        println!("  Symlinks: none found in output path or descendants");
         if !plan.generated_namespaces.is_empty() {
             println!(
                 "Generated namespaces: {}",
                 plan.generated_namespaces.join(", ")
             );
+        }
+        if options.linked {
+            println!("Next step: run `cobble clean --linked --yes` to remove this linked output.");
+        } else {
+            println!("Next step: rerun without --dry-run to remove this output.");
         }
         return Ok(());
     }
@@ -102,6 +117,9 @@ struct CleanPlan {
     output_dir: PathBuf,
     exists: bool,
     entry_count: usize,
+    marker_path: PathBuf,
+    marker_namespace: Option<String>,
+    marker_project_id: Option<String>,
     generated_namespaces: Vec<String>,
 }
 
@@ -116,6 +134,9 @@ fn inspect_clean_target(
             output_dir: output_dir.to_path_buf(),
             exists: false,
             entry_count: 0,
+            marker_path: build_manifest_path(output_dir),
+            marker_namespace: None,
+            marker_project_id: None,
             generated_namespaces: Vec::new(),
         });
     }
@@ -178,13 +199,25 @@ fn inspect_clean_target(
                 .collect()
         })
         .unwrap_or_default();
+    let marker_namespace = manifest_string(&manifest, "namespace");
+    let marker_project_id = manifest_string(&manifest, "project_id");
 
     Ok(CleanPlan {
         output_dir: output_dir.to_path_buf(),
         exists: true,
         entry_count,
+        marker_path: manifest_path,
+        marker_namespace,
+        marker_project_id,
         generated_namespaces,
     })
+}
+
+fn manifest_string(manifest: &Value, field: &str) -> Option<String> {
+    manifest
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 fn require_path(path: PathBuf, label: &str, output_dir: &Path) -> Result<(), String> {

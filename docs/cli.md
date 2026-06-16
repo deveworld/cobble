@@ -301,6 +301,12 @@ Linked cleanup also requires the saved link state to resolve under the saved
 match the current project. Linked cleanup requires `--yes` for real deletion;
 `--dry-run` does not require confirmation.
 
+`clean --dry-run` prints the marker path that made the output eligible for
+cleanup, the marker namespace, the marker `project_id` when present, the
+required data pack files that were checked, and a symlink safety summary. For
+linked output, the dry run ends with the exact confirmation shape:
+`cobble clean --linked --yes`.
+
 ### `cobble link`
 
 Configure a local Minecraft `datapacks/` target for watch workflows.
@@ -343,6 +349,10 @@ already exists, `watch --link` requires a valid `.cobble/build_manifest.json`,
 `pack.mcmeta`, and `data/`; the manifest namespace and `project_id` must match
 the current project. Copied, stale, or namespace-only forged markers are refused
 until the path is moved aside or rebuilt by the owning Cobble project.
+`link --status` includes recovery hints for the common cases: configure a
+missing link with `cobble link --datapacks <DIR>`, clear and recreate tampered
+link state with `cobble link --clear`, create a missing linked pack with
+`cobble watch --link`, or move aside an unrelated pack before rebuilding.
 
 ### `cobble inspect`
 

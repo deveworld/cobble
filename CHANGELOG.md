@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Opened 0.7.2-alpha.0 development after the 0.7.1 release.
+- Expanded `cobble clean --dry-run` output with the marker path, namespace,
+  project identity, required data pack files, symlink safety summary, and the
+  next cleanup step.
+- Added recovery hints to `cobble link --status` for missing link state,
+  tampered link state, missing markers, and invalid linked-pack markers.
 
 ## [0.7.1] - 2026-06-16
 
