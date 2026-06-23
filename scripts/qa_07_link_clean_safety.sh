@@ -120,7 +120,7 @@ printf '{}\n' > "$pack_dir/pack.mcmeta"
 cat > "$pack_dir/.cobble/build_manifest.json" <<'JSON'
 {
   "version": 1,
-  "cobble_version": "0.7.1",
+  "cobble_version": "0.7.2",
   "namespace": "other_pack"
 }
 JSON
@@ -139,7 +139,7 @@ printf 'keep me\n' > "$pack_dir/SENTINEL_DO_NOT_DELETE.txt"
 cat > "$pack_dir/.cobble/build_manifest.json" <<JSON
 {
   "version": 1,
-  "cobble_version": "0.7.1-alpha.0",
+  "cobble_version": "0.7.2",
   "namespace": "$namespace",
   "generated_namespaces": ["$namespace"]
 }
@@ -240,7 +240,7 @@ if command -v ln >/dev/null 2>&1; then
   cat > "$marked_output/.cobble/build_manifest.json" <<JSON
 {
   "version": 1,
-  "cobble_version": "0.7.1-alpha.0",
+  "cobble_version": "0.7.2",
   "namespace": "$namespace",
   "generated_namespaces": ["$namespace"]
 }

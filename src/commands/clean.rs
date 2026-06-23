@@ -313,7 +313,7 @@ mod tests {
             output_dir.join(".cobble/build_manifest.json"),
             r#"{
   "version": 1,
-  "cobble_version": "0.7.1",
+  "cobble_version": "0.7.2",
   "namespace": "example",
   "project_id": "other-project",
   "generated_namespaces": ["example"]

@@ -736,7 +736,7 @@ entry_points = []
             output_dir.join(".cobble/build_manifest.json"),
             r#"{
   "version": 1,
-  "cobble_version": "0.7.1",
+  "cobble_version": "0.7.2",
   "namespace": "watch_pack",
   "project_id": "project-id"
 }"#,
@@ -758,7 +758,7 @@ entry_points = []
             output_dir.join(".cobble/build_manifest.json"),
             r#"{
   "version": 1,
-  "cobble_version": "0.7.1",
+  "cobble_version": "0.7.2",
   "namespace": "watch_pack"
 }"#,
         )
@@ -782,7 +782,7 @@ entry_points = []
             output_dir.join(".cobble/build_manifest.json"),
             r#"{
   "version": 1,
-  "cobble_version": "0.7.1",
+  "cobble_version": "0.7.2",
   "namespace": "other_pack"
 }"#,
         )

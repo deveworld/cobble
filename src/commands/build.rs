@@ -1,6 +1,7 @@
 use super::{find_cobble_files, resolve_entry_points};
 use crate::commands::output_safety::{
-    ensure_no_symlink_components, ensure_no_symlink_descendants, project_marker_identity,
+    build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
+    project_marker_identity, read_build_manifest, require_manifest_ownership,
 };
 use crate::commands::validate::{print_validation_report, run_validation};
 use crate::config::CobbleConfig;
@@ -82,7 +83,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         .or_else(|| config.as_ref().map(|c| c.project.namespace.clone()))
         .unwrap_or_else(|| "cobble".to_string());
 
-    // Security: Validate namespace to prevent command injection
+    // Security: Validate namespace before it is used in data pack paths or zip names.
     validate_namespace(&namespace)?;
 
     let description = options
@@ -173,7 +174,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     transpiler.set_description(description);
     transpiler.set_pack_format(pack_format);
     transpiler.set_source_display_root(source_display_root.clone());
-    transpiler.set_project_identity(project_root_marker, project_id);
+    transpiler.set_project_identity(project_root_marker, project_id.clone());
     transpiler.set_build_input(BuildManifestInput {
         source: path_display_relative(&source_path, &source_display_root),
         entry_points: configured_entry_points,
@@ -286,7 +287,16 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
 
     if options.validate {
         if build_output_dir != final_output_dir {
-            replace_output_dir(&build_output_dir, &final_output_dir)?;
+            if let Err(error) = publish_validated_output(
+                &mut transpiler,
+                &build_output_dir,
+                &final_output_dir,
+                &namespace,
+                &project_id,
+            ) {
+                let _ = fs::remove_dir_all(&build_output_dir);
+                return Err(error);
+            }
         }
         if !options.quiet {
             println!("✓ Data pack generated at {:?}", final_output_dir);
@@ -411,10 +421,17 @@ fn print_build_summary(
     }
 }
 
-/// Validate that namespace contains only safe characters
+/// Validate that namespace is a Minecraft resource namespace and a single safe
+/// filesystem path segment.
 fn validate_namespace(namespace: &str) -> Result<(), String> {
     if namespace.is_empty() {
         return Err("Namespace cannot be empty".to_string());
+    }
+    if namespace == "." || namespace == ".." {
+        return Err(format!(
+            "Invalid namespace '{}': Namespace cannot be '.' or '..'",
+            namespace
+        ));
     }
     if namespace.len() > 64 {
         return Err(format!(
@@ -473,80 +490,71 @@ fn staging_output_dir(output_dir: &Path) -> Result<PathBuf, String> {
     Ok(staging)
 }
 
-fn replace_output_dir(staging_dir: &Path, output_dir: &Path) -> Result<(), String> {
-    let backup_dir = if output_dir.exists() {
-        let metadata = fs::symlink_metadata(output_dir)
-            .map_err(|e| format!("Failed to inspect existing output {:?}: {}", output_dir, e))?;
-        if !metadata.is_dir() {
-            return Err(format!(
-                "Refusing to replace non-directory output path: {}",
-                output_dir.display()
-            ));
-        }
-        let backup_dir = replacement_backup_dir(output_dir)?;
-        fs::rename(output_dir, &backup_dir).map_err(|e| {
-            format!(
-                "Failed to move existing output {:?} to backup {:?}: {}",
-                output_dir, backup_dir, e
-            )
-        })?;
-        Some(backup_dir)
-    } else {
-        None
-    };
+fn publish_validated_output(
+    transpiler: &mut Transpiler,
+    staging_dir: &Path,
+    output_dir: &Path,
+    namespace: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    if output_dir.exists() {
+        ensure_replace_output_dir_safe(output_dir, namespace, project_id)?;
 
-    if let Err(error) = fs::rename(staging_dir, output_dir) {
-        if let Some(backup_dir) = &backup_dir {
-            let _ = fs::rename(backup_dir, output_dir);
+        let previous_output_dir = std::mem::replace(
+            &mut transpiler.data_pack.output_dir,
+            output_dir.to_path_buf(),
+        );
+        let write_result = transpiler
+            .write_data_pack()
+            .map_err(|e| format!("Failed to write validated data pack: {}", e));
+        if write_result.is_err() {
+            transpiler.data_pack.output_dir = previous_output_dir;
+            return write_result;
         }
-        return Err(format!(
+        if staging_dir.exists() {
+            fs::remove_dir_all(staging_dir)
+                .map_err(|e| format!("Failed to clean staging output {:?}: {}", staging_dir, e))?;
+        }
+        return Ok(());
+    }
+
+    fs::rename(staging_dir, output_dir).map_err(|e| {
+        format!(
             "Failed to move validated data pack from {:?} to {:?}: {}",
-            staging_dir, output_dir, error
+            staging_dir, output_dir, e
+        )
+    })
+}
+
+fn ensure_replace_output_dir_safe(
+    output_dir: &Path,
+    namespace: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(output_dir)
+        .map_err(|e| format!("Failed to inspect existing output {:?}: {}", output_dir, e))?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "Refusing to replace non-directory output path: {}",
+            output_dir.display()
         ));
     }
 
-    if let Some(backup_dir) = backup_dir {
-        if backup_dir.is_dir() {
-            fs::remove_dir_all(&backup_dir).map_err(|e| {
-                format!(
-                    "Failed to clean previous output backup {:?}: {}",
-                    backup_dir, e
-                )
-            })?;
-        } else if backup_dir.exists() {
-            fs::remove_file(&backup_dir).map_err(|e| {
-                format!(
-                    "Failed to clean previous output backup {:?}: {}",
-                    backup_dir, e
-                )
-            })?;
-        }
-    }
-
-    Ok(())
-}
-
-fn replacement_backup_dir(output_dir: &Path) -> Result<PathBuf, String> {
-    let parent = output_dir.parent().unwrap_or_else(|| Path::new("."));
-    let name = output_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("output");
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("System clock error while creating output backup: {}", e))?
-        .as_nanos();
-    let backup_dir = parent.join(format!(
-        ".{}.cobble-backup-{}-{}",
-        name,
-        std::process::id(),
-        stamp
-    ));
-    if backup_dir.exists() {
-        fs::remove_dir_all(&backup_dir)
-            .map_err(|e| format!("Failed to clean output backup {:?}: {}", backup_dir, e))?;
-    }
-    Ok(backup_dir)
+    let manifest_path = build_manifest_path(output_dir);
+    let manifest = read_build_manifest(&manifest_path).map_err(|error| {
+        format!(
+            "Refusing to replace existing output without Cobble ownership marker at {}: {}",
+            manifest_path.display(),
+            error
+        )
+    })?;
+    require_manifest_ownership(&manifest, Some(namespace), Some(project_id)).map_err(|error| {
+        format!(
+            "Refusing to replace existing output owned by another Cobble project at {}: {}",
+            output_dir.display(),
+            error
+        )
+    })
 }
 
 fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
@@ -589,6 +597,28 @@ mod tests {
         fn drop(&mut self) {
             std::env::set_current_dir(&self.previous).unwrap();
         }
+    }
+
+    fn write_say_commands_json(path: &Path) {
+        fs::write(
+            path,
+            r#"{
+                "type": "root",
+                "children": {
+                    "say": {
+                        "type": "literal",
+                        "children": {
+                            "message": {
+                                "type": "argument",
+                                "parser": "minecraft:message",
+                                "executable": true
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -719,32 +749,6 @@ mod tests {
     }
 
     #[test]
-    fn replace_output_dir_restores_previous_output_when_staging_move_fails() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let output_dir = temp_dir.path().join("output");
-        let missing_staging = temp_dir.path().join("missing-staging");
-        fs::create_dir_all(&output_dir).unwrap();
-        fs::write(output_dir.join("sentinel.txt"), "keep\n").unwrap();
-
-        let error = replace_output_dir(&missing_staging, &output_dir).unwrap_err();
-
-        assert!(error.contains("Failed to move validated data pack"));
-        assert_eq!(
-            fs::read_to_string(output_dir.join("sentinel.txt")).unwrap(),
-            "keep\n"
-        );
-        assert!(!temp_dir
-            .path()
-            .read_dir()
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .any(|entry| entry
-                .file_name()
-                .to_string_lossy()
-                .contains(".output.cobble-backup-")));
-    }
-
-    #[test]
     fn build_rejects_existing_non_directory_output_path() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let input_file = temp_dir.path().join("test.cbl");
@@ -769,6 +773,68 @@ mod tests {
 
         assert!(error.contains("Refusing to build data pack over non-directory output path"));
         assert_eq!(fs::read_to_string(&output_path).unwrap(), "important\n");
+    }
+
+    #[test]
+    fn build_rejects_namespace_paths_before_write_or_zip() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let input_file = project_dir.join("test.cbl");
+        let output_dir = project_dir.join("out");
+        let abs_escape = temp_dir.path().join("abs_escape");
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(&input_file, "def test():\n    /say safe\n").unwrap();
+
+        let cases = [
+            (".", false, output_dir.clone()),
+            ("..", false, output_dir.clone()),
+            ("../../rel_escape", false, project_dir.join("rel_escape")),
+            (
+                "nested/escaped",
+                false,
+                output_dir.join("data/nested/escaped"),
+            ),
+            ("bad\\escaped", false, output_dir.join("data/bad\\escaped")),
+            (
+                abs_escape.to_str().expect("temp path should be UTF-8"),
+                false,
+                abs_escape.clone(),
+            ),
+            (
+                "../zip_escape",
+                true,
+                temp_dir.path().join("zip_escape.zip"),
+            ),
+        ];
+
+        for (namespace, zip, escaped_path) in cases {
+            let error = build(BuildOptions {
+                input: Some(input_file.clone()),
+                output: Some(output_dir.clone()),
+                namespace: Some(namespace.to_string()),
+                pack_format: None,
+                description: None,
+                verbose: false,
+                quiet: true,
+                zip,
+                validate: false,
+                dry_run: false,
+                commands_json: PathBuf::from("data/commands.json"),
+            })
+            .unwrap_err();
+
+            assert!(
+                error.contains("Invalid namespace"),
+                "namespace {namespace:?} produced unexpected error: {error}"
+            );
+            assert!(
+                !escaped_path.exists(),
+                "namespace {namespace:?} unexpectedly created {}",
+                escaped_path.display()
+            );
+        }
+
+        assert!(!output_dir.exists());
     }
 
     #[test]
@@ -899,6 +965,230 @@ mod tests {
             "keep\n"
         );
         assert!(!outside_dir.join("symlink_build").exists());
+    }
+
+    #[test]
+    fn build_rejects_traversal_namespace_from_config_without_deleting_functions() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let source_dir = project_dir.join("src");
+        let victim_function_dir = temp_dir.path().join("victim").join("function");
+
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(project_dir.join("data")).unwrap();
+        fs::create_dir_all(&victim_function_dir).unwrap();
+        fs::write(source_dir.join("main.cbl"), "def main():\n    /say safe\n").unwrap();
+        fs::write(
+            victim_function_dir.join("important.mcfunction"),
+            "say keep\n",
+        )
+        .unwrap();
+        fs::write(
+            project_dir.join("cobble.toml"),
+            r#"
+[project]
+name = "malicious"
+description = "malicious"
+namespace = "../../victim"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "."
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::push(&project_dir);
+        let error = build(BuildOptions {
+            input: None,
+            output: None,
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Invalid namespace"));
+        assert_eq!(
+            fs::read_to_string(victim_function_dir.join("important.mcfunction")).unwrap(),
+            "say keep\n"
+        );
+    }
+
+    #[test]
+    fn build_validate_refuses_to_replace_unowned_existing_output() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let source_dir = project_dir.join("src");
+        let victim_dir = temp_dir.path().join("victim").join("keep");
+        let commands_json = project_dir.join("commands.json");
+
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(victim_dir.join("sub")).unwrap();
+        fs::write(source_dir.join("main.cbl"), "def main():\n    /say safe\n").unwrap();
+        fs::write(victim_dir.join("sub").join("important.txt"), "keep\n").unwrap();
+        write_say_commands_json(&commands_json);
+        fs::write(
+            project_dir.join("cobble.toml"),
+            r#"
+[project]
+name = "malicious"
+description = "malicious"
+namespace = "malicious"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "../victim/keep"
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::push(&project_dir);
+        let error = build(BuildOptions {
+            input: None,
+            output: None,
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            validate: true,
+            dry_run: false,
+            commands_json,
+        })
+        .unwrap_err();
+
+        assert!(
+            error.contains("Refusing to replace existing output without Cobble ownership marker"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(victim_dir.join("sub").join("important.txt")).unwrap(),
+            "keep\n"
+        );
+        assert!(!victim_dir.join("pack.mcmeta").exists());
+    }
+
+    #[test]
+    fn build_validate_preserves_unrelated_files_after_prior_nonvalidated_build() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let source_dir = project_dir.join("src");
+        let victim_dir = temp_dir.path().join("victim").join("keep");
+        let commands_json = project_dir.join("commands.json");
+
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(victim_dir.join("sub")).unwrap();
+        fs::write(source_dir.join("main.cbl"), "def main():\n    /say safe\n").unwrap();
+        fs::write(victim_dir.join("sub").join("important.txt"), "keep\n").unwrap();
+        write_say_commands_json(&commands_json);
+        fs::write(
+            project_dir.join("cobble.toml"),
+            r#"
+[project]
+name = "malicious"
+description = "malicious"
+namespace = "malicious"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "../victim/keep"
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::push(&project_dir);
+        build(BuildOptions {
+            input: None,
+            output: None,
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            validate: false,
+            dry_run: false,
+            commands_json: commands_json.clone(),
+        })
+        .unwrap();
+        build(BuildOptions {
+            input: None,
+            output: None,
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            validate: true,
+            dry_run: false,
+            commands_json,
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(victim_dir.join("sub").join("important.txt")).unwrap(),
+            "keep\n"
+        );
+        assert!(victim_dir
+            .join("data/malicious/function/main.mcfunction")
+            .exists());
+    }
+
+    #[test]
+    fn build_validate_replaces_owned_existing_output() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("main.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let commands_json = temp_dir.path().join("commands.json");
+        write_say_commands_json(&commands_json);
+
+        let build_once = || {
+            build(BuildOptions {
+                input: Some(input_file.clone()),
+                output: Some(output_dir.clone()),
+                namespace: Some("owned".to_string()),
+                pack_format: None,
+                description: None,
+                verbose: false,
+                quiet: true,
+                zip: false,
+                validate: true,
+                dry_run: false,
+                commands_json: commands_json.clone(),
+            })
+        };
+
+        fs::write(&input_file, "def main():\n    /say first\n").unwrap();
+        build_once().unwrap();
+        fs::write(output_dir.join("notes.txt"), "keep\n").unwrap();
+        fs::write(&input_file, "def main():\n    /say second\n").unwrap();
+        build_once().unwrap();
+
+        let content =
+            fs::read_to_string(output_dir.join("data/owned/function/main.mcfunction")).unwrap();
+        assert_eq!(content.trim(), "say second");
+        assert_eq!(
+            fs::read_to_string(output_dir.join("notes.txt")).unwrap(),
+            "keep\n"
+        );
     }
 
     #[test]

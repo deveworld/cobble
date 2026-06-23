@@ -540,6 +540,8 @@ impl DataPack {
     }
 
     pub fn write(&self) -> std::io::Result<()> {
+        self.validate_write_paths()?;
+
         let data_dir = self.output_dir.join("data");
         let namespace_dir = data_dir.join(&self.namespace);
         let function_dir = namespace_dir.join("function");
@@ -1032,9 +1034,97 @@ impl DataPack {
 
     fn is_safe_namespace_path(namespace: &str) -> bool {
         !namespace.is_empty()
+            && namespace != "."
+            && namespace != ".."
             && namespace.chars().all(|c| {
                 c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' || c == '.'
             })
+    }
+
+    fn is_safe_resource_path(path: &str) -> bool {
+        !path.is_empty()
+            && !path.contains('\\')
+            && !path.contains(':')
+            && path.split('/').all(|segment| {
+                !segment.is_empty()
+                    && segment != "."
+                    && segment != ".."
+                    && segment.chars().all(|c| {
+                        c.is_ascii_lowercase()
+                            || c.is_ascii_digit()
+                            || c == '_'
+                            || c == '-'
+                            || c == '.'
+                    })
+            })
+    }
+
+    fn invalid_path_error(message: impl Into<String>) -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, message.into())
+    }
+
+    fn validate_namespace_for_write(namespace: &str, label: &str) -> std::io::Result<()> {
+        if Self::is_safe_namespace_path(namespace) {
+            Ok(())
+        } else {
+            Err(Self::invalid_path_error(format!(
+                "Invalid {label} namespace `{namespace}`: use lowercase letters, digits, underscores, hyphens, and dots only"
+            )))
+        }
+    }
+
+    fn validate_resource_path_for_write(path: &str, label: &str) -> std::io::Result<()> {
+        if Self::is_safe_resource_path(path) {
+            Ok(())
+        } else {
+            Err(Self::invalid_path_error(format!(
+                "Invalid {label} path `{path}`: use lowercase resource paths with '/', '_', '-', or '.', and no empty, '.', or '..' segments"
+            )))
+        }
+    }
+
+    fn validate_write_paths(&self) -> std::io::Result<()> {
+        Self::validate_namespace_for_write(&self.namespace, "data pack")?;
+
+        for function_name in self.functions.keys() {
+            Self::validate_resource_path_for_write(function_name, "function")?;
+        }
+
+        for tag_name in self.tags.keys() {
+            let (namespace, path) = tag_name
+                .split_once(':')
+                .unwrap_or((&self.namespace, tag_name.as_str()));
+            Self::validate_namespace_for_write(namespace, "function tag")?;
+            Self::validate_resource_path_for_write(path, "function tag")?;
+        }
+
+        for (label, resources) in [
+            ("advancement", &self.advancements),
+            ("loot table", &self.loot_tables),
+            ("recipe", &self.recipes),
+            ("predicate", &self.predicates),
+            ("item modifier", &self.item_modifiers),
+        ] {
+            for name in resources.keys() {
+                Self::validate_resource_path_for_write(name, label)?;
+            }
+        }
+
+        for key in self.json_resources.keys() {
+            let Some((namespace, relative_path)) = Self::split_json_resource_key(key) else {
+                return Err(Self::invalid_path_error(format!(
+                    "Invalid JSON resource key `{key}`"
+                )));
+            };
+            Self::validate_namespace_for_write(namespace, "JSON resource")?;
+            Self::validate_resource_path_for_write(relative_path, "JSON resource")?;
+        }
+
+        for namespace in self.generated_namespaces() {
+            Self::validate_namespace_for_write(&namespace, "generated")?;
+        }
+
+        Ok(())
     }
 
     fn json_resource_key(namespace: &str, relative_path: &str) -> String {
@@ -1153,6 +1243,8 @@ impl DataPack {
             } else {
                 (default_namespace, tag_name)
             };
+        Self::validate_namespace_for_write(namespace, "function tag")?;
+        Self::validate_resource_path_for_write(relative_tag_name, "function tag")?;
         let tag_file = data_dir
             .join(namespace)
             .join("tags")

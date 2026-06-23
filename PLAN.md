@@ -3,10 +3,10 @@
 ## Status
 
 - Planning date: 2026-06-16
-- Current stable release: `0.7.1`
-- Current development version: `0.7.2-alpha.0`
-- Next planned release: `0.7.2`
-- Active pre-release: `0.7.2-alpha.0`
+- Current stable release: `0.7.2`
+- Current development version: `0.7.2`
+- Next planned release: `0.7.3`
+- Active pre-release: none
 - Current Minecraft target: Java Edition `26.1.2`
 - Current data pack format: `101.1`
 - Package name: `cobble-lang`
@@ -14,7 +14,7 @@
 - Website: <https://deveworld.github.io/cobble/>
 - Browser compiler: <https://deveworld.github.io/cobble/try/>
 
-This roadmap tracks what Cobble should become after 0.7.1. Historical release
+This roadmap tracks what Cobble should become after 0.7.2. Historical release
 details and completed version plans belong in `CHANGELOG.md`.
 
 ## North Star

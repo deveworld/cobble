@@ -72,7 +72,7 @@ cargo package --locked
 cargo publish --dry-run --locked
 ```
 
-The 0.7.1 line also has an aggregate release gate that runs the Rust gate,
+The 0.7.2 line also has an aggregate release gate that runs the Rust gate,
 example checks, focused workflow QA scripts, representative validated builds,
 the full example gallery as validated builds, doctor/inspect JSON checks, linked
 cleanup, the full web gate, optional server smoke when EULA acceptance is
@@ -95,9 +95,9 @@ Running `cobble check examples` treats the whole gallery as one project and is
 expected to reject duplicate names such as `init` or `tick` across unrelated
 examples.
 
-## Focused 0.7.1 Workflow QA
+## Focused 0.7.2 Workflow QA
 
-These scripts run the workflow-specific checks added for the 0.7.1 line. They
+These scripts run the workflow-specific checks added for the 0.7.2 line. They
 create temporary projects and linked world directories under `/tmp` by default
 and delete them on success. Set `COBBLE_QA_KEEP=1` to keep their temporary
 directories for debugging.

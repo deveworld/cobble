@@ -7,13 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-23
+
 ### Changed
-- Opened 0.7.2-alpha.0 development after the 0.7.1 release.
+- Released Cobble 0.7.2 as a stable security and workflow hardening release for
+  Minecraft Java Edition 26.1.2 and data pack format 101.1.
 - Expanded `cobble clean --dry-run` output with the marker path, namespace,
   project identity, required data pack files, symlink safety summary, and the
   next cleanup step.
 - Added recovery hints to `cobble link --status` for missing link state,
   tampered link state, missing markers, and invalid linked-pack markers.
+
+### Security
+- Hardened `cobble build --validate` so validated staging no longer
+  recursively replaces arbitrary existing output paths. Existing outputs must
+  carry a matching Cobble build manifest before validated rebuilds write into
+  them.
+- Reused normal data-pack writing for validated rebuilds into existing owned
+  outputs, preserving unrelated files instead of deleting and replacing the
+  whole output directory.
+- Rejected unsafe namespace values before they can be used in build output
+  paths or ZIP file names, preventing absolute, traversal, slash, and backslash
+  namespace escapes.
+- Added writer-level validation for direct `DataPack` usage so data-pack
+  namespaces, function names, tag paths, and JSON resource paths are checked
+  before cleanup or file writes.
 
 ## [0.7.1] - 2026-06-16
 

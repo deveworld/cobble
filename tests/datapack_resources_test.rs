@@ -622,3 +622,69 @@ fn direct_datapack_resource_writers_create_nested_paths() {
         .join("item_modifier/items/set_name.json")
         .exists());
 }
+
+#[test]
+fn direct_datapack_writer_rejects_traversal_namespace_without_deleting_functions() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let output_dir = temp_dir.path().join("project");
+    let victim_function_dir = temp_dir.path().join("victim").join("function");
+    fs::create_dir_all(output_dir.join("data")).unwrap();
+    fs::create_dir_all(&victim_function_dir).unwrap();
+    fs::write(
+        victim_function_dir.join("important.mcfunction"),
+        "say keep\n",
+    )
+    .unwrap();
+
+    let mut data_pack = DataPack::new("../../victim".to_string(), output_dir);
+    data_pack.add_function("main".to_string(), vec!["say generated".to_string()]);
+
+    let error = data_pack.write().unwrap_err();
+
+    assert!(error.to_string().contains("Invalid data pack namespace"));
+    assert_eq!(
+        fs::read_to_string(victim_function_dir.join("important.mcfunction")).unwrap(),
+        "say keep\n"
+    );
+}
+
+#[test]
+fn direct_datapack_writer_rejects_traversal_json_resource_namespace_without_cleanup() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let output_dir = temp_dir.path().join("project");
+    let victim_predicate_dir = temp_dir.path().join("victim").join("predicate");
+    fs::create_dir_all(output_dir.join("data")).unwrap();
+    fs::create_dir_all(&victim_predicate_dir).unwrap();
+    fs::write(victim_predicate_dir.join("important.json"), "{}\n").unwrap();
+
+    let mut data_pack = DataPack::new("resources".to_string(), output_dir);
+    data_pack
+        .add_json_resource_in_namespace(
+            "../../victim".to_string(),
+            "predicate/generated".to_string(),
+            "{}".to_string(),
+        )
+        .unwrap();
+
+    let error = data_pack.write().unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("Invalid JSON resource namespace"));
+    assert_eq!(
+        fs::read_to_string(victim_predicate_dir.join("important.json")).unwrap(),
+        "{}\n"
+    );
+}
+
+#[test]
+fn direct_datapack_writer_rejects_traversal_tag_paths() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let output_dir = temp_dir.path().join("output");
+    let mut data_pack = DataPack::new("resources".to_string(), output_dir);
+    data_pack.add_tag("../victim".to_string(), vec!["resources:setup".to_string()]);
+
+    let error = data_pack.write().unwrap_err();
+
+    assert!(error.to_string().contains("Invalid function tag path"));
+}

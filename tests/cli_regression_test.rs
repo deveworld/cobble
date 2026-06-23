@@ -1062,7 +1062,7 @@ fn cli_watch_link_refuses_mismatched_marker_namespace() {
         pack_dir.join(".cobble/build_manifest.json"),
         r#"{
   "version": 1,
-  "cobble_version": "0.7.1",
+  "cobble_version": "0.7.2",
   "namespace": "other_pack"
 }"#,
     )
@@ -1138,7 +1138,7 @@ fn cli_link_watch_and_clean_reject_forged_same_namespace_marker() {
         pack_dir.join(".cobble/build_manifest.json"),
         r#"{
   "version": 1,
-  "cobble_version": "0.7.1",
+  "cobble_version": "0.7.2",
   "namespace": "linked_pack",
   "generated_namespaces": ["linked_pack"]
 }"#,
