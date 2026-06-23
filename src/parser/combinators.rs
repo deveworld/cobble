@@ -2,6 +2,8 @@ use super::tokenizer::{tokenize, Token};
 use crate::ast::*;
 use chumsky::prelude::*;
 
+const MAX_UNARY_OPERATORS: usize = 1024;
+
 /// Token parser using chumsky
 pub fn token_parser<'a>(
 ) -> impl Parser<'a, &'a [Token], Program, extra::Err<Rich<'a, Token>>> + Clone {
@@ -99,17 +101,25 @@ pub fn token_parser<'a>(
                 });
 
             // Binary operations with proper precedence
-            // Unary +/- (high precedence, but lower than call, higher than power)
-            // Allow unary operators before any atom/call/parenthesized expression
-            let unary = recursive(|unary_rec| {
-                choice((
-                    just(&Token::Minus).to(UnaryOp::Neg),
-                    just(&Token::Plus).to(UnaryOp::Pos),
-                ))
-                .then(unary_rec.clone())
-                .map(|(op, expr)| Expression::Unary(op, Box::new(expr)))
-                .or(call.clone())
-            });
+            // Unary +/- (high precedence, but lower than call, higher than power).
+            // Parse leading unary operators iteratively instead of recursively so
+            // attacker-controlled operator runs cannot consume one parser stack
+            // frame per token. Keep an explicit limit to avoid constructing an
+            // expression tree deep enough to overflow later recursive walks/drop.
+            let unary = choice((
+                just(&Token::Minus).to(UnaryOp::Neg),
+                just(&Token::Plus).to(UnaryOp::Pos),
+            ))
+            .repeated()
+            .at_most(MAX_UNARY_OPERATORS)
+            .collect::<Vec<_>>()
+            .then(call.clone())
+            .map(|(ops, expr)| {
+                ops.into_iter()
+                    .rev()
+                    .fold(expr, |expr, op| Expression::Unary(op, Box::new(expr)))
+            })
+            .boxed();
 
             // Highest precedence: ^ (power) - right-associative
             // Power operator is right-associative: 2^3^2 = 2^(3^2) = 512
@@ -744,5 +754,15 @@ from stdlib import event
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         let program = result.unwrap();
         assert_eq!(program.imports.len(), 2);
+    }
+
+    #[test]
+    fn excessive_unary_operators_are_rejected() {
+        let source = format!(
+            "def test():\n    x = {}1\n",
+            "+".repeat(MAX_UNARY_OPERATORS + 1)
+        );
+
+        assert!(parse(&source).is_err());
     }
 }
