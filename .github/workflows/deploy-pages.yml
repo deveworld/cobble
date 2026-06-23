@@ -21,8 +21,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -34,6 +32,7 @@ concurrency:
 jobs:
   build:
     name: Build static site
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -84,26 +83,42 @@ jobs:
         working-directory: web
         run: npm run test:links
 
-      - name: Configure Pages
-        if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload static site artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
         with:
+          name: github-pages-site
           path: web/out
+          if-no-files-found: error
 
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
+      - name: Download static site artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages-site
+          path: web/out
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/out
+
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
