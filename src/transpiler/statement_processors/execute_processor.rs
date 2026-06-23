@@ -223,8 +223,8 @@ impl Transpiler {
                                 }
                                 continue;
                             }
-                            // Check if the translated condition already has "unless" prefix(es)
-                            if translated.starts_with("unless ") {
+                            // Check if the translated condition already has an execute condition prefix.
+                            if translated.starts_with("unless ") || translated.starts_with("if ") {
                                 execute_parts.push(translated);
                             } else {
                                 execute_parts.push(format!("unless {}", translated));
