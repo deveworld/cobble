@@ -2658,6 +2658,42 @@ def test():
 }
 
 #[test]
+fn test_regression_power_const_exponent_limit() {
+    // Const exponents should also be limited before compile-time expansion.
+    let source = r#"
+def test():
+    const EXP = 500
+    base = 2
+    result = base ^ EXP
+"#;
+
+    let result = compile_source(source);
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("Power exponent too large"));
+    assert!(err.contains("500 > 100"));
+}
+
+#[test]
+fn test_regression_power_nested_const_exponent_limit() {
+    // Nested expressions take a separate evaluation path that must enforce the same cap.
+    let source = r#"
+def test():
+    const EXP = 500
+    base = 2
+    result = (base + 1) ^ EXP
+"#;
+
+    let result = compile_source(source);
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("Power exponent too large"));
+    assert!(err.contains("500 > 100"));
+}
+
+#[test]
 fn test_regression_power_exponent_within_limit() {
     // Verify that power exponents within the limit (<=100) still work
     let source = r#"

@@ -800,6 +800,17 @@ impl Transpiler {
                                                 "Power exponent must be non-negative".to_string()
                                             );
                                         }
+                                        // Limit maximum exponent to prevent excessive command generation
+                                        const MAX_POWER_EXPONENT: i32 = 100;
+                                        if num > MAX_POWER_EXPONENT {
+                                            return Err(format!(
+                                                "Power exponent too large: {} > {}.\n\
+                                                \n\
+                                                Large exponents generate {} multiplication commands, which is excessive.\n\
+                                                Solution: Use a smaller exponent or implement iterative multiplication in a loop.",
+                                                num, MAX_POWER_EXPONENT, num - 1
+                                            ));
+                                        }
                                         if num == 0 {
                                             commands.push(format!(
                                                 "scoreboard players set {} temp 1",
