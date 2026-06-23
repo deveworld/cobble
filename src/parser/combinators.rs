@@ -115,9 +115,9 @@ pub fn token_parser<'a>(
             .collect::<Vec<_>>()
             .then(call.clone())
             .map(|(ops, expr)| {
-                ops.into_iter().rev().fold(expr, |expr, op| {
-                    Expression::Unary(op, Box::new(expr))
-                })
+                ops.into_iter()
+                    .rev()
+                    .fold(expr, |expr, op| Expression::Unary(op, Box::new(expr)))
             })
             .boxed();
 
