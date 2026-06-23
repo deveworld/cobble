@@ -400,6 +400,12 @@ fn validate_namespace(namespace: &str) -> Result<(), CompileDiagnostic> {
             "Use a lowercase namespace such as `my_datapack` or `cool-pack.v2`.",
         ));
     }
+    if namespace == "." || namespace == ".." {
+        return Err(namespace_diagnostic(
+            format!("Invalid namespace '{namespace}'"),
+            "Use a single Minecraft namespace segment, not '.' or '..'.",
+        ));
+    }
     if namespace.len() > 64 {
         return Err(namespace_diagnostic(
             format!("Namespace too long: {} chars (max 64)", namespace.len()),
@@ -755,6 +761,18 @@ stdlib.addEventListener(event.TICK, tick)
             .as_deref()
             .unwrap()
             .contains("lowercase letters"));
+    }
+
+    #[test]
+    fn validate_namespace_rejects_dot_segments() {
+        for namespace in [".", ".."] {
+            let diagnostic =
+                validate_namespace(namespace).expect_err("dot namespace should fail");
+
+            assert_eq!(diagnostic.kind, "invalid-namespace");
+            assert!(diagnostic.message.contains("Invalid namespace"));
+            assert!(diagnostic.help.as_deref().unwrap().contains("not '.' or '..'"));
+        }
     }
 
     #[test]

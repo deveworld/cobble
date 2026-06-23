@@ -1,3 +1,4 @@
+use super::output_safety::ensure_no_symlink_components;
 use crate::config::CobbleConfig;
 use std::fs;
 use std::path::PathBuf;
@@ -39,6 +40,7 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     // Create project directory if a name was provided
     let project_dir = if has_name {
         let dir = PathBuf::from(requested_name.as_ref().unwrap());
+        ensure_no_symlink_components(&dir, "initialize project")?;
         fs::create_dir_all(&dir)
             .map_err(|e| format!("Failed to create project directory: {}", e))?;
         dir
@@ -76,6 +78,13 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     }
 
     let config_path = project_dir.join("cobble.toml");
+    let src_dir = project_dir.join("src");
+    let main_file = src_dir.join("main.cbl");
+    let gitignore = project_dir.join(".gitignore");
+
+    for path in [&config_path, &src_dir, &main_file, &gitignore] {
+        ensure_no_symlink_components(path, "initialize project")?;
+    }
 
     if config_path.exists() {
         return Err("cobble.toml already exists".to_string());
@@ -84,16 +93,12 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     config.save(&config_path)?;
 
     // Create src directory
-    let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir).map_err(|e| format!("Failed to create src directory: {}", e))?;
 
     // Create main.cbl with sample code
-    let main_file = src_dir.join("main.cbl");
-
     fs::write(&main_file, sample_code).map_err(|e| format!("Failed to create main.cbl: {}", e))?;
 
     // Create .gitignore
-    let gitignore = project_dir.join(".gitignore");
     let gitignore_content = r#"# Cobble output
 output/
 *.zip

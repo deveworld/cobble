@@ -46,6 +46,9 @@ After creation, Cobble prints the exact next commands for the selected target
 directory, including `cobble build --dry-run`, `cobble build --validate`, and
 `cobble watch`.
 
+Before writing project files, `init` refuses target paths that traverse an
+existing symlink component.
+
 This creates:
 - `cobble.toml` - Project configuration file
 - `src/main.cbl` - Main source file with example code
@@ -120,7 +123,9 @@ invalid for Minecraft Java Edition 26.1.2. If the default `data/commands.json`
 is missing, Cobble downloads the Minecraft server jar and generates it
 automatically. This requires `curl` and Java. Cobble tries Mojang's current
 Piston manifest host, the legacy launcher manifest host, and a pinned 26.1.2
-server jar URL.
+server jar URL. The default `data/commands.json` path is refused if it would
+traverse an existing symlink component; use an explicit `--commands-json` path
+for a deliberate custom command tree.
 
 `--dry-run` parses and transpiles sources, prints the same build summary, and
 does not replace or clean the final output directory. When combined with
@@ -223,7 +228,9 @@ trailing whitespace, a UTF-8 BOM, blank EOF padding, and the final newline
 while preserving raw Minecraft command payloads, string contents, multiline
 docstring bodies, inline JSON/SNBT-looking text, and comments. Cobble validates
 the formatted candidate before writing; if any target file still has language
-or syntax diagnostics, formatting aborts and no files are written.
+or syntax diagnostics, formatting aborts and no files are written. Formatting
+refuses source paths and target files that traverse existing symlink
+components.
 
 ### `cobble doctor`
 
@@ -341,13 +348,15 @@ cobble link --clear
 
 `link` writes project-local state to `.cobble/link_state.json`. It creates the
 target `datapacks/` directory when configuring a real link, but it does not
-delete or replace existing data packs. `link --status`, `doctor --json`,
-`watch --link`, and `clean --linked` all reject a saved `pack_path` that is not
-under the saved `target_path` or would traverse an existing target symlink. Use
-`cobble watch --link` to build into the configured pack path. If that pack path
-already exists, `watch --link` requires a valid `.cobble/build_manifest.json`,
-`pack.mcmeta`, and `data/`; the manifest namespace and `project_id` must match
-the current project. Copied, stale, or namespace-only forged markers are refused
+delete or replace existing data packs. Link state reads, writes, and clears
+refuse symlink components in the project-local `.cobble/link_state.json` path.
+`link --status`, `doctor --json`, `watch --link`, and `clean --linked` all
+reject a saved `pack_path` that is not under the saved `target_path` or would
+traverse an existing target symlink. Use `cobble watch --link` to build into
+the configured pack path. If that pack path already exists, `watch --link`
+requires a valid `.cobble/build_manifest.json`, `pack.mcmeta`, and `data/`; the
+manifest namespace and `project_id` must match the current project. Copied,
+stale, or namespace-only forged markers are refused
 until the path is moved aside or rebuilt by the owning Cobble project.
 `link --status` includes recovery hints for the common cases: configure a
 missing link with `cobble link --datapacks <DIR>`, clear and recreate tampered
@@ -407,6 +416,9 @@ cobble validate output --commands-json /tmp/commands.json
 ```
 
 The validator uses Minecraft's exported Brigadier command tree, including 26.1.2 commands such as `dialog`, `fetchprofile`, `transfer`, `waypoint`, `stopwatch`, `version`, and `return run`.
+Automatic generation for the default `data/commands.json` path refuses existing
+symlink components before creating temporary files or replacing the command
+tree.
 
 Validation output includes the number of macro commands checked and skipped.
 When the validator can identify an error position, it prints a caret under the

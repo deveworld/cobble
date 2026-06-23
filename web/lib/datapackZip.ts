@@ -4,7 +4,7 @@ export type ZipFileLike = {
 };
 
 export function isDataPackZipFile(file: ZipFileLike) {
-  return file.path === "pack.mcmeta" || file.path.startsWith("data/");
+  return isSafeDataPackZipPath(file.path);
 }
 
 export function createStoredZip(files: ZipFileLike[]) {
@@ -16,6 +16,10 @@ export function createStoredZip(files: ZipFileLike[]) {
   const { time, date } = dosDateTime(new Date());
 
   for (const file of sortedFiles) {
+    if (!isSafeDataPackZipPath(file.path)) {
+      throw new Error(`Unsafe data pack ZIP path: ${file.path}`);
+    }
+
     const nameBytes = encoder.encode(file.path);
     const data = encoder.encode(file.content);
     const checksum = crc32(data);
@@ -74,6 +78,21 @@ export function createStoredZip(files: ZipFileLike[]) {
   return new Blob([...localParts, ...centralParts, endRecord].map(blobPart), {
     type: "application/zip"
   });
+}
+
+function isSafeDataPackZipPath(path: string) {
+  if (path === "pack.mcmeta") {
+    return true;
+  }
+  if (!path.startsWith("data/")) {
+    return false;
+  }
+  if (path.startsWith("/") || path.includes("\\") || path.includes(":")) {
+    return false;
+  }
+
+  const segments = path.split("/");
+  return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 function blobPart(bytes: Uint8Array): BlobPart {

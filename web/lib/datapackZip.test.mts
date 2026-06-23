@@ -47,6 +47,28 @@ test("data pack ZIP includes only pack and data files", async () => {
   assert.equal(entries[2].content, '{"pack":{"description":"test"}}');
 });
 
+test("data pack ZIP rejects unsafe entry paths", () => {
+  const unsafePaths = [
+    "data/../escape.mcfunction",
+    "data/demo/../escape.mcfunction",
+    "data//demo.mcfunction",
+    "data/./demo.mcfunction",
+    "/data/demo.mcfunction",
+    "data\\demo.mcfunction",
+    "data/demo:bad.mcfunction",
+    "pack.mcmeta/extra"
+  ];
+
+  for (const path of unsafePaths) {
+    assert.equal(isDataPackZipFile({ path, content: "" }), false, path);
+    assert.throws(
+      () => createStoredZip([{ path, content: "" }]),
+      /Unsafe data pack ZIP path/,
+      path
+    );
+  }
+});
+
 async function readStoredZipEntries(zip: Blob) {
   const bytes = new Uint8Array(await zip.arrayBuffer());
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

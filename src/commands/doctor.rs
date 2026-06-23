@@ -419,6 +419,17 @@ fn inspect_output_marker(
     expected_project_id: Option<&str>,
 ) -> OutputMarkerReport {
     let marker_path = build_manifest_path(output_path);
+    if let Err(error) = ensure_no_symlink_components(&marker_path, "inspect output marker") {
+        return OutputMarkerReport {
+            status: "error".to_string(),
+            path: Some(path_display(&marker_path)),
+            present: false,
+            namespace: None,
+            project_id: None,
+            message: error,
+        };
+    }
+
     match fs::symlink_metadata(&marker_path) {
         Ok(metadata) if metadata.file_type().is_symlink() => OutputMarkerReport {
             status: "error".to_string(),
@@ -596,6 +607,16 @@ fn inspect_link_marker(
     expected_project_id: Option<&str>,
 ) -> LinkMarkerReport {
     let marker_path = build_manifest_path(pack_path);
+    if let Err(error) = ensure_no_symlink_components(&marker_path, "inspect linked output marker") {
+        return LinkMarkerReport {
+            status: "error".to_string(),
+            path: Some(path_display(&marker_path)),
+            present: false,
+            project_id: None,
+            message: error,
+        };
+    }
+
     match fs::symlink_metadata(&marker_path) {
         Ok(metadata) if metadata.file_type().is_symlink() => LinkMarkerReport {
             status: "error".to_string(),

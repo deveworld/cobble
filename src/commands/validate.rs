@@ -1,3 +1,4 @@
+use crate::commands::output_safety::ensure_no_symlink_components;
 use crate::pack_format::SUPPORTED_MINECRAFT_VERSION;
 use crate::transpiler::SourceMap;
 use crate::validator::CommandValidator;
@@ -52,6 +53,8 @@ pub fn run_validation(input: &Path, commands_json: &Path) -> Result<ValidationRe
 }
 
 fn ensure_commands_json(commands_json: &Path) -> Result<(), String> {
+    ensure_commands_json_path_safe(commands_json)?;
+
     if commands_json.exists() {
         return verify_default_commands_json_fingerprint(commands_json);
     }
@@ -69,6 +72,13 @@ fn ensure_commands_json(commands_json: &Path) -> Result<(), String> {
 
     generate_commands_json(commands_json)?;
     verify_default_commands_json_fingerprint(commands_json)
+}
+
+fn ensure_commands_json_path_safe(commands_json: &Path) -> Result<(), String> {
+    if is_auto_download_commands_json_path(commands_json) {
+        ensure_no_symlink_components(commands_json, "generate commands.json")?;
+    }
+    Ok(())
 }
 
 fn verify_default_commands_json_fingerprint(commands_json: &Path) -> Result<(), String> {
@@ -628,6 +638,30 @@ fn source_map_key(datapack_dir: &Path, generated_file: &Path, line: usize) -> (S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn cwd_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct CurrentDirGuard {
+        previous: PathBuf,
+    }
+
+    impl CurrentDirGuard {
+        fn push(path: &Path) -> Self {
+            let previous = std::env::current_dir().unwrap();
+            std::env::set_current_dir(path).unwrap();
+            Self { previous }
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
 
     #[test]
     fn auto_download_only_applies_to_default_commands_json_paths() {
@@ -664,6 +698,25 @@ mod tests {
         assert!(error.contains("Command tree not found"));
         assert!(error.contains("scripts/setup_commands_json.sh"));
         assert!(!commands_json.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_commands_json_rejects_symlink_parent_before_generation() {
+        use std::os::unix::fs::symlink;
+
+        let _guard = cwd_lock().lock().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let outside_dir = temp_dir.path().join("outside-data");
+        fs::create_dir_all(&outside_dir).unwrap();
+        symlink(&outside_dir, temp_dir.path().join("data")).unwrap();
+        let _cwd = CurrentDirGuard::push(temp_dir.path());
+
+        let error = ensure_commands_json(Path::new("data/commands.json")).unwrap_err();
+
+        assert!(error.contains("Refusing to generate commands.json through symlink"));
+        assert!(!outside_dir.join("commands.json").exists());
+        assert!(!outside_dir.join("commands.json.part").exists());
     }
 
     #[test]

@@ -139,6 +139,9 @@ pub struct Transpiler {
 }
 
 impl Transpiler {
+    pub(in crate::transpiler) const ALWAYS_FALSE_CONDITION: &'static str =
+        "__cobble_always_false_condition__";
+
     pub fn new(namespace: String, output_dir: PathBuf) -> Self {
         Self {
             data_pack: DataPack::new(namespace, output_dir),
@@ -3392,6 +3395,9 @@ impl Transpiler {
                         if let Ok(translated) =
                             self.try_translate_python_expression(&fixed_part, false)
                         {
+                            if translated == Self::ALWAYS_FALSE_CONDITION {
+                                return Ok(Self::ALWAYS_FALSE_CONDITION.to_string());
+                            }
                             // The translated part should already be in the form "score x temp matches ..."
                             // We just need to add "if " prefix
                             if translated.starts_with("score ") {
@@ -3427,12 +3433,11 @@ impl Transpiler {
                     let part = part.trim();
                     // Recursively translate each part
                     if let Ok(translated) = self.try_translate_python_expression(part, false) {
-                        // Remove any "if" or "unless" prefix that might have been added
-                        let clean_translated = translated
-                            .strip_prefix("if ")
-                            .or_else(|| translated.strip_prefix("unless "))
-                            .unwrap_or(&translated);
-                        translated_parts.push(clean_translated.to_string());
+                        if translated == Self::ALWAYS_FALSE_CONDITION {
+                            translated_parts.push(translated);
+                            continue;
+                        }
+                        translated_parts.push(translated);
                     } else {
                         // Try simple translation
                         translated_parts.push(part.to_string());
@@ -3488,14 +3493,7 @@ impl Transpiler {
                 format!("{}..", right)
             } else if let Ok(value) = right.parse::<i32>() {
                 if value == i32::MAX {
-                    if _is_unless {
-                        return Ok(format!(
-                            "if score {} {} matches -2147483648..2147483647",
-                            left, objective
-                        ));
-                    } else {
-                        format!("0 unless score {} {} matches 0", left, objective)
-                    }
+                    return Ok(Self::ALWAYS_FALSE_CONDITION.to_string());
                 } else {
                     format!("{}..", value + 1)
                 }
@@ -3522,8 +3520,7 @@ impl Transpiler {
                     .map(|s| s.as_str())
                     .unwrap_or("temp");
                 if value == i32::MIN {
-                    return Ok("score 0 temp matches 1 unless score 0 temp matches 1".to_string());
-                    // Always false
+                    return Ok(Self::ALWAYS_FALSE_CONDITION.to_string());
                 }
                 return Ok(format!(
                     "score {} {} matches ..{}",

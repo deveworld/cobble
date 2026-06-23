@@ -156,9 +156,10 @@ and CI tooling can try it before 1.0 schema commitments.
 
 Commands that consume link state validate that `pack_path` remains under
 `target_path`, still ends with `pack_name`, and does not rely on an existing
-target symlink. Tampered link state is reported as an error by `doctor --json`,
-shown as invalid by `link --status`, and refused by `watch --link` and
-`clean --linked`.
+target symlink. Link state reads, writes, and clears also refuse symlink
+components in the project-local `.cobble/link_state.json` path. Tampered link
+state is reported as an error by `doctor --json`, shown as invalid by
+`link --status`, and refused by `watch --link` and `clean --linked`.
 
 The linked pack is considered Cobble-owned only when its output directory
 contains a valid `.cobble/build_manifest.json` alongside normal data pack files

@@ -194,6 +194,7 @@ fn print_link_status(config: &CobbleConfig, config_dir: &Path) -> Result<(), Str
 
 fn clear_link_state(config_dir: &Path) -> Result<(), String> {
     let path = link_state_path(config_dir);
+    ensure_no_symlink_components(&path, "clear link state")?;
     if path.exists() {
         fs::remove_file(&path)
             .map_err(|error| format!("Failed to remove {}: {error}", path.display()))?;
@@ -206,6 +207,7 @@ fn clear_link_state(config_dir: &Path) -> Result<(), String> {
 
 fn write_link_state(config_dir: &Path, state: &LinkState) -> Result<(), String> {
     let path = link_state_path(config_dir);
+    ensure_no_symlink_components(&path, "write link state")?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
@@ -218,6 +220,7 @@ fn write_link_state(config_dir: &Path, state: &LinkState) -> Result<(), String> 
 
 pub(crate) fn read_link_state(config_dir: &Path) -> Result<Option<LinkState>, String> {
     let path = link_state_path(config_dir);
+    ensure_no_symlink_components(&path, "read link state")?;
     if !path.exists() {
         return Ok(None);
     }
@@ -463,6 +466,38 @@ mod tests {
         write_link_state(temp_dir.path(), &state).unwrap();
 
         assert_eq!(read_link_state(temp_dir.path()).unwrap(), Some(state));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_state_operations_reject_symlink_state_directory() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let outside_dir = temp_dir.path().join("outside");
+        let state_path = outside_dir.join("link_state.json");
+        fs::create_dir_all(&outside_dir).unwrap();
+        symlink(&outside_dir, temp_dir.path().join(".cobble")).unwrap();
+
+        let state = LinkState {
+            version: 1,
+            target_kind: "datapacks".to_string(),
+            target_path: "world/datapacks".to_string(),
+            pack_name: "linked_pack".to_string(),
+            pack_path: "world/datapacks/linked_pack".to_string(),
+        };
+
+        let write_error = write_link_state(temp_dir.path(), &state).unwrap_err();
+        assert!(write_error.contains("Refusing to write link state through symlink"));
+        assert!(!state_path.exists());
+
+        fs::write(&state_path, serde_json::to_string(&state).unwrap()).unwrap();
+        let read_error = read_link_state(temp_dir.path()).unwrap_err();
+        assert!(read_error.contains("Refusing to read link state through symlink"));
+
+        let clear_error = clear_link_state(temp_dir.path()).unwrap_err();
+        assert!(clear_error.contains("Refusing to clear link state through symlink"));
+        assert!(state_path.exists());
     }
 
     #[test]

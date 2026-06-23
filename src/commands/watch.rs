@@ -1,7 +1,8 @@
 use crate::commands::build::{build, BuildOptions};
 use crate::commands::link::linked_output_path;
 use crate::commands::output_safety::{
-    build_manifest_path, project_marker_identity, read_build_manifest, require_manifest_ownership,
+    build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
+    project_marker_identity, read_build_manifest, require_manifest_ownership,
 };
 use crate::config::CobbleConfig;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -387,6 +388,8 @@ fn ensure_linked_output_target_safe(
         return Ok(());
     }
 
+    ensure_no_symlink_components(output_dir, "build linked output")?;
+
     let metadata = std::fs::symlink_metadata(output_dir).map_err(|error| {
         format!(
             "Failed to inspect linked output {}: {error}",
@@ -405,6 +408,8 @@ fn ensure_linked_output_target_safe(
             output_dir.display()
         ));
     }
+
+    ensure_no_symlink_descendants(output_dir, "build linked output")?;
 
     let marker_path = build_manifest_path(output_dir);
     read_build_manifest(&marker_path)
@@ -723,6 +728,37 @@ entry_points = []
         assert!(error.contains("Refusing to build linked output"));
         assert!(error.contains("missing or unreadable .cobble/build_manifest.json"));
         assert!(output_dir.join("important.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_output_target_rejects_symlink_descendant() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let output_dir = temp_dir.path().join("pack");
+        let outside_marker_dir = temp_dir.path().join("outside-marker");
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::create_dir_all(&outside_marker_dir).unwrap();
+        fs::create_dir_all(output_dir.join("data/watch_pack/function")).unwrap();
+        fs::write(output_dir.join("pack.mcmeta"), "{}").unwrap();
+        fs::write(
+            outside_marker_dir.join("build_manifest.json"),
+            r#"{
+  "version": 1,
+  "cobble_version": "0.7.3",
+  "namespace": "watch_pack",
+  "project_id": "project-id"
+}"#,
+        )
+        .unwrap();
+        symlink(&outside_marker_dir, output_dir.join(".cobble")).unwrap();
+
+        let error =
+            ensure_linked_output_target_safe(&output_dir, Some("watch_pack"), Some("project-id"))
+                .unwrap_err();
+
+        assert!(error.contains("Refusing to build linked output through symlink"));
     }
 
     #[test]

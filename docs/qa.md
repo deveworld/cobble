@@ -122,8 +122,8 @@ Coverage:
   and `clean --linked`, mismatched marker namespace refusal, namespace-only
   forged marker refusal, validated rebuild failure preserving the previous
   linked pack, linked cleanup confirmation, unmarked cleanup refusal, build
-  symlink-output refusal, and link/clean symlink output, symlink-parent, or
-  symlink-descendant refusal.
+  symlink-output refusal, and link/watch/clean symlink output, symlink-parent,
+  symlink-descendant, or symlinked link-state refusal.
 - `qa_07_watch_smoke.sh` runs a bounded linked `watch --validate`, verifies the
   initial build, confirms a failed validated rebuild preserves the previous
   linked pack, confirms a later valid edit recovers, writes generated-output

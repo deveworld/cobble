@@ -335,6 +335,83 @@ fn cli_doctor_json_reports_link_status_and_marker() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn cli_doctor_json_rejects_symlinked_link_marker_parent() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+    let pack_dir = datapacks_dir.join("linked_pack");
+    let outside_marker_dir = temp_dir.path().join("outside-marker");
+    let commands_json = write_say_commands_json(temp_dir.path());
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let link = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_dir)
+        .output()
+        .unwrap();
+    let (link_stdout, link_stderr) = output_text(&link);
+    assert!(
+        link.status.success(),
+        "link failed\nstdout:\n{link_stdout}\nstderr:\n{link_stderr}"
+    );
+
+    fs::create_dir_all(pack_dir.join("data/linked_pack/function")).unwrap();
+    fs::create_dir_all(&outside_marker_dir).unwrap();
+    fs::write(pack_dir.join("pack.mcmeta"), "{}").unwrap();
+    fs::write(
+        outside_marker_dir.join("build_manifest.json"),
+        r#"{
+  "version": 1,
+  "cobble_version": "0.7.3",
+  "namespace": "linked_pack",
+  "project_id": "not-this-project"
+}"#,
+    )
+    .unwrap();
+    symlink(&outside_marker_dir, pack_dir.join(".cobble")).unwrap();
+
+    let output = cobble()
+        .arg("doctor")
+        .arg("--json")
+        .arg(&project_dir)
+        .arg("--commands-json")
+        .arg(&commands_json)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "doctor --json failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["status"], "error");
+    assert_eq!(value["experimental_link"]["marker"]["status"], "error");
+    assert!(value["experimental_link"]["marker"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Refusing to inspect linked output marker through symlink"));
+}
+
 #[test]
 fn cli_init_lists_templates_without_creating_project_files() {
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -362,6 +439,29 @@ fn cli_init_lists_templates_without_creating_project_files() {
     assert!(stdout.contains("game-mechanic"));
     assert!(stdout.contains("web-demo"));
     assert!(!project_dir.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_init_refuses_symlinked_source_directory_without_writing_outside() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let outside_dir = temp_dir.path().join("outside-src");
+    fs::create_dir_all(&outside_dir).unwrap();
+    symlink(&outside_dir, temp_dir.path().join("src")).unwrap();
+
+    let output = cobble()
+        .arg("init")
+        .current_dir(temp_dir.path())
+        .output()
+        .unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Refusing to initialize project through symlink"));
+    assert!(!outside_dir.join("main.cbl").exists());
+    assert!(!temp_dir.path().join("cobble.toml").exists());
 }
 
 #[test]
@@ -1749,6 +1849,26 @@ fn cli_fmt_formats_file_conservatively() {
         fs::read_to_string(&input).unwrap(),
         "def main():\n    # setup\n    /tellraw @a {\"text\":\"Hi\",\"color\":\"green\"}\n"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_fmt_refuses_symlink_input_without_writing_target() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let outside = temp_dir.path().join("outside.cbl");
+    let input = temp_dir.path().join("linked.cbl");
+    let original = "def main():  \n  /say outside  \n";
+    fs::write(&outside, original).unwrap();
+    symlink(&outside, &input).unwrap();
+
+    let output = cobble().arg("fmt").arg(&input).output().unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Refusing to format source through symlink"));
+    assert_eq!(fs::read_to_string(&outside).unwrap(), original);
 }
 
 #[test]

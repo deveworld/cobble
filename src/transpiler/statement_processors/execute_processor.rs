@@ -76,7 +76,7 @@ impl Transpiler {
                     }
 
                     // Special handling for AND conditions which return multiple "if" parts
-                    if condition.contains(" if ") || condition.contains(" unless ") {
+                    if Self::is_prefixed_condition_chain(&condition) {
                         // This is an AND condition that already includes multiple conditions
                         // Don't add another "if" prefix
                         execute_parts.push(condition);
@@ -110,6 +110,10 @@ impl Transpiler {
                             if translated.starts_with("OR(") {
                                 // Mark as OR condition for special handling
                                 execute_parts.push(format!("OR_CONDITION:{}", translated));
+                                continue;
+                            }
+                            if translated == Self::ALWAYS_FALSE_CONDITION {
+                                execute_parts.push(self.always_false_execute_condition());
                                 continue;
                             }
                             // Check if the translated condition already has a prefix
@@ -177,12 +181,7 @@ impl Transpiler {
                         // We can chain unless conditions in Minecraft
                         let or_conditions = Transpiler::flatten_or_conditions(&condition)?;
                         for cond in or_conditions {
-                            // Add each condition as "unless"
-                            if cond.starts_with("unless ") {
-                                execute_parts.push(cond);
-                            } else {
-                                execute_parts.push(format!("unless {}", cond));
-                            }
+                            execute_parts.push(Self::negate_execute_condition(&cond));
                         }
                         continue;
                     }
@@ -196,12 +195,7 @@ impl Transpiler {
                         continue;
                     }
 
-                    // translate_condition may return "unless ..." for != operator
-                    if condition.starts_with("unless ") {
-                        execute_parts.push(condition);
-                    } else {
-                        execute_parts.push(format!("unless {}", condition));
-                    }
+                    execute_parts.push(Self::negate_execute_condition(&condition));
                 }
                 ExecuteModifier::UnlessRaw(condition) => {
                     // Check if this is actually a Python expression that needs translation
@@ -215,20 +209,21 @@ impl Transpiler {
                                 // unless (A or B) = unless A and unless B (De Morgan's law)
                                 let or_conditions = Transpiler::flatten_or_conditions(&translated)?;
                                 for cond in or_conditions {
-                                    if cond.starts_with("unless ") {
-                                        execute_parts.push(cond);
-                                    } else {
-                                        execute_parts.push(format!("unless {}", cond));
+                                    if cond == Self::ALWAYS_FALSE_CONDITION {
+                                        continue;
                                     }
+                                    execute_parts.push(Self::negate_execute_condition(&cond));
                                 }
                                 continue;
                             }
-                            // Check if the translated condition already has an execute condition prefix.
-                            if translated.starts_with("unless ") || translated.starts_with("if ") {
-                                execute_parts.push(translated);
-                            } else {
-                                execute_parts.push(format!("unless {}", translated));
+                            if translated == Self::ALWAYS_FALSE_CONDITION {
+                                continue;
                             }
+                            if Self::is_prefixed_condition_chain(&translated) {
+                                execute_parts.push(format!("UNLESS_AND:{}", translated));
+                                continue;
+                            }
+                            execute_parts.push(Self::negate_execute_condition(&translated));
                         } else {
                             // Translation failed - this is a Python expression we can't handle
                             return Err(format!(
@@ -372,20 +367,7 @@ impl Transpiler {
                     }
 
                     // Set to 1 if ALL conditions are true (the AND check)
-                    // Split the AND conditions and add "if" prefix to each
-                    let and_conditions: Vec<String> = and_str
-                        .split(" and ")
-                        .map(|cond| {
-                            let cond = cond.trim();
-                            // Fix spacing for range operators
-                            let fixed_cond = if cond.contains("matches..") {
-                                cond.replace("matches..", "matches ..")
-                            } else {
-                                cond.to_string()
-                            };
-                            format!("if {}", fixed_cond)
-                        })
-                        .collect();
+                    let and_conditions = Self::unless_and_conditions(and_str);
 
                     let and_check = and_conditions.join(" ");
 
@@ -477,6 +459,9 @@ impl Transpiler {
 
                     // Check each OR condition
                     for cond in or_conditions {
+                        if cond == Self::ALWAYS_FALSE_CONDITION {
+                            continue;
+                        }
                         let cond_prefix = if cond.starts_with("if ") || cond.starts_with("unless ")
                         {
                             cond.clone()
@@ -584,6 +569,102 @@ impl Transpiler {
             format!("execute {}", tail)
         } else {
             format!("execute {} {}", modifier_args, tail)
+        }
+    }
+
+    fn always_false_execute_condition(&mut self) -> String {
+        self.data_pack.track_objective("temp");
+        format!(
+            "if score {holder} temp matches 0 unless score {holder} temp matches 0",
+            holder = "#cobble_always_false"
+        )
+    }
+
+    fn unless_and_conditions(condition: &str) -> Vec<String> {
+        if let Some(conditions) = Self::split_prefixed_execute_conditions(condition) {
+            return conditions;
+        }
+
+        condition
+            .split(" and ")
+            .map(|cond| {
+                let fixed_cond = Self::normalize_condition_spacing(cond.trim());
+                if fixed_cond.starts_with("if ") || fixed_cond.starts_with("unless ") {
+                    fixed_cond
+                } else {
+                    format!("if {}", fixed_cond)
+                }
+            })
+            .collect()
+    }
+
+    fn is_prefixed_condition_chain(condition: &str) -> bool {
+        Self::split_prefixed_execute_conditions(condition)
+            .is_some_and(|conditions| conditions.len() > 1)
+    }
+
+    fn split_prefixed_execute_conditions(condition: &str) -> Option<Vec<String>> {
+        let mut rest = condition.trim();
+        let mut conditions = Vec::new();
+
+        while !rest.is_empty() {
+            let (prefix, after_prefix) = if let Some(after_prefix) = rest.strip_prefix("if ") {
+                ("if", after_prefix)
+            } else if let Some(after_prefix) = rest.strip_prefix("unless ") {
+                ("unless", after_prefix)
+            } else {
+                return if conditions.is_empty() {
+                    None
+                } else {
+                    Some(conditions)
+                };
+            };
+
+            let next_if = after_prefix.find(" if ");
+            let next_unless = after_prefix.find(" unless ");
+            let next = match (next_if, next_unless) {
+                (Some(if_index), Some(unless_index)) => Some(if_index.min(unless_index)),
+                (Some(index), None) | (None, Some(index)) => Some(index),
+                (None, None) => None,
+            };
+
+            if let Some(next) = next {
+                let condition = after_prefix[..next].trim();
+                conditions.push(format!("{} {}", prefix, condition));
+                rest = after_prefix[next + 1..].trim_start();
+            } else {
+                let condition = after_prefix.trim();
+                if !condition.is_empty() {
+                    conditions.push(format!("{} {}", prefix, condition));
+                }
+                break;
+            }
+        }
+
+        if conditions.is_empty() {
+            None
+        } else {
+            Some(conditions)
+        }
+    }
+
+    fn normalize_condition_spacing(condition: &str) -> String {
+        if condition.contains("matches..") {
+            condition.replace("matches..", "matches ..")
+        } else if condition.contains("matches-") && !condition.contains("matches -") {
+            condition.replace("matches-", "matches -")
+        } else {
+            condition.to_string()
+        }
+    }
+
+    fn negate_execute_condition(condition: &str) -> String {
+        if let Some(stripped) = condition.strip_prefix("if ") {
+            format!("unless {}", stripped)
+        } else if let Some(stripped) = condition.strip_prefix("unless ") {
+            format!("if {}", stripped)
+        } else {
+            format!("unless {}", condition)
         }
     }
 }

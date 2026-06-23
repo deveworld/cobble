@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Opened 0.7.3-alpha.0 development after the 0.7.2 release.
 
+### Security
+- Hardened project-local `.cobble/link_state.json` reads, writes, and clears so
+  link state operations refuse symlink components before touching the file.
+- Hardened `watch --link` linked-output preflight so existing linked packs with
+  symlink descendants are refused before marker reads or rebuilds.
+- Hardened `doctor --json` linked-pack marker inspection so symlinked marker
+  components are reported as errors instead of being followed.
+- Hardened default `data/commands.json` validation setup so automatic
+  generation and default-tree fingerprint checks refuse symlink components.
+- Hardened `cobble fmt` and `cobble init` writes so source formatting and
+  project scaffolding refuse symlinked input or output components.
+- Hardened the web demo namespace and ZIP export path checks so browser-created
+  data-pack ZIPs reject traversal-like entries before download.
+- Fixed raw execute `unless` translation for Python-style `and`/`or`,
+  prefixed comparison branches, and impossible out-of-range comparisons so
+  protective guards are no longer emitted as positive `if` chains or
+  score-existence-dependent checks.
+
 ## [0.7.2] - 2026-06-23
 
 ### Changed

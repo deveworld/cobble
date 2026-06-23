@@ -2742,7 +2742,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(content.contains(
-        "execute as @a if score x temp matches 0 unless score x temp matches 0 run say unreachable"
+        "execute as @a if score #cobble_always_false temp matches 0 unless score #cobble_always_false temp matches 0 run say unreachable"
     ));
     assert!(!content.contains("-2147483648.."));
 }
@@ -2760,8 +2760,158 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(
-        content.contains(
-            "execute as @a if score x temp matches -2147483648..2147483647 run say reachable"
+        content.contains("execute as @a run say reachable"),
+        "{}",
+        content
+    );
+    assert!(!content.contains("-2147483648.."));
+}
+
+#[test]
+fn test_execute_raw_python_unless_gt_max_with_selector_score_is_unconditional() {
+    let source = r#"
+def test():
+    as @a unless @s > 2147483647:
+        /say reachable
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(
+        content.contains("execute as @a run say reachable"),
+        "{}",
+        content
+    );
+    assert!(!content.contains("-2147483648.."));
+}
+
+#[test]
+fn test_execute_raw_python_if_lt_min_uses_always_false_condition() {
+    let source = r#"
+def test():
+    x = 0
+    as @a if x < -2147483648:
+        /say unreachable
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(content.contains(
+        "execute as @a if score #cobble_always_false temp matches 0 unless score #cobble_always_false temp matches 0 run say unreachable"
+    ));
+}
+
+#[test]
+fn test_execute_raw_python_unless_lt_min_is_unconditional() {
+    let source = r#"
+def test():
+    x = 0
+    as @a unless x < -2147483648:
+        /say reachable
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(
+        content.contains("execute as @a run say reachable"),
+        "{}",
+        content
+    );
+}
+
+#[test]
+fn test_execute_raw_python_unless_or_ignores_impossible_gt_max_branch() {
+    let source = r#"
+def test():
+    x = 0
+    y = 0
+    as @a unless x > 2147483647 or y > 0:
+        /say reachable
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(
+        content.contains("execute as @a unless score y temp matches 1.. run say reachable"),
+        "{}",
+        content
+    );
+    assert!(!content.contains("#cobble_always_false"));
+    assert!(!content.contains("-2147483648.."));
+}
+
+#[test]
+fn test_execute_raw_python_unless_or_negates_prefixed_branch() {
+    let source = r#"
+def test():
+    x = 0
+    y = 0
+    as @a unless x > 2147483647 or y != 0:
+        /say reachable
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(
+        content.contains("execute as @a if score y temp matches 0 run say reachable"),
+        "{}",
+        content
+    );
+    assert!(!content.contains("unless score y temp matches 0 run say reachable"));
+    assert!(!content.contains("-2147483648.."));
+}
+
+#[test]
+fn test_execute_raw_python_unless_negates_prefixed_not_equal_condition() {
+    let source = r#"
+def test():
+    x = 0
+    as @a unless x != 0:
+        /say reachable
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(
+        content.contains("execute as @a if score x temp matches 0 run say reachable"),
+        "{}",
+        content
+    );
+    assert!(!content.contains("execute as @a unless score x temp matches 0 run say reachable"));
+}
+
+#[test]
+fn test_execute_raw_python_unless_and_does_not_become_positive_if_chain() {
+    let source = r#"
+def test():
+    x = 1
+    y = 1
+    as @a unless x == 1 and y == 1:
+        /say guarded
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(
+        content.contains("execute as @a if score x temp matches 1 if score y temp matches 1 run scoreboard players set @s temp 1"),
+        "{}",
+        content
+    );
+    assert!(
+        content.contains("execute as @a unless score @s temp matches 1 run say guarded"),
+        "{}",
+        content
+    );
+    assert!(
+        !content.contains(
+            "execute as @a if score x temp matches 1 if score y temp matches 1 run say guarded"
         ),
         "{}",
         content
