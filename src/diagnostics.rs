@@ -4,6 +4,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// Keep diagnostics import traversal aligned with the transpiler guard so
+// preflight validation cannot recurse deeply enough to exhaust the stack.
+const MAX_IMPORT_DEPTH: usize = 50;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticSeverity {
     Error,
@@ -404,6 +408,24 @@ fn analyze_import_tree(
             {
                 output.push(diagnostics);
             }
+            continue;
+        }
+
+        if stack.len() >= MAX_IMPORT_DEPTH {
+            output.push(FileSourceDiagnostics::new(
+                current_path,
+                current_source,
+                vec![SourceDiagnostic::error(
+                    "maximum-import-depth",
+                    line,
+                    column,
+                    format!("Maximum import depth exceeded ({MAX_IMPORT_DEPTH})"),
+                )
+                .with_help(format!(
+                    "Import chain: {}. This usually indicates a circular or excessively deep import chain.",
+                    format_import_chain(stack, &canonical_path)
+                ))],
+            ));
             continue;
         }
 
@@ -6685,6 +6707,36 @@ def main():
         assert!(diagnostics[0].diagnostics[0]
             .message
             .contains("Cannot import 'missing'"));
+    }
+
+    #[test]
+    fn parse_source_file_reports_maximum_import_depth() {
+        let temp_dir = TempDir::new("maximum-import-depth");
+        let main = temp_dir.path().join("main.cbl");
+        std::fs::write(&main, "import m1\n\ndef main():\n    pass\n").unwrap();
+
+        for index in 1..=MAX_IMPORT_DEPTH {
+            let path = temp_dir.path().join(format!("m{index}.cbl"));
+            let source = if index == MAX_IMPORT_DEPTH {
+                format!("def m{index}():\n    pass\n")
+            } else {
+                format!("import m{}\n\ndef m{index}():\n    pass\n", index + 1)
+            };
+            std::fs::write(path, source).unwrap();
+        }
+
+        let diagnostics = parse_source_file(&main).expect_err("deep imports should fail");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].diagnostics[0].kind, "maximum-import-depth");
+        assert!(diagnostics[0].diagnostics[0]
+            .message
+            .contains("Maximum import depth exceeded (50)"));
+        assert!(diagnostics[0].diagnostics[0]
+            .help
+            .as_deref()
+            .unwrap()
+            .contains("Import chain:"));
     }
 
     #[test]
