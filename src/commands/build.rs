@@ -1,6 +1,7 @@
 use super::{find_cobble_files, resolve_entry_points};
 use crate::commands::output_safety::{
-    ensure_no_symlink_components, ensure_no_symlink_descendants, project_marker_identity,
+    build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
+    project_marker_identity, read_build_manifest, require_manifest_ownership,
 };
 use crate::commands::validate::{print_validation_report, run_validation};
 use crate::config::CobbleConfig;
@@ -173,7 +174,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     transpiler.set_description(description);
     transpiler.set_pack_format(pack_format);
     transpiler.set_source_display_root(source_display_root.clone());
-    transpiler.set_project_identity(project_root_marker, project_id);
+    transpiler.set_project_identity(project_root_marker, project_id.clone());
     transpiler.set_build_input(BuildManifestInput {
         source: path_display_relative(&source_path, &source_display_root),
         entry_points: configured_entry_points,
@@ -286,7 +287,12 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
 
     if options.validate {
         if build_output_dir != final_output_dir {
-            replace_output_dir(&build_output_dir, &final_output_dir)?;
+            replace_output_dir(
+                &build_output_dir,
+                &final_output_dir,
+                &namespace,
+                &project_id,
+            )?;
         }
         if !options.quiet {
             println!("✓ Data pack generated at {:?}", final_output_dir);
@@ -473,16 +479,14 @@ fn staging_output_dir(output_dir: &Path) -> Result<PathBuf, String> {
     Ok(staging)
 }
 
-fn replace_output_dir(staging_dir: &Path, output_dir: &Path) -> Result<(), String> {
+fn replace_output_dir(
+    staging_dir: &Path,
+    output_dir: &Path,
+    namespace: &str,
+    project_id: &str,
+) -> Result<(), String> {
     let backup_dir = if output_dir.exists() {
-        let metadata = fs::symlink_metadata(output_dir)
-            .map_err(|e| format!("Failed to inspect existing output {:?}: {}", output_dir, e))?;
-        if !metadata.is_dir() {
-            return Err(format!(
-                "Refusing to replace non-directory output path: {}",
-                output_dir.display()
-            ));
-        }
+        ensure_replace_output_dir_safe(output_dir, namespace, project_id)?;
         let backup_dir = replacement_backup_dir(output_dir)?;
         fs::rename(output_dir, &backup_dir).map_err(|e| {
             format!(
@@ -524,6 +528,37 @@ fn replace_output_dir(staging_dir: &Path, output_dir: &Path) -> Result<(), Strin
     }
 
     Ok(())
+}
+
+fn ensure_replace_output_dir_safe(
+    output_dir: &Path,
+    namespace: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(output_dir)
+        .map_err(|e| format!("Failed to inspect existing output {:?}: {}", output_dir, e))?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "Refusing to replace non-directory output path: {}",
+            output_dir.display()
+        ));
+    }
+
+    let manifest_path = build_manifest_path(output_dir);
+    let manifest = read_build_manifest(&manifest_path).map_err(|error| {
+        format!(
+            "Refusing to replace existing output without Cobble ownership marker at {}: {}",
+            manifest_path.display(),
+            error
+        )
+    })?;
+    require_manifest_ownership(&manifest, Some(namespace), Some(project_id)).map_err(|error| {
+        format!(
+            "Refusing to replace existing output owned by another Cobble project at {}: {}",
+            output_dir.display(),
+            error
+        )
+    })
 }
 
 fn replacement_backup_dir(output_dir: &Path) -> Result<PathBuf, String> {
@@ -726,7 +761,20 @@ mod tests {
         fs::create_dir_all(&output_dir).unwrap();
         fs::write(output_dir.join("sentinel.txt"), "keep\n").unwrap();
 
-        let error = replace_output_dir(&missing_staging, &output_dir).unwrap_err();
+        let namespace = "restore";
+        let (_, project_id) = project_marker_identity(temp_dir.path());
+        let manifest_dir = output_dir.join(".cobble");
+        fs::create_dir_all(&manifest_dir).unwrap();
+        fs::write(
+            manifest_dir.join("build_manifest.json"),
+            format!(
+                r#"{{"version":1,"cobble_version":"test","namespace":"{namespace}","project_id":"{project_id}"}}"#
+            ),
+        )
+        .unwrap();
+
+        let error =
+            replace_output_dir(&missing_staging, &output_dir, namespace, &project_id).unwrap_err();
 
         assert!(error.contains("Failed to move validated data pack"));
         assert_eq!(
@@ -899,6 +947,65 @@ mod tests {
             "keep\n"
         );
         assert!(!outside_dir.join("symlink_build").exists());
+    }
+
+    #[test]
+    fn build_validate_refuses_to_replace_unowned_existing_output() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let source_dir = project_dir.join("src");
+        let victim_dir = temp_dir.path().join("victim").join("keep");
+        let valid_commands_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("commands.json");
+        if !valid_commands_json.exists() {
+            return;
+        }
+
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(victim_dir.join("sub")).unwrap();
+        fs::write(source_dir.join("main.cbl"), "def main():\n    /say safe\n").unwrap();
+        fs::write(victim_dir.join("sub").join("important.txt"), "keep\n").unwrap();
+        fs::write(
+            project_dir.join("cobble.toml"),
+            r#"
+[project]
+name = "malicious"
+namespace = "malicious"
+pack_format = "26"
+
+[build]
+source = "src"
+output = "../victim/keep"
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::push(&project_dir);
+        let error = build(BuildOptions {
+            input: None,
+            output: None,
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            validate: true,
+            dry_run: false,
+            commands_json: valid_commands_json,
+        })
+        .unwrap_err();
+
+        assert!(
+            error.contains("Refusing to replace existing output without Cobble ownership marker")
+        );
+        assert_eq!(
+            fs::read_to_string(victim_dir.join("sub").join("important.txt")).unwrap(),
+            "keep\n"
+        );
+        assert!(!victim_dir.join("pack.mcmeta").exists());
     }
 
     #[test]
