@@ -2694,6 +2694,45 @@ def test():
 }
 
 #[test]
+fn test_execute_raw_python_gt_max_does_not_overflow() {
+    let source = r#"
+def test():
+    x = 0
+    as @a if x > 2147483647:
+        /say unreachable
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(content.contains(
+        "execute as @a if score x temp matches 0 unless score x temp matches 0 run say unreachable"
+    ));
+    assert!(!content.contains("-2147483648.."));
+}
+
+#[test]
+fn test_execute_raw_python_unless_gt_max_does_not_overflow() {
+    let source = r#"
+def test():
+    x = 0
+    as @a unless x > 2147483647:
+        /say reachable
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(
+        content.contains(
+            "execute as @a if score x temp matches -2147483648..2147483647 run say reachable"
+        ),
+        "{}",
+        content
+    );
+}
+
+#[test]
 fn test_regression_boundary_condition_lt_min() {
     // Regression test for BUG #5: x < i32::MIN should be always false
     let source = r#"

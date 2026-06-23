@@ -3470,16 +3470,6 @@ impl Transpiler {
             let left = left.trim();
             let right = right.trim();
 
-            // Check if right side is a macro parameter {param}
-            let right_value = if right.starts_with('{') && right.ends_with('}') {
-                // This is a macro parameter, keep as-is with ..
-                format!("{}..", right)
-            } else if let Ok(value) = right.parse::<i32>() {
-                format!("{}..", value + 1)
-            } else {
-                return Err("Cannot parse right side of comparison".to_string());
-            };
-
             // Check if left side is a macro parameter {param}
             let left_var = left.to_string();
             let objective = if left.starts_with('{') && left.ends_with('}') {
@@ -3490,6 +3480,27 @@ impl Transpiler {
                     .map(|s| s.as_str())
                     .unwrap_or("temp")
                     .to_string()
+            };
+
+            // Check if right side is a macro parameter {param}
+            let right_value = if right.starts_with('{') && right.ends_with('}') {
+                // This is a macro parameter, keep as-is with ..
+                format!("{}..", right)
+            } else if let Ok(value) = right.parse::<i32>() {
+                if value == i32::MAX {
+                    if _is_unless {
+                        return Ok(format!(
+                            "if score {} {} matches -2147483648..2147483647",
+                            left, objective
+                        ));
+                    } else {
+                        format!("0 unless score {} {} matches 0", left, objective)
+                    }
+                } else {
+                    format!("{}..", value + 1)
+                }
+            } else {
+                return Err("Cannot parse right side of comparison".to_string());
             };
 
             return Ok(format!(
