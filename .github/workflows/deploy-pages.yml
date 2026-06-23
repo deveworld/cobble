@@ -32,6 +32,7 @@ concurrency:
 jobs:
   build:
     name: Build static site
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -83,7 +84,7 @@ jobs:
         run: npm run test:links
 
       - name: Upload static site artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: github-pages-site
@@ -93,7 +94,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
