@@ -2858,7 +2858,7 @@ fn evaluate_numeric_const_for_diagnostics(
                 "-" => Some(left - right),
                 "*" => Some(left * right),
                 "/" if right != 0.0 => Some(left / right),
-                "%" if right != 0.0 => Some(((left as i32) % (right as i32)) as f64),
+                "%" if (right as i32) != 0 => Some(((left as i32) % (right as i32)) as f64),
                 "^" => Some((left as i32).checked_pow(right as u32)? as f64),
                 _ => None,
             };
@@ -2888,16 +2888,15 @@ fn split_top_level_binary_operator<'a>(
     expression: &'a str,
     operators: &[&'static str],
 ) -> Option<(&'a str, &'static str, &'a str)> {
-    let bytes = expression.as_bytes();
     let mut delimiter_depth = 0usize;
 
-    for index in (0..bytes.len()).rev() {
-        match bytes[index] {
-            b')' | b']' | b'}' => {
+    for (index, ch) in expression.char_indices().rev() {
+        match ch {
+            ')' | ']' | '}' => {
                 delimiter_depth += 1;
                 continue;
             }
-            b'(' | b'[' | b'{' => {
+            '(' | '[' | '{' => {
                 delimiter_depth = delimiter_depth.saturating_sub(1);
                 continue;
             }
@@ -5731,6 +5730,42 @@ def main():
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].kind, "unsupported-control-flow");
         assert_eq!(diagnostics[0].line, 9);
+    }
+
+    #[test]
+    fn numeric_const_diagnostics_ignore_unicode_string_constants() {
+        let source = r#"
+const LABEL = "é"
+
+def main():
+    items = [1, 2, 3]
+    first = items[i]
+"#;
+
+        let diagnostics = parse_source(source)
+            .expect_err("dynamic storage index should still report a diagnostic");
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == "unsupported-storage-access"));
+    }
+
+    #[test]
+    fn numeric_const_diagnostics_ignore_fractional_modulo_divisor() {
+        let source = r#"
+const INDEX = 1 % 0.5
+
+def main():
+    items = [1, 2, 3]
+    first = items[INDEX]
+"#;
+
+        let diagnostics = parse_source(source)
+            .expect_err("non-evaluable const index should still report a diagnostic");
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == "unsupported-storage-access"));
     }
 
     #[test]
