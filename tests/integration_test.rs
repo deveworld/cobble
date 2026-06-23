@@ -2887,6 +2887,91 @@ def test():
 }
 
 #[test]
+fn test_execute_raw_python_or_and_unless_and_combination_is_composable() {
+    let source = r#"
+def test():
+    a = 0
+    b = 1
+    c = 0
+    d = 0
+    as @a if a == 1 or b == 1 unless c == 1 and d == 1:
+        /say combined
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(!content.contains("OR_CONDITION"), "{}", content);
+    assert!(!content.contains("UNLESS_AND"), "{}", content);
+    assert!(!content.contains("b == 1 unless"), "{}", content);
+    assert!(
+        content
+            .contains("execute as @a if score a temp matches 1 run scoreboard players set @s cblx"),
+        "{}",
+        content
+    );
+    assert!(
+        content
+            .contains("execute as @a if score b temp matches 1 run scoreboard players set @s cblx"),
+        "{}",
+        content
+    );
+    assert!(
+        content.contains("if score a temp matches 1 if score b temp matches 1")
+            || content.contains("if score c temp matches 1 if score d temp matches 1"),
+        "{}",
+        content
+    );
+    assert!(
+        content.contains("run say combined")
+            && content.contains("if score @s cblx")
+            && content.contains("unless score @s cblx"),
+        "{}",
+        content
+    );
+}
+
+#[test]
+fn test_execute_raw_python_multiple_unless_and_guards_are_all_preserved() {
+    let source = r#"
+def test():
+    a = 0
+    b = 0
+    c = 0
+    d = 0
+    as @a unless a == 1 and b == 1 unless c == 1 and d == 1:
+        /say guarded
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "test");
+
+    assert!(!content.contains("UNLESS_AND"), "{}", content);
+    assert!(!content.contains("b == 1 unless"), "{}", content);
+    assert!(
+        content.contains("execute as @a if score a temp matches 1 if score b temp matches 1 run scoreboard players set @s cblx"),
+        "{}",
+        content
+    );
+    assert!(
+        content.contains("execute as @a if score c temp matches 1 if score d temp matches 1 run scoreboard players set @s cblx"),
+        "{}",
+        content
+    );
+
+    let body_line = content
+        .lines()
+        .find(|line| line.contains("run say guarded"))
+        .unwrap_or("");
+    assert_eq!(
+        body_line.matches("unless score @s cblx").count(),
+        2,
+        "{}",
+        content
+    );
+}
+
+#[test]
 fn test_execute_raw_python_unless_and_does_not_become_positive_if_chain() {
     let source = r#"
 def test():

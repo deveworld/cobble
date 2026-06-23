@@ -465,8 +465,27 @@ pub fn token_parser<'a>(
 
         // Execute block modifiers
         // Helper to parse execute condition (for if/unless modifiers)
+        let is_execute_modifier_boundary = |t: &Token| {
+            matches!(
+                t,
+                Token::Colon
+                    | Token::Newline
+                    | Token::As
+                    | Token::At
+                    | Token::If
+                    | Token::Unless
+                    | Token::In
+            ) || matches!(
+                t,
+                Token::Ident(s)
+                    if matches!(
+                        s.as_str(),
+                        "positioned" | "rotated" | "anchored" | "align" | "store"
+                    )
+            )
+        };
         let exec_condition = any()
-            .filter(|t: &Token| !matches!(t, Token::Colon | Token::Newline | Token::As | Token::At))
+            .filter(move |t: &Token| !is_execute_modifier_boundary(t))
             .repeated()
             .at_least(1)
             .collect::<Vec<Token>>()

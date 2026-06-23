@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prefixed comparison branches, and impossible out-of-range comparisons so
   protective guards are no longer emitted as positive `if` chains or
   score-existence-dependent checks.
+- Fixed combined execute modifier lowering so Python-style `or` guards and
+  `unless A and B` guards can appear in the same execute block without leaking
+  internal markers or dropping earlier guards.
 
 ## [0.7.2] - 2026-06-23
 

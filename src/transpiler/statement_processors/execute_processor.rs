@@ -326,226 +326,130 @@ impl Transpiler {
                 .collect();
         }
 
-        // Check if we have special conditions
-        let has_or_condition = execute_parts.iter().any(|p| p.starts_with("OR_CONDITION:"));
-        let has_unless_and = execute_parts.iter().any(|p| p.starts_with("UNLESS_AND:"));
-
-        if has_unless_and {
-            // Handle unless (A and B) - use temp variable
-            // unless (A and B) = check if both are true, then unless that result
-            let mut unless_and_str = None;
-            let mut other_modifiers = Vec::new();
-
-            for part in &execute_parts {
-                if let Some(stripped) = part.strip_prefix("UNLESS_AND:") {
-                    unless_and_str = Some(stripped);
-                } else {
-                    other_modifiers.push(part.clone());
-                }
+        let mut final_execute_parts = Vec::new();
+        let mut special_conditions = Vec::new();
+        for part in &execute_parts {
+            if let Some(stripped) = part.strip_prefix("OR_CONDITION:") {
+                special_conditions.push(("or", stripped.to_string()));
+            } else if let Some(stripped) = part.strip_prefix("UNLESS_AND:") {
+                special_conditions.push(("unless_and", stripped.to_string()));
+            } else {
+                final_execute_parts.push(part.clone());
             }
+        }
 
-            if let Some(and_str) = unless_and_str {
-                // Generate a unique temp variable for unless AND result
-                self.data_pack.track_objective("temp");
-                let unless_var = format!("unless_temp_{}", self.get_unique_id());
-                let modifier_args = Self::modifier_args(&other_modifiers);
-                let score_holder = if Self::has_as_modifier(&other_modifiers) {
-                    "@s".to_string()
+        if !special_conditions.is_empty() {
+            let modifier_args = Self::modifier_args(&final_execute_parts);
+            let has_as_modifier = Self::has_as_modifier(&final_execute_parts);
+            let use_dedicated_objectives = special_conditions.len() > 1;
+            let mut setup_commands = Vec::new();
+
+            for (kind, condition) in special_conditions {
+                let unique_id = self.get_unique_id();
+                let objective = if use_dedicated_objectives {
+                    format!("cblx{}", unique_id)
                 } else {
-                    unless_var.clone()
+                    "temp".to_string()
+                };
+                self.data_pack.track_objective(&objective);
+
+                let score_holder = if has_as_modifier {
+                    "@s".to_string()
+                } else if use_dedicated_objectives {
+                    "#cobble_exec".to_string()
+                } else if kind == "or" {
+                    format!("or_temp_{}", unique_id)
+                } else {
+                    format!("unless_temp_{}", unique_id)
                 };
 
-                // Initialize result to 0 (false)
-                if let Some(ref mut commands) = self.current_function {
-                    if modifier_args.is_empty() && score_holder != "@s" {
-                        commands.push(format!("scoreboard players set {} temp 0", score_holder));
-                    } else {
-                        commands.push(Self::execute_with_modifiers(
-                            &modifier_args,
-                            &format!("run scoreboard players set {} temp 0", score_holder),
-                        ));
-                    }
-
-                    // Set to 1 if ALL conditions are true (the AND check)
-                    let and_conditions = Self::unless_and_conditions(and_str);
-
-                    let and_check = and_conditions.join(" ");
-
-                    let check_cmd = Self::execute_with_modifiers(
+                let reset_cmd = if modifier_args.is_empty() && score_holder != "@s" {
+                    format!("scoreboard players set {} {} 0", score_holder, objective)
+                } else {
+                    Self::execute_with_modifiers(
                         &modifier_args,
                         &format!(
-                            "{} run scoreboard players set {} temp 1",
-                            and_check, score_holder
+                            "run scoreboard players set {} {} 0",
+                            score_holder, objective
                         ),
-                    );
-
-                    if has_macro_params {
-                        commands.push(format!("${}", check_cmd));
-                    } else {
-                        commands.push(check_cmd);
-                    }
-                }
-
-                // Now process body with the unless result check (unless the AND was true)
-                let execute_prefix = Self::execute_with_modifiers(
-                    &modifier_args,
-                    &format!("unless score {} temp matches 1", score_holder),
-                );
-
-                // Process body statements
-                for stmt in &exec_block.body {
-                    let capture = self.capture_statement(stmt)?;
-                    self.append_transformed_capture(capture, |cmd| {
-                        let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
-                            has_macro_params = true;
-                            stripped
-                        } else {
-                            cmd
-                        };
-
-                        let final_cmd =
-                            if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
-                                format!("{} {}", execute_prefix, inner_parts)
-                            } else {
-                                format!("{} run {}", execute_prefix, inner_cmd)
-                            };
-
-                        if has_macro_params {
-                            format!("${}", final_cmd)
-                        } else {
-                            final_cmd
-                        }
-                    })?;
-                }
-            }
-        } else if has_or_condition {
-            // Handle OR condition specially
-            // Extract the OR condition and other modifiers
-            let mut or_condition_str = None;
-            let mut other_modifiers = Vec::new();
-
-            for part in &execute_parts {
-                if let Some(stripped) = part.strip_prefix("OR_CONDITION:") {
-                    or_condition_str = Some(stripped);
-                } else {
-                    other_modifiers.push(part.clone());
-                }
-            }
-
-            if let Some(or_str) = or_condition_str {
-                // Process OR condition
-                let or_conditions = Transpiler::flatten_or_conditions(or_str)?;
-                let modifier_args = Self::modifier_args(&other_modifiers);
-
-                // Generate a unique temp variable for this OR result
-                self.data_pack.track_objective("temp");
-                let or_var = format!("or_temp_{}", self.get_unique_id());
-                let score_holder = if Self::has_as_modifier(&other_modifiers) {
-                    "@s".to_string()
-                } else {
-                    or_var.clone()
+                    )
                 };
+                setup_commands.push(reset_cmd);
 
-                // Initialize OR result to 0
-                if let Some(ref mut commands) = self.current_function {
-                    if modifier_args.is_empty() && score_holder != "@s" {
-                        commands.push(format!("scoreboard players set {} temp 0", score_holder));
-                    } else {
-                        commands.push(Self::execute_with_modifiers(
-                            &modifier_args,
-                            &format!("run scoreboard players set {} temp 0", score_holder),
-                        ));
-                    }
-
-                    // Check each OR condition
-                    for cond in or_conditions {
+                if kind == "or" {
+                    for cond in Transpiler::flatten_or_conditions(&condition)? {
                         if cond == Self::ALWAYS_FALSE_CONDITION {
                             continue;
                         }
                         let cond_prefix = if cond.starts_with("if ") || cond.starts_with("unless ")
                         {
-                            cond.clone()
+                            cond
                         } else {
                             format!("if {}", cond)
                         };
-
-                        // If any condition is true, set or_result to 1
-                        let check_cmd = Self::execute_with_modifiers(
+                        setup_commands.push(Self::execute_with_modifiers(
                             &modifier_args,
                             &format!(
-                                "{} run scoreboard players set {} temp 1",
-                                cond_prefix, score_holder
+                                "{} run scoreboard players set {} {} 1",
+                                cond_prefix, score_holder, objective
                             ),
-                        );
-
-                        if has_macro_params {
-                            commands.push(format!("${}", check_cmd));
-                        } else {
-                            commands.push(check_cmd);
-                        }
+                        ));
                     }
-                }
-
-                // Now process body with the OR result check
-                let execute_prefix = Self::execute_with_modifiers(
-                    &modifier_args,
-                    &format!("if score {} temp matches 1", score_holder),
-                );
-
-                // Process body statements
-                for stmt in &exec_block.body {
-                    let capture = self.capture_statement(stmt)?;
-                    self.append_transformed_capture(capture, |cmd| {
-                        let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
-                            has_macro_params = true;
-                            stripped
-                        } else {
-                            cmd
-                        };
-
-                        let final_cmd =
-                            if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
-                                format!("{} {}", execute_prefix, inner_parts)
-                            } else {
-                                format!("{} run {}", execute_prefix, inner_cmd)
-                            };
-
-                        if has_macro_params {
-                            format!("${}", final_cmd)
-                        } else {
-                            final_cmd
-                        }
-                    })?;
+                    final_execute_parts
+                        .push(format!("if score {} {} matches 1", score_holder, objective));
+                } else {
+                    let and_conditions = Self::unless_and_conditions(&condition);
+                    let and_check = and_conditions.join(" ");
+                    setup_commands.push(Self::execute_with_modifiers(
+                        &modifier_args,
+                        &format!(
+                            "{} run scoreboard players set {} {} 1",
+                            and_check, score_holder, objective
+                        ),
+                    ));
+                    final_execute_parts.push(format!(
+                        "unless score {} {} matches 1",
+                        score_holder, objective
+                    ));
                 }
             }
-        } else {
-            // Normal execute without OR condition
-            let execute_prefix = execute_parts.join(" ");
 
-            // Process body statements
-            for stmt in &exec_block.body {
-                let capture = self.capture_statement(stmt)?;
-                self.append_transformed_capture(capture, |cmd| {
-                    let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
-                        has_macro_params = true;
-                        stripped
-                    } else {
-                        cmd
-                    };
-
-                    let final_cmd = if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
-                        format!("{} {}", execute_prefix, inner_parts)
-                    } else {
-                        format!("{} run {}", execute_prefix, inner_cmd)
-                    };
-
+            if let Some(ref mut commands) = self.current_function {
+                for command in setup_commands {
                     if has_macro_params {
-                        format!("${}", final_cmd)
+                        commands.push(format!("${}", command));
                     } else {
-                        final_cmd
+                        commands.push(command);
                     }
-                })?;
+                }
             }
+        }
+
+        let execute_prefix = final_execute_parts.join(" ");
+
+        // Process body statements
+        for stmt in &exec_block.body {
+            let capture = self.capture_statement(stmt)?;
+            self.append_transformed_capture(capture, |cmd| {
+                let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
+                    has_macro_params = true;
+                    stripped
+                } else {
+                    cmd
+                };
+
+                let final_cmd = if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
+                    format!("{} {}", execute_prefix, inner_parts)
+                } else {
+                    format!("{} run {}", execute_prefix, inner_cmd)
+                };
+
+                if has_macro_params {
+                    format!("${}", final_cmd)
+                } else {
+                    final_cmd
+                }
+            })?;
         }
 
         Ok(())
