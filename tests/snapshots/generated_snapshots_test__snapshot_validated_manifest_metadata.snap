@@ -3,6 +3,22 @@ source: tests/generated_snapshots_test.rs
 expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json\")"
 ---
 {
+  "active_stdlib_modules": [
+    "bossbar",
+    "datapack",
+    "entity",
+    "event",
+    "math",
+    "random",
+    "resource_pack",
+    "schedule",
+    "score",
+    "score.objective",
+    "storage",
+    "team",
+    "text",
+    "timer"
+  ],
   "cobble_version": "<cobble-version>",
   "description": "Snapshot fixture",
   "generated": {
@@ -40,6 +56,7 @@ expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json
   "project_id": "<project-id>",
   "project_root": "<project-root>",
   "resources": [],
+  "stdlib_version": 2,
   "validation": {
     "commands_checked": 1,
     "commands_json": "<commands-json>",

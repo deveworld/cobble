@@ -105,6 +105,16 @@ fn print_inspection(input: &Path, summary: &InspectionSummary) {
         "  JSON resources",
     );
     print_usize(manifest, &["generated", "function_tags"], "  Function tags");
+    print_usize(
+        manifest,
+        &["generated", "resource_pack_models"],
+        "  Resource-pack models",
+    );
+    print_usize(
+        manifest,
+        &["generated", "resource_pack_langs"],
+        "  Resource-pack lang files",
+    );
 
     match summary.source_map_entries {
         Some(entries) => println!("  Source map entries: {entries}"),

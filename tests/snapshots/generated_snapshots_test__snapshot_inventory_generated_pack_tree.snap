@@ -4,6 +4,22 @@ expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
 {
+  "active_stdlib_modules": [
+    "bossbar",
+    "datapack",
+    "entity",
+    "event",
+    "math",
+    "random",
+    "resource_pack",
+    "schedule",
+    "score",
+    "score.objective",
+    "storage",
+    "team",
+    "text",
+    "timer"
+  ],
   "cobble_version": "<cobble-version>",
   "description": "Snapshot fixture",
   "generated": {
@@ -41,6 +57,7 @@ expression: datapack_tree_snapshot(&output_dir)
   "project_id": "<project-id>",
   "project_root": "<project-root>",
   "resources": [],
+  "stdlib_version": 2,
   "validation": null,
   "version": 1
 }
@@ -61,7 +78,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$execute if entity $(player)[nbt={Inventory:[{id:\"minecraft:diamond\"}]}] run tellraw $(player) {\"text\":\"You have diamonds!\",\"color\":\"aqua\"}",
       "source": {
         "file": "main.cbl",
-        "line": 50,
+        "line": 51,
         "column": 5
       },
       "kind": "UserCommand"
@@ -72,7 +89,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$execute store result score $(player) empty_slots run data get entity $(player) Inventory",
       "source": {
         "file": "main.cbl",
-        "line": 53,
+        "line": 54,
         "column": 5
       },
       "kind": "UserCommand"
@@ -83,7 +100,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$tellraw $(player) [{\"text\":\"Inventory slots used: \",\"color\":\"gray\"},{\"score\":{\"name\":\"$(player)\",\"objective\":\"empty_slots\"},\"color\":\"white\"}]",
       "source": {
         "file": "main.cbl",
-        "line": 54,
+        "line": 55,
         "column": 5
       },
       "kind": "UserCommand"
@@ -94,7 +111,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run give @s minecraft:diamond_sword[minecraft:custom_name='{\"text\":\"Excalibur\",\"color\":\"gold\",\"bold\":true,\"italic\":false}',minecraft:lore=['{\"text\":\"A legendary blade\",\"color\":\"gray\",\"italic\":true}','{\"text\":\"Forged by ancient smiths\",\"color\":\"gray\",\"italic\":true}'],minecraft:enchantments={levels:{\"minecraft:sharpness\":5,\"minecraft:unbreaking\":3,\"minecraft:mending\":1,\"minecraft:looting\":3}},minecraft:unbreakable={}]",
       "source": {
         "file": "main.cbl",
-        "line": 36,
+        "line": 37,
         "column": 9
       },
       "kind": "UserCommand"
@@ -105,7 +122,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:\"minecraft:strong_healing\"}] 3",
       "source": {
         "file": "main.cbl",
-        "line": 41,
+        "line": 42,
         "column": 9
       },
       "kind": "UserCommand"
@@ -116,7 +133,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:\"minecraft:strong_strength\"}] 2",
       "source": {
         "file": "main.cbl",
-        "line": 42,
+        "line": 43,
         "column": 9
       },
       "kind": "UserCommand"
@@ -127,7 +144,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:\"minecraft:swiftness\"}] 2",
       "source": {
         "file": "main.cbl",
-        "line": 43,
+        "line": 44,
         "column": 9
       },
       "kind": "UserCommand"
@@ -138,7 +155,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run give @s minecraft:potion[minecraft:potion_contents={potion:\"minecraft:fire_resistance\"}] 1",
       "source": {
         "file": "main.cbl",
-        "line": 44,
+        "line": 45,
         "column": 9
       },
       "kind": "UserCommand"
@@ -149,7 +166,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run give @s minecraft:splash_potion[minecraft:potion_contents={potion:\"minecraft:strong_harming\"}] 3",
       "source": {
         "file": "main.cbl",
-        "line": 45,
+        "line": 46,
         "column": 9
       },
       "kind": "UserCommand"
@@ -160,7 +177,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{profession:\"minecraft:librarian\",level:5,type:\"minecraft:plains\"},CustomName:'{\"text\":\"Shop Keeper\",\"color\":\"gold\"}',PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}",
       "source": {
         "file": "main.cbl",
-        "line": 7,
+        "line": 8,
         "column": 9
       },
       "kind": "UserCommand"
@@ -171,7 +188,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$clear $(player)",
       "source": {
         "file": "main.cbl",
-        "line": 12,
+        "line": 13,
         "column": 5
       },
       "kind": "UserCommand"
@@ -182,7 +199,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$item replace entity $(player) armor.head with minecraft:iron_helmet",
       "source": {
         "file": "main.cbl",
-        "line": 15,
+        "line": 16,
         "column": 5
       },
       "kind": "UserCommand"
@@ -193,7 +210,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$item replace entity $(player) armor.chest with minecraft:iron_chestplate",
       "source": {
         "file": "main.cbl",
-        "line": 16,
+        "line": 17,
         "column": 5
       },
       "kind": "UserCommand"
@@ -204,7 +221,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$item replace entity $(player) armor.legs with minecraft:iron_leggings",
       "source": {
         "file": "main.cbl",
-        "line": 17,
+        "line": 18,
         "column": 5
       },
       "kind": "UserCommand"
@@ -215,7 +232,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$item replace entity $(player) armor.feet with minecraft:iron_boots",
       "source": {
         "file": "main.cbl",
-        "line": 18,
+        "line": 19,
         "column": 5
       },
       "kind": "UserCommand"
@@ -226,7 +243,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$give $(player) minecraft:iron_sword[minecraft:custom_name='{\"text\":\"Starter Sword\",\"color\":\"gray\"}']",
       "source": {
         "file": "main.cbl",
-        "line": 21,
+        "line": 22,
         "column": 5
       },
       "kind": "UserCommand"
@@ -237,7 +254,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$give $(player) minecraft:iron_pickaxe[minecraft:enchantments={levels:{\"minecraft:efficiency\":2}}]",
       "source": {
         "file": "main.cbl",
-        "line": 22,
+        "line": 23,
         "column": 5
       },
       "kind": "UserCommand"
@@ -248,7 +265,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$give $(player) minecraft:iron_axe",
       "source": {
         "file": "main.cbl",
-        "line": 23,
+        "line": 24,
         "column": 5
       },
       "kind": "UserCommand"
@@ -259,7 +276,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$give $(player) minecraft:iron_shovel",
       "source": {
         "file": "main.cbl",
-        "line": 24,
+        "line": 25,
         "column": 5
       },
       "kind": "UserCommand"
@@ -270,7 +287,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$give $(player) minecraft:bread 32",
       "source": {
         "file": "main.cbl",
-        "line": 27,
+        "line": 28,
         "column": 5
       },
       "kind": "UserCommand"
@@ -281,7 +298,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$give $(player) minecraft:torch 64",
       "source": {
         "file": "main.cbl",
-        "line": 28,
+        "line": 29,
         "column": 5
       },
       "kind": "UserCommand"
@@ -292,7 +309,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$give $(player) minecraft:cobblestone 64",
       "source": {
         "file": "main.cbl",
-        "line": 29,
+        "line": 30,
         "column": 5
       },
       "kind": "UserCommand"
@@ -303,7 +320,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "$tellraw $(player) {\"text\":\"Starter kit received!\",\"color\":\"green\"}",
       "source": {
         "file": "main.cbl",
-        "line": 31,
+        "line": 32,
         "column": 5
       },
       "kind": "UserCommand"
@@ -314,7 +331,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run setblock ~ ~ ~ minecraft:chest{CustomName:'{\"text\":\"Storage\",\"color\":\"dark_green\"}'}",
       "source": {
         "file": "main.cbl",
-        "line": 59,
+        "line": 60,
         "column": 9
       },
       "kind": "UserCommand"
@@ -325,7 +342,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.0 with minecraft:iron_ingot 64",
       "source": {
         "file": "main.cbl",
-        "line": 62,
+        "line": 63,
         "column": 9
       },
       "kind": "UserCommand"
@@ -336,7 +353,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.1 with minecraft:gold_ingot 32",
       "source": {
         "file": "main.cbl",
-        "line": 63,
+        "line": 64,
         "column": 9
       },
       "kind": "UserCommand"
@@ -347,7 +364,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.2 with minecraft:diamond 16",
       "source": {
         "file": "main.cbl",
-        "line": 64,
+        "line": 65,
         "column": 9
       },
       "kind": "UserCommand"
@@ -358,7 +375,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.3 with minecraft:emerald 8",
       "source": {
         "file": "main.cbl",
-        "line": 65,
+        "line": 66,
         "column": 9
       },
       "kind": "UserCommand"
@@ -369,7 +386,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.9 with minecraft:iron_pickaxe",
       "source": {
         "file": "main.cbl",
-        "line": 68,
+        "line": 69,
         "column": 9
       },
       "kind": "UserCommand"
@@ -380,7 +397,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.10 with minecraft:iron_axe",
       "source": {
         "file": "main.cbl",
-        "line": 69,
+        "line": 70,
         "column": 9
       },
       "kind": "UserCommand"
@@ -391,7 +408,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.11 with minecraft:iron_shovel",
       "source": {
         "file": "main.cbl",
-        "line": 70,
+        "line": 71,
         "column": 9
       },
       "kind": "UserCommand"
@@ -402,7 +419,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.12 with minecraft:iron_hoe",
       "source": {
         "file": "main.cbl",
-        "line": 71,
+        "line": 72,
         "column": 9
       },
       "kind": "UserCommand"
@@ -413,7 +430,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.18 with minecraft:bread 64",
       "source": {
         "file": "main.cbl",
-        "line": 74,
+        "line": 75,
         "column": 9
       },
       "kind": "UserCommand"
@@ -424,7 +441,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.19 with minecraft:cooked_beef 64",
       "source": {
         "file": "main.cbl",
-        "line": 75,
+        "line": 76,
         "column": 9
       },
       "kind": "UserCommand"
@@ -435,7 +452,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "execute as @s at @s run item replace block ~ ~ ~ container.20 with minecraft:golden_apple 3",
       "source": {
         "file": "main.cbl",
-        "line": 76,
+        "line": 77,
         "column": 9
       },
       "kind": "UserCommand"

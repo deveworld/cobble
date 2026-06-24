@@ -27,6 +27,7 @@ pub struct BuildOptions {
     pub verbose: bool,
     pub quiet: bool,
     pub zip: bool,
+    pub experimental_resource_pack: bool,
     pub validate: bool,
     pub dry_run: bool,
     pub commands_json: PathBuf,
@@ -85,6 +86,12 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
 
     // Security: Validate namespace before it is used in data pack paths or zip names.
     validate_namespace(&namespace)?;
+
+    let experimental_resource_pack = options.experimental_resource_pack
+        || config
+            .as_ref()
+            .map(|cfg| cfg.experimental.resource_pack)
+            .unwrap_or(false);
 
     let description = options
         .description
@@ -175,6 +182,9 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     transpiler.set_pack_format(pack_format);
     transpiler.set_source_display_root(source_display_root.clone());
     transpiler.set_project_identity(project_root_marker, project_id.clone());
+    let stdlib_version = config.as_ref().map(|cfg| cfg.stdlib.version).unwrap_or(2);
+    transpiler.set_stdlib_version(stdlib_version);
+    transpiler.set_experimental_resource_pack(experimental_resource_pack);
     transpiler.set_build_input(BuildManifestInput {
         source: path_display_relative(&source_path, &source_display_root),
         entry_points: configured_entry_points,
@@ -404,6 +414,15 @@ fn print_build_summary(
     println!("  Commands: {}", generated.commands);
     println!("  Function tags: {}", generated.function_tags);
     println!("  JSON resources: {}", generated.total_json_resources);
+    if generated.resource_pack_models > 0 {
+        println!("  Resource-pack models: {}", generated.resource_pack_models);
+    }
+    if generated.resource_pack_langs > 0 {
+        println!(
+            "  Resource-pack lang files: {}",
+            generated.resource_pack_langs
+        );
+    }
     if let Some(validation) = validation {
         println!(
             "  Validation: {} commands in {} files ({} macro checked, {} skipped)",
@@ -651,6 +670,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: false,
             commands_json,
@@ -688,6 +708,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: false,
             commands_json,
@@ -720,6 +741,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: false,
             commands_json: valid_commands_json.clone(),
@@ -736,6 +758,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: false,
             commands_json: valid_commands_json,
@@ -765,6 +788,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -817,6 +841,7 @@ mod tests {
                 verbose: false,
                 quiet: true,
                 zip,
+                experimental_resource_pack: false,
                 validate: false,
                 dry_run: false,
                 commands_json: PathBuf::from("data/commands.json"),
@@ -853,6 +878,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: true,
             commands_json: PathBuf::from("data/commands.json"),
@@ -885,6 +911,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -919,6 +946,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -953,6 +981,7 @@ mod tests {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1011,6 +1040,7 @@ output = "."
             verbose: false,
             quiet: true,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("commands.json"),
@@ -1065,6 +1095,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: true,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: false,
             commands_json,
@@ -1123,6 +1154,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: true,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: commands_json.clone(),
@@ -1137,6 +1169,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: true,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: false,
             commands_json,
@@ -1170,6 +1203,7 @@ output = "../victim/keep"
                 verbose: false,
                 quiet: true,
                 zip: false,
+                experimental_resource_pack: false,
                 validate: true,
                 dry_run: false,
                 commands_json: commands_json.clone(),
@@ -1207,6 +1241,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: true,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1225,6 +1260,7 @@ output = "../victim/keep"
             verbose: true,
             quiet: true,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1258,6 +1294,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: true,
             commands_json: valid_commands_json,
@@ -1301,6 +1338,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: true,
             dry_run: false,
             commands_json: valid_commands_json,
@@ -1331,6 +1369,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1363,6 +1402,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1396,6 +1436,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1424,6 +1465,7 @@ output = "../victim/keep"
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1468,6 +1510,7 @@ output = "output"
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1498,6 +1541,7 @@ output = "output"
                 verbose: false,
                 quiet: false,
                 zip: false,
+                experimental_resource_pack: false,
                 validate: false,
                 dry_run: false,
                 commands_json: PathBuf::from("data/commands.json"),
@@ -1534,6 +1578,7 @@ output = "output"
             verbose: false,
             quiet: false,
             zip: true,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -1574,7 +1619,10 @@ fn create_zip(output_dir: &Path, namespace: &str) -> Result<PathBuf, String> {
 
             // Convert path to use forward slashes for ZIP (required by Minecraft)
             let zip_path = relative_path.to_string_lossy().replace('\\', "/");
-            if zip_path != "pack.mcmeta" && !zip_path.starts_with("data/") {
+            if zip_path != "pack.mcmeta"
+                && !zip_path.starts_with("data/")
+                && !zip_path.starts_with("assets/")
+            {
                 continue;
             }
 

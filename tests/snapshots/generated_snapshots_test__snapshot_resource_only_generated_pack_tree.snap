@@ -1,9 +1,26 @@
 ---
 source: tests/generated_snapshots_test.rs
+assertion_line: 229
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
 {
+  "active_stdlib_modules": [
+    "bossbar",
+    "datapack",
+    "entity",
+    "event",
+    "math",
+    "random",
+    "resource_pack",
+    "schedule",
+    "score",
+    "score.objective",
+    "storage",
+    "team",
+    "text",
+    "timer"
+  ],
   "cobble_version": "<cobble-version>",
   "description": "Snapshot fixture",
   "generated": {
@@ -82,6 +99,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "path": "stonecutting/test"
     }
   ],
+  "stdlib_version": 2,
   "validation": null,
   "version": 1
 }
@@ -134,8 +152,8 @@ expression: datapack_tree_snapshot(&output_dir)
 ===== data/resource_only/tags/block/mineable/test.json =====
 {
   "values": [
-    "minecraft:stone",
-    "minecraft:deepslate"
+    "minecraft:deepslate",
+    "minecraft:stone"
   ]
 }
 

@@ -35,6 +35,7 @@ fn compile_and_validate(source: &str) -> Vec<(String, cobble::validator::Validat
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: std::path::PathBuf::from("data/commands.json"),

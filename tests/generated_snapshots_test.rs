@@ -73,6 +73,7 @@ fn build_project_fixture(project: &str, validate: bool) -> (TempDir, PathBuf) {
         verbose: false,
         quiet: true,
         zip: false,
+        experimental_resource_pack: false,
         validate,
         dry_run: false,
         commands_json,
@@ -87,7 +88,8 @@ fn build_source_fixture(source: &str, namespace: &str, validate: bool) -> (TempD
     let input_file = temp_dir.path().join("main.cbl");
     let output_dir = temp_dir.path().join("output");
     let commands_json = commands_json_fixture(temp_dir.path(), validate);
-    fs::write(&input_file, source).unwrap();
+    let full_source = format!("import stdlib\n{source}");
+    fs::write(&input_file, &full_source).unwrap();
 
     cobble::commands::build::build(cobble::commands::build::BuildOptions {
         input: Some(input_file),
@@ -98,6 +100,7 @@ fn build_source_fixture(source: &str, namespace: &str, validate: bool) -> (TempD
         verbose: false,
         quiet: true,
         zip: false,
+        experimental_resource_pack: false,
         validate,
         dry_run: false,
         commands_json,
@@ -186,6 +189,33 @@ fn snapshot_resource_authoring_generated_pack_tree() {
     let (_temp, output_dir) = build_project_fixture("examples/resource_authoring", false);
     insta::assert_snapshot!(
         "snapshot_resource_authoring_generated_pack_tree",
+        datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
+fn snapshot_stdlib_v2_generated_pack_tree() {
+    let (_temp, output_dir) = build_project_fixture("examples/stdlib_v2", false);
+    insta::assert_snapshot!(
+        "snapshot_stdlib_v2_generated_pack_tree",
+        datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
+fn snapshot_resource_pack_generated_pack_tree() {
+    let (_temp, output_dir) = build_project_fixture("examples/resource_pack", false);
+    insta::assert_snapshot!(
+        "snapshot_resource_pack_generated_pack_tree",
+        datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
+fn snapshot_unrolling_generated_pack_tree() {
+    let (_temp, output_dir) = build_project_fixture("examples/unrolling", false);
+    insta::assert_snapshot!(
+        "snapshot_unrolling_generated_pack_tree",
         datapack_tree_snapshot(&output_dir)
     );
 }

@@ -1,0 +1,203 @@
+# Compile-Time Unrolling Design
+
+Status: 0.8.0 implementation contract.
+
+This document defines the scoped compile-time unrolling behavior added in
+0.8.0. Unrolling lets `for` loops over literal ranges or literal arrays
+expand at compile time so that each iteration emits concrete commands with
+literal values, without the scoreboard loop scaffolding that dynamic loops
+require.
+
+## Goals
+
+- Make common small loops produce readable, literal generated commands.
+- Keep generated output traceable to the source `for` statement.
+- Avoid hidden runtime state: unrolled loops emit no scoreboard counters,
+  no macro helper functions, and no storage keys.
+- Keep unrolling deterministic and bounded.
+
+## Non-Goals
+
+- Template functions that obscure generated output.
+- Arbitrary dynamic code execution or `eval`.
+- Unrolling over non-literal iterables (variables, function calls, computed
+  ranges).
+- Registry-wide code generation.
+- Static data import from files (deferred to a separate design).
+
+## Supported Patterns
+
+### Literal Range
+
+```python
+for i in range(5):
+    /say iteration {i}
+```
+
+Expands to five commands, one per integer in `0..5`:
+
+```
+say iteration 0
+say iteration 1
+say iteration 2
+say iteration 3
+say iteration 4
+```
+
+### Literal Range With Step
+
+```python
+for i in range(0, 10, 2):
+    /say step {i}
+```
+
+`range(start, stop, step)` is supported when all three arguments are integer
+literals or `const` integer identifiers. The expansion follows Python
+half-open semantics: `start`, `start + step`, ... up to but not including
+`stop`.
+
+### Literal Array
+
+```python
+for x in [1, 2, 3]:
+    /give @s minecraft:item_{x}
+```
+
+Expands to one command per literal array element, with `x` replaced by each
+literal value:
+
+```
+give @s minecraft:item_1
+give @s minecraft:item_2
+give @s minecraft:item_3
+```
+
+Array elements must be literals: `Number`, `String`, `Boolean`. Nested arrays
+or maps are not unrolled and produce a diagnostic.
+
+## Limits
+
+| Limit | Value | Diagnostic on violation |
+| --- | --- | --- |
+| Maximum iteration count | 1024 | `unroll-limit-exceeded` error |
+| Large expansion warning threshold | 256 | `unroll-large-expansion` warning |
+| Iterables | literal `range(...)` or literal array | `unroll-non-literal` error |
+
+The iteration count is the number of values the loop would produce. For
+`range(n)` it is `n`. For a literal array it is the array length. For
+`range(start, stop, step)` it is `ceil((stop - start) / step)` clamped to
+non-negative.
+
+When the limit is exceeded, Cobble does not fall back to a scoreboard loop.
+It emits `unroll-limit-exceeded` and fails the build. Users must either
+reduce the iteration count or refactor to a dynamic loop (which Cobble
+already supports via scoreboard counters).
+
+## Variable Substitution
+
+During unrolling, the loop variable is substituted with the literal value
+for each iteration:
+
+- `Expression::Identifier(name)` where `name` matches the loop target
+  becomes `Expression::Number(value)` for integer ranges, or the matching
+  literal expression for arrays.
+- Substitution applies recursively to nested expressions, raw `/` command
+  strings via macro parameter expansion, and stdlib helper arguments.
+- Substitution does not apply to the loop target name when it appears as a
+  different variable (shadowing inside nested scopes is not supported in
+  0.8.0; the loop target is treated as a compile-time substitution token,
+  not a runtime variable).
+
+If the loop body references the loop variable in a context that cannot
+accept a literal substitution (for example, as a scoreboard target that
+must be a runtime holder), Cobble emits `unroll-non-literal` and fails.
+
+## Source-Span Mapping
+
+Unrolled commands inherit the `for` statement's `SourceLocation`. All
+iterations of a single unrolled loop map to the same source line and
+column (the `for` keyword position).
+
+A new `GeneratedCommandKind::Unrolled` variant distinguishes unrolled
+commands from regular `ControlFlow` and `UserCommand` commands in the
+source map. This lets `inspect --json` and editor tooling show that a
+command came from an unrolled iteration without changing the source
+location format.
+
+### Source Map Example
+
+Source:
+
+```python
+def demo():
+    for i in range(3):
+        /say iter {i}
+```
+
+`source_map.json` entries (abbreviated):
+
+| generated_path | generated_line | command | source | kind |
+| --- | --- | --- | --- | --- |
+| `data/ns/function/demo.mcfunction` | 1 | `say iter 0` | `src/main.cbl:2:5` | `Unrolled` |
+| `data/ns/function/demo.mcfunction` | 2 | `say iter 1` | `src/main.cbl:2:5` | `Unrolled` |
+| `data/ns/function/demo.mcfunction` | 3 | `say iter 2` | `src/main.cbl:2:5` | `Unrolled` |
+
+All three entries point to the `for` line. The iteration index is not
+encoded in the source location; it is implicit in the generated line order.
+
+## Build Manifest Impact
+
+`generated.commands` counts unrolled commands as regular commands. A new
+optional field `unrolled_loops: usize` records the number of `for` loops
+that were unrolled. This field is additive and does not require a schema
+version bump.
+
+## Diagnostics
+
+| Code | Severity | Condition |
+| --- | --- | --- |
+| `unroll-limit-exceeded` | error | iteration count > 1024 |
+| `unroll-large-expansion` | warning | iteration count > 256 |
+| `unroll-non-literal` | error | iterable is not a literal `range` or array |
+| `unroll-bad-step` | error | `range` step is zero or non-integer |
+| `unroll-bad-range` | error | `range` stop < start with positive step, or empty array |
+
+Diagnostics include the `for` statement source location.
+
+## Interaction With Other Features
+
+- **stdlib v2 module gating**: unrolling does not depend on stdlib imports.
+  The loop variable substitution works regardless of which stdlib modules
+  are active.
+- **Tag auto-merge**: unrolled `datapack.function_tag` calls inside an
+  unrolled loop are merged normally. Each iteration's declaration is a
+  separate contributor in `json_resource_origins`.
+- **Resource pack (experimental)**: unrolled `resource_pack.*` calls are
+  allowed and emit one asset JSON per iteration.
+- **Macros**: unrolling happens before macro expansion. The loop variable
+  is substituted into raw `/` command strings as a literal macro argument
+  would be.
+
+## Web Compiler Behavior
+
+Unrolling is a compile-time transformation with no filesystem access. It
+works identically in the browser `/try` compiler and the CLI. The
+iteration limit and diagnostics are the same.
+
+## Implementation Checklist
+
+- [x] Add `GeneratedCommandKind::Unrolled` variant.
+- [x] Add `try_unroll_for_loop` in `loop_processor.rs` that detects literal
+  `range(...)` and literal array iterables.
+- [x] Evaluate `range` arguments with `try_eval_const` to detect literal
+  integer bounds.
+- [x] Substitute the loop variable in the body statements per iteration.
+- [x] Enforce the 1024 limit and emit `unroll-limit-exceeded`.
+- [x] Emit `unroll-large-expansion` warning above 256.
+- [x] Emit `unroll-non-literal` for non-literal iterables (no fallback).
+- [x] Map all unrolled commands to the `for` statement source location.
+- [x] Record `unrolled_loops` in the build manifest.
+- [x] Add unit tests for range, range with step, literal array, limit, and
+  diagnostics.
+- [x] Add a snapshot test covering generated commands and source-map entries.
+- [x] Add `examples/unrolling` with source and generated output.

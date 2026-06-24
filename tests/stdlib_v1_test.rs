@@ -5,7 +5,8 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.cbl");
     let output_dir = temp_dir.path().join("output");
-    fs::write(&input_file, source).unwrap();
+    let full_source = format!("import stdlib\n{source}");
+    fs::write(&input_file, &full_source).unwrap();
 
     cobble::commands::build::build(cobble::commands::build::BuildOptions {
         input: Some(input_file),
@@ -16,6 +17,7 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),

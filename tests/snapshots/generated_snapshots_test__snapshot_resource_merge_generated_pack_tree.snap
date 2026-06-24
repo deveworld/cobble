@@ -4,6 +4,22 @@ expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
 {
+  "active_stdlib_modules": [
+    "bossbar",
+    "datapack",
+    "entity",
+    "event",
+    "math",
+    "random",
+    "resource_pack",
+    "schedule",
+    "score",
+    "score.objective",
+    "storage",
+    "team",
+    "text",
+    "timer"
+  ],
   "cobble_version": "<cobble-version>",
   "description": "Snapshot fixture",
   "generated": {
@@ -52,6 +68,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "path": "checks/ready"
     }
   ],
+  "stdlib_version": 2,
   "validation": null,
   "version": 1
 }
@@ -72,7 +89,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say extra",
       "source": {
         "file": "main.cbl",
-        "line": 15,
+        "line": 16,
         "column": 5
       },
       "kind": "UserCommand"
@@ -90,7 +107,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say load",
       "source": {
         "file": "main.cbl",
-        "line": 12,
+        "line": 13,
         "column": 5
       },
       "kind": "UserCommand"

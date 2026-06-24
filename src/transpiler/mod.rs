@@ -61,14 +61,6 @@ impl FunctionContext {
     fn is_param(&self, name: &str) -> bool {
         self.params.iter().any(|p| p == name)
     }
-
-    pub(in crate::transpiler) fn with_extra_param(&self, param: String) -> Vec<String> {
-        let mut params = self.params.clone();
-        if !params.contains(&param) {
-            params.push(param);
-        }
-        params
-    }
 }
 
 impl FunctionCapture {
@@ -112,6 +104,27 @@ fn validate_text_color(color: &str) -> Result<(), String> {
     }
 }
 
+/// Stdlib module names that can be imported via `from stdlib import <name>`.
+///
+/// `import stdlib` (without `from`) activates every module for backward
+/// compatibility with 0.7.x. See `docs/stdlib-v2-design.md`.
+pub(in crate::transpiler) const ALL_STDLIB_MODULES: &[&str] = &[
+    "text",
+    "score",
+    "score.objective",
+    "random",
+    "timer",
+    "storage",
+    "schedule",
+    "bossbar",
+    "team",
+    "entity",
+    "math",
+    "event",
+    "datapack",
+    "resource_pack",
+];
+
 pub struct Transpiler {
     pub data_pack: DataPack,
     current_function: Option<Vec<String>>,
@@ -136,6 +149,19 @@ pub struct Transpiler {
     statement_locations: HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
     current_statement_source: Option<SourceLocation>,
     variable_types: HashMap<String, crate::ast::CobbleType>, // Track type of each variable for type checking
+    /// Stdlib version declared in `cobble.toml`. `1` keeps 0.7.x behavior
+    /// (all modules always active). `2` (default) requires per-module opt-in
+    /// via `from stdlib import ...`.
+    stdlib_version: u8,
+    /// Stdlib modules activated by imports. When `stdlib_version == 1` or
+    /// `import stdlib` is used, every module in `ALL_STDLIB_MODULES` is
+    /// inserted here.
+    active_stdlib_modules: HashSet<String>,
+    /// Whether `[stdlib] version = 1` deprecation warning was already emitted
+    /// for this build. The warning is emitted once per build.
+    stdlib_v1_warning_emitted: bool,
+    /// Whether experimental resource-pack output is enabled for this build.
+    experimental_resource_pack: bool,
 }
 
 impl Transpiler {
@@ -167,6 +193,10 @@ impl Transpiler {
             statement_locations: HashMap::new(),
             current_statement_source: None,
             variable_types: HashMap::new(),
+            stdlib_version: 2,
+            active_stdlib_modules: HashSet::new(),
+            stdlib_v1_warning_emitted: false,
+            experimental_resource_pack: false,
         }
     }
 
@@ -779,7 +809,58 @@ impl Transpiler {
         self.data_pack.set_validation_summary(validation);
     }
 
+    /// Enable or disable experimental resource-pack output.
+    pub fn set_experimental_resource_pack(&mut self, enabled: bool) {
+        self.experimental_resource_pack = enabled;
+        self.data_pack
+            .experimental_features
+            .retain(|feature| feature != "resource_pack");
+        if enabled {
+            self.data_pack
+                .experimental_features
+                .push("resource_pack".to_string());
+        }
+        self.data_pack.experimental_features.sort();
+    }
+
+    /// Set the stdlib version from `cobble.toml` (`[stdlib] version`).
+    ///
+    /// `version = 1` keeps 0.7.x behavior where all modules are always
+    /// active. `version = 2` (default) requires per-module opt-in.
+    pub fn set_stdlib_version(&mut self, version: u8) {
+        self.stdlib_version = version;
+        if version == 1 {
+            self.active_stdlib_modules.clear();
+            for module in ALL_STDLIB_MODULES {
+                self.active_stdlib_modules.insert((*module).to_string());
+            }
+        }
+        self.data_pack.stdlib_version = Some(version);
+    }
+
+    /// Returns the active stdlib version.
+    pub fn stdlib_version(&self) -> u8 {
+        self.stdlib_version
+    }
+
+    /// Returns the set of modules activated by stdlib imports.
+    pub fn active_stdlib_modules(&self) -> &HashSet<String> {
+        &self.active_stdlib_modules
+    }
+
+    /// Sync the active stdlib module set into the data pack so it is
+    /// recorded in the build manifest. Called after imports are processed
+    /// and before the data pack is written.
+    pub fn sync_stdlib_modules_to_manifest(&mut self) {
+        let mut modules: Vec<String> = self.active_stdlib_modules.iter().cloned().collect();
+        modules.sort();
+        self.data_pack.active_stdlib_modules = modules;
+    }
+
     pub fn transpile(&mut self, program: &Program) -> Result<(), String> {
+        // Emit the stdlib v1 deprecation warning once per build.
+        self.maybe_emit_stdlib_v1_warning();
+
         // When building multiple files, clear the import stack for each new file
         // The current file should already be in the stack from set_current_file()
         // We only keep the current file to properly detect circular imports within its imports
@@ -964,13 +1045,24 @@ impl Transpiler {
             self.module_level_vars.clear();
         }
 
+        // Sync active stdlib modules into the data pack for manifest output.
+        self.sync_stdlib_modules_to_manifest();
+
         Ok(())
     }
 
     fn process_import(&mut self, import: &Import) -> Result<(), String> {
         // Handle stdlib imports
         if import.module == "stdlib" {
-            // stdlib is automatically available, no action needed
+            if import.items.is_empty() {
+                // `import stdlib` activates every module (0.7.x compatibility).
+                self.activate_all_stdlib_modules();
+            } else {
+                // `from stdlib import text, score, ...` activates listed modules.
+                for item in &import.items {
+                    self.activate_stdlib_module(item)?;
+                }
+            }
             return Ok(());
         }
 
@@ -1106,6 +1198,56 @@ impl Transpiler {
             .collect();
         chain.push(next_path.display().to_string());
         chain.join(" -> ")
+    }
+
+    /// Activate every stdlib module. Used by `import stdlib` and by
+    /// `[stdlib] version = 1`.
+    fn activate_all_stdlib_modules(&mut self) {
+        for module in ALL_STDLIB_MODULES {
+            self.active_stdlib_modules.insert((*module).to_string());
+        }
+    }
+
+    /// Activate a single stdlib module by name. Returns an error if the
+    /// module name is not recognized.
+    fn activate_stdlib_module(&mut self, name: &str) -> Result<(), String> {
+        if !ALL_STDLIB_MODULES.contains(&name) {
+            return Err(format!(
+                "Unknown stdlib module '{}'. Available modules: {}",
+                name,
+                ALL_STDLIB_MODULES.join(", ")
+            ));
+        }
+        self.active_stdlib_modules.insert(name.to_string());
+        Ok(())
+    }
+
+    /// Check that a stdlib module is active before calling one of its
+    /// helpers. Returns an error in `version = 2` when the module was not
+    /// imported. In `version = 1` every module is always active so this
+    /// always succeeds.
+    fn require_stdlib_module(&self, module: &str) -> Result<(), String> {
+        if self.active_stdlib_modules.contains(module) {
+            Ok(())
+        } else {
+            Err(format!(
+                "module '{module}' not imported.\n\
+                 Add `from stdlib import {module}` or use `import stdlib` to enable all modules.\n\
+                 See docs/stdlib-v2-design.md for the import and versioning model."
+            ))
+        }
+    }
+
+    /// Emit the `[stdlib] version = 1` deprecation warning once per build.
+    fn maybe_emit_stdlib_v1_warning(&mut self) {
+        if self.stdlib_version == 1 && !self.stdlib_v1_warning_emitted {
+            self.stdlib_v1_warning_emitted = true;
+            eprintln!(
+                "warning: [stdlib] version = 1 is deprecated.\n\
+                 Migrate to version = 2 and use `from stdlib import ...` for per-module opt-in.\n\
+                 See docs/stdlib-v2-design.md for the migration guide."
+            );
+        }
     }
 
     fn strip_command_prefix(cmd: &str) -> String {
@@ -1284,6 +1426,7 @@ impl Transpiler {
                         | "team"
                         | "entity"
                         | "datapack"
+                        | "resource_pack"
                 )
             }
             Expression::Identifier(name) => {
@@ -1623,6 +1766,7 @@ impl Transpiler {
                     Expression::Identifier(func_name) => {
                         // Check for standalone addEventListener
                         if func_name == "addEventListener" {
+                            self.require_stdlib_module("event")?;
                             self.process_add_event_listener(args)?;
                         } else if func_name.contains('.') {
                             // Method call on module (e.g., stdlib.addEventListener)
@@ -1631,6 +1775,7 @@ impl Transpiler {
                                 && parts[0] == "stdlib"
                                 && parts[1] == "addEventListener"
                             {
+                                self.require_stdlib_module("event")?;
                                 self.process_add_event_listener(args)?;
                             } else {
                                 return Err(format!("Unknown module method: {}", func_name));
@@ -1644,31 +1789,47 @@ impl Transpiler {
                         // Handle attribute access like stdlib.addEventListener
                         if let Some(module_name) = Self::expression_path(obj) {
                             if module_name == "stdlib" && method == "addEventListener" {
+                                self.require_stdlib_module("event")?;
                                 self.process_add_event_listener(args)?;
                             } else if module_name == "math" {
+                                self.require_stdlib_module("math")?;
                                 self.process_math_intrinsic(method, args)?;
                             } else if module_name == "text" {
+                                self.require_stdlib_module("text")?;
                                 self.process_text_intrinsic(method, args)?;
                             } else if module_name == "score" {
+                                self.require_stdlib_module("score")?;
                                 self.process_score_intrinsic(method, args)?;
                             } else if module_name == "score.objective" {
+                                self.require_stdlib_module("score.objective")?;
                                 self.process_score_objective_intrinsic(method, args)?;
                             } else if module_name == "random" {
+                                self.require_stdlib_module("random")?;
                                 self.process_random_intrinsic(method, args)?;
                             } else if module_name == "timer" {
+                                self.require_stdlib_module("timer")?;
                                 self.process_timer_intrinsic(method, args)?;
                             } else if module_name == "storage" {
+                                self.require_stdlib_module("storage")?;
                                 self.process_storage_intrinsic(method, args)?;
                             } else if module_name == "schedule" {
+                                self.require_stdlib_module("schedule")?;
                                 self.process_schedule_intrinsic(method, args)?;
                             } else if module_name == "bossbar" {
+                                self.require_stdlib_module("bossbar")?;
                                 self.process_bossbar_intrinsic(method, args)?;
                             } else if module_name == "team" {
+                                self.require_stdlib_module("team")?;
                                 self.process_team_intrinsic(method, args)?;
                             } else if module_name == "entity" {
+                                self.require_stdlib_module("entity")?;
                                 self.process_entity_intrinsic(method, args)?;
                             } else if module_name == "datapack" {
+                                self.require_stdlib_module("datapack")?;
                                 self.process_datapack_intrinsic(method, args)?;
+                            } else if module_name == "resource_pack" {
+                                self.require_stdlib_module("resource_pack")?;
+                                self.process_resource_pack_intrinsic(method, args)?;
                             } else {
                                 return Err(format!(
                                     "Unknown module method: {}.{}",
@@ -2487,6 +2648,99 @@ impl Transpiler {
             "dialog" => self.add_datapack_json_resource("dialog", args),
             _ => Err(format!("Unknown datapack function: datapack.{}", method)),
         }
+    }
+
+    fn process_resource_pack_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        if !self.experimental_resource_pack {
+            return Err(
+                "resource_pack.* requires --experimental-resource-pack or [experimental] resource_pack = true"
+                    .to_string(),
+            );
+        }
+
+        match method {
+            "item_model" => self.add_resource_pack_model("item", args),
+            "block_model" => self.add_resource_pack_model("block", args),
+            "lang" => self.add_resource_pack_lang(args),
+            _ => Err(format!(
+                "Unknown resource_pack function: resource_pack.{}",
+                method
+            )),
+        }
+    }
+
+    fn add_resource_pack_model(
+        &mut self,
+        model_type: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        if args.len() != 2 {
+            return Err(format!(
+                "resource_pack.{}_model() takes 2 arguments",
+                model_type
+            ));
+        }
+
+        let (namespace, name) = self.expr_to_resource_id(&args[0], "model name")?;
+        let json = self.expr_to_json_value(&args[1])?;
+        if !json.is_object() {
+            return Err(format!(
+                "resource_pack.{}_model() JSON value must be an object",
+                model_type
+            ));
+        }
+        let content = serde_json::to_string_pretty(&json)
+            .map_err(|e| format!("Failed to encode resource-pack model JSON: {}", e))?;
+        let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
+        self.data_pack
+            .add_resource_pack_model_in_namespace_with_source(
+                namespace,
+                format!("models/{}/{}", model_type, name),
+                content,
+                self.current_statement_source.clone(),
+            )
+    }
+
+    fn add_resource_pack_lang(&mut self, args: &[Expression]) -> Result<(), String> {
+        if args.len() != 2 {
+            return Err("resource_pack.lang() takes 2 arguments".to_string());
+        }
+
+        let (namespace, locale) = self.expr_to_resource_id(&args[0], "language locale")?;
+        if locale.contains('/') {
+            return Err(format!(
+                "Invalid language locale '{}': use locale names such as 'en_us'",
+                locale
+            ));
+        }
+
+        let json = self.expr_to_json_value(&args[1])?;
+        let Some(object) = json.as_object() else {
+            return Err("resource_pack.lang() JSON value must be an object".to_string());
+        };
+        for (key, value) in object {
+            if !value.is_string() {
+                return Err(format!(
+                    "resource_pack.lang() value for '{}' must be a string",
+                    key
+                ));
+            }
+        }
+
+        let content = serde_json::to_string_pretty(&json)
+            .map_err(|e| format!("Failed to encode resource-pack lang JSON: {}", e))?;
+        let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
+        self.data_pack
+            .add_resource_pack_lang_in_namespace_with_source(
+                namespace,
+                locale,
+                content,
+                self.current_statement_source.clone(),
+            )
     }
 
     fn add_datapack_tag_resource(

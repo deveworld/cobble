@@ -4,9 +4,9 @@
 
 - Planning date: 2026-06-16
 - Current stable release: `0.7.3`
-- Current development version: none
+- Current development version: `0.8.0-alpha.0`
 - Next planned release: `0.8.0`
-- Active pre-release: none
+- Active pre-release: `0.8.0-alpha.0`
 - Current Minecraft target: Java Edition `26.1.2`
 - Current data pack format: `101.1`
 - Package name: `cobble-lang`
@@ -1050,8 +1050,8 @@ Tasks:
 
 Deliverables:
 
-- A stdlib v2 design document.
-- A resource authoring design document.
+- A stdlib v2 design document: `docs/stdlib-v2-design.md`.
+- A resource authoring design document: `docs/resource-authoring-design.md`.
 - Tests planned for every accepted helper family.
 - Explicit defer list for helpers or resources that would make 0.8.0 too broad.
 - A stdlib import/versioning decision before helper implementation.

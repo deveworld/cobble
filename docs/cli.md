@@ -73,6 +73,7 @@ cobble build [SOURCE] [OPTIONS]
 - `-v, --verbose` - Show verbose output
 - `-q, --quiet` - Suppress successful build progress and summary output
 - `--zip` - Create a ZIP archive of the data pack
+- `--experimental-resource-pack` - Enable experimental `resource_pack.*` asset output under `assets/`
 - `--validate` - Validate generated `.mcfunction` files after building
 - `--dry-run` - Compile and print the build summary without writing final output
 - `--commands-json <PATH>` - Path to `commands.json` for validation (default: `data/commands.json`)
@@ -443,6 +444,7 @@ cobble watch [SOURCE] [OPTIONS]
 - `--description <DESC>` - Override pack description
 - `-v, --verbose` - Show verbose output
 - `--zip` - Create a ZIP archive after each build
+- `--experimental-resource-pack` - Enable experimental `resource_pack.*` asset output under `assets/`
 - `--link` - Build into the pack path configured by `cobble link`
 - `--validate` - Validate generated `.mcfunction` files after each successful build
 - `--commands-json <PATH>` - Path to `commands.json` for validation (default: `data/commands.json`)

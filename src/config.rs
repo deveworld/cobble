@@ -8,6 +8,10 @@ pub struct CobbleConfig {
     pub project: ProjectConfig,
     #[serde(default)]
     pub build: BuildConfig,
+    #[serde(default)]
+    pub stdlib: StdlibConfig,
+    #[serde(default)]
+    pub experimental: ExperimentalConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,8 +35,38 @@ pub struct BuildConfig {
     pub entry_points: Vec<String>,
 }
 
+/// Standard library configuration.
+///
+/// `version = 2` (default) enables per-module opt-in via
+/// `from stdlib import text, score, ...`. `version = 1` keeps the 0.7.x
+/// behavior where every module is always active.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StdlibConfig {
+    #[serde(default = "default_stdlib_version")]
+    pub version: u8,
+}
+
+impl Default for StdlibConfig {
+    fn default() -> Self {
+        Self {
+            version: default_stdlib_version(),
+        }
+    }
+}
+
+/// Experimental feature flags. All default off.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExperimentalConfig {
+    #[serde(default)]
+    pub resource_pack: bool,
+}
+
 fn default_version() -> String {
     "1.0.0".to_string()
+}
+
+fn default_stdlib_version() -> u8 {
+    2
 }
 
 fn default_pack_format() -> String {
@@ -109,6 +143,8 @@ impl CobbleConfig {
                 output: default_output(),
                 entry_points: vec![],
             },
+            stdlib: StdlibConfig::default(),
+            experimental: ExperimentalConfig::default(),
         }
     }
 

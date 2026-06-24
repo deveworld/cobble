@@ -4,6 +4,18 @@ use std::path::PathBuf;
 use cobble::transpiler::DataPack;
 
 fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> {
+    compile_source_with_options(source, false, false)
+}
+
+fn compile_resource_pack_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> {
+    compile_source_with_options(source, true, false)
+}
+
+fn compile_source_with_options(
+    source: &str,
+    experimental_resource_pack: bool,
+    zip: bool,
+) -> Result<(tempfile::TempDir, PathBuf), String> {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.cbl");
     let output_dir = temp_dir.path().join("output");
@@ -17,7 +29,8 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
         description: None,
         verbose: false,
         quiet: false,
-        zip: false,
+        zip,
+        experimental_resource_pack,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -30,6 +43,7 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
 fn datapack_resource_declarations_write_modern_json_layout() {
     let (_temp, output_dir) = compile_source(
         r##"
+import stdlib
 datapack.function_tag("utility", ["resources:setup"])
 datapack.block_tag("solid_blocks", ["minecraft:stone"])
 datapack.item_tag("reward_items", ["minecraft:diamond"])
@@ -80,6 +94,7 @@ def setup():
 fn build_writes_cobble_manifest_metadata() {
     let (_temp, output_dir) = compile_source(
         r##"
+import stdlib
 datapack.function_tag("minecraft:load", ["resources:setup"])
 datapack.predicate("always", {
     "condition": "minecraft:random_chance",
@@ -138,6 +153,7 @@ def setup():
 fn datapack_resource_declarations_support_explicit_namespaces() {
     let (_temp, output_dir) = compile_source(
         r#"
+import stdlib
 datapack.function_tag("minecraft:load", ["resources:setup"])
 datapack.predicate("other_ns:checks/is_ready", {
     "condition": "minecraft:random_chance",
@@ -162,6 +178,7 @@ def setup():
 fn datapack_json_resources_serialize_none_as_json_null() {
     let (_temp, output_dir) = compile_source(
         r#"
+import stdlib
 datapack.predicate("maybe", {
     "condition": "minecraft:random_chance",
     "chance": 1,
@@ -249,6 +266,7 @@ datapack.predicate("bad", ["not", "an", "object"])
 fn duplicate_datapack_resource_ids_fail() {
     let error = compile_source(
         r#"
+import stdlib
 datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
 datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.25})
 "#,
@@ -258,42 +276,76 @@ datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.
     assert!(error.contains("Duplicate data pack resource"));
     assert!(error.contains("predicate/same"));
     assert!(error.contains("invalid overwrite"));
-    assert!(error.contains("first declaration: main.cbl:2:1"));
-    assert!(error.contains("second declaration: main.cbl:3:1"));
+    assert!(error.contains("first declaration: main.cbl:3:1"));
+    assert!(error.contains("second declaration: main.cbl:4:1"));
 }
 
 #[test]
-fn duplicate_identical_datapack_resource_ids_report_exact_duplicate() {
-    let error = compile_source(
+fn duplicate_identical_datapack_resource_ids_are_accepted_once() {
+    let (_temp, output_dir) = compile_source(
         r#"
+import stdlib
 datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
 datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
 "#,
     )
-    .unwrap_err();
+    .unwrap();
 
-    assert!(error.contains("Duplicate data pack resource"));
-    assert!(error.contains("predicate/same"));
-    assert!(error.contains("exact duplicate"));
-    assert!(error.contains("first declaration: main.cbl:2:1"));
-    assert!(error.contains("second declaration: main.cbl:3:1"));
+    let predicate_path = output_dir.join("data/resources/predicate/same.json");
+    assert!(predicate_path.exists());
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let predicate_resources: Vec<_> = manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|resource| resource["kind"] == "predicate" && resource["path"] == "same")
+        .collect();
+    assert_eq!(predicate_resources.len(), 1);
 }
 
 #[test]
-fn duplicate_datapack_tags_report_tag_declaration_conflict() {
-    let error = compile_source(
+fn duplicate_datapack_tags_are_merged_deterministically() {
+    let (_temp, output_dir) = compile_source(
         r#"
+import stdlib
 datapack.function_tag("minecraft:load", ["resources:setup"])
 datapack.function_tag("minecraft:load", ["resources:other"])
 "#,
     )
-    .unwrap_err();
+    .unwrap();
 
-    assert!(error.contains("Duplicate data pack resource"));
-    assert!(error.contains("minecraft:tags/function/load"));
-    assert!(error.contains("invalid duplicate tag declaration"));
-    assert!(error.contains("first declaration: main.cbl:2:1"));
-    assert!(error.contains("second declaration: main.cbl:3:1"));
+    let tag_path = output_dir.join("data/minecraft/tags/function/load.json");
+    let tag: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
+    let values = tag["values"].as_array().unwrap();
+    assert_eq!(values.len(), 2);
+    // Values are sorted lexicographically.
+    assert_eq!(values[0], "resources:other");
+    assert_eq!(values[1], "resources:setup");
+}
+
+#[test]
+fn duplicate_datapack_tags_dedup_identical_values() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+import stdlib
+datapack.function_tag("utility", ["resources:setup", "resources:tick"])
+datapack.function_tag("utility", ["resources:tick", "resources:init"])
+"#,
+    )
+    .unwrap();
+
+    let tag_path = output_dir.join("data/resources/tags/function/utility.json");
+    let tag: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
+    let values = tag["values"].as_array().unwrap();
+    assert_eq!(values.len(), 3);
+    assert_eq!(values[0], "resources:init");
+    assert_eq!(values[1], "resources:setup");
+    assert_eq!(values[2], "resources:tick");
 }
 
 #[test]
@@ -305,6 +357,7 @@ fn duplicate_datapack_resources_across_imports_fail() {
     fs::write(
         source_dir.join("main.cbl"),
         r#"
+import stdlib
 import extra
 datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
 "#,
@@ -313,6 +366,7 @@ datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.
     fs::write(
         source_dir.join("extra.cbl"),
         r#"
+import stdlib
 datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.25})
 "#,
     )
@@ -327,6 +381,7 @@ datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -336,14 +391,15 @@ datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.
     assert!(error.contains("Duplicate data pack resource"));
     assert!(error.contains("predicate/same"));
     assert!(error.contains("invalid overwrite"));
-    assert!(error.contains("first declaration: extra.cbl:2:1"));
-    assert!(error.contains("second declaration: main.cbl:3:1"));
+    assert!(error.contains("first declaration: extra.cbl:3:1"));
+    assert!(error.contains("second declaration: main.cbl:4:1"));
 }
 
 #[test]
 fn datapack_resource_names_reject_invalid_paths() {
     let error = compile_source(
         r#"
+import stdlib
 datapack.predicate("Bad/Name", {"condition": "minecraft:random_chance", "chance": 1})
 "#,
     )
@@ -355,6 +411,7 @@ datapack.predicate("Bad/Name", {"condition": "minecraft:random_chance", "chance"
 
     let namespace_error = compile_source(
         r#"
+import stdlib
 datapack.function_tag("minecraft/load", ["resources:setup"])
 "#,
     )
@@ -365,6 +422,7 @@ datapack.function_tag("minecraft/load", ["resources:setup"])
 
     let tag_value_error = compile_source(
         r#"
+import stdlib
 datapack.item_tag("rewards", ["minecraft/diamond"])
 "#,
     )
@@ -375,6 +433,7 @@ datapack.item_tag("rewards", ["minecraft/diamond"])
 
     let non_string_tag_value_error = compile_source(
         r#"
+import stdlib
 datapack.item_tag("rewards", [1])
 "#,
     )
@@ -392,6 +451,7 @@ fn removed_datapack_resources_do_not_survive_rebuilds() {
     fs::write(
         &input_file,
         r#"
+import stdlib
 datapack.predicate("old", {"condition": "minecraft:random_chance", "chance": 1})
 
 def setup():
@@ -410,6 +470,7 @@ def setup():
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -467,6 +528,154 @@ def setup():
 }
 
 #[test]
+fn resource_pack_helpers_require_experimental_opt_in() {
+    let error = compile_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("resources:test_item", {"parent": "minecraft:item/generated"})
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("resource_pack.* requires --experimental-resource-pack"));
+}
+
+#[test]
+fn resource_pack_helpers_write_assets_and_manifest_metadata() {
+    let (_temp, output_dir) = compile_resource_pack_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("rp:custom_sword", {
+    "parent": "minecraft:item/handheld",
+    "textures": {"layer0": "rp:item/custom_sword"}
+})
+resource_pack.block_model("custom_block", {
+    "parent": "minecraft:block/cube_all",
+    "textures": {"all": "resources:block/custom_block"}
+})
+resource_pack.lang("rp:en_us", {
+    "item.rp.custom_sword": "Custom Sword",
+    "block.resources.custom_block": "Custom Block"
+})
+
+def setup():
+    /say resources
+"#,
+    )
+    .unwrap();
+
+    assert!(output_dir
+        .join("assets/rp/models/item/custom_sword.json")
+        .exists());
+    assert!(output_dir
+        .join("assets/resources/models/block/custom_block.json")
+        .exists());
+    assert!(output_dir.join("assets/rp/lang/en_us.json").exists());
+
+    let lang: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("assets/rp/lang/en_us.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(lang["item.rp.custom_sword"], "Custom Sword");
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["generated"]["resource_pack_models"], 2);
+    assert_eq!(manifest["generated"]["resource_pack_langs"], 1);
+    assert!(manifest["experimental_features"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("resource_pack")));
+    assert!(manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| {
+            resource["kind"] == "resource_pack_model"
+                && resource["namespace"] == "rp"
+                && resource["path"] == "item/custom_sword"
+        }));
+    assert!(manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| {
+            resource["kind"] == "resource_pack_lang"
+                && resource["namespace"] == "rp"
+                && resource["path"] == "en_us"
+        }));
+
+    let generated_asset_namespaces: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/generated_asset_namespaces.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        generated_asset_namespaces,
+        serde_json::json!(["resources", "rp"])
+    );
+}
+
+#[test]
+fn resource_pack_zip_includes_assets() {
+    let (temp_dir, output_dir) = compile_source_with_options(
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("resources:test_item", {"parent": "minecraft:item/generated"})
+
+def setup():
+    /say zip
+"#,
+        true,
+        true,
+    )
+    .unwrap();
+
+    let zip_file = fs::File::open(temp_dir.path().join("resources.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+
+    assert!(output_dir
+        .join("assets/resources/models/item/test_item.json")
+        .exists());
+    assert!(names
+        .iter()
+        .any(|name| name == "assets/resources/models/item/test_item.json"));
+    assert!(names
+        .iter()
+        .any(|name| name == "data/resources/function/setup.mcfunction"));
+}
+
+#[test]
+fn duplicate_resource_pack_pass_through_resources_follow_json_policy() {
+    compile_resource_pack_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.lang("en_us", {"item.resources.test": "Test"})
+resource_pack.lang("en_us", {"item.resources.test": "Test"})
+"#,
+    )
+    .unwrap();
+
+    let error = compile_resource_pack_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.lang("en_us", {"item.resources.test": "Test"})
+resource_pack.lang("en_us", {"item.resources.test": "Changed"})
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("Duplicate resource pack language file"));
+    assert!(error.contains("invalid overwrite"));
+    assert!(error.contains("first declaration: main.cbl:3:1"));
+    assert!(error.contains("second declaration: main.cbl:4:1"));
+}
+
+#[test]
 fn namespace_changes_clean_previous_generated_namespace() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.cbl");
@@ -483,6 +692,7 @@ fn namespace_changes_clean_previous_generated_namespace() {
             verbose: false,
             quiet: false,
             zip: false,
+            experimental_resource_pack: false,
             validate: false,
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
@@ -514,6 +724,7 @@ fn namespace_changes_clean_previous_function_dir_when_namespace_is_still_used_fo
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -527,6 +738,7 @@ fn namespace_changes_clean_previous_function_dir_when_namespace_is_still_used_fo
     fs::write(
         &input_file,
         r#"
+import stdlib
 datapack.predicate("old:checks/ready", {
     "condition": "minecraft:random_chance",
     "chance": 1
@@ -547,6 +759,7 @@ def main():
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),

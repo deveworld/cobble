@@ -145,6 +145,7 @@ fn build_datapack(repo_root: &Path, project_dir: &Path, datapack_dir: &Path) {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: commands_json.exists(),
         dry_run: false,
         commands_json,

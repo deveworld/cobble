@@ -27,6 +27,7 @@ fn metadata_json_schema_shape_is_stable() {
     fs::write(
         &input_file,
         r#"
+import stdlib
 datapack.predicate("always", {
     "condition": "minecraft:random_chance",
     "chance": 1
@@ -47,6 +48,7 @@ def schema():
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -75,6 +77,8 @@ def schema():
             "generated",
             "resources",
             "validation",
+            "stdlib_version",
+            "active_stdlib_modules",
         ],
     );
     assert!(manifest["project_root"]
@@ -142,7 +146,7 @@ fn source_map_tracks_user_raw_command_locations() {
     let output_dir = temp_dir.path().join("output");
     fs::write(
         &input_file,
-        "def test():\n    x = 1\n    score.set(\"points\", 1)\n    /say hello\n",
+        "import stdlib\ndef test():\n    x = 1\n    score.set(\"points\", 1)\n    /say hello\n",
     )
     .unwrap();
 
@@ -155,6 +159,7 @@ fn source_map_tracks_user_raw_command_locations() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -195,7 +200,7 @@ fn source_map_tracks_user_raw_command_locations() {
 
     let source = entry.source.as_ref().expect("source location missing");
     assert_eq!(source.file, PathBuf::from("main.cbl"));
-    assert_eq!(source.line, 4);
+    assert_eq!(source.line, 5);
     assert_eq!(source.column, 5);
 }
 
@@ -327,6 +332,7 @@ stdlib.addEventListener(event.LOAD, load)
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -384,6 +390,7 @@ fn source_map_tracks_user_commands_through_control_flow_rewrites() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -395,7 +402,11 @@ fn source_map_tracks_user_commands_through_control_flow_rewrites() {
         serde_json::from_str(&fs::read_to_string(source_map_path).unwrap()).unwrap();
     let expected_source = PathBuf::from("main.cbl");
 
-    let assert_user_entry = |needle: &str, path_fragment: &str, line: usize, column: usize| {
+    let assert_entry = |needle: &str,
+                        path_fragment: &str,
+                        expected_kind: GeneratedCommandKind,
+                        line: usize,
+                        column: usize| {
         let entry = source_map
             .entries
             .iter()
@@ -406,21 +417,52 @@ fn source_map_tracks_user_commands_through_control_flow_rewrites() {
             "expected generated path containing {path_fragment}, got {}",
             entry.generated_path
         );
-        assert_eq!(entry.kind, GeneratedCommandKind::UserCommand);
+        assert_eq!(entry.kind, expected_kind);
         let source = entry.source.as_ref().expect("source location missing");
         assert_eq!(source.file, expected_source);
         assert_eq!(source.line, line);
         assert_eq!(source.column, column);
     };
 
-    assert_user_entry("say first", "if_temp_", 4, 9);
-    assert_user_entry("say loop", "while_body_", 7, 9);
-    assert_user_entry("say step", "loop_body_", 10, 9);
-    assert_user_entry("say zero", "match_case_", 13, 13);
-    assert_user_entry("say default", "test.mcfunction", 16, 13);
-    assert_user_entry(
+    assert_entry(
+        "say first",
+        "if_temp_",
+        GeneratedCommandKind::UserCommand,
+        4,
+        9,
+    );
+    assert_entry(
+        "say loop",
+        "while_body_",
+        GeneratedCommandKind::UserCommand,
+        7,
+        9,
+    );
+    assert_entry(
+        "say step",
+        "test.mcfunction",
+        GeneratedCommandKind::Unrolled,
+        9,
+        5,
+    );
+    assert_entry(
+        "say zero",
+        "match_case_",
+        GeneratedCommandKind::UserCommand,
+        13,
+        13,
+    );
+    assert_entry(
+        "say default",
+        "test.mcfunction",
+        GeneratedCommandKind::UserCommand,
+        16,
+        13,
+    );
+    assert_entry(
         "execute as @a run say execute body",
         "test.mcfunction",
+        GeneratedCommandKind::UserCommand,
         18,
         9,
     );
@@ -433,7 +475,8 @@ fn source_map_tracks_generated_commands_back_to_source_statements() {
     let output_dir = temp_dir.path().join("output");
     fs::write(
         &input_file,
-        r#"def helper(target):
+        r#"import stdlib
+def helper(target):
     /say {target}
 
 def test():
@@ -457,6 +500,7 @@ def test():
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -484,49 +528,49 @@ def test():
     assert_entry(
         r#"tellraw @a {"text":"Ready"}"#,
         GeneratedCommandKind::StdLib,
-        5,
+        6,
         5,
     );
     assert_entry(
         "scoreboard players set points temp 1",
         GeneratedCommandKind::StdLib,
-        6,
+        7,
         5,
     );
     assert_entry(
         "execute store result score roll temp run random value 1..6",
         GeneratedCommandKind::StdLib,
-        7,
+        8,
         5,
     );
     assert_entry(
         "scoreboard players set cooldown_done temp 0",
         GeneratedCommandKind::StdLib,
-        8,
+        9,
         5,
     );
     assert_entry(
         "data modify storage source_map:global state set value {ready:1b}",
         GeneratedCommandKind::StdLib,
-        9,
+        10,
         5,
     );
     assert_entry(
         "function source_map:_cobble_math_sqrt",
         GeneratedCommandKind::ControlFlow,
-        10,
+        11,
         5,
     );
     assert_entry(
         "data modify storage source_map:global args.target set value \"ok\"",
         GeneratedCommandKind::ControlFlow,
-        11,
+        12,
         5,
     );
     assert_entry(
         "function source_map:helper with storage source_map:global args",
         GeneratedCommandKind::ControlFlow,
-        11,
+        12,
         5,
     );
 }
@@ -551,6 +595,7 @@ fn source_map_keeps_duplicate_match_commands_on_original_case_lines() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -588,7 +633,8 @@ fn source_map_tracks_module_init_escaped_strings_and_multiline_calls() {
     let output_dir = temp_dir.path().join("output");
     fs::write(
         &input_file,
-        r#"counter = 1
+        r#"import stdlib
+counter = 1
 
 def test():
     ok = 1
@@ -610,6 +656,7 @@ def test():
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -629,7 +676,7 @@ def test():
     assert_eq!(counter_entry.kind, GeneratedCommandKind::ControlFlow);
     let counter_source = counter_entry.source.as_ref().expect("source missing");
     assert_eq!(counter_source.file, expected_source);
-    assert_eq!(counter_source.line, 1);
+    assert_eq!(counter_source.line, 2);
     assert_eq!(counter_source.column, 1);
 
     let tellraw_entry = source_map
@@ -640,7 +687,7 @@ def test():
     assert_eq!(tellraw_entry.kind, GeneratedCommandKind::StdLib);
     let tellraw_source = tellraw_entry.source.as_ref().expect("source missing");
     assert_eq!(tellraw_source.file, PathBuf::from("main.cbl"));
-    assert_eq!(tellraw_source.line, 6);
+    assert_eq!(tellraw_source.line, 7);
     assert_eq!(tellraw_source.column, 9);
 }
 
@@ -664,6 +711,7 @@ fn source_map_tracks_while_condition_helper_metadata() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -710,6 +758,7 @@ fn validate_reports_stale_source_map_entries() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: commands_json.clone(),

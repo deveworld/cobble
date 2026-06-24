@@ -2367,6 +2367,7 @@ fn is_known_module_call(module: &str, method: &str) -> bool {
         "datapack" => {
             datapack_json_resource_type(method).is_some() || datapack_tag_type(method).is_some()
         }
+        "resource_pack" => matches!(method, "item_model" | "block_model" | "lang"),
         _ => false,
     }
 }
@@ -4153,6 +4154,7 @@ fn is_builtin_symbol(name: &str) -> bool {
             | "bossbar"
             | "team"
             | "entity"
+            | "resource_pack"
     )
 }
 

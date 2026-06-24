@@ -8,7 +8,8 @@ fn compile_source(source: &str) -> Result<(TempDir, PathBuf), String> {
     let input_file = temp_dir.path().join("test.cbl");
     let output_dir = temp_dir.path().join("output");
 
-    fs::write(&input_file, source).unwrap();
+    let full_source = format!("import stdlib\n{source}");
+    fs::write(&input_file, &full_source).unwrap();
 
     // Use the build command
     cobble::commands::build::build(cobble::commands::build::BuildOptions {
@@ -20,6 +21,7 @@ fn compile_source(source: &str) -> Result<(TempDir, PathBuf), String> {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -200,6 +202,7 @@ fn test_directory_build_does_not_duplicate_module_initializers() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -303,36 +306,11 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Check main function
+    // Literal range loops are unrolled directly into the containing function.
     let main_content = read_function(&output_dir, "test");
-    assert!(main_content.contains("scoreboard players set i loop_counter 0"));
-    assert!(main_content.contains("function cobble:loop_temp_"));
-
-    // Check for loop body function (contains the actual command)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
-        .collect();
-
-    assert!(!body_files.is_empty(), "No loop_body function generated");
-
-    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
-    assert!(body_content.contains("say hello"));
-
-    // Check loop control function
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
-        .collect();
-
-    assert!(!loop_files.is_empty(), "No loop control function generated");
-
-    let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
-    assert!(loop_content.contains("scoreboard players add i loop_counter 1"));
-    assert!(loop_content
-        .contains("execute if score i loop_counter matches ..2 run function cobble:loop_temp_"));
+    assert_eq!(main_content.matches("say hello").count(), 3);
+    assert!(!main_content.contains("loop_counter"));
+    assert!(!main_content.contains("loop_temp_"));
 }
 
 #[test]
@@ -580,21 +558,16 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Find the loop body function (contains the arithmetic)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
-        .collect();
-
-    assert!(!body_files.is_empty(), "No loop_body function generated");
-
-    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
-
-    // Loop variable is now a macro parameter, but arithmetic still uses scoreboard
-    // The body should have scoreboard operations with the loop variable from parameter
-    assert!(body_content.contains("scoreboard players operation total temp"));
-    assert!(body_content.contains("i")); // Variable i should appear somewhere
+    let main_content = read_function(&output_dir, "test");
+    assert!(main_content.contains("scoreboard players set total temp 0"));
+    for value in 0..5 {
+        assert!(
+            main_content.contains(&format!("scoreboard players add total temp {value}")),
+            "{}",
+            main_content
+        );
+    }
+    assert!(!main_content.contains("loop_counter"));
 }
 
 #[test]
@@ -1094,23 +1067,12 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Find the loop body function (contains the tellraw)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
-        .collect();
-
-    assert!(!body_files.is_empty(), "No loop_body function generated");
-
-    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
-
-    // Loop variable is now passed as macro parameter
-    // So {i} should be converted to $(i) in the macro function
-    assert!(body_content.contains("$tellraw"));
-    assert!(body_content.contains("$(i)"));
-    // Should NOT contain literal {i}
-    assert!(!body_content.contains("Value: {i}"));
+    let main_content = read_function(&output_dir, "test");
+    assert!(main_content.contains(r#"tellraw @a {"text":"Value: 0"}"#));
+    assert!(main_content.contains(r#"tellraw @a {"text":"Value: 1"}"#));
+    assert!(main_content.contains(r#"tellraw @a {"text":"Value: 2"}"#));
+    assert!(!main_content.contains("Value: {i}"));
+    assert!(!main_content.contains("$(i)"));
 }
 
 #[test]
@@ -1514,14 +1476,16 @@ def repeat(player):
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
-        .collect();
-    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
-    assert!(body_content.contains("$(player)"), "{}", body_content);
-    assert!(body_content.contains("$(i)"), "{}", body_content);
+    let content = read_function(&output_dir, "repeat");
+    assert!(
+        content.contains(r#"$tellraw $(player) {"text":"loop 0"}"#),
+        "{content}"
+    );
+    assert!(
+        content.contains(r#"$tellraw $(player) {"text":"loop 1"}"#),
+        "{content}"
+    );
+    assert!(!content.contains("$(i)"), "{content}");
 }
 
 #[test]
@@ -1775,6 +1739,7 @@ def test():
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -1802,49 +1767,12 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Check that loop body is a macro function
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
-        .collect();
-
-    assert!(!body_files.is_empty(), "No loop_body function generated");
-
-    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
-    // Should use macro variable syntax
-    assert!(body_content.contains("$say Count: $(i)"));
-
-    // Check loop control function stores variable to storage
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
-        .collect();
-
-    assert!(!loop_files.is_empty(), "No loop control function generated");
-
-    let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
-    // After Bug 1 fix, loop_temp no longer stores - wrapper does that
-    // Just verify it calls wrapper and recurses
-    assert!(
-        loop_content.contains("function cobble:loop_wrapper_")
-            || loop_content.contains("function cobble:loop_body_")
-    );
-
-    // Check wrapper function exists (contains storage operations)
-    let wrapper_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_wrapper_"))
-        .collect();
-
-    if !wrapper_files.is_empty() {
-        let wrapper_content = fs::read_to_string(wrapper_files[0].path()).unwrap();
-        assert!(wrapper_content.contains("execute store result storage"));
-        assert!(wrapper_content.contains("function cobble:loop_body_"));
-        assert!(wrapper_content.contains("with storage"));
-    }
+    let content = read_function(&output_dir, "test");
+    assert!(content.contains("say Count: 0"), "{content}");
+    assert!(content.contains("say Count: 1"), "{content}");
+    assert!(content.contains("say Count: 2"), "{content}");
+    assert!(!content.contains("$(i)"), "{content}");
+    assert!(!content.contains("loop_"), "{content}");
 }
 
 #[test]
@@ -1857,16 +1785,12 @@ def test():
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_body_"))
-        .collect();
-
-    assert!(!body_files.is_empty());
-
-    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
-    assert!(body_content.contains("$say Even: $(i)"));
+    let content = read_function(&output_dir, "test");
+    for value in [0, 2, 4, 6, 8] {
+        assert!(content.contains(&format!("say Even: {value}")), "{content}");
+    }
+    assert!(!content.contains("say Even: 10"), "{content}");
+    assert!(!content.contains("loop_"), "{content}");
 }
 
 #[test]
@@ -2349,8 +2273,8 @@ def test():
 
 #[test]
 fn test_nested_loops_no_infinite_loop() {
-    // Regression test for nested loop wrapper naming bug
-    // Bug: wrapper functions had duplicate names causing infinite loops
+    // Regression coverage for nested loops: compile-time unrolling should
+    // produce the full Cartesian product without recursive loop helpers.
     let source = r#"
 def test():
     for i in range(2):
@@ -2360,49 +2284,24 @@ def test():
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
-
-    // Check that we have TWO distinct wrapper functions, not one
-    let wrapper_files: Vec<_> = std::fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_wrapper_"))
-        .collect();
-
+    let content = read_function(&output_dir, "test");
+    assert_eq!(content.matches("say done").count(), 4, "{content}");
+    assert!(
+        content.contains("scoreboard players set result temp 0"),
+        "{content}"
+    );
     assert_eq!(
-        wrapper_files.len(),
+        content
+            .matches("scoreboard players set result temp 1")
+            .count(),
         2,
-        "Should have exactly 2 wrapper functions for nested loops, found {}",
-        wrapper_files.len()
+        "{content}"
     );
-
-    // Verify outer loop calls the correct (outer) wrapper
-    let loop_temp_0 = read_function(&output_dir, "loop_temp_0");
     assert!(
-        loop_temp_0.contains("loop_wrapper_3") || loop_temp_0.contains("loop_wrapper_"),
-        "Outer loop should call a wrapper function"
+        content.contains("scoreboard players set result temp 2"),
+        "{content}"
     );
-
-    // Verify inner loop calls a different wrapper
-    let loop_temp_1 = read_function(&output_dir, "loop_temp_1");
-    assert!(
-        loop_temp_1.contains("loop_wrapper_2") || loop_temp_1.contains("loop_wrapper_"),
-        "Inner loop should call a wrapper function"
-    );
-
-    // Most importantly: verify the two wrappers are DIFFERENT
-    let outer_wrapper_call = loop_temp_0
-        .lines()
-        .find(|l| l.contains("loop_wrapper_"))
-        .unwrap();
-    let inner_wrapper_call = loop_temp_1
-        .lines()
-        .find(|l| l.contains("loop_wrapper_"))
-        .unwrap();
-
-    assert_ne!(
-        outer_wrapper_call, inner_wrapper_call,
-        "Outer and inner loops must call DIFFERENT wrapper functions to avoid infinite loop"
-    );
+    assert!(!content.contains("loop_"), "{content}");
 }
 
 #[test]
@@ -2416,22 +2315,15 @@ def test():
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
-    let loop_body_1 = read_function(&output_dir, "loop_body_1");
-
-    // Both i and j should be accessible from loop_counter
-    assert!(
-        loop_body_1.contains("i loop_counter"),
-        "Inner loop body should access outer loop variable i from loop_counter"
-    );
-    assert!(
-        loop_body_1.contains("j loop_counter"),
-        "Inner loop body should access inner loop variable j from loop_counter"
-    );
-
-    // Should perform the addition
-    assert!(
-        loop_body_1.contains("result temp =") && loop_body_1.contains("+="),
-        "Should perform addition: result = i + j"
+    let content = read_function(&output_dir, "test");
+    assert_eq!(
+        content.lines().collect::<Vec<_>>(),
+        vec![
+            "scoreboard players set result temp 0",
+            "scoreboard players set result temp 1",
+            "scoreboard players set result temp 1",
+            "scoreboard players set result temp 2",
+        ]
     );
 }
 
@@ -2447,19 +2339,13 @@ def test():
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
-
-    // Should have 3 wrapper functions
-    let wrapper_files: Vec<_> = std::fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_wrapper_"))
-        .collect();
-
+    let content = read_function(&output_dir, "test");
     assert_eq!(
-        wrapper_files.len(),
-        3,
-        "Should have exactly 3 wrapper functions for triple nested loops"
+        content.matches("say Triple loop works").count(),
+        8,
+        "{content}"
     );
+    assert!(!content.contains("loop_"), "{content}");
 }
 
 // ============================================================================
@@ -2532,6 +2418,7 @@ fn test_regression_decimal_pack_format() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -2573,6 +2460,7 @@ fn test_regression_decimal_pack_format() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
@@ -2595,6 +2483,7 @@ fn test_regression_decimal_pack_format() {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: false,
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),

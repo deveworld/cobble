@@ -39,6 +39,7 @@ fn build_fixture(project: &str) {
         verbose: false,
         quiet: false,
         zip: false,
+        experimental_resource_pack: false,
         validate: commands_json.exists(),
         dry_run: false,
         commands_json,

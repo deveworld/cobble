@@ -73,6 +73,10 @@ enum Commands {
         #[arg(long)]
         zip: bool,
 
+        /// Enable experimental resource-pack asset output
+        #[arg(long)]
+        experimental_resource_pack: bool,
+
         /// Validate generated .mcfunction files after building
         #[arg(long)]
         validate: bool,
@@ -114,6 +118,10 @@ enum Commands {
         /// Create a zip file
         #[arg(long)]
         zip: bool,
+
+        /// Enable experimental resource-pack asset output
+        #[arg(long)]
+        experimental_resource_pack: bool,
 
         /// Build to the configured linked data pack target
         #[arg(long)]
@@ -273,6 +281,7 @@ fn main() {
             verbose,
             quiet,
             zip,
+            experimental_resource_pack,
             validate,
             dry_run,
             commands_json,
@@ -285,6 +294,7 @@ fn main() {
             verbose,
             quiet,
             zip,
+            experimental_resource_pack,
             validate,
             dry_run,
             commands_json,
@@ -297,6 +307,7 @@ fn main() {
             description,
             verbose,
             zip,
+            experimental_resource_pack,
             link,
             validate,
             commands_json,
@@ -308,6 +319,7 @@ fn main() {
             description,
             verbose,
             zip,
+            experimental_resource_pack,
             link,
             validate,
             commands_json,

@@ -411,6 +411,7 @@ mod tests {
                 verbose: false,
                 quiet: true,
                 zip: false,
+                experimental_resource_pack: false,
                 validate: false,
                 dry_run: false,
                 commands_json: PathBuf::from("data/commands.json"),

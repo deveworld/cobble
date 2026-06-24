@@ -84,7 +84,9 @@ def on_load():
   {
     name: "Resources",
     namespace: "resource_demo",
-    source: `datapack.function_tag("minecraft:load", ["resource_demo:on_load"])
+    source: `from stdlib import datapack
+
+datapack.function_tag("minecraft:load", ["resource_demo:on_load"])
 datapack.predicate("checks/always", {
     "condition": "minecraft:random_chance",
     "chance": 1
@@ -109,7 +111,9 @@ def on_load():
   {
     name: "Validation Focus",
     namespace: "validation_demo",
-    source: `def commands():
+    source: `from stdlib import event
+
+def commands():
     /dialog show @p validation_demo:notice
     /fetchprofile @p
     /return run say returned

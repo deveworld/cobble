@@ -1,0 +1,201 @@
+---
+source: tests/generated_snapshots_test.rs
+assertion_line: 199
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "active_stdlib_modules": [
+    "datapack",
+    "event",
+    "score",
+    "storage",
+    "text"
+  ],
+  "cobble_version": "<cobble-version>",
+  "description": "Cobble stdlib v2 fixture",
+  "generated": {
+    "advancements": 0,
+    "commands": 7,
+    "custom_function_tags": 1,
+    "function_tags": 2,
+    "functions": 2,
+    "item_modifiers": 0,
+    "json_function_tags": 1,
+    "json_resources": 2,
+    "loot_tables": 0,
+    "predicates": 1,
+    "recipes": 0,
+    "source_map_entries": 7,
+    "stdlib_function_tags": 1,
+    "total_json_resources": 2
+  },
+  "generated_at_unix_epoch_ms": "<generated-at-unix-epoch-ms>",
+  "generated_namespaces": [
+    "cobble_stdlib_v2",
+    "minecraft"
+  ],
+  "input": {
+    "compiled_files": [
+      "src/main.cbl"
+    ],
+    "entry_points": [
+      "main.cbl"
+    ],
+    "source": "src"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "cobble_stdlib_v2",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "project_id": "<project-id>",
+  "project_root": "<project-root>",
+  "resources": [
+    {
+      "kind": "function_tag",
+      "namespace": "cobble_stdlib_v2",
+      "path": "utility"
+    },
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "load"
+    },
+    {
+      "kind": "predicate",
+      "namespace": "cobble_stdlib_v2",
+      "path": "checks/always"
+    }
+  ],
+  "stdlib_version": 2,
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "cobble_stdlib_v2",
+  "minecraft"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/cobble_stdlib_v2/function/announce.mcfunction",
+      "generated_line": 1,
+      "command": "say stdlib v2 utility tag",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 16,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
+      "generated_line": 1,
+      "command": "gamerule max_command_sequence_length 1000000000",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard objectives add temp dummy",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
+      "generated_line": 3,
+      "command": "scoreboard players set points temp 10",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 10,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
+      "generated_line": 4,
+      "command": "data modify storage cobble_stdlib_v2:global state set value {ready:1b}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 11,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
+      "generated_line": 5,
+      "command": "tellraw @a {\"text\":\"Stdlib v2 modules ready\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 12,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
+      "generated_line": 6,
+      "command": "function cobble_stdlib_v2:announce",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 13,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    }
+  ]
+}
+
+===== data/cobble_stdlib_v2/function/announce.mcfunction =====
+say stdlib v2 utility tag
+
+===== data/cobble_stdlib_v2/function/load.mcfunction =====
+gamerule max_command_sequence_length 1000000000
+scoreboard objectives add temp dummy
+scoreboard players set points temp 10
+data modify storage cobble_stdlib_v2:global state set value {ready:1b}
+tellraw @a {"text":"Stdlib v2 modules ready"}
+function cobble_stdlib_v2:announce
+
+===== data/cobble_stdlib_v2/predicate/checks/always.json =====
+{
+  "chance": 1,
+  "condition": "minecraft:random_chance"
+}
+
+===== data/cobble_stdlib_v2/tags/function/utility.json =====
+{
+  "values": [
+    "cobble_stdlib_v2:announce"
+  ]
+}
+
+===== data/minecraft/tags/function/load.json =====
+{
+  "values": [
+    "cobble_stdlib_v2:load"
+  ]
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Cobble stdlib v2 fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

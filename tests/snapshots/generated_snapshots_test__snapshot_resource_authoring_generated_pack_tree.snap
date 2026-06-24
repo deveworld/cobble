@@ -1,9 +1,26 @@
 ---
 source: tests/generated_snapshots_test.rs
+assertion_line: 190
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
 {
+  "active_stdlib_modules": [
+    "bossbar",
+    "datapack",
+    "entity",
+    "event",
+    "math",
+    "random",
+    "resource_pack",
+    "schedule",
+    "score",
+    "score.objective",
+    "storage",
+    "team",
+    "text",
+    "timer"
+  ],
   "cobble_version": "<cobble-version>",
   "description": "Cobble resource authoring fixture",
   "generated": {
@@ -104,6 +121,7 @@ expression: datapack_tree_snapshot(&output_dir)
       "path": "stonecutting/polished_granite"
     }
   ],
+  "stdlib_version": 2,
   "validation": null,
   "version": 1
 }
@@ -269,16 +287,16 @@ function cobble_resource_authoring:grant_reward with storage cobble_resource_aut
 ===== data/cobble_resource_authoring/tags/block/building_blocks.json =====
 {
   "values": [
-    "minecraft:stone",
-    "minecraft:deepslate"
+    "minecraft:deepslate",
+    "minecraft:stone"
   ]
 }
 
 ===== data/cobble_resource_authoring/tags/entity_type/hostile_targets.json =====
 {
   "values": [
-    "minecraft:zombie",
-    "minecraft:skeleton"
+    "minecraft:skeleton",
+    "minecraft:zombie"
   ]
 }
 

@@ -84,7 +84,7 @@ function isSafeDataPackZipPath(path: string) {
   if (path === "pack.mcmeta") {
     return true;
   }
-  if (!path.startsWith("data/")) {
+  if (!path.startsWith("data/") && !path.startsWith("assets/")) {
     return false;
   }
   if (path.startsWith("/") || path.includes("\\") || path.includes(":")) {

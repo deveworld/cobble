@@ -39,31 +39,13 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    // Bug fix: Negative step loops should start at count - 1 (not count + step)
-    // range(10) by -2 should start at 9 (not 8)
-    assert!(
-        content.contains("scoreboard players set i loop_counter 9"),
-        "range(10) by -2 should start at 9 (count - 1), not 8 (count + step)"
-    );
-
-    // Check loop control function exists and uses correct decrement
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
-        .collect();
-
-    assert!(!loop_files.is_empty(), "Loop temp functions should exist");
-
-    let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
-    assert!(
-        loop_content.contains("scoreboard players remove i loop_counter 2"),
-        "Loop should decrement by 2"
-    );
-    assert!(
-        loop_content.contains("matches 0.."),
-        "Loop should continue while i >= 0"
-    );
+    assert!(content.contains("say Value: 9"), "{content}");
+    assert!(content.contains("say Value: 7"), "{content}");
+    assert!(content.contains("say Value: 5"), "{content}");
+    assert!(content.contains("say Value: 3"), "{content}");
+    assert!(content.contains("say Value: 1"), "{content}");
+    assert!(!content.contains("say Value: 8"), "{content}");
+    assert!(!content.contains("loop_counter"), "{content}");
 }
 
 #[test]
@@ -77,25 +59,12 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    // Bug fix: range(10) by -3 should start at 9 (not 7)
-    // Expected iterations: 9, 6, 3, 0 (4 times)
-    // Previously buggy: 7, 4, 1 (3 times)
-    assert!(
-        content.contains("scoreboard players set i loop_counter 9"),
-        "range(10) by -3 should start at 9 (count - 1), not 7 (count + step)"
-    );
-
-    let loop_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("loop_temp_"))
-        .collect();
-
-    let loop_content = fs::read_to_string(loop_files[0].path()).unwrap();
-    assert!(
-        loop_content.contains("scoreboard players remove i loop_counter 3"),
-        "Loop should decrement by 3"
-    );
+    assert!(content.contains("say Value: 9"), "{content}");
+    assert!(content.contains("say Value: 6"), "{content}");
+    assert!(content.contains("say Value: 3"), "{content}");
+    assert!(content.contains("say Value: 0"), "{content}");
+    assert!(!content.contains("say Value: 7"), "{content}");
+    assert!(!content.contains("loop_counter"), "{content}");
 }
 
 #[test]
@@ -109,12 +78,12 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    // range(20) by -5 should start at 19 (not 15)
-    // Expected iterations: 19, 14, 9, 4 (stops before -1)
-    assert!(
-        content.contains("scoreboard players set i loop_counter 19"),
-        "range(20) by -5 should start at 19 (count - 1), not 15 (count + step)"
-    );
+    assert!(content.contains("say Value: 19"), "{content}");
+    assert!(content.contains("say Value: 14"), "{content}");
+    assert!(content.contains("say Value: 9"), "{content}");
+    assert!(content.contains("say Value: 4"), "{content}");
+    assert!(!content.contains("say Value: 15"), "{content}");
+    assert!(!content.contains("loop_counter"), "{content}");
 }
 
 #[test]

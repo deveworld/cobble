@@ -1,0 +1,193 @@
+---
+source: tests/generated_snapshots_test.rs
+assertion_line: 217
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "active_stdlib_modules": [
+    "datapack"
+  ],
+  "cobble_version": "<cobble-version>",
+  "description": "Cobble compile-time unrolling fixture",
+  "generated": {
+    "advancements": 0,
+    "commands": 8,
+    "custom_function_tags": 1,
+    "function_tags": 1,
+    "functions": 1,
+    "item_modifiers": 0,
+    "json_function_tags": 1,
+    "json_resources": 1,
+    "loot_tables": 0,
+    "predicates": 0,
+    "recipes": 0,
+    "source_map_entries": 8,
+    "stdlib_function_tags": 0,
+    "total_json_resources": 1
+  },
+  "generated_at_unix_epoch_ms": "<generated-at-unix-epoch-ms>",
+  "generated_namespaces": [
+    "cobble_unrolling",
+    "minecraft"
+  ],
+  "input": {
+    "compiled_files": [
+      "src/main.cbl"
+    ],
+    "entry_points": [
+      "main.cbl"
+    ],
+    "source": "src"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "cobble_unrolling",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "project_id": "<project-id>",
+  "project_root": "<project-root>",
+  "resources": [
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "load"
+    }
+  ],
+  "stdlib_version": 2,
+  "unrolled_loops": 3,
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "cobble_unrolling",
+  "minecraft"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/cobble_unrolling/function/load.mcfunction",
+      "generated_line": 1,
+      "command": "say range index 0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 6,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_unrolling/function/load.mcfunction",
+      "generated_line": 2,
+      "command": "say range index 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 6,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_unrolling/function/load.mcfunction",
+      "generated_line": 3,
+      "command": "say range index 2",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 6,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_unrolling/function/load.mcfunction",
+      "generated_line": 4,
+      "command": "say array value north",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 8,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_unrolling/function/load.mcfunction",
+      "generated_line": 5,
+      "command": "say array value south",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 8,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_unrolling/function/load.mcfunction",
+      "generated_line": 6,
+      "command": "say stepped value 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 10,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_unrolling/function/load.mcfunction",
+      "generated_line": 7,
+      "command": "say stepped value 3",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 10,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_unrolling/function/load.mcfunction",
+      "generated_line": 8,
+      "command": "say stepped value 5",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 10,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    }
+  ]
+}
+
+===== data/cobble_unrolling/function/load.mcfunction =====
+say range index 0
+say range index 1
+say range index 2
+say array value north
+say array value south
+say stepped value 1
+say stepped value 3
+say stepped value 5
+
+===== data/minecraft/tags/function/load.json =====
+{
+  "values": [
+    "cobble_unrolling:load"
+  ]
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Cobble compile-time unrolling fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

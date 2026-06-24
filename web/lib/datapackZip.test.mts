@@ -3,11 +3,15 @@ import { test } from "node:test";
 
 import { createStoredZip, isDataPackZipFile, type ZipFileLike } from "./datapackZip.ts";
 
-test("data pack ZIP includes only pack and data files", async () => {
+test("data pack ZIP includes only pack, data, and asset files", async () => {
   const files: ZipFileLike[] = [
     {
       path: ".cobble/source_map.json",
       content: "{}"
+    },
+    {
+      path: "assets/demo/models/item/test.json",
+      content: '{"parent":"minecraft:item/generated"}'
     },
     {
       path: "data/demo/function/load.mcfunction",
@@ -27,6 +31,7 @@ test("data pack ZIP includes only pack and data files", async () => {
   assert.deepEqual(
     zipFiles.map((file) => file.path).sort(),
     [
+      "assets/demo/models/item/test.json",
       "data/demo/function/load.mcfunction",
       "data/minecraft/tags/function/load.json",
       "pack.mcmeta"
@@ -37,14 +42,16 @@ test("data pack ZIP includes only pack and data files", async () => {
   assert.deepEqual(
     entries.map((entry) => entry.name),
     [
+      "assets/demo/models/item/test.json",
       "data/demo/function/load.mcfunction",
       "data/minecraft/tags/function/load.json",
       "pack.mcmeta"
     ]
   );
-  assert.equal(entries[0].content, "say load\n");
-  assert.equal(entries[1].content, '{"values":["demo:load"]}');
-  assert.equal(entries[2].content, '{"pack":{"description":"test"}}');
+  assert.equal(entries[0].content, '{"parent":"minecraft:item/generated"}');
+  assert.equal(entries[1].content, "say load\n");
+  assert.equal(entries[2].content, '{"values":["demo:load"]}');
+  assert.equal(entries[3].content, '{"pack":{"description":"test"}}');
 });
 
 test("data pack ZIP rejects unsafe entry paths", () => {
@@ -53,6 +60,7 @@ test("data pack ZIP rejects unsafe entry paths", () => {
     "data/demo/../escape.mcfunction",
     "data//demo.mcfunction",
     "data/./demo.mcfunction",
+    "assets/../escape.json",
     "/data/demo.mcfunction",
     "data\\demo.mcfunction",
     "data/demo:bad.mcfunction",

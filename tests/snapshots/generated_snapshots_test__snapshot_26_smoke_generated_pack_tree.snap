@@ -1,24 +1,41 @@
 ---
 source: tests/generated_snapshots_test.rs
+assertion_line: 172
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
 {
+  "active_stdlib_modules": [
+    "bossbar",
+    "datapack",
+    "entity",
+    "event",
+    "math",
+    "random",
+    "resource_pack",
+    "schedule",
+    "score",
+    "score.objective",
+    "storage",
+    "team",
+    "text",
+    "timer"
+  ],
   "cobble_version": "<cobble-version>",
   "description": "Cobble 26.1.2 smoke fixture",
   "generated": {
     "advancements": 0,
-    "commands": 52,
+    "commands": 46,
     "custom_function_tags": 0,
     "function_tags": 2,
-    "functions": 10,
+    "functions": 7,
     "item_modifiers": 0,
     "json_function_tags": 0,
     "json_resources": 1,
     "loot_tables": 0,
     "predicates": 0,
     "recipes": 0,
-    "source_map_entries": 52,
+    "source_map_entries": 46,
     "stdlib_function_tags": 2,
     "total_json_resources": 1
   },
@@ -59,6 +76,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "path": "tick"
     }
   ],
+  "stdlib_version": 2,
+  "unrolled_loops": 1,
   "validation": null,
   "version": 1
 }
@@ -138,20 +157,13 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 2,
-      "command": "scoreboard objectives add loop_counter dummy",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 3,
       "command": "scoreboard objectives add temp dummy",
       "source": null,
       "kind": "RuntimeSetup"
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 4,
+      "generated_line": 3,
       "command": "scoreboard players set score temp 10",
       "source": {
         "file": "src/main.cbl",
@@ -162,7 +174,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 5,
+      "generated_line": 4,
       "command": "scoreboard players set health temp 20",
       "source": {
         "file": "src/main.cbl",
@@ -173,7 +185,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 6,
+      "generated_line": 5,
       "command": "scoreboard players set active temp 1",
       "source": {
         "file": "src/main.cbl",
@@ -184,7 +196,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 7,
+      "generated_line": 6,
       "command": "data modify storage cobble_26_smoke:global args.message set value \"Cobble 26.1.2 smoke test loaded\"",
       "source": {
         "file": "src/main.cbl",
@@ -195,7 +207,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 8,
+      "generated_line": 7,
       "command": "function cobble_26_smoke:announce with storage cobble_26_smoke:global args",
       "source": {
         "file": "src/main.cbl",
@@ -206,7 +218,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 9,
+      "generated_line": 8,
       "command": "data modify storage cobble_26_smoke:global args.player set value \"@a\"",
       "source": {
         "file": "src/main.cbl",
@@ -217,7 +229,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 10,
+      "generated_line": 9,
       "command": "data modify storage cobble_26_smoke:global args.amount set value 1",
       "source": {
         "file": "src/main.cbl",
@@ -228,7 +240,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 11,
+      "generated_line": 10,
       "command": "function cobble_26_smoke:reward with storage cobble_26_smoke:global args",
       "source": {
         "file": "src/main.cbl",
@@ -239,7 +251,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 12,
+      "generated_line": 11,
       "command": "scoreboard objectives add smoke dummy \"Smoke Test\"",
       "source": {
         "file": "src/main.cbl",
@@ -250,7 +262,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 13,
+      "generated_line": 12,
       "command": "tellraw @a {\"text\":\"Smoke datapack initialized\",\"color\":\"green\"}",
       "source": {
         "file": "src/main.cbl",
@@ -261,7 +273,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 14,
+      "generated_line": 13,
       "command": "dialog clear @a",
       "source": {
         "file": "src/main.cbl",
@@ -272,7 +284,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 15,
+      "generated_line": 14,
       "command": "dialog show @a cobble_26_smoke:notice",
       "source": {
         "file": "src/main.cbl",
@@ -283,7 +295,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 16,
+      "generated_line": 15,
       "command": "fetchprofile name Notch",
       "source": {
         "file": "src/main.cbl",
@@ -294,7 +306,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 17,
+      "generated_line": 16,
       "command": "fetchprofile id 123e4567-e89b-12d3-a456-426614174000",
       "source": {
         "file": "src/main.cbl",
@@ -305,7 +317,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 18,
+      "generated_line": 17,
       "command": "waypoint list",
       "source": {
         "file": "src/main.cbl",
@@ -316,7 +328,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 19,
+      "generated_line": 18,
       "command": "stopwatch create cobble:smoke",
       "source": {
         "file": "src/main.cbl",
@@ -327,7 +339,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 20,
+      "generated_line": 19,
       "command": "stopwatch query cobble:smoke 20.0",
       "source": {
         "file": "src/main.cbl",
@@ -338,7 +350,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 21,
+      "generated_line": 20,
       "command": "version",
       "source": {
         "file": "src/main.cbl",
@@ -346,72 +358,6 @@ expression: datapack_tree_snapshot(&output_dir)
         "column": 5
       },
       "kind": "UserCommand"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/loop_body_3.mcfunction",
-      "generated_line": 1,
-      "command": "$say loop $(i)",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 50,
-        "column": 9
-      },
-      "kind": "UserCommand"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/loop_temp_3.mcfunction",
-      "generated_line": 1,
-      "command": "execute if score i loop_counter matches ..2 run function cobble_26_smoke:loop_wrapper_4",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 49,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/loop_temp_3.mcfunction",
-      "generated_line": 2,
-      "command": "scoreboard players add i loop_counter 1",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 49,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/loop_temp_3.mcfunction",
-      "generated_line": 3,
-      "command": "execute if score i loop_counter matches ..2 run function cobble_26_smoke:loop_temp_3",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 49,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/loop_wrapper_4.mcfunction",
-      "generated_line": 1,
-      "command": "execute store result storage cobble_26_smoke:global args.i int 1 run scoreboard players get i loop_counter",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 49,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/loop_wrapper_4.mcfunction",
-      "generated_line": 2,
-      "command": "function cobble_26_smoke:loop_body_3 with storage cobble_26_smoke:global args",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 49,
-        "column": 5
-      },
-      "kind": "ControlFlow"
     },
     {
       "generated_path": "data/cobble_26_smoke/function/operator_probe.mcfunction",
@@ -603,28 +549,39 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 14,
-      "command": "scoreboard players set i loop_counter 0",
+      "command": "say loop 0",
       "source": {
         "file": "src/main.cbl",
         "line": 49,
         "column": 5
       },
-      "kind": "ControlFlow"
+      "kind": "Unrolled"
     },
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 15,
-      "command": "function cobble_26_smoke:loop_temp_3",
+      "command": "say loop 1",
       "source": {
         "file": "src/main.cbl",
         "line": 49,
         "column": 5
       },
-      "kind": "ControlFlow"
+      "kind": "Unrolled"
     },
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 16,
+      "command": "say loop 2",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 49,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
+      "generated_line": 17,
       "command": "execute as @a[gamemode=creative] at @s run particle flame ~ ~1 ~",
       "source": {
         "file": "src/main.cbl",
@@ -655,7 +612,6 @@ $tellraw @a {"text":"$(message)","color":"aqua"}
 
 ===== data/cobble_26_smoke/function/init.mcfunction =====
 gamerule max_command_sequence_length 1000000000
-scoreboard objectives add loop_counter dummy
 scoreboard objectives add temp dummy
 scoreboard players set score temp 10
 scoreboard players set health temp 20
@@ -675,18 +631,6 @@ waypoint list
 stopwatch create cobble:smoke
 stopwatch query cobble:smoke 20.0
 version
-
-===== data/cobble_26_smoke/function/loop_body_3.mcfunction =====
-$say loop $(i)
-
-===== data/cobble_26_smoke/function/loop_temp_3.mcfunction =====
-execute if score i loop_counter matches ..2 run function cobble_26_smoke:loop_wrapper_4
-scoreboard players add i loop_counter 1
-execute if score i loop_counter matches ..2 run function cobble_26_smoke:loop_temp_3
-
-===== data/cobble_26_smoke/function/loop_wrapper_4.mcfunction =====
-execute store result storage cobble_26_smoke:global args.i int 1 run scoreboard players get i loop_counter
-function cobble_26_smoke:loop_body_3 with storage cobble_26_smoke:global args
 
 ===== data/cobble_26_smoke/function/operator_probe.mcfunction =====
 execute as @a[tag=operator] run tellraw @s {"text":"Operator probe","color":"yellow"}
@@ -712,8 +656,9 @@ scoreboard players operation match_temp_2 temp = score temp
 execute if score match_temp_2 temp matches 0..14 run say warming
 execute if score match_temp_2 temp matches 15..30 run say active
 execute unless score match_temp_2 temp matches 0..14 unless score match_temp_2 temp matches 15..30 run say overflow
-scoreboard players set i loop_counter 0
-function cobble_26_smoke:loop_temp_3
+say loop 0
+say loop 1
+say loop 2
 execute as @a[gamemode=creative] at @s run particle flame ~ ~1 ~
 
 ===== data/minecraft/tags/function/load.json =====

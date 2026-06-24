@@ -218,3 +218,74 @@ COBBLE_MINECRAFT_EULA_ACCEPTED=1 scripts/test_minecraft_server.sh
 
 If this gate is skipped for a release candidate, record that in the release
 notes.
+
+## 0.8.0 QA Gate
+
+The 0.8.0 line adds stdlib v2 opt-in, resource authoring ergonomics,
+compile-time unrolling, and experimental resource-pack support. Run the
+existing 0.7.x gates plus the focused 0.8.0 checks below.
+
+### Focused 0.8.0 Workflow QA
+
+```bash
+scripts/qa_08_stdlib_v2.sh
+scripts/qa_08_resource_authoring.sh
+scripts/qa_08_unrolling.sh
+scripts/qa_08_resource_pack.sh
+scripts/check_resource_snapshots.sh
+scripts/check_resource_schemas.sh
+```
+
+Coverage:
+
+- `qa_08_stdlib_v2.sh` covers per-module opt-in (`from stdlib import text`,
+  `from stdlib import text, score`), `import stdlib` full activation,
+  `stdlib-module-not-imported` diagnostics for unimported modules,
+  `[stdlib] version = 1` deprecation warning, and build manifest
+  `stdlib_version`/`active_stdlib_modules` fields.
+- `qa_08_resource_authoring.sh` covers tag auto-merge for
+  `function_tag`/`block_tag`/`item_tag`/`entity_type_tag`, dedup of
+  identical values, deterministic sort order, `replace` warning, typed
+  schema violation diagnostics, passthrough resource overwrite refusal,
+  and path suggestions for slash/uppercase mistakes.
+- `qa_08_unrolling.sh` covers literal `range(n)`, `range(start, stop,
+  step)`, and literal array unrolling, the 1024 limit, the 256 expansion
+  warning, `unroll-non-literal` for non-literal iterables, source-map
+  `Unrolled` kind mapping, and manifest `unrolled_loops` count.
+- `qa_08_resource_pack.sh` covers `--experimental-resource-pack` opt-in,
+  refusal without the flag, `resource_pack.item_model`/
+  `block_model`/`lang` generation, unified `data/`+`assets/` output,
+  ZIP inclusion of `assets/`, manifest `experimental_features` and
+  `resource_pack_models`/`resource_pack_langs` counts, and `inspect --json`
+  asset reporting.
+- `check_resource_snapshots.sh` regenerates resource snapshots for
+  `examples/stdlib_v2`, `examples/resource_authoring`,
+  `examples/resource_pack`, and `examples/unrolling` and fails on
+  unintended diffs.
+- `check_resource_schemas.sh` validates typed tag JSON against the Cobble
+  tag schema and rejects non-array `values`, non-string entries, and
+  invalid resource IDs.
+
+### 0.8.0 Validated Build Matrix
+
+```bash
+cargo run --locked -- build examples/stdlib_v2 --validate -o /tmp/cobble-qa-stdlib-v2
+cargo run --locked -- build examples/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
+cargo run --locked -- build examples/unrolling --validate -o /tmp/cobble-qa-unrolling
+cargo run --locked -- build examples/resource_pack --experimental-resource-pack --validate -o /tmp/cobble-qa-resource-pack
+cargo run --locked -- inspect /tmp/cobble-qa-stdlib-v2 --json
+cargo run --locked -- inspect /tmp/cobble-qa-resource-authoring --json
+cargo run --locked -- inspect /tmp/cobble-qa-unrolling --json
+cargo run --locked -- inspect /tmp/cobble-qa-resource-pack --json
+```
+
+### 0.8.0 Aggregate Release Gate
+
+```bash
+scripts/qa_08_release_gate.sh
+```
+
+This composes the 0.7.x Rust/example/workflow gates with the 0.8.0 focused
+QA scripts, the validated build matrix above, resource snapshot and schema
+checks, the full web gate, optional server smoke when EULA acceptance is
+provided, and Cargo package dry-runs.

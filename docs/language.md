@@ -465,15 +465,27 @@ def countdown():
     # Negative step: count backwards
     for i in range(10) by -1:
         /say i = 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
+
+def stepped_range():
+    for i in range(1, 6, 2):
+        /say i = 1, 3, 5
+
+def literal_array():
+    for direction in ["north", "south"]:
+        /say direction = {direction}
 ```
 
-For loops are compiled into recursive functions with automatic loop counters.
+For loops over literal ranges and literal arrays are expanded at compile time.
+They emit the repeated commands directly instead of runtime scoreboard loop
+counters or helper functions.
 
-**Step Support:**
-- Use `by` keyword to specify step value: `for i in range(n) by step:`
-- Positive step: starts at 0, increments by step, continues while `i < n`
-- Negative step: starts at `n-1`, decrements by step (e.g., `by -1`), continues while `i >= 0`
-- Default step is 1 if not specified
+**Unrolling Support:**
+- `range(n)` iterates `0..n`.
+- `range(start, stop, step)` uses Python-style half-open bounds.
+- `for i in range(n) by step:` remains supported for compatibility.
+- Negative `by` over `range(n)` starts at `n - 1` and counts down.
+- Literal arrays may contain numbers, strings, or booleans.
+- A single loop may expand up to 1024 iterations. Expansions above 256 emit a warning.
 
 ### While Loops
 
@@ -859,6 +871,8 @@ paths. Cobble reports uppercase characters, invalid path separators, and common
 `namespace/path` mistakes with focused diagnostics.
 
 ```python
+from stdlib import datapack
+
 datapack.function_tag("utility", ["mypack:setup"])
 datapack.function_tag("minecraft:load", ["mypack:setup"])
 datapack.block_tag("solid_blocks", ["minecraft:stone"])
@@ -894,10 +908,48 @@ Supported resource declarations:
 - `datapack.item_modifier(name, json)`
 - `datapack.dialog(name, json)`
 
-Duplicate resource IDs are compile errors.
+Typed tag declarations with the same ID are merged, deduplicated, and sorted.
+Pass-through JSON declarations with identical JSON are accepted once; different
+JSON for the same ID is a compile error.
 Resource names may use nested paths and explicit namespaces, such as
 `other_pack:checks/is_ready`. Predicate, advancement, loot table, recipe, item
 modifier, and dialog declarations require object JSON values.
+
+### Experimental Resource-Pack Assets
+
+Resource-pack output is opt-in in 0.8.0. Enable it with
+`cobble build --experimental-resource-pack` or `[experimental] resource_pack =
+true` in `cobble.toml`, then import the `resource_pack` stdlib module.
+
+```python
+from stdlib import resource_pack
+
+resource_pack.item_model("mypack:custom_sword", {
+    "parent": "minecraft:item/handheld",
+    "textures": {
+        "layer0": "mypack:item/custom_sword"
+    }
+})
+
+resource_pack.block_model("display_block", {
+    "parent": "minecraft:block/cube_all",
+    "textures": {
+        "all": "mypack:block/display_block"
+    }
+})
+
+resource_pack.lang("en_us", {
+    "item.mypack.custom_sword": "Custom Sword",
+    "block.mypack.display_block": "Display Block"
+})
+```
+
+`resource_pack.item_model` writes `assets/<namespace>/models/item/<path>.json`,
+`resource_pack.block_model` writes
+`assets/<namespace>/models/block/<path>.json`, and `resource_pack.lang` writes
+`assets/<namespace>/lang/<locale>.json`. The same lowercase namespace/path
+validation used by `datapack.*` applies here. JSON must be an object, and lang
+values must be strings.
 
 ### Math Helpers
 
@@ -1001,7 +1053,7 @@ def calculate():
 - Power exponent must be a constant (variables not supported)
 - Complex expressions automatically use temporary fake players such as `#expr_temp` for intermediate results
 - All operations work with both constants and variables
-- Loop variables (like `i` in `for i in range(5)`) use the correct objective (`loop_counter`)
+- Literal loop variables are substituted at compile time during unrolling
 
 **⚠️ Division and Modulo by Zero:**
 
@@ -1146,7 +1198,7 @@ structured diagnostics.
 - Lists and maps are storage-backed values; access works only when the base
   resolves to storage, and dynamic indexing remains limited
 - Function parameters require Minecraft's function macro support
-- For loops only support `range()` iterators
+- For loops only support literal `range(...)` iterators or literal arrays
 - While loops compile to recursive functions (performance impact for very long loops)
 
 ## Further Reading

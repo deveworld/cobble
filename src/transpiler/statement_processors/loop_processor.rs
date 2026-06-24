@@ -2,264 +2,221 @@ use crate::ast::*;
 use crate::transpiler::{GeneratedCommand, GeneratedCommandKind, Transpiler};
 use std::collections::HashMap;
 
+const UNROLL_LIMIT: usize = 1024;
+const UNROLL_WARNING_THRESHOLD: usize = 256;
+
+#[derive(Debug, Clone)]
+enum UnrollValue {
+    Number(f64),
+    String(String),
+    Boolean(bool),
+}
+
+impl UnrollValue {
+    fn as_expression(&self) -> Expression {
+        match self {
+            Self::Number(value) => Expression::Number(*value),
+            Self::String(value) => Expression::String(value.clone()),
+            Self::Boolean(value) => Expression::Boolean(*value),
+        }
+    }
+
+    fn as_command_text(&self) -> String {
+        match self {
+            Self::Number(value) => format_unroll_number(*value),
+            Self::String(value) => value.clone(),
+            Self::Boolean(value) => value.to_string(),
+        }
+    }
+}
+
 impl Transpiler {
     pub(in crate::transpiler) fn process_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
-        let mut for_commands = Vec::new();
+        let values = self.unroll_values(for_loop)?;
+        if values.len() > UNROLL_WARNING_THRESHOLD {
+            eprintln!(
+                "warning: unroll-large-expansion: for {} expands to {} iterations",
+                for_loop.target,
+                values.len()
+            );
+        }
 
-        // Handle range-based for loops
-        if let Expression::Call(func, args) = &for_loop.iter {
-            if let Expression::Identifier(name) = &**func {
-                if name == "range" && args.len() == 1 {
-                    // Check if the argument is a literal number
-                    let count = match &args[0] {
-                        Expression::Number(n) => *n as i32,
-                        Expression::Identifier(var_name) => {
-                            return Err(format!(
-                                "For loops with range() only accept literal numbers, not variables.\n\
-                                 \n\
-                                 Got: for {} in range({})\n\
-                                 \n\
-                                 Solution: Use a literal number instead:\n\
-                                 - for {} in range(10):  # Correct\n\
-                                 \n\
-                                 Note: Dynamic loop ranges are not supported because Minecraft data packs\n\
-                                 require the loop count to be known at compile time.",
-                                for_loop.target, var_name, for_loop.target
-                            ));
-                        }
-                        _ => {
-                            return Err(format!(
-                                "For loops with range() only accept literal numbers.\n\
-                                 Got: range({:?})\n\
-                                 \n\
-                                 Solution: Use a literal number:\n\
-                                 - for {} in range(10):  # Correct",
-                                args[0], for_loop.target
-                            ));
-                        }
-                    };
-
-                    // Determine step value (default 1, or from for_loop.step)
-                    let step = if let Some(ref step_expr) = for_loop.step {
-                        match step_expr {
-                            Expression::Number(s) => *s as i32,
-                            _ => return Err("Step must be a constant number".to_string()),
-                        }
-                    } else {
-                        1
-                    };
-
-                    if step == 0 {
-                        return Err("Step cannot be zero".to_string());
-                    }
-
-                    // Generate a helper function for the loop
-                    let loop_func_name = format!("loop_temp_{}", self.temp_counter);
-                    self.temp_counter += 1;
-
-                    // Track loop_counter objective
-                    self.data_pack.track_objective("loop_counter");
-
-                    // Save previous state of loop variable (if it exists)
-                    let saved_var_objective =
-                        self.variable_objectives.get(&for_loop.target).cloned();
-                    let was_scoreboard_var = self.scoreboard_variables.contains(&for_loop.target);
-
-                    // Track this variable's objective AND mark as scoreboard variable
-                    self.variable_objectives
-                        .insert(for_loop.target.clone(), "loop_counter".to_string());
-                    self.scoreboard_variables.insert(for_loop.target.clone());
-
-                    // Initialize loop counter based on step direction
-                    let start_value = if step > 0 {
-                        0
-                    } else {
-                        // For negative step, always start at count - 1
-                        // This ensures we iterate from (n-1) down to 0 regardless of step magnitude
-                        count - 1
-                    };
-
-                    for_commands.push(format!(
-                        "scoreboard players set {} loop_counter {}",
-                        for_loop.target, start_value
-                    ));
-
-                    // Create a macro function for the loop body
-                    // This allows loop variables to be used in commands like /say
-                    let body_func_name = format!("loop_body_{}", self.temp_counter - 1);
-
-                    // Process loop body as a macro function with loop variable as parameter
-                    let saved_context = self.current_context.clone();
-                    let saved_variable_types = self.variable_types.clone();
-
-                    // Set up function context with loop variable as a parameter
-                    self.current_context = crate::transpiler::FunctionContext::with_params(
-                        saved_context.with_extra_param(for_loop.target.clone()),
-                    );
-
-                    let capture = self.capture_statements(&for_loop.body)?;
-                    self.add_captured_function(body_func_name.clone(), capture);
-                    // Track this function as having parameters
-                    self.function_params
-                        .insert(body_func_name.clone(), vec![for_loop.target.clone()]);
-
-                    self.current_context = saved_context;
-                    self.variable_types = saved_variable_types;
-
-                    // Restore previous state of loop variable
-                    if let Some(obj) = saved_var_objective {
-                        self.variable_objectives
-                            .insert(for_loop.target.clone(), obj);
-                    } else {
-                        self.variable_objectives.remove(&for_loop.target);
-                    }
-                    if !was_scoreboard_var {
-                        self.scoreboard_variables.remove(&for_loop.target);
-                    }
-
-                    // Create loop control function
-                    let mut loop_commands = vec![];
-
-                    // Condition depends on step direction
-                    let condition = if step > 0 {
-                        // For positive step: continue while i < count
-                        format!("..{}", count - 1)
-                    } else {
-                        // For negative step: continue while i >= 0
-                        "0..".to_string()
-                    };
-
-                    // Create a wrapper function that stores variable and calls body
-                    // Use a separate counter increment to ensure unique wrapper names in nested loops
-                    let wrapper_id = self.temp_counter;
-                    self.temp_counter += 1;
-                    let wrapper_func_name = format!("loop_wrapper_{}", wrapper_id);
-                    let mut wrapper_commands = vec![];
-                    let mut wrapper_metadata = HashMap::new();
-
-                    // Store loop variable value into storage for macro function
-                    wrapper_commands.push(format!(
-                            "execute store result storage {}:global args.{} int 1 run scoreboard players get {} loop_counter",
-                            self.data_pack.namespace, for_loop.target, for_loop.target
-                        ));
-                    wrapper_metadata.insert(
-                        0,
-                        GeneratedCommand::new(
-                            wrapper_commands[0].clone(),
-                            self.current_statement_source.clone(),
-                            GeneratedCommandKind::ControlFlow,
-                        ),
-                    );
-
-                    // Call the macro body function with the loop variable
-                    wrapper_commands.push(format!(
-                        "function {}:{} with storage {}:global args",
-                        self.data_pack.namespace, body_func_name, self.data_pack.namespace
-                    ));
-                    wrapper_metadata.insert(
-                        1,
-                        GeneratedCommand::new(
-                            wrapper_commands[1].clone(),
-                            self.current_statement_source.clone(),
-                            GeneratedCommandKind::ControlFlow,
-                        ),
-                    );
-
-                    self.data_pack.add_function_with_metadata(
-                        wrapper_func_name.clone(),
-                        wrapper_commands,
-                        wrapper_metadata,
-                    );
-
-                    // Check condition BEFORE executing body (to prevent zero-length loops from executing)
-                    loop_commands.push(format!(
-                        "execute if score {} loop_counter matches {} run function {}:{}",
-                        for_loop.target, condition, self.data_pack.namespace, wrapper_func_name
-                    ));
-
-                    // THEN add increment/decrement
-                    if step > 0 {
-                        loop_commands.push(format!(
-                            "scoreboard players add {} loop_counter {}",
-                            for_loop.target, step
-                        ));
-                    } else {
-                        // Use 'remove' for negative step (Java Edition compatibility)
-                        loop_commands.push(format!(
-                            "scoreboard players remove {} loop_counter {}",
-                            for_loop.target,
-                            step.abs()
-                        ));
-                    }
-
-                    // Recursive call (check condition again after increment)
-                    loop_commands.push(format!(
-                        "execute if score {} loop_counter matches {} run function {}:{}",
-                        for_loop.target, condition, self.data_pack.namespace, loop_func_name
-                    ));
-
-                    // Add the loop function to the data pack
-                    let loop_metadata = Self::metadata_for_commands(
-                        &loop_commands,
-                        self.current_statement_source.clone(),
-                    );
-                    self.data_pack.add_function_with_metadata(
-                        loop_func_name.clone(),
-                        loop_commands,
-                        loop_metadata,
-                    );
-
-                    // Start the loop in the main function
-                    for_commands.push(format!(
-                        "function {}:{}",
-                        self.data_pack.namespace, loop_func_name
-                    ));
-                } else {
-                    return Err(format!(
-                        "For loops with range() must have exactly one argument.\n\
-                         Got: range() with {} arguments\n\
-                         \n\
-                         Solution: Use range(N) where N is a literal number:\n\
-                         - for {} in range(10):",
-                        args.len(),
-                        for_loop.target
-                    ));
+        self.data_pack.unrolled_loops += 1;
+        for value in values {
+            let substituted = substitute_statements(&for_loop.body, &for_loop.target, &value)?;
+            for statement in substituted {
+                let start_index = self.current_function.as_ref().map(Vec::len);
+                self.process_statement(&statement)?;
+                if let Some(start_index) = start_index {
+                    self.mark_current_function_commands_as_unrolled(start_index);
                 }
-            } else {
-                return Err(format!(
-                    "For loops only support range() iterator, not {}.\n\
-                     \n\
-                     Solution: Use range(N) where N is a literal number:\n\
-                     - for {} in range(10):",
-                    if let Expression::Identifier(n) = &**func {
-                        n
-                    } else {
-                        "unknown"
-                    },
-                    for_loop.target
-                ));
             }
-        } else {
-            // Unsupported iterator type - provide clear error message
+        }
+        Ok(())
+    }
+
+    fn unroll_values(&self, for_loop: &ForLoop) -> Result<Vec<UnrollValue>, String> {
+        match &for_loop.iter {
+            Expression::Array(items) => self.unroll_array_values(items),
+            Expression::Call(func, args) if is_identifier(func, "range") => {
+                self.unroll_range_values(for_loop, args)
+            }
+            Expression::Call(func, _) => {
+                let name = match &**func {
+                    Expression::Identifier(name) => name.as_str(),
+                    _ => "unknown",
+                };
+                Err(format!(
+                    "unroll-non-literal: for loops only support literal range(...) or literal arrays, not {name}(...)."
+                ))
+            }
+            _ => Err(
+                "unroll-non-literal: for loops only support literal range(...) or literal arrays."
+                    .to_string(),
+            ),
+        }
+    }
+
+    fn unroll_array_values(&self, items: &[Expression]) -> Result<Vec<UnrollValue>, String> {
+        if items.is_empty() {
+            return Err(
+                "unroll-bad-range: literal arrays used for unrolling cannot be empty.".to_string(),
+            );
+        }
+        if items.len() > UNROLL_LIMIT {
             return Err(format!(
-                "For loops only support range() iterator.\n\
-                 Syntax: for {} in range(N):\n\
-                 \n\
-                 Examples:\n\
-                 - for i in range(10):       # Loop 10 times (0..9)\n\
-                 - for i in range(10) by 2:  # Count by 2s\n\
-                 - for i in range(10) by -1: # Count backwards\n\
-                 \n\
-                 Iterating over lists/arrays is not yet supported.",
-                for_loop.target
+                "unroll-limit-exceeded: literal array expands to {} iterations (limit {}).",
+                items.len(),
+                UNROLL_LIMIT
             ));
         }
 
-        if let Some(ref mut commands) = self.current_function {
-            commands.extend(for_commands);
+        items
+            .iter()
+            .map(|item| match item {
+                Expression::Number(value) => Ok(UnrollValue::Number(*value)),
+                Expression::String(value) => Ok(UnrollValue::String(value.clone())),
+                Expression::Boolean(value) => Ok(UnrollValue::Boolean(*value)),
+                _ => Err(
+                    "unroll-non-literal: literal arrays may only contain numbers, strings, or booleans."
+                        .to_string(),
+                ),
+            })
+            .collect()
+    }
+
+    fn unroll_range_values(
+        &self,
+        for_loop: &ForLoop,
+        args: &[Expression],
+    ) -> Result<Vec<UnrollValue>, String> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(format!(
+                "unroll-non-literal: range(...) expects 1 to 3 arguments, got {}.",
+                args.len()
+            ));
         }
 
-        Ok(())
+        let by_step = for_loop
+            .step
+            .as_ref()
+            .map(|step| self.integer_unroll_expr(step, "range step"))
+            .transpose()?;
+        if args.len() == 3 && by_step.is_some() {
+            return Err(
+                "unroll-bad-step: use either range(start, stop, step) or 'by step', not both."
+                    .to_string(),
+            );
+        }
+
+        let (start, stop, step) = match args.len() {
+            1 => {
+                let count = self.integer_unroll_expr(&args[0], "range count")?;
+                if count < 0 {
+                    return Err(format!(
+                        "unroll-bad-range: range({count}) cannot expand a negative count."
+                    ));
+                }
+                let step = by_step.unwrap_or(1);
+                if step == 0 {
+                    return Err("unroll-bad-step: range step cannot be zero.".to_string());
+                }
+                if step > 0 {
+                    (0, count, step)
+                } else {
+                    (count - 1, -1, step)
+                }
+            }
+            2 => {
+                let start = self.integer_unroll_expr(&args[0], "range start")?;
+                let stop = self.integer_unroll_expr(&args[1], "range stop")?;
+                let step = by_step.unwrap_or(1);
+                if step == 0 {
+                    return Err("unroll-bad-step: range step cannot be zero.".to_string());
+                }
+                (start, stop, step)
+            }
+            3 => {
+                let start = self.integer_unroll_expr(&args[0], "range start")?;
+                let stop = self.integer_unroll_expr(&args[1], "range stop")?;
+                let step = self.integer_unroll_expr(&args[2], "range step")?;
+                if step == 0 {
+                    return Err("unroll-bad-step: range step cannot be zero.".to_string());
+                }
+                (start, stop, step)
+            }
+            _ => unreachable!(),
+        };
+
+        if args.len() != 1 {
+            if step > 0 && start > stop {
+                return Err(format!(
+                    "unroll-bad-range: range start {start} is greater than stop {stop} with a positive step."
+                ));
+            }
+            if step < 0 && start < stop {
+                return Err(format!(
+                    "unroll-bad-range: range start {start} is less than stop {stop} with a negative step."
+                ));
+            }
+        }
+
+        range_unroll_values(start, stop, step)
+    }
+
+    fn integer_unroll_expr(&self, expr: &Expression, label: &str) -> Result<i32, String> {
+        let value = self.try_eval_const(expr).ok_or_else(|| {
+            format!("unroll-non-literal: {label} must be an integer literal or const identifier.")
+        })?;
+        if !value.is_finite() || value.fract() != 0.0 {
+            return Err(format!("unroll-bad-step: {label} must be an integer."));
+        }
+        if value < i32::MIN as f64 || value > i32::MAX as f64 {
+            return Err(format!(
+                "unroll-bad-range: {label} value {value} is outside the i32 range."
+            ));
+        }
+        Ok(value as i32)
+    }
+
+    fn mark_current_function_commands_as_unrolled(&mut self, start_index: usize) {
+        let Some(ref commands) = self.current_function else {
+            return;
+        };
+        let Some(ref mut metadata) = self.current_function_metadata else {
+            return;
+        };
+        let source = self.current_statement_source.clone();
+        for (index, command) in commands.iter().enumerate().skip(start_index) {
+            metadata.insert(
+                index,
+                GeneratedCommand::new(
+                    command.clone(),
+                    source.clone(),
+                    GeneratedCommandKind::Unrolled,
+                ),
+            );
+        }
     }
 
     pub(in crate::transpiler) fn process_while(
@@ -366,26 +323,6 @@ impl Transpiler {
         Ok(())
     }
 
-    fn metadata_for_commands(
-        commands: &[String],
-        source: Option<crate::transpiler::SourceLocation>,
-    ) -> HashMap<usize, GeneratedCommand> {
-        commands
-            .iter()
-            .enumerate()
-            .map(|(index, command)| {
-                (
-                    index,
-                    GeneratedCommand::new(
-                        command.clone(),
-                        source.clone(),
-                        GeneratedCommandKind::ControlFlow,
-                    ),
-                )
-            })
-            .collect()
-    }
-
     fn append_capture_to_buffers(
         commands: &mut Vec<String>,
         metadata: &mut HashMap<usize, GeneratedCommand>,
@@ -397,4 +334,376 @@ impl Transpiler {
             metadata.insert(start + source_index, generated.clone());
         }
     }
+}
+
+fn is_identifier(expr: &Expression, expected: &str) -> bool {
+    matches!(expr, Expression::Identifier(name) if name == expected)
+}
+
+fn range_unroll_values(start: i32, stop: i32, step: i32) -> Result<Vec<UnrollValue>, String> {
+    let mut values = Vec::new();
+    let mut current = i64::from(start);
+    let stop = i64::from(stop);
+    let step = i64::from(step);
+
+    while (step > 0 && current < stop) || (step < 0 && current > stop) {
+        if values.len() == UNROLL_LIMIT {
+            return Err(format!(
+                "unroll-limit-exceeded: range expands past {} iterations.",
+                UNROLL_LIMIT
+            ));
+        }
+        if current < i64::from(i32::MIN) || current > i64::from(i32::MAX) {
+            return Err(format!(
+                "unroll-bad-range: range value {current} is outside the i32 range."
+            ));
+        }
+        values.push(UnrollValue::Number(current as f64));
+        current += step;
+    }
+
+    Ok(values)
+}
+
+fn format_unroll_number(value: f64) -> String {
+    if value == 0.0 {
+        "0".to_string()
+    } else if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        value.to_string()
+    }
+}
+
+fn substitute_statements(
+    statements: &[Statement],
+    target: &str,
+    value: &UnrollValue,
+) -> Result<Vec<Statement>, String> {
+    statements
+        .iter()
+        .map(|statement| substitute_statement(statement, target, value))
+        .collect()
+}
+
+fn substitute_statement(
+    statement: &Statement,
+    target: &str,
+    value: &UnrollValue,
+) -> Result<Statement, String> {
+    let substituted = match statement {
+        Statement::Import(import) => Statement::Import(import.clone()),
+        Statement::FunctionDef(function) => {
+            if function.params.iter().any(|param| param.name == target) {
+                return Err(format!(
+                    "unroll-non-literal: nested function parameter '{}' shadows the unrolled loop target.",
+                    target
+                ));
+            }
+            Statement::FunctionDef(FunctionDef {
+                name: function.name.clone(),
+                params: function.params.clone(),
+                decorators: function.decorators.clone(),
+                body: substitute_statements(&function.body, target, value)?,
+            })
+        }
+        Statement::Assignment(assign) => {
+            if assign.target == target {
+                return Err(format!(
+                    "unroll-non-literal: cannot assign to unrolled loop target '{}'.",
+                    target
+                ));
+            }
+            Statement::Assignment(Assignment {
+                target: assign.target.clone(),
+                value: substitute_expression(&assign.value, target, value)?,
+            })
+        }
+        Statement::ConstAssignment(assign) => {
+            if assign.target == target {
+                return Err(format!(
+                    "unroll-non-literal: cannot assign to unrolled loop target '{}'.",
+                    target
+                ));
+            }
+            Statement::ConstAssignment(ConstAssignment {
+                target: assign.target.clone(),
+                value: substitute_expression(&assign.value, target, value)?,
+            })
+        }
+        Statement::Expression(expr) => {
+            Statement::Expression(substitute_expression(expr, target, value)?)
+        }
+        Statement::If(if_stmt) => Statement::If(IfStatement {
+            condition: substitute_expression(&if_stmt.condition, target, value)?,
+            then_branch: substitute_statements(&if_stmt.then_branch, target, value)?,
+            elif_branches: if_stmt
+                .elif_branches
+                .iter()
+                .map(|(condition, body)| {
+                    Ok((
+                        substitute_expression(condition, target, value)?,
+                        substitute_statements(body, target, value)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+            else_branch: if_stmt
+                .else_branch
+                .as_ref()
+                .map(|body| substitute_statements(body, target, value))
+                .transpose()?,
+        }),
+        Statement::For(for_loop) => {
+            if for_loop.target == target {
+                return Err(format!(
+                    "unroll-non-literal: nested loop target '{}' shadows the unrolled loop target.",
+                    target
+                ));
+            }
+            Statement::For(ForLoop {
+                target: for_loop.target.clone(),
+                iter: substitute_expression(&for_loop.iter, target, value)?,
+                step: for_loop
+                    .step
+                    .as_ref()
+                    .map(|step| substitute_expression(step, target, value))
+                    .transpose()?,
+                body: substitute_statements(&for_loop.body, target, value)?,
+            })
+        }
+        Statement::While(while_loop) => Statement::While(WhileLoop {
+            condition: substitute_expression(&while_loop.condition, target, value)?,
+            body: substitute_statements(&while_loop.body, target, value)?,
+        }),
+        Statement::Match(match_stmt) => Statement::Match(MatchStatement {
+            value: substitute_expression(&match_stmt.value, target, value)?,
+            cases: match_stmt
+                .cases
+                .iter()
+                .map(|case| {
+                    Ok(MatchCase {
+                        pattern: case.pattern.clone(),
+                        body: substitute_statements(&case.body, target, value)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        }),
+        Statement::Return(expr) => Statement::Return(
+            expr.as_ref()
+                .map(|expr| substitute_expression(expr, target, value))
+                .transpose()?,
+        ),
+        Statement::Pass => Statement::Pass,
+        Statement::MinecraftCommand(command) => Statement::MinecraftCommand(
+            replace_unroll_placeholder(command, target, &value.as_command_text()),
+        ),
+        Statement::Global(vars) => Statement::Global(vars.clone()),
+        Statement::Execute(exec_block) => Statement::Execute(ExecuteBlock {
+            modifiers: exec_block
+                .modifiers
+                .iter()
+                .map(|modifier| substitute_execute_modifier(modifier, target, value))
+                .collect::<Result<Vec<_>, String>>()?,
+            body: substitute_statements(&exec_block.body, target, value)?,
+        }),
+        Statement::SelectorDef(selector_def) => Statement::SelectorDef(SelectorDef {
+            name: selector_def.name.clone(),
+            selector: replace_unroll_placeholder(
+                &selector_def.selector,
+                target,
+                &value.as_command_text(),
+            ),
+        }),
+        Statement::EntityDef(entity_def) => Statement::EntityDef(EntityDef {
+            name: entity_def.name.clone(),
+            selector: replace_unroll_placeholder(
+                &entity_def.selector,
+                target,
+                &value.as_command_text(),
+            ),
+            nbt: substitute_expression(&entity_def.nbt, target, value)?,
+        }),
+        Statement::CreateEntity(name) => Statement::CreateEntity(name.clone()),
+    };
+    Ok(substituted)
+}
+
+fn substitute_execute_modifier(
+    modifier: &ExecuteModifier,
+    target: &str,
+    value: &UnrollValue,
+) -> Result<ExecuteModifier, String> {
+    let command_value = value.as_command_text();
+    let substituted = match modifier {
+        ExecuteModifier::As(raw) => {
+            ExecuteModifier::As(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::At(raw) => {
+            ExecuteModifier::At(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::If(expr) => {
+            ExecuteModifier::If(substitute_expression(expr, target, value)?)
+        }
+        ExecuteModifier::IfRaw(raw) => {
+            ExecuteModifier::IfRaw(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::Unless(expr) => {
+            ExecuteModifier::Unless(substitute_expression(expr, target, value)?)
+        }
+        ExecuteModifier::UnlessRaw(raw) => {
+            ExecuteModifier::UnlessRaw(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::Positioned(raw) => {
+            ExecuteModifier::Positioned(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::Rotated(raw) => {
+            ExecuteModifier::Rotated(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::In(raw) => {
+            ExecuteModifier::In(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::Anchored(raw) => {
+            ExecuteModifier::Anchored(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::Align(raw) => {
+            ExecuteModifier::Align(replace_unroll_placeholder(raw, target, &command_value))
+        }
+        ExecuteModifier::Store(raw) => {
+            ExecuteModifier::Store(replace_unroll_placeholder(raw, target, &command_value))
+        }
+    };
+    Ok(substituted)
+}
+
+fn substitute_expression(
+    expression: &Expression,
+    target: &str,
+    value: &UnrollValue,
+) -> Result<Expression, String> {
+    let substituted = match expression {
+        Expression::Identifier(name) if name == target => value.as_expression(),
+        Expression::Identifier(_) => expression.clone(),
+        Expression::String(text) => Expression::String(replace_unroll_placeholder(
+            text,
+            target,
+            &value.as_command_text(),
+        )),
+        Expression::Array(items) => Expression::Array(
+            items
+                .iter()
+                .map(|item| substitute_expression(item, target, value))
+                .collect::<Result<Vec<_>, String>>()?,
+        ),
+        Expression::Map(entries) => Expression::Map(
+            entries
+                .iter()
+                .map(|(key, entry_value)| {
+                    Ok((
+                        replace_unroll_placeholder(key, target, &value.as_command_text()),
+                        substitute_expression(entry_value, target, value)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        ),
+        Expression::Attribute(base, attr) => Expression::Attribute(
+            Box::new(substitute_expression(base, target, value)?),
+            attr.clone(),
+        ),
+        Expression::Binary(left, op, right) => Expression::Binary(
+            Box::new(substitute_expression(left, target, value)?),
+            op.clone(),
+            Box::new(substitute_expression(right, target, value)?),
+        ),
+        Expression::Unary(op, expr) => Expression::Unary(
+            op.clone(),
+            Box::new(substitute_expression(expr, target, value)?),
+        ),
+        Expression::Call(func, args) => Expression::Call(
+            Box::new(substitute_expression(func, target, value)?),
+            args.iter()
+                .map(|arg| substitute_expression(arg, target, value))
+                .collect::<Result<Vec<_>, String>>()?,
+        ),
+        Expression::Subscript(base, index) => Expression::Subscript(
+            Box::new(substitute_expression(base, target, value)?),
+            Box::new(substitute_expression(index, target, value)?),
+        ),
+        Expression::Number(_) | Expression::Boolean(_) | Expression::None => expression.clone(),
+    };
+    Ok(substituted)
+}
+
+fn replace_unroll_placeholder(text: &str, target: &str, replacement: &str) -> String {
+    let mut output = String::new();
+    let mut index = 0;
+
+    while index < text.len() {
+        let remaining = &text[index..];
+        if let Some(stripped) = remaining.strip_prefix("{{") {
+            if let Some(end) = stripped.find("}}") {
+                let end_index = index + 2 + end + 2;
+                output.push_str(&text[index..end_index]);
+                index = end_index;
+            } else {
+                output.push_str(&text[index..]);
+                break;
+            }
+        } else if remaining.starts_with('{') {
+            if let Some(end_index) = find_matching_unroll_brace(text, index) {
+                let placeholder = text[index + 1..end_index].trim();
+                if placeholder == target {
+                    output.push_str(replacement);
+                } else {
+                    output.push('{');
+                    output.push_str(&replace_unroll_placeholder(
+                        &text[index + 1..end_index],
+                        target,
+                        replacement,
+                    ));
+                    output.push('}');
+                }
+                index = end_index + 1;
+            } else {
+                output.push_str(&text[index..]);
+                break;
+            }
+        } else {
+            let ch = remaining.chars().next().expect("non-empty string slice");
+            output.push(ch);
+            index += ch.len_utf8();
+        }
+    }
+
+    output
+}
+
+fn find_matching_unroll_brace(text: &str, open_index: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut index = open_index;
+
+    while index < text.len() {
+        let remaining = &text[index..];
+        if let Some(stripped) = remaining.strip_prefix("{{") {
+            if let Some(end) = stripped.find("}}") {
+                index += 2 + end + 2;
+                continue;
+            }
+            return None;
+        }
+
+        let ch = remaining.chars().next()?;
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+        index += ch.len_utf8();
+    }
+
+    None
 }

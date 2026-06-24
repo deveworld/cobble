@@ -1,0 +1,164 @@
+---
+source: tests/generated_snapshots_test.rs
+assertion_line: 208
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "active_stdlib_modules": [
+    "event",
+    "resource_pack"
+  ],
+  "cobble_version": "<cobble-version>",
+  "description": "Cobble experimental resource-pack fixture",
+  "experimental_features": [
+    "resource_pack"
+  ],
+  "generated": {
+    "advancements": 0,
+    "commands": 2,
+    "custom_function_tags": 0,
+    "function_tags": 1,
+    "functions": 1,
+    "item_modifiers": 0,
+    "json_function_tags": 0,
+    "json_resources": 0,
+    "loot_tables": 0,
+    "predicates": 0,
+    "recipes": 0,
+    "resource_pack_langs": 1,
+    "resource_pack_models": 2,
+    "source_map_entries": 2,
+    "stdlib_function_tags": 1,
+    "total_json_resources": 0
+  },
+  "generated_at_unix_epoch_ms": "<generated-at-unix-epoch-ms>",
+  "generated_namespaces": [
+    "cobble_resource_pack",
+    "minecraft"
+  ],
+  "input": {
+    "compiled_files": [
+      "src/main.cbl"
+    ],
+    "entry_points": [
+      "main.cbl"
+    ],
+    "source": "src"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "cobble_resource_pack",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "project_id": "<project-id>",
+  "project_root": "<project-root>",
+  "resources": [
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "load"
+    },
+    {
+      "kind": "resource_pack_lang",
+      "namespace": "cobble_resource_pack",
+      "path": "en_us"
+    },
+    {
+      "kind": "resource_pack_model",
+      "namespace": "cobble_resource_pack",
+      "path": "block/display_block"
+    },
+    {
+      "kind": "resource_pack_model",
+      "namespace": "cobble_resource_pack",
+      "path": "item/custom_sword"
+    }
+  ],
+  "stdlib_version": 2,
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_asset_namespaces.json =====
+[
+  "cobble_resource_pack"
+]
+
+===== .cobble/generated_namespaces.json =====
+[
+  "cobble_resource_pack",
+  "minecraft"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/cobble_resource_pack/function/load.mcfunction",
+      "generated_line": 1,
+      "command": "gamerule max_command_sequence_length 1000000000",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_resource_pack/function/load.mcfunction",
+      "generated_line": 2,
+      "command": "tellraw @a {\"text\":\"Resource-pack assets generated\",\"color\":\"aqua\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 23,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    }
+  ]
+}
+
+===== assets/cobble_resource_pack/lang/en_us.json =====
+{
+  "block.cobble_resource_pack.display_block": "Cobble Display Block",
+  "item.cobble_resource_pack.custom_sword": "Cobble Sword"
+}
+
+===== assets/cobble_resource_pack/models/block/display_block.json =====
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "cobble_resource_pack:block/display_block"
+  }
+}
+
+===== assets/cobble_resource_pack/models/item/custom_sword.json =====
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "cobble_resource_pack:item/custom_sword"
+  }
+}
+
+===== data/cobble_resource_pack/function/load.mcfunction =====
+gamerule max_command_sequence_length 1000000000
+tellraw @a {"text":"Resource-pack assets generated","color":"aqua"}
+
+===== data/minecraft/tags/function/load.json =====
+{
+  "values": [
+    "cobble_resource_pack:load"
+  ]
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Cobble experimental resource-pack fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

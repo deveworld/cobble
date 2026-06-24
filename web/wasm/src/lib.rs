@@ -252,6 +252,30 @@ fn materialize_files(
         }
     }
 
+    let mut resource_pack_model_paths = pack.resource_pack_models.keys().collect::<Vec<_>>();
+    resource_pack_model_paths.sort();
+    for key in resource_pack_model_paths {
+        if let Some((resource_namespace, relative_path)) = key.split_once('/') {
+            files.push(CompileFile {
+                path: format!("assets/{resource_namespace}/{relative_path}.json"),
+                kind: "resource-pack-model".to_string(),
+                content: pack.resource_pack_models[key].clone(),
+            });
+        }
+    }
+
+    let mut resource_pack_lang_paths = pack.resource_pack_langs.keys().collect::<Vec<_>>();
+    resource_pack_lang_paths.sort();
+    for key in resource_pack_lang_paths {
+        if let Some((resource_namespace, relative_path)) = key.split_once('/') {
+            files.push(CompileFile {
+                path: format!("assets/{resource_namespace}/{relative_path}.json"),
+                kind: "resource-pack-lang".to_string(),
+                content: pack.resource_pack_langs[key].clone(),
+            });
+        }
+    }
+
     if !source_map_entries.is_empty() {
         files.push(CompileFile {
             path: ".cobble/source_map.json".to_string(),
@@ -270,6 +294,15 @@ fn materialize_files(
         kind: "source-map".to_string(),
         content: serde_json::to_string_pretty(&generated_namespaces).map_err(to_diag)?,
     });
+
+    let generated_asset_namespaces = generated_asset_namespaces(pack);
+    if !generated_asset_namespaces.is_empty() {
+        files.push(CompileFile {
+            path: ".cobble/generated_asset_namespaces.json".to_string(),
+            kind: "source-map".to_string(),
+            content: serde_json::to_string_pretty(&generated_asset_namespaces).map_err(to_diag)?,
+        });
+    }
 
     files.push(CompileFile {
         path: ".cobble/build_manifest.json".to_string(),
@@ -377,6 +410,22 @@ fn generated_namespaces(pack: &transpiler::DataPack, namespace: &str) -> Vec<Str
     }
     for tag_name in pack.tags.keys() {
         if let Some((resource_namespace, _)) = tag_name.split_once(':') {
+            namespaces.insert(resource_namespace.to_string());
+        }
+    }
+    let mut namespaces = namespaces.into_iter().collect::<Vec<_>>();
+    namespaces.sort();
+    namespaces
+}
+
+fn generated_asset_namespaces(pack: &transpiler::DataPack) -> Vec<String> {
+    let mut namespaces = HashSet::new();
+    for key in pack
+        .resource_pack_models
+        .keys()
+        .chain(pack.resource_pack_langs.keys())
+    {
+        if let Some((resource_namespace, _)) = key.split_once('/') {
             namespaces.insert(resource_namespace.to_string());
         }
     }

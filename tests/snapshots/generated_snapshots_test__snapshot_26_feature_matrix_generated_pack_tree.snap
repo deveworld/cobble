@@ -1,24 +1,41 @@
 ---
 source: tests/generated_snapshots_test.rs
+assertion_line: 181
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
 {
+  "active_stdlib_modules": [
+    "bossbar",
+    "datapack",
+    "entity",
+    "event",
+    "math",
+    "random",
+    "resource_pack",
+    "schedule",
+    "score",
+    "score.objective",
+    "storage",
+    "team",
+    "text",
+    "timer"
+  ],
   "cobble_version": "<cobble-version>",
   "description": "Cobble 26.1.2 feature matrix fixture",
   "generated": {
     "advancements": 0,
-    "commands": 282,
+    "commands": 271,
     "custom_function_tags": 1,
     "function_tags": 3,
-    "functions": 19,
+    "functions": 13,
     "item_modifiers": 0,
     "json_function_tags": 2,
     "json_resources": 5,
     "loot_tables": 0,
     "predicates": 2,
     "recipes": 0,
-    "source_map_entries": 282,
+    "source_map_entries": 271,
     "stdlib_function_tags": 2,
     "total_json_resources": 5
   },
@@ -75,6 +92,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "path": "checks/always_true"
     }
   ],
+  "stdlib_version": 2,
+  "unrolled_loops": 2,
   "validation": null,
   "version": 1
 }
@@ -1357,27 +1376,20 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
       "generated_line": 2,
-      "command": "scoreboard objectives add loop_counter dummy",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 3,
       "command": "scoreboard objectives add math dummy",
       "source": null,
       "kind": "RuntimeSetup"
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 4,
+      "generated_line": 3,
       "command": "scoreboard objectives add temp dummy",
       "source": null,
       "kind": "RuntimeSetup"
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 5,
+      "generated_line": 4,
       "command": "scoreboard players set score temp 7",
       "source": {
         "file": "src/main.cbl",
@@ -1388,7 +1400,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 6,
+      "generated_line": 5,
       "command": "scoreboard players set energy temp 5",
       "source": {
         "file": "src/main.cbl",
@@ -1399,7 +1411,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 7,
+      "generated_line": 6,
       "command": "scoreboard players set stage temp 0",
       "source": {
         "file": "src/main.cbl",
@@ -1410,7 +1422,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 8,
+      "generated_line": 7,
       "command": "scoreboard players set enabled temp 1",
       "source": {
         "file": "src/main.cbl",
@@ -1421,7 +1433,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 9,
+      "generated_line": 8,
       "command": "data modify storage cobble_26_feature_matrix:global vars.status set value \"boot\"",
       "source": {
         "file": "src/main.cbl",
@@ -1432,7 +1444,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 10,
+      "generated_line": 9,
       "command": "function cobble_26_feature_matrix:setup_scoreboards",
       "source": {
         "file": "src/main.cbl",
@@ -1443,7 +1455,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 11,
+      "generated_line": 10,
       "command": "data modify storage cobble_26_feature_matrix:global args.message set value \"Feature matrix online\"",
       "source": {
         "file": "src/main.cbl",
@@ -1454,7 +1466,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 12,
+      "generated_line": 11,
       "command": "function cobble_26_feature_matrix:announce with storage cobble_26_feature_matrix:global args",
       "source": {
         "file": "src/main.cbl",
@@ -1465,7 +1477,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 13,
+      "generated_line": 12,
       "command": "data modify storage cobble_26_feature_matrix:global args.player set value \"@a\"",
       "source": {
         "file": "src/main.cbl",
@@ -1476,7 +1488,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 14,
+      "generated_line": 13,
       "command": "data modify storage cobble_26_feature_matrix:global args.item set value \"diamond\"",
       "source": {
         "file": "src/main.cbl",
@@ -1487,7 +1499,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 15,
+      "generated_line": 14,
       "command": "data modify storage cobble_26_feature_matrix:global args.count set value 2",
       "source": {
         "file": "src/main.cbl",
@@ -1498,7 +1510,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 16,
+      "generated_line": 15,
       "command": "function cobble_26_feature_matrix:give_kit with storage cobble_26_feature_matrix:global args",
       "source": {
         "file": "src/main.cbl",
@@ -1509,7 +1521,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 17,
+      "generated_line": 16,
       "command": "tellraw @a {\"bold\":true,\"color\":\"aqua\",\"text\":\"Feature matrix loaded\"}",
       "source": {
         "file": "src/main.cbl",
@@ -1520,7 +1532,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 18,
+      "generated_line": 17,
       "command": "title @a title {\"text\":\"Matrix score\"}",
       "source": {
         "file": "src/main.cbl",
@@ -1531,7 +1543,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 19,
+      "generated_line": 18,
       "command": "scoreboard players set matrix_ready temp 1",
       "source": {
         "file": "src/main.cbl",
@@ -1542,7 +1554,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 20,
+      "generated_line": 19,
       "command": "execute store result score matrix_roll temp run random value 1..6",
       "source": {
         "file": "src/main.cbl",
@@ -1553,7 +1565,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 21,
+      "generated_line": 20,
       "command": "scoreboard players set matrix_timer temp 20",
       "source": {
         "file": "src/main.cbl",
@@ -1564,7 +1576,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 22,
+      "generated_line": 21,
       "command": "data modify storage cobble_26_feature_matrix:global status set value {state:\"loaded\",enabled:1b}",
       "source": {
         "file": "src/main.cbl",
@@ -1575,7 +1587,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 23,
+      "generated_line": 22,
       "command": "data modify storage cobble_26_feature_matrix:global events append value \"loaded\"",
       "source": {
         "file": "src/main.cbl",
@@ -1586,7 +1598,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 24,
+      "generated_line": 23,
       "command": "execute store result score matrix_state_count temp run data get storage cobble_26_feature_matrix:global events 1",
       "source": {
         "file": "src/main.cbl",
@@ -1597,7 +1609,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 25,
+      "generated_line": 24,
       "command": "schedule function cobble_26_feature_matrix:tick 20t replace",
       "source": {
         "file": "src/main.cbl",
@@ -1608,7 +1620,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 26,
+      "generated_line": 25,
       "command": "tag @a add matrix_loader",
       "source": {
         "file": "src/main.cbl",
@@ -1619,7 +1631,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 27,
+      "generated_line": 26,
       "command": "scoreboard players set #math_input math 100",
       "source": {
         "file": "src/main.cbl",
@@ -1630,7 +1642,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 28,
+      "generated_line": 27,
       "command": "function cobble_26_feature_matrix:_cobble_math_sqrt",
       "source": {
         "file": "src/main.cbl",
@@ -1641,7 +1653,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 29,
+      "generated_line": 28,
       "command": "scoreboard players operation root temp = #math_result math",
       "source": {
         "file": "src/main.cbl",
@@ -1652,7 +1664,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 30,
+      "generated_line": 29,
       "command": "datapack list enabled",
       "source": {
         "file": "src/main.cbl",
@@ -1663,7 +1675,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 31,
+      "generated_line": 30,
       "command": "random roll 1..6",
       "source": {
         "file": "src/main.cbl",
@@ -1674,7 +1686,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 32,
+      "generated_line": 31,
       "command": "dialog clear @a",
       "source": {
         "file": "src/main.cbl",
@@ -1685,7 +1697,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 33,
+      "generated_line": 32,
       "command": "waypoint list",
       "source": {
         "file": "src/main.cbl",
@@ -1696,7 +1708,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 34,
+      "generated_line": 33,
       "command": "stopwatch create cobble:matrix",
       "source": {
         "file": "src/main.cbl",
@@ -1707,7 +1719,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 35,
+      "generated_line": 34,
       "command": "stopwatch query cobble:matrix 20.0",
       "source": {
         "file": "src/main.cbl",
@@ -1718,7 +1730,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
-      "generated_line": 36,
+      "generated_line": 35,
       "command": "version",
       "source": {
         "file": "src/main.cbl",
@@ -1726,138 +1738,6 @@ expression: datapack_tree_snapshot(&output_dir)
         "column": 5
       },
       "kind": "UserCommand"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_body_11.mcfunction",
-      "generated_line": 1,
-      "command": "$say reverse loop $(n)",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 100,
-        "column": 9
-      },
-      "kind": "UserCommand"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_body_9.mcfunction",
-      "generated_line": 1,
-      "command": "$tellraw @a {\"text\":\"even loop $(i)\",\"color\":\"green\"}",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 97,
-        "column": 9
-      },
-      "kind": "UserCommand"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_11.mcfunction",
-      "generated_line": 1,
-      "command": "execute if score n loop_counter matches 0.. run function cobble_26_feature_matrix:loop_wrapper_12",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 99,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_11.mcfunction",
-      "generated_line": 2,
-      "command": "scoreboard players remove n loop_counter 3",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 99,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_11.mcfunction",
-      "generated_line": 3,
-      "command": "execute if score n loop_counter matches 0.. run function cobble_26_feature_matrix:loop_temp_11",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 99,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_9.mcfunction",
-      "generated_line": 1,
-      "command": "execute if score i loop_counter matches ..5 run function cobble_26_feature_matrix:loop_wrapper_10",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 96,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_9.mcfunction",
-      "generated_line": 2,
-      "command": "scoreboard players add i loop_counter 2",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 96,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_temp_9.mcfunction",
-      "generated_line": 3,
-      "command": "execute if score i loop_counter matches ..5 run function cobble_26_feature_matrix:loop_temp_9",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 96,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_wrapper_10.mcfunction",
-      "generated_line": 1,
-      "command": "execute store result storage cobble_26_feature_matrix:global args.i int 1 run scoreboard players get i loop_counter",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 96,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_wrapper_10.mcfunction",
-      "generated_line": 2,
-      "command": "function cobble_26_feature_matrix:loop_body_9 with storage cobble_26_feature_matrix:global args",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 96,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_wrapper_12.mcfunction",
-      "generated_line": 1,
-      "command": "execute store result storage cobble_26_feature_matrix:global args.n int 1 run scoreboard players get n loop_counter",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 99,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_feature_matrix/function/loop_wrapper_12.mcfunction",
-      "generated_line": 2,
-      "command": "function cobble_26_feature_matrix:loop_body_11 with storage cobble_26_feature_matrix:global args",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 99,
-        "column": 5
-      },
-      "kind": "ControlFlow"
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/marker_scan.mcfunction",
@@ -2390,50 +2270,72 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 31,
-      "command": "scoreboard players set i loop_counter 0",
+      "command": "tellraw @a {\"text\":\"even loop 0\",\"color\":\"green\"}",
       "source": {
         "file": "src/main.cbl",
         "line": 96,
         "column": 5
       },
-      "kind": "ControlFlow"
+      "kind": "Unrolled"
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 32,
-      "command": "function cobble_26_feature_matrix:loop_temp_9",
+      "command": "tellraw @a {\"text\":\"even loop 2\",\"color\":\"green\"}",
       "source": {
         "file": "src/main.cbl",
         "line": 96,
         "column": 5
       },
-      "kind": "ControlFlow"
+      "kind": "Unrolled"
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 33,
-      "command": "scoreboard players set n loop_counter 7",
+      "command": "tellraw @a {\"text\":\"even loop 4\",\"color\":\"green\"}",
       "source": {
         "file": "src/main.cbl",
-        "line": 99,
+        "line": 96,
         "column": 5
       },
-      "kind": "ControlFlow"
+      "kind": "Unrolled"
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 34,
-      "command": "function cobble_26_feature_matrix:loop_temp_11",
+      "command": "say reverse loop 7",
       "source": {
         "file": "src/main.cbl",
         "line": 99,
         "column": 5
       },
-      "kind": "ControlFlow"
+      "kind": "Unrolled"
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 35,
+      "command": "say reverse loop 4",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 36,
+      "command": "say reverse loop 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 99,
+        "column": 5
+      },
+      "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
+      "generated_line": 37,
       "command": "execute as @a[gamemode=!spectator] at @s if entity @s[distance=..32] run particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 3",
       "source": {
         "file": "src/main.cbl",
@@ -2444,7 +2346,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
-      "generated_line": 36,
+      "generated_line": 38,
       "command": "execute positioned ~ ~2 ~ rotated ~ 0 run particle minecraft:flame ~ ~ ~ 0 0 0 0 1",
       "source": {
         "file": "src/main.cbl",
@@ -2455,7 +2357,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
-      "generated_line": 37,
+      "generated_line": 39,
       "command": "tellraw @a [{\"color\":\"blue\",\"text\":\"Status: \"},{\"nbt\":\"vars.status\",\"storage\":\"cobble_26_feature_matrix:global\"}]",
       "source": {
         "file": "src/main.cbl",
@@ -2704,7 +2606,6 @@ $title $(player) actionbar {"text":"Kit count: $(count)"}
 
 ===== data/cobble_26_feature_matrix/function/load.mcfunction =====
 gamerule max_command_sequence_length 1000000000
-scoreboard objectives add loop_counter dummy
 scoreboard objectives add math dummy
 scoreboard objectives add temp dummy
 scoreboard players set score temp 7
@@ -2739,30 +2640,6 @@ waypoint list
 stopwatch create cobble:matrix
 stopwatch query cobble:matrix 20.0
 version
-
-===== data/cobble_26_feature_matrix/function/loop_body_11.mcfunction =====
-$say reverse loop $(n)
-
-===== data/cobble_26_feature_matrix/function/loop_body_9.mcfunction =====
-$tellraw @a {"text":"even loop $(i)","color":"green"}
-
-===== data/cobble_26_feature_matrix/function/loop_temp_11.mcfunction =====
-execute if score n loop_counter matches 0.. run function cobble_26_feature_matrix:loop_wrapper_12
-scoreboard players remove n loop_counter 3
-execute if score n loop_counter matches 0.. run function cobble_26_feature_matrix:loop_temp_11
-
-===== data/cobble_26_feature_matrix/function/loop_temp_9.mcfunction =====
-execute if score i loop_counter matches ..5 run function cobble_26_feature_matrix:loop_wrapper_10
-scoreboard players add i loop_counter 2
-execute if score i loop_counter matches ..5 run function cobble_26_feature_matrix:loop_temp_9
-
-===== data/cobble_26_feature_matrix/function/loop_wrapper_10.mcfunction =====
-execute store result storage cobble_26_feature_matrix:global args.i int 1 run scoreboard players get i loop_counter
-function cobble_26_feature_matrix:loop_body_9 with storage cobble_26_feature_matrix:global args
-
-===== data/cobble_26_feature_matrix/function/loop_wrapper_12.mcfunction =====
-execute store result storage cobble_26_feature_matrix:global args.n int 1 run scoreboard players get n loop_counter
-function cobble_26_feature_matrix:loop_body_11 with storage cobble_26_feature_matrix:global args
 
 ===== data/cobble_26_feature_matrix/function/marker_scan.mcfunction =====
 execute as @e[type=armor_stand,tag=matrix_marker,distance=..16] run data merge entity @s {Glowing:1b}
@@ -2823,10 +2700,12 @@ execute if score match_temp_3 temp matches 0 run function cobble_26_feature_matr
 execute if score match_temp_3 temp matches 1..2 run function cobble_26_feature_matrix:match_case_1_5
 execute unless score match_temp_3 temp matches 0..0 unless score match_temp_3 temp matches 1..2 run function cobble_26_feature_matrix:match_default_6
 function cobble_26_feature_matrix:while_temp_7
-scoreboard players set i loop_counter 0
-function cobble_26_feature_matrix:loop_temp_9
-scoreboard players set n loop_counter 7
-function cobble_26_feature_matrix:loop_temp_11
+tellraw @a {"text":"even loop 0","color":"green"}
+tellraw @a {"text":"even loop 2","color":"green"}
+tellraw @a {"text":"even loop 4","color":"green"}
+say reverse loop 7
+say reverse loop 4
+say reverse loop 1
 execute as @a[gamemode=!spectator] at @s if entity @s[distance=..32] run particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 3
 execute positioned ~ ~2 ~ rotated ~ 0 run particle minecraft:flame ~ ~ ~ 0 0 0 0 1
 tellraw @a [{"color":"blue","text":"Status: "},{"nbt":"vars.status","storage":"cobble_26_feature_matrix:global"}]

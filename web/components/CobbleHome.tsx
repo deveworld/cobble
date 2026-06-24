@@ -34,7 +34,9 @@ stdlib.addEventListener(event.LOAD, on_load)`
   },
   {
     title: "Data Pack Resources",
-    code: `datapack.function_tag("minecraft:load", ["demo:on_load"])
+    code: `from stdlib import datapack
+
+datapack.function_tag("minecraft:load", ["demo:on_load"])
 datapack.predicate("checks/always", {
     "condition": "minecraft:random_chance",
     "chance": 1

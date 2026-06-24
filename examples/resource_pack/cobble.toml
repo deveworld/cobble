@@ -1,0 +1,14 @@
+[project]
+name = "cobble_resource_pack"
+description = "Cobble experimental resource-pack fixture"
+namespace = "cobble_resource_pack"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = ["main.cbl"]
+
+[experimental]
+resource_pack = true
