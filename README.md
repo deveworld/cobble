@@ -14,7 +14,7 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Cobble 0.7.2** targets Minecraft Java Edition 26.1.2 and pack format
+**Cobble 0.7.3** targets Minecraft Java Edition 26.1.2 and pack format
 101.1. It is the current stable crates.io release.
 
 ## Website And Web Demo
@@ -58,7 +58,7 @@ cobble --version
 For an exact version:
 
 ```bash
-cargo install cobble-lang --version 0.7.2 --locked
+cargo install cobble-lang --version 0.7.3 --locked
 cobble --help
 ```
 

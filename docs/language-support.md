@@ -5,7 +5,7 @@ intentional. It is a planning and QA companion to `docs/language.md`; the
 language reference should explain user-facing behavior, while this matrix keeps
 implementation coverage explicit.
 
-The 0.7.2 line keeps this 0.7.0 source-language surface stable while
+The 0.7.3 line keeps this 0.7.0 source-language surface stable while
 adding workflow and tooling commands.
 
 Cobble is Python-inspired, not Python-compatible. Syntax listed as unsupported

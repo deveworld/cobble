@@ -3,10 +3,10 @@
 ## Status
 
 - Planning date: 2026-06-16
-- Current stable release: `0.7.2`
-- Current development version: `0.7.3-alpha.0`
-- Next planned release: `0.7.3`
-- Active pre-release: `0.7.3-alpha.0`
+- Current stable release: `0.7.3`
+- Current development version: none
+- Next planned release: `0.8.0`
+- Active pre-release: none
 - Current Minecraft target: Java Edition `26.1.2`
 - Current data pack format: `101.1`
 - Package name: `cobble-lang`
@@ -14,7 +14,7 @@
 - Website: <https://deveworld.github.io/cobble/>
 - Browser compiler: <https://deveworld.github.io/cobble/try/>
 
-This roadmap tracks what Cobble should become after 0.7.2. Historical release
+This roadmap tracks what Cobble should become after 0.7.3. Historical release
 details and completed version plans belong in `CHANGELOG.md`.
 
 ## North Star
@@ -127,6 +127,8 @@ QA when EULA acceptance is available.
 - `0.7.2`: follow-up stabilization for the new workflow surface. No new helper
   families, resource behavior, or schema commitments unless needed to fix a
   compatible bug.
+- `0.7.3`: security hardening for workflow filesystem safety and execute-guard
+  correctness before larger 0.8.0 work.
 - `0.8.0`: stdlib v2, data-pack resource authoring, and compatibility prep that
   is too broad for a 0.7.x patch release.
 - `1.0.0`: long-term compatibility contract for language behavior, CLI
@@ -365,7 +367,7 @@ Tasks:
   - zip packaging exclusions.
 - Audit project config extension points:
   - whether link state belongs in `.cobble/` metadata or `cobble.toml`,
-  - workflow profile design only; implementation belongs in 0.7.2 or later
+  - workflow profile design only; implementation belongs in 0.7.3 or later
     after link/watch/clean behavior is proven,
   - how `doctor --json` should expose project, output, commands-json, and link
     health without performing network work.
@@ -795,14 +797,14 @@ Cut from 0.7.1 if implementation would require:
 - real-world filesystem mutation without a marker,
 - long-lived watcher tests that are flaky in CI.
 
-Move to 0.7.2 or later 0.7.x patch releases if:
+Move to 0.7.3 or later 0.7.x patch releases if:
 
 - the feature is already shipped but needs hardening,
 - docs need clarification,
 - a safety bug is found in `fmt`, `watch`, or `link`,
 - a template or example needs small compatibility maintenance.
 
-### 0.7.2: Workflow Stabilization And 0.8 Scope Freeze
+### 0.7.3: Workflow Stabilization And 0.8 Scope Freeze
 
 Theme: stabilize the expanded 0.7 workflow before broad stdlib or resource
 changes.
@@ -864,7 +866,7 @@ changes.
 
 #### Release Candidate And QA
 
-Before the first 0.7.2 release candidate:
+Before the first 0.7.3 release candidate:
 
 ```bash
 cargo fmt --check
@@ -881,7 +883,7 @@ cargo package --locked
 cargo publish --dry-run --locked
 ```
 
-Focused 0.7.2 QA must include a regression test or documented manual result for
+Focused 0.7.3 QA must include a regression test or documented manual result for
 every 0.7.1 issue fixed in the release.
 
 ### 0.8.0: Stdlib V2 And Resource Authoring
@@ -975,10 +977,10 @@ that make the language or generated output harder to explain.
 
 ##### Release Thesis
 
-After 0.7.1 and 0.7.2, users should have a safer project workflow. The next
-gap is authoring reach: common scoreboard, storage, selector, text, schedule,
-NBT, and resource patterns should be easier to express without hiding the
-commands and JSON that Cobble generates.
+After 0.7.x workflow hardening, users should have a safer project workflow.
+The next gap is authoring reach: common scoreboard, storage, selector, text,
+schedule, NBT, and resource patterns should be easier to express without hiding
+the commands and JSON that Cobble generates.
 
 The release should therefore prioritize:
 
@@ -1604,7 +1606,7 @@ These decisions should be made deliberately before implementation starts.
   `watch --link` or a separate command?
 - Should `cobble clean` require an explicit confirmation flag for all writes, or
   only for linked-world cleanup?
-- Should workflow profiles ship in 0.7.2 or later 0.7.x after `fmt`, `watch`,
+- Should workflow profiles ship in 0.7.3 or later 0.7.x after `fmt`, `watch`,
   `link`, and `clean` stabilize?
 - Should resource-pack support live in Cobble core or a separate tool?
 - Should stdlib versions be tied to Cobble versions or importable as explicit
@@ -1634,9 +1636,9 @@ These decisions should be made deliberately before implementation starts.
    existing parser, diagnostics, manifest, and source-map paths.
 7. For 0.7.1, keep website and `/try` output aligned with CLI behavior through
    PR-gated web checks.
-8. For 0.7.2, stabilize the 0.7.1 workflow surface based on real QA, issue
+8. For 0.7.3, stabilize the 0.7.1 workflow surface based on real QA, issue
    reports, and manual template/link usage.
-9. For 0.7.2, finalize 0.8.0 helper/resource scope, stdlib versioning, and
+9. For 0.7.3, finalize 0.8.0 helper/resource scope, stdlib versioning, and
    Minecraft target policy before implementation starts.
 10. For 0.8.0, design and implement the required stdlib v2 MVP and
     resource-authoring ergonomics

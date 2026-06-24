@@ -209,4 +209,4 @@ run cargo package "${package_args[@]}"
 run cargo publish --dry-run "${package_args[@]}"
 
 echo
-echo "0.7.2 release QA gate passed"
+echo "0.7.3 release QA gate passed"

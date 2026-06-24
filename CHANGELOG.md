@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-06-24
+
 ### Changed
-- Opened 0.7.3-alpha.0 development after the 0.7.2 release.
+- Released Cobble 0.7.3 as a stable security hardening release for Minecraft
+  Java Edition 26.1.2 and data pack format 101.1.
 
 ### Security
 - Hardened project-local `.cobble/link_state.json` reads, writes, and clears so
