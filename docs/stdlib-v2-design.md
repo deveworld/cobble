@@ -1,6 +1,6 @@
 # Stdlib V2 Design
 
-Status: 0.8.0 implementation contract. Supersedes the 0.8.0-alpha.0 prep notes.
+Status: 0.8.0 implementation contract.
 
 This document defines the standard-library contract for the 0.8.0 line. The
 goal is to add authoring power without hiding generated Minecraft commands,

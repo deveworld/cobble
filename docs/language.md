@@ -274,7 +274,7 @@ def give_reward(player, amount):
 ```
 
 **Important**: Use `{param_name}` in Cobble source. Cobble compiles it to
-Minecraft's `$(param_name)` macro syntax when needed. Cobble v0.7.3 targets
+Minecraft's `$(param_name)` macro syntax when needed. Cobble v0.8.0 targets
 Minecraft Java Edition 26.1.2, where function macros are available.
 
 Parameter names must be unique. Default parameter values, `*args`, and
@@ -1136,7 +1136,7 @@ stdlib.addEventListener(event.TICK, game_loop)
 
 ## Minecraft Version Compatibility
 
-Cobble v0.7.3 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
+Cobble v0.8.0 requires **Minecraft Java Edition 26.1.2** and pack format **101.1**. Older Minecraft versions are intentionally not supported by this release.
 
 - **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax

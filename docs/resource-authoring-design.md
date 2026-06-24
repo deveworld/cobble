@@ -1,6 +1,6 @@
 # Resource Authoring Design
 
-Status: 0.8.0 implementation contract. Supersedes the 0.8.0-alpha.0 prep notes.
+Status: 0.8.0 implementation contract.
 
 This document defines the 0.8.0 resource-authoring contract. The release
 makes existing data-pack resource declarations clearer and more deterministic

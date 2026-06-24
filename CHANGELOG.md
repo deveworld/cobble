@@ -7,9 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-24
+
+### Added
+- Released Cobble 0.8.0 as the stdlib v2 and resource authoring release for
+  Minecraft Java Edition 26.1.2 and data pack format 101.1.
+- Added stdlib v2 module opt-in with `from stdlib import ...`, while preserving
+  `[stdlib] version = 1` and `import stdlib` compatibility paths.
+- Added data-pack resource authoring helpers for deterministic tag/resource
+  generation, duplicate handling, typed diagnostics, and build-manifest
+  resource metadata.
+- Added compile-time unrolling for literal `range(...)` and literal-array
+  `for` loops with source-map `Unrolled` metadata and manifest
+  `unrolled_loops` reporting.
+- Added experimental resource-pack output behind `--experimental-resource-pack`,
+  including `assets/` generation, ZIP inclusion, manifest counts, and inspect
+  reporting.
+- Added 0.8.0 examples, design docs, focused QA scripts, snapshot checks,
+  schema checks, and an aggregate release gate.
+
 ### Changed
-- Opened 0.8.0-alpha.0 development after the 0.7.3 security hardening
-  release.
+- Defaulted configured projects to stdlib v2 semantics, requiring explicit
+  per-module stdlib imports for new helper usage.
+- Updated the web compiler and ZIP export path to include 0.8.0 data-pack
+  resources, resource-pack assets, and unrolling metadata.
 
 ### Security
 - Added aggregate compile-time unrolling limits so nested literal `for` loops

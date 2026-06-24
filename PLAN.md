@@ -3,10 +3,10 @@
 ## Status
 
 - Planning date: 2026-06-16
-- Current stable release: `0.7.3`
-- Current development version: `0.8.0-alpha.0`
-- Next planned release: `0.8.0`
-- Active pre-release: `0.8.0-alpha.0`
+- Current stable release: `0.8.0`
+- Current development version: `0.8.0`
+- Next planned release: `1.0.0`
+- Active pre-release: none
 - Current Minecraft target: Java Edition `26.1.2`
 - Current data pack format: `101.1`
 - Package name: `cobble-lang`
