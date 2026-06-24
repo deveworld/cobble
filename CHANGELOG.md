@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opened 0.8.0-alpha.0 development after the 0.7.3 security hardening
   release.
 
+### Security
+- Added aggregate compile-time unrolling limits so nested literal `for` loops
+  and command-heavy expansions fail before they can exhaust compiler memory or
+  freeze the browser WASM compiler.
+
 ## [0.7.3] - 2026-06-24
 
 ### Changed

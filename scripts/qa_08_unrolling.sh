@@ -99,6 +99,42 @@ if [[ "$limit_status" -eq 0 ]]; then
 fi
 grep -q "unroll-limit-exceeded" "$work_dir/limit.err"
 
+nested_source="$work_dir/nested-limit.cbl"
+cat >"$nested_source" <<'CBL'
+def main():
+    for i in range(64):
+        for j in range(64):
+            for k in range(64):
+                /say nested {i} {j} {k}
+CBL
+set +e
+cargo run --locked --quiet -- build "$nested_source" -o "$work_dir/nested-limit-out" >"$work_dir/nested-limit.out" 2>"$work_dir/nested-limit.err"
+nested_status=$?
+set -e
+if [[ "$nested_status" -eq 0 ]]; then
+  echo "nested aggregate unrolling unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -q "nested unrolling" "$work_dir/nested-limit.err"
+
+command_limit_source="$work_dir/command-limit.cbl"
+{
+  echo "def main():"
+  echo "    for i in range(1024):"
+  for index in $(seq 0 64); do
+    echo "        /say command $index {i}"
+  done
+} >"$command_limit_source"
+set +e
+cargo run --locked --quiet -- build "$command_limit_source" -o "$work_dir/command-limit-out" >"$work_dir/command-limit.out" 2>"$work_dir/command-limit.err"
+command_limit_status=$?
+set -e
+if [[ "$command_limit_status" -eq 0 ]]; then
+  echo "command-heavy unrolling unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -q "unrolling generated" "$work_dir/command-limit.err"
+
 nonliteral_source="$work_dir/nonliteral.cbl"
 cat >"$nonliteral_source" <<'CBL'
 values = [1, 2]

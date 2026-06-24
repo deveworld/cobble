@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 const UNROLL_LIMIT: usize = 1024;
 const UNROLL_WARNING_THRESHOLD: usize = 256;
+const UNROLL_NESTED_ITERATION_LIMIT: usize = 65_536;
+const UNROLL_GENERATED_COMMAND_LIMIT: usize = 65_536;
 
 #[derive(Debug, Clone)]
 enum UnrollValue {
@@ -33,6 +35,21 @@ impl UnrollValue {
 impl Transpiler {
     pub(in crate::transpiler) fn process_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
         let values = self.unroll_values(for_loop)?;
+        let previous_iteration_factor = self.unroll_iteration_factor;
+        let projected_iterations = previous_iteration_factor
+            .checked_mul(values.len())
+            .ok_or_else(|| {
+                format!(
+                    "unroll-limit-exceeded: nested unrolling expands past {} aggregate iterations.",
+                    UNROLL_NESTED_ITERATION_LIMIT
+                )
+            })?;
+        if projected_iterations > UNROLL_NESTED_ITERATION_LIMIT {
+            return Err(format!(
+                "unroll-limit-exceeded: nested unrolling expands to {} aggregate iterations (limit {}).",
+                projected_iterations, UNROLL_NESTED_ITERATION_LIMIT
+            ));
+        }
         if values.len() > UNROLL_WARNING_THRESHOLD {
             eprintln!(
                 "warning: unroll-large-expansion: for {} expands to {} iterations",
@@ -41,18 +58,36 @@ impl Transpiler {
             );
         }
 
-        self.data_pack.unrolled_loops += 1;
-        for value in values {
-            let substituted = substitute_statements(&for_loop.body, &for_loop.target, &value)?;
-            for statement in substituted {
-                let start_index = self.current_function.as_ref().map(Vec::len);
-                self.process_statement(&statement)?;
-                if let Some(start_index) = start_index {
-                    self.mark_current_function_commands_as_unrolled(start_index);
+        let is_outermost_unroll = self.unroll_depth == 0;
+        if is_outermost_unroll {
+            self.unroll_command_baseline = Some(self.generated_command_count());
+        }
+        self.unroll_depth += 1;
+        self.unroll_iteration_factor = projected_iterations;
+
+        let result = (|| {
+            self.data_pack.unrolled_loops += 1;
+            for value in values {
+                let substituted = substitute_statements(&for_loop.body, &for_loop.target, &value)?;
+                for statement in substituted {
+                    let start_index = self.current_function.as_ref().map(Vec::len);
+                    self.process_statement(&statement)?;
+                    if let Some(start_index) = start_index {
+                        self.mark_current_function_commands_as_unrolled(start_index);
+                    }
+                    self.ensure_unroll_command_budget()?;
                 }
             }
+            Ok(())
+        })();
+
+        self.unroll_depth -= 1;
+        self.unroll_iteration_factor = previous_iteration_factor;
+        if is_outermost_unroll {
+            self.unroll_command_baseline = None;
         }
-        Ok(())
+
+        result
     }
 
     fn unroll_values(&self, for_loop: &ForLoop) -> Result<Vec<UnrollValue>, String> {
@@ -217,6 +252,29 @@ impl Transpiler {
                 ),
             );
         }
+    }
+
+    fn generated_command_count(&self) -> usize {
+        self.data_pack
+            .functions
+            .values()
+            .map(Vec::len)
+            .sum::<usize>()
+            + self.current_function.as_ref().map_or(0, Vec::len)
+    }
+
+    fn ensure_unroll_command_budget(&self) -> Result<(), String> {
+        let Some(baseline) = self.unroll_command_baseline else {
+            return Ok(());
+        };
+        let generated = self.generated_command_count().saturating_sub(baseline);
+        if generated > UNROLL_GENERATED_COMMAND_LIMIT {
+            return Err(format!(
+                "unroll-limit-exceeded: unrolling generated {} commands (limit {}).",
+                generated, UNROLL_GENERATED_COMMAND_LIMIT
+            ));
+        }
+        Ok(())
     }
 
     pub(in crate::transpiler) fn process_while(

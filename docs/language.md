@@ -486,6 +486,8 @@ counters or helper functions.
 - Negative `by` over `range(n)` starts at `n - 1` and counts down.
 - Literal arrays may contain numbers, strings, or booleans.
 - A single loop may expand up to 1024 iterations. Expansions above 256 emit a warning.
+- Nested unrolling is capped at 65,536 aggregate iterations and one outer
+  unroll may emit at most 65,536 generated commands.
 
 ### While Loops
 

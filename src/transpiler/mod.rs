@@ -162,6 +162,12 @@ pub struct Transpiler {
     stdlib_v1_warning_emitted: bool,
     /// Whether experimental resource-pack output is enabled for this build.
     experimental_resource_pack: bool,
+    /// Current nesting depth while compile-time `for` unrolling is active.
+    unroll_depth: usize,
+    /// Product of literal iteration counts across the active unroll stack.
+    unroll_iteration_factor: usize,
+    /// Generated command count at the start of the outermost unroll.
+    unroll_command_baseline: Option<usize>,
 }
 
 impl Transpiler {
@@ -197,6 +203,9 @@ impl Transpiler {
             active_stdlib_modules: HashSet::new(),
             stdlib_v1_warning_emitted: false,
             experimental_resource_pack: false,
+            unroll_depth: 0,
+            unroll_iteration_factor: 1,
+            unroll_command_baseline: None,
         }
     }
 

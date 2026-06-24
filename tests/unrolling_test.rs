@@ -141,6 +141,37 @@ def test():
 }
 
 #[test]
+fn rejects_nested_unrolls_over_the_aggregate_limit() {
+    let error = compile_error(
+        r#"
+def test():
+    for i in range(64):
+        for j in range(64):
+            for k in range(64):
+                /say {i} {j} {k}
+"#,
+    );
+
+    assert!(error.contains("unroll-limit-exceeded"), "{error}");
+    assert!(error.contains("nested unrolling"), "{error}");
+}
+
+#[test]
+fn rejects_unrolled_command_output_over_the_aggregate_limit() {
+    let repeated_commands = (0..65)
+        .map(|index| format!("        /say command {index} {{i}}\n"))
+        .collect::<String>();
+    let source = format!(
+        "def test():\n    for i in range(1024):\n{}",
+        repeated_commands
+    );
+    let error = compile_error(&source);
+
+    assert!(error.contains("unroll-limit-exceeded"), "{error}");
+    assert!(error.contains("unrolling generated"), "{error}");
+}
+
+#[test]
 fn rejects_bad_range_step() {
     let error = compile_error(
         r#"

@@ -250,8 +250,9 @@ Coverage:
   and path suggestions for slash/uppercase mistakes.
 - `qa_08_unrolling.sh` covers literal `range(n)`, `range(start, stop,
   step)`, and literal array unrolling, the 1024 limit, the 256 expansion
-  warning, `unroll-non-literal` for non-literal iterables, source-map
-  `Unrolled` kind mapping, and manifest `unrolled_loops` count.
+  warning, aggregate nested/command output limits, `unroll-non-literal`
+  for non-literal iterables, source-map `Unrolled` kind mapping, and
+  manifest `unrolled_loops` count.
 - `qa_08_resource_pack.sh` covers `--experimental-resource-pack` opt-in,
   refusal without the flag, `resource_pack.item_model`/
   `block_model`/`lang` generation, unified `data/`+`assets/` output,
