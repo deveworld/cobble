@@ -22,7 +22,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 0,
     "recipes": 0,
-    "source_map_entries": 8,
+    "source_map_entries": 9,
     "stdlib_function_tags": 0,
     "total_json_resources": 1
   },
@@ -156,6 +156,17 @@ expression: datapack_tree_snapshot(&output_dir)
         "column": 5
       },
       "kind": "Unrolled"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/load.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 3,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
     }
   ]
 }

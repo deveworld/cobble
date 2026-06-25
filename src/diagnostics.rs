@@ -1,4 +1,4 @@
-use crate::ast::{CobbleType, Import, Program};
+use crate::ast::{CobbleType, Expression, Import, Program, Statement};
 use crate::parser::parse;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -822,6 +822,7 @@ fn collect_cross_file_call_diagnostics(
     output: &mut BTreeMap<usize, Vec<SourceDiagnostic>>,
 ) {
     let mut active_docstring_quote = None;
+    let mut multiline_expression_depth = 0usize;
     for (line_index, line) in file.source.lines().enumerate() {
         let line_number = line_index + 1;
         let raw_trimmed = line.trim_start();
@@ -832,116 +833,120 @@ fn collect_cross_file_call_diagnostics(
         let masked = mask_non_code(line);
         let trimmed = masked.trim_start();
         if should_skip_call_argument_scan(trimmed) {
+            update_delimiter_depth_for_indentation(trimmed, &mut multiline_expression_depth);
             continue;
         }
 
+        let inside_multiline_expression = multiline_expression_depth > 0;
         let indent = masked.len() - trimmed.len();
-        for call in function_calls_in_expression(trimmed) {
-            let Some(signature) = signatures.get(&call.name) else {
-                if !is_user_function_call_statement(trimmed, &call) {
-                    continue;
-                }
+        if !inside_multiline_expression {
+            for call in function_calls_in_expression(trimmed) {
+                let Some(signature) = signatures.get(&call.name) else {
+                    if !is_user_function_call_statement(trimmed, &call) {
+                        continue;
+                    }
 
-                if let Some((module, method)) = split_module_call_name(&call.name) {
-                    if is_value_only_module_call(module, method) {
+                    if let Some((module, method)) = split_module_call_name(&call.name) {
+                        if let Some(message) =
+                            value_only_module_call_message(module, method, &call.name)
+                        {
+                            output.entry(file_index).or_default().push(
+                                SourceDiagnostic::error(
+                                    "unsupported-function-call-expression",
+                                    line_number,
+                                    column_from_byte(line, indent + call.offset),
+                                    message,
+                                )
+                                .with_help(
+                                    "Pass the returned value to another helper or JSON resource value instead.",
+                                ),
+                            );
+                            continue;
+                        }
+
+                        if is_known_module_call(module, method) {
+                            continue;
+                        }
+
                         output.entry(file_index).or_default().push(
                             SourceDiagnostic::error(
-                                "unsupported-function-call-expression",
+                                "undefined-function",
                                 line_number,
                                 column_from_byte(line, indent + call.offset),
-                                format!(
-                                    "`{}` returns a value and cannot be used as a standalone statement",
-                                    call.name
-                                ),
+                                format!("Unknown helper function `{}`", call.name),
                             )
                             .with_help(
-                                "Pass the returned value to another helper or JSON resource value instead.",
+                                "Use a documented Cobble helper module/function, define a Cobble function, or use a raw Minecraft command for external behavior.",
                             ),
                         );
                         continue;
                     }
 
-                    if is_known_module_call(module, method) {
-                        continue;
+                    if !is_known_non_user_function_call(&call.name) {
+                        output.entry(file_index).or_default().push(
+                            SourceDiagnostic::error(
+                                "undefined-function",
+                                line_number,
+                                column_from_byte(line, indent + call.offset),
+                                format!("Undefined function `{}`", call.name),
+                            )
+                            .with_help(
+                                "Define the Cobble function, import a file that defines it, or use a raw `/function namespace:path` command for external Minecraft functions.",
+                            ),
+                        );
                     }
-
-                    output.entry(file_index).or_default().push(
-                        SourceDiagnostic::error(
-                            "undefined-function",
-                            line_number,
-                            column_from_byte(line, indent + call.offset),
-                            format!("Unknown helper function `{}`", call.name),
-                        )
-                        .with_help(
-                            "Use a documented Cobble helper module/function, define a Cobble function, or use a raw Minecraft command for external behavior.",
-                        ),
-                    );
-                    continue;
-                }
-
-                if !is_known_non_user_function_call(&call.name) {
-                    output.entry(file_index).or_default().push(
-                        SourceDiagnostic::error(
-                            "undefined-function",
-                            line_number,
-                            column_from_byte(line, indent + call.offset),
-                            format!("Undefined function `{}`", call.name),
-                        )
-                        .with_help(
-                            "Define the Cobble function, import a file that defines it, or use a raw `/function namespace:path` command for external Minecraft functions.",
-                        ),
-                    );
-                }
-                continue;
-            };
-
-            if call.arg_count != signature.params.len() {
-                output.entry(file_index).or_default().push(
-                    SourceDiagnostic::error(
-                        "function-argument-count",
-                        line_number,
-                        column_from_byte(line, indent + call.offset),
-                        format!(
-                            "Function `{}` expects {} argument(s), but {} provided",
-                            signature.name,
-                            signature.params.len(),
-                            call.arg_count
-                        ),
-                    )
-                    .with_help(format!(
-                        "Expected parameters: ({}). Definition is at {}.",
-                        signature.params.join(", "),
-                        format_file_signature_location(signature)
-                    )),
-                );
-                continue;
-            }
-
-            for argument in &call.arguments {
-                let Some(nested_call) = function_calls_in_expression(&argument.text)
-                    .into_iter()
-                    .next()
-                else {
                     continue;
                 };
 
-                output.entry(file_index).or_default().push(
-                    SourceDiagnostic::error(
-                        "unsupported-function-call-argument",
-                        line_number,
-                        column_from_byte(line, indent + argument.offset + nested_call.offset),
-                        format!(
-                            "Function `{}` arguments cannot contain function call expressions",
-                            signature.name
-                        ),
-                    )
-                    .with_help(format!(
-                        "Call Cobble functions as standalone statements, or pass a literal, variable, selector, or storage-backed value. Definition is at {}.",
-                        format_file_signature_location(signature)
-                    )),
-                );
+                if call.arg_count != signature.params.len() {
+                    output.entry(file_index).or_default().push(
+                        SourceDiagnostic::error(
+                            "function-argument-count",
+                            line_number,
+                            column_from_byte(line, indent + call.offset),
+                            format!(
+                                "Function `{}` expects {} argument(s), but {} provided",
+                                signature.name,
+                                signature.params.len(),
+                                call.arg_count
+                            ),
+                        )
+                        .with_help(format!(
+                            "Expected parameters: ({}). Definition is at {}.",
+                            signature.params.join(", "),
+                            format_file_signature_location(signature)
+                        )),
+                    );
+                    continue;
+                }
+
+                for argument in &call.arguments {
+                    let Some(nested_call) = function_calls_in_expression(&argument.text)
+                        .into_iter()
+                        .next()
+                    else {
+                        continue;
+                    };
+
+                    output.entry(file_index).or_default().push(
+                        SourceDiagnostic::error(
+                            "unsupported-function-call-argument",
+                            line_number,
+                            column_from_byte(line, indent + argument.offset + nested_call.offset),
+                            format!(
+                                "Function `{}` arguments cannot contain function call expressions",
+                                signature.name
+                            ),
+                        )
+                        .with_help(format!(
+                            "Call Cobble functions as standalone statements, or pass a literal, variable, selector, or storage-backed value. Definition is at {}.",
+                            format_file_signature_location(signature)
+                        )),
+                    );
+                }
             }
         }
+        update_delimiter_depth_for_indentation(trimmed, &mut multiline_expression_depth);
     }
 }
 
@@ -2167,6 +2172,7 @@ fn check_undefined_function_calls(
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
     let mut active_docstring_quote = None;
+    let mut multiline_expression_depth = 0usize;
     for (line_index, line) in source.lines().enumerate() {
         let line_number = line_index + 1;
         let raw_trimmed = line.trim_start();
@@ -2177,35 +2183,57 @@ fn check_undefined_function_calls(
         let masked = mask_non_code(line);
         let trimmed = masked.trim_start();
         if should_skip_call_argument_scan(trimmed) {
+            update_delimiter_depth_for_indentation(trimmed, &mut multiline_expression_depth);
             continue;
         }
 
+        let inside_multiline_expression = multiline_expression_depth > 0;
         let indent = masked.len() - trimmed.len();
-        for call in function_calls_in_expression(trimmed) {
-            if !is_user_function_call_statement(trimmed, &call) {
-                continue;
-            }
+        if !inside_multiline_expression {
+            for call in function_calls_in_expression(trimmed) {
+                if !is_user_function_call_statement(trimmed, &call) {
+                    continue;
+                }
 
-            if let Some((module, method)) = split_module_call_name(&call.name) {
-                if is_value_only_module_call(module, method) {
+                if let Some((module, method)) = split_module_call_name(&call.name) {
+                    if let Some(message) =
+                        value_only_module_call_message(module, method, &call.name)
+                    {
+                        diagnostics.push(
+                            SourceDiagnostic::error(
+                                "unsupported-function-call-expression",
+                                line_number,
+                                column_from_byte(line, indent + call.offset),
+                                message,
+                            )
+                            .with_help(
+                                "Pass the returned value to another helper or JSON resource value instead.",
+                            ),
+                        );
+                        continue;
+                    }
+
+                    if is_known_module_call(module, method) {
+                        continue;
+                    }
+
                     diagnostics.push(
                         SourceDiagnostic::error(
-                            "unsupported-function-call-expression",
+                            "undefined-function",
                             line_number,
                             column_from_byte(line, indent + call.offset),
-                            format!(
-                                "`{}` returns a value and cannot be used as a standalone statement",
-                                call.name
-                            ),
+                            format!("Unknown helper function `{}`", call.name),
                         )
                         .with_help(
-                            "Pass the returned value to another helper or JSON resource value instead.",
+                            "Use a documented Cobble helper module/function, define a Cobble function, or use a raw Minecraft command for external behavior.",
                         ),
                     );
                     continue;
                 }
 
-                if is_known_module_call(module, method) {
+                if function_defs.contains_key(&call.name)
+                    || is_allowed_value_function_call(&call.name)
+                {
                     continue;
                 }
 
@@ -2214,32 +2242,15 @@ fn check_undefined_function_calls(
                         "undefined-function",
                         line_number,
                         column_from_byte(line, indent + call.offset),
-                        format!("Unknown helper function `{}`", call.name),
+                        format!("Undefined function `{}`", call.name),
                     )
                     .with_help(
-                        "Use a documented Cobble helper module/function, define a Cobble function, or use a raw Minecraft command for external behavior.",
+                        "Define the Cobble function, import a file that defines it, or use a raw `/function namespace:path` command for external Minecraft functions.",
                     ),
                 );
-                continue;
             }
-
-            if function_defs.contains_key(&call.name) || is_allowed_value_function_call(&call.name)
-            {
-                continue;
-            }
-
-            diagnostics.push(
-                SourceDiagnostic::error(
-                    "undefined-function",
-                    line_number,
-                    column_from_byte(line, indent + call.offset),
-                    format!("Undefined function `{}`", call.name),
-                )
-                .with_help(
-                    "Define the Cobble function, import a file that defines it, or use a raw `/function namespace:path` command for external Minecraft functions.",
-                ),
-            );
         }
+        update_delimiter_depth_for_indentation(trimmed, &mut multiline_expression_depth);
     }
 }
 
@@ -2340,8 +2351,26 @@ fn is_known_module_call(module: &str, method: &str) -> bool {
                 | "get"
                 | "read_score"
                 | "copy_from"
+                | "path"
+                | "child"
+                | "index"
+        ),
+        "item_component" => matches!(
+            method,
+            "components" | "custom_name" | "lore" | "unbreakable"
         ),
         "schedule" => matches!(method, "once" | "clear"),
+        "selector" => matches!(
+            method,
+            "current"
+                | "nearest_player"
+                | "all_players"
+                | "all_entities"
+                | "tagged"
+                | "players_tagged"
+                | "entity_type"
+        ),
+        "position" => matches!(method, "here" | "absolute" | "relative" | "local"),
         "bossbar" => matches!(
             method,
             "add"
@@ -2363,6 +2392,7 @@ fn is_known_module_call(module: &str, method: &str) -> bool {
                 | "effect_clear"
                 | "attribute_get"
                 | "attribute_base_set"
+                | "teleport"
         ),
         "datapack" => {
             datapack_json_resource_type(method).is_some() || datapack_tag_type(method).is_some()
@@ -2372,8 +2402,52 @@ fn is_known_module_call(module: &str, method: &str) -> bool {
     }
 }
 
-fn is_value_only_module_call(module: &str, method: &str) -> bool {
-    module == "text" && matches!(method, "plain" | "colored" | "score" | "selector")
+fn value_only_module_call_message(module: &str, method: &str, name: &str) -> Option<String> {
+    (module == "text" && matches!(method, "plain" | "colored" | "score" | "selector"))
+        .then(|| format!("`{name}` returns a value and cannot be used as a standalone statement"))
+        .or_else(|| {
+            (module == "storage" && matches!(method, "path" | "child" | "index")).then(|| {
+                format!(
+                    "{name}() returns a storage path string and cannot be used as a standalone statement"
+                )
+            })
+        })
+        .or_else(|| {
+            (module == "item_component"
+                && matches!(method, "components" | "custom_name" | "lore" | "unbreakable"))
+            .then(|| {
+                format!(
+                    "{name}() returns an item component JSON object and cannot be used as a standalone statement"
+                )
+            })
+        })
+        .or_else(|| {
+            (module == "selector"
+                && matches!(
+                    method,
+                    "current"
+                        | "nearest_player"
+                        | "all_players"
+                        | "all_entities"
+                        | "tagged"
+                        | "players_tagged"
+                        | "entity_type"
+                ))
+            .then(|| {
+                format!(
+                    "{name}() returns a selector string and cannot be used as a standalone statement"
+                )
+            })
+        })
+        .or_else(|| {
+            (module == "position"
+                && matches!(method, "here" | "absolute" | "relative" | "local"))
+            .then(|| {
+                format!(
+                    "{name}() returns a coordinate string and cannot be used as a standalone statement"
+                )
+            })
+        })
 }
 
 fn check_unsupported_none_usage(source: &str, diagnostics: &mut Vec<SourceDiagnostic>) {
@@ -4150,7 +4224,10 @@ fn is_builtin_symbol(name: &str) -> bool {
             | "random"
             | "timer"
             | "storage"
+            | "item_component"
             | "schedule"
+            | "selector"
+            | "position"
             | "bossbar"
             | "team"
             | "entity"
@@ -4272,15 +4349,17 @@ fn check_datapack_helper_argument_shapes(
         }
 
         if let Some(tag_type) = datapack_tag_type(helper) {
-            if call.arg_count != 2 {
+            if !(2..=3).contains(&call.arg_count) {
                 diagnostics.push(
                     SourceDiagnostic::error(
                         "datapack-resource-argument",
                         line_number,
                         column_from_byte(line, indent + call.offset),
-                        format!("datapack.{tag_type}_tag() takes 2 arguments"),
+                        format!("datapack.{tag_type}_tag() takes 2 or 3 arguments"),
                     )
-                    .with_help("Pass a tag name and an array of resource IDs."),
+                    .with_help(
+                        "Pass a tag name, an array of resource IDs, and optional replace boolean.",
+                    ),
                 );
                 continue;
             }
@@ -4320,6 +4399,21 @@ fn check_datapack_helper_argument_shapes(
                     diagnostics,
                 );
             }
+
+            if let Some(replace_arg) = call.arguments.get(2) {
+                let replace = replace_arg.text.trim();
+                if replace != "True" && replace != "False" {
+                    diagnostics.push(
+                        SourceDiagnostic::error(
+                            "datapack-resource-argument",
+                            line_number,
+                            column_from_byte(line, indent + replace_arg.offset),
+                            "Tag replace must be a literal boolean",
+                        )
+                        .with_help("Use `True` to replace vanilla tag values or `False` to preserve the explicit setting."),
+                    );
+                }
+            }
         }
     }
 }
@@ -4337,15 +4431,35 @@ fn check_datapack_tag_value_resource_ids(
         .unwrap_or(&argument.text);
 
     for item in array_literal_item_spans(raw_argument) {
+        if item.text.starts_with('{') {
+            for diagnostic in datapack_tag_object_diagnostics(&item.text) {
+                diagnostics.push(
+                    SourceDiagnostic::error(
+                        diagnostic.kind,
+                        line_number,
+                        column_from_byte(
+                            line,
+                            indent + argument.offset + item.offset + diagnostic.offset,
+                        ),
+                        diagnostic.message,
+                    )
+                    .with_help(diagnostic.help),
+                );
+            }
+            continue;
+        }
+
         if !item.text.starts_with('"') && !item.text.starts_with('\'') {
             diagnostics.push(
                 SourceDiagnostic::error(
                     "datapack-resource-argument",
                     line_number,
                     column_from_byte(line, indent + argument.offset + item.offset),
-                    "Tag values must be string resource IDs",
+                    "Tag values must be string resource IDs or object entries",
                 )
-                .with_help("Use string values such as `[\"minecraft:stone\"]`."),
+                .with_help(
+                    "Use string values such as `[\"minecraft:stone\"]` or object entries such as `[{\"id\": \"minecraft:stone\", \"required\": False}]`.",
+                ),
             );
             continue;
         }
@@ -4492,6 +4606,122 @@ fn validate_datapack_resource_id(label: &str, id: &str) -> Option<ResourceIdDiag
     }
 
     None
+}
+
+struct TagObjectDiagnostic {
+    kind: &'static str,
+    message: String,
+    help: String,
+    offset: usize,
+}
+
+fn datapack_tag_object_diagnostics(text: &str) -> Vec<TagObjectDiagnostic> {
+    let Some(Expression::Map(entries)) = parse_diagnostic_expression(text) else {
+        return vec![TagObjectDiagnostic {
+            kind: "datapack-resource-argument",
+            message: "Tag object values must be valid object entries".to_string(),
+            help:
+                "Use object entries such as `{\"id\": \"minecraft:stone\", \"required\": False}`."
+                    .to_string(),
+            offset: 0,
+        }];
+    };
+
+    let mut diagnostics = Vec::new();
+    let mut id = None;
+    let mut required = None;
+
+    for (key, value) in &entries {
+        match key.as_str() {
+            "id" => id = Some(value),
+            "required" => required = Some(value),
+            _ => diagnostics.push(TagObjectDiagnostic {
+                kind: "datapack-resource-argument",
+                message: "Tag object values may only contain \"id\" and \"required\" fields"
+                    .to_string(),
+                help:
+                    "Remove extra fields or use a string tag entry such as `\"minecraft:stone\"`."
+                        .to_string(),
+                offset: object_field_key_offset(text, key).unwrap_or(0),
+            }),
+        }
+    }
+
+    match id {
+        Some(Expression::String(value)) => {
+            if let Some(diagnostic) = validate_datapack_resource_id("tag value", value) {
+                let value_offset = object_field_value_offset(text, "id").unwrap_or(0);
+                let quote_offset = text
+                    .get(value_offset..)
+                    .and_then(|rest| rest.chars().next())
+                    .filter(|quote| matches!(quote, '"' | '\''))
+                    .map_or(0, char::len_utf8);
+                diagnostics.push(TagObjectDiagnostic {
+                    kind: "datapack-resource-id",
+                    message: diagnostic.message,
+                    help: diagnostic.help,
+                    offset: value_offset + quote_offset + diagnostic.offset,
+                });
+            }
+        }
+        Some(_) | None => diagnostics.push(TagObjectDiagnostic {
+            kind: "datapack-resource-argument",
+            message: "Tag object values must include a string \"id\" resource ID".to_string(),
+            help:
+                "Use object entries such as `{\"id\": \"minecraft:stone\", \"required\": False}`."
+                    .to_string(),
+            offset: object_field_value_offset(text, "id").unwrap_or(0),
+        }),
+    }
+
+    if let Some(value) = required {
+        if !matches!(value, Expression::Boolean(_)) {
+            diagnostics.push(TagObjectDiagnostic {
+                kind: "datapack-resource-argument",
+                message: "Tag object value \"required\" must be a boolean".to_string(),
+                help: "Use `required: True` or `required: False`.".to_string(),
+                offset: object_field_value_offset(text, "required").unwrap_or(0),
+            });
+        }
+    }
+
+    diagnostics
+}
+
+fn parse_diagnostic_expression(text: &str) -> Option<Expression> {
+    let source = format!("__cobble_diagnostic_value = {}\n", text);
+    let program = parse(&source).ok()?;
+    match program.statements.into_iter().next()? {
+        Statement::Assignment(assignment) => Some(assignment.value),
+        Statement::Expression(expression) => Some(expression),
+        _ => None,
+    }
+}
+
+fn object_field_key_offset(text: &str, key: &str) -> Option<usize> {
+    for pattern in [
+        format!("\"{}\"", key),
+        format!("'{}'", key),
+        key.to_string(),
+    ] {
+        if let Some(offset) = text.find(&pattern) {
+            return Some(offset);
+        }
+    }
+    None
+}
+
+fn object_field_value_offset(text: &str, key: &str) -> Option<usize> {
+    let key_offset = object_field_key_offset(text, key)?;
+    let colon_offset = text.get(key_offset..)?.find(':')? + key_offset;
+    let value_start = colon_offset + ':'.len_utf8();
+    let whitespace = text
+        .get(value_start..)?
+        .chars()
+        .take_while(|ch| ch.is_whitespace())
+        .map(char::len_utf8)
+        .sum::<usize>();
+    Some(value_start + whitespace)
 }
 
 fn quoted_string_literal_at(text: &str, offset: usize) -> Option<&str> {
@@ -4846,16 +5076,18 @@ fn check_mapped_datapack_helper_argument_shapes(
         }
 
         if let Some(tag_type) = datapack_tag_type(helper) {
-            if call.arg_count != 2 {
+            if !(2..=3).contains(&call.arg_count) {
                 let location = expression.location_at(call.offset);
                 diagnostics.push(
                     SourceDiagnostic::error(
                         "datapack-resource-argument",
                         location.line,
                         location.column,
-                        format!("datapack.{tag_type}_tag() takes 2 arguments"),
+                        format!("datapack.{tag_type}_tag() takes 2 or 3 arguments"),
                     )
-                    .with_help("Pass a tag name and an array of resource IDs."),
+                    .with_help(
+                        "Pass a tag name, an array of resource IDs, and optional replace boolean.",
+                    ),
                 );
                 continue;
             }
@@ -4885,6 +5117,22 @@ fn check_mapped_datapack_helper_argument_shapes(
                 );
             } else {
                 check_mapped_datapack_tag_value_resource_ids(expression, values_arg, diagnostics);
+            }
+
+            if let Some(replace_arg) = call.arguments.get(2) {
+                let replace = replace_arg.text.trim();
+                if replace != "True" && replace != "False" {
+                    let location = expression.location_at(replace_arg.offset);
+                    diagnostics.push(
+                        SourceDiagnostic::error(
+                            "datapack-resource-argument",
+                            location.line,
+                            location.column,
+                            "Tag replace must be a literal boolean",
+                        )
+                        .with_help("Use `True` to replace vanilla tag values or `False` to preserve the explicit setting."),
+                    );
+                }
             }
         }
     }
@@ -4926,6 +5174,22 @@ fn check_mapped_datapack_tag_value_resource_ids(
 
     for item in array_literal_item_spans(raw_argument) {
         let item_offset = argument.offset + item.offset;
+        if item.text.starts_with('{') {
+            for diagnostic in datapack_tag_object_diagnostics(&item.text) {
+                let location = expression.location_at(item_offset + diagnostic.offset);
+                diagnostics.push(
+                    SourceDiagnostic::error(
+                        diagnostic.kind,
+                        location.line,
+                        location.column,
+                        diagnostic.message,
+                    )
+                    .with_help(diagnostic.help),
+                );
+            }
+            continue;
+        }
+
         if !item.text.starts_with('"') && !item.text.starts_with('\'') {
             let location = expression.location_at(item_offset);
             diagnostics.push(
@@ -4933,9 +5197,11 @@ fn check_mapped_datapack_tag_value_resource_ids(
                     "datapack-resource-argument",
                     location.line,
                     location.column,
-                    "Tag values must be string resource IDs",
+                    "Tag values must be string resource IDs or object entries",
                 )
-                .with_help("Use string values such as `[\"minecraft:stone\"]`."),
+                .with_help(
+                    "Use string values such as `[\"minecraft:stone\"]` or object entries such as `[{\"id\": \"minecraft:stone\", \"required\": False}]`.",
+                ),
             );
             continue;
         }
@@ -6090,6 +6356,21 @@ datapack.block_tag("bad", {"values": ["minecraft:stone"]})
     }
 
     #[test]
+    fn reports_datapack_tag_replace_argument_diagnostics() {
+        let diagnostics = analyze_source(
+            r#"
+datapack.block_tag("bad", ["minecraft:stone"], "yes")
+"#,
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, "datapack-resource-argument");
+        assert!(diagnostics[0]
+            .message
+            .contains("Tag replace must be a literal boolean"));
+    }
+
+    #[test]
     fn reports_datapack_tag_non_string_values() {
         let diagnostics = analyze_source(
             r#"
@@ -6104,6 +6385,52 @@ datapack.item_tag("bad", [1, True])
         assert!(diagnostics.iter().all(|diagnostic| diagnostic
             .message
             .contains("Tag values must be string resource IDs")));
+    }
+
+    #[test]
+    fn allows_datapack_tag_object_values() {
+        let diagnostics = analyze_source(
+            r#"
+datapack.item_tag("ok", [
+    "minecraft:diamond",
+    {"id": "minecraft:emerald", "required": False},
+])
+"#,
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn reports_datapack_tag_object_value_diagnostics() {
+        let diagnostics = analyze_source(
+            r#"
+datapack.item_tag("bad", [
+    {"id": "minecraft/diamond", "required": False},
+    {"required": False},
+    {"id": "minecraft:emerald", "required": "no"},
+    {"id": "minecraft:gold_ingot", "optional": False},
+])
+"#,
+        );
+
+        assert_eq!(diagnostics.len(), 4);
+        assert_eq!(diagnostics[0].kind, "datapack-resource-id");
+        assert!(diagnostics[0]
+            .message
+            .contains("Use 'minecraft:diamond' instead"));
+        assert_eq!(diagnostics[1].kind, "datapack-resource-argument");
+        assert!(diagnostics[1]
+            .message
+            .contains("must include a string \"id\""));
+        assert_eq!(diagnostics[2].kind, "datapack-resource-argument");
+        assert!(diagnostics[2]
+            .message
+            .contains("\"required\" must be a boolean"));
+        assert_eq!(diagnostics[3].kind, "datapack-resource-argument");
+        assert!(diagnostics[3]
+            .message
+            .contains("may only contain \"id\" and \"required\""));
     }
 
     #[test]

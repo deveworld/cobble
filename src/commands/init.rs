@@ -399,6 +399,8 @@ mod tests {
                 input: Some(project_dir.join("src")),
                 json: false,
                 symbols: false,
+                experimental_plugins: false,
+                experimental_python_compat: false,
             })
             .unwrap();
 

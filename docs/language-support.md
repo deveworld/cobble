@@ -1,18 +1,25 @@
 # Cobble Language Support Matrix
 
-This document records the language surface that Cobble 0.7.0 should treat as
+This document records the language surface that Cobble 0.9.0 should treat as
 intentional. It is a planning and QA companion to `docs/language.md`; the
 language reference should explain user-facing behavior, while this matrix keeps
 implementation coverage explicit.
 
-The 0.7.3 line keeps this 0.7.0 source-language surface stable while
-adding workflow and tooling commands.
+The 0.9.0 line keeps the stable Python-inspired source surface intentionally
+small while expanding data-pack/resource-pack authoring and tooling contracts.
+Experimental features may report additional diagnostics, but they must not make
+unsupported Python syntax silently compile.
 
 Cobble is Python-inspired, not Python-compatible. Syntax listed as unsupported
 should fail with an actionable diagnostic.
-The 0.7.0 implementation already runs a shared CLI/WASM preflight diagnostic
+The current implementation runs a shared CLI/WASM preflight diagnostic
 pass for the unsupported constructs listed below when they can be detected from
 source text before parsing.
+`cobble check --experimental-python-compat` and `[experimental]
+python_compat = true` add an experimental diagnostics-only compatibility report
+to `check` output. The report currently lists `pass` as the deliberately
+supported Python-like no-op and summarizes unsupported Python-like diagnostics;
+it does not make unsupported syntax compile.
 
 ## Supported Syntax
 
@@ -32,12 +39,13 @@ source text before parsing.
 | Imports | `import module`, `from module import item` | Parser, CLI, and import diagnostics tests |
 | Selectors | `@Name = @selector[...]` aliases | Integration tests |
 | Entity templates | `define @Name = @Selector create {...} end`, `create @Name` | Parser and integration tests |
-| Data pack resources | `datapack.*` helper calls | Resource tests and snapshots |
-| Stdlib calls | `stdlib.*` and imported stdlib helper calls | Stdlib tests |
+| Data pack resources | `datapack.*` helper calls, including object-shaped tag entries | Resource tests and snapshots |
+| Resource pack beta | Opt-in `resource_pack.*` helper calls and CLI static `assets/` passthrough | Resource-pack tests and snapshots |
+| Stdlib calls | `stdlib.*`, imported command helpers, and value helpers such as `selector.*` and `position.*` | Stdlib tests |
 
 ## Intentionally Unsupported Python Syntax
 
-| Syntax | Desired 0.7 behavior | Alternative |
+| Syntax | Desired 0.9 behavior | Alternative |
 | --- | --- | --- |
 | Default parameters, `*args`, `**kwargs` | Reject with function-parameter diagnostic | Use explicit parameters and call sites |
 | Duplicate function parameter names | Reject with duplicate-parameter diagnostic | Rename one parameter |
@@ -56,7 +64,7 @@ source text before parsing.
 | Unclosed delimiters or strings | Reject with structural syntax diagnostic | Close `()`, `[]`, `{}`, or string quotes before continuing |
 | Unknown, invalid, unsupported imported-symbol, or unclosed raw command `{name}` placeholders | Reject with placeholder diagnostic | Use identifier names, define a value, pass a parameter, or escape literal braces as `{{name}}` |
 
-## 0.7.0 Diagnostic Priorities
+## 0.9.0 Diagnostic Priorities
 
 1. Preserve current successful generated output.
 2. Reject unsupported Python-like syntax before transpilation when practical.
@@ -66,7 +74,8 @@ source text before parsing.
 5. Keep CLI diagnostics and WASM structured diagnostics aligned.
 
 The first three priorities and CLI/WASM alignment for early language-surface
-diagnostics are covered in 0.7.0. The first semantic preflight checks also
+diagnostics are covered by the shared preflight path. The first semantic
+preflight checks also
 cover duplicate function definitions, unsupported `return` statements, and
 function calls used as assignment values except supported math intrinsics.
 They also check same-file user function call argument counts, including calls
@@ -87,10 +96,10 @@ semantic scans skip multi-line docstring bodies so documentation text does not
 produce false unsupported-syntax, undefined-variable, or placeholder
 diagnostics. Clearly inferred type changes are reported before transpilation.
 `datapack.*` helper calls report non-object JSON resource values, invalid tag
-value arrays, and non-string tag entries before transpilation. Literal datapack
-resource names and tag values also report common ID mistakes such as
-`minecraft/load`, uppercase paths, invalid namespaces, and invalid path
-separators before transpilation. CLI import preflight now reports missing
+value arrays, non-string tag entries, and invalid object-shaped tag entries
+before transpilation. Literal datapack resource names and tag values also
+report common ID mistakes such as `minecraft/load`, uppercase paths, invalid
+namespaces, and invalid path separators before transpilation. CLI import preflight now reports missing
 imports, circular import chains, and imported-file language diagnostics before
 transpilation. It
 also reports missing `from module import item` symbols, rejects import-wide and

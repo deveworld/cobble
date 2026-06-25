@@ -41,6 +41,8 @@ type Example = {
   name: string;
   namespace: string;
   source: string;
+  experimentalResourcePack?: boolean;
+  experimentalPythonCompat?: boolean;
 };
 
 const examples: Example[] = [
@@ -100,6 +102,32 @@ def on_load():
     /say resources ready`
   },
   {
+    name: "Resource Pack",
+    namespace: "resource_pack_demo",
+    experimentalResourcePack: true,
+    source: `from stdlib import resource_pack
+
+resource_pack.item_model("resource_pack_demo:custom_sword", {
+    "parent": "minecraft:item/generated",
+    "textures": {
+        "layer0": "resource_pack_demo:item/custom_sword"
+    }
+})
+resource_pack.block_model("display_block", {
+    "parent": "minecraft:block/cube_all",
+    "textures": {
+        "all": "resource_pack_demo:block/display_block"
+    }
+})
+resource_pack.lang("en_us", {
+    "item.resource_pack_demo.custom_sword": "Custom Sword",
+    "block.resource_pack_demo.display_block": "Display Block"
+})
+
+def on_load():
+    /say resource pack ready`
+  },
+  {
     name: "Diagnostic Example",
     namespace: "diagnostic_demo",
     source: `def greet(player):
@@ -141,6 +169,12 @@ export function CobbleDemo() {
   const [selectedExample, setSelectedExample] = useState(0);
   const [source, setSource] = useState(examples[0].source);
   const [namespace, setNamespace] = useState(examples[0].namespace);
+  const [experimentalResourcePack, setExperimentalResourcePack] = useState(
+    examples[0].experimentalResourcePack ?? false
+  );
+  const [experimentalPythonCompat, setExperimentalPythonCompat] = useState(
+    examples[0].experimentalPythonCompat ?? false
+  );
   const [result, setResult] = useState<CompileResult | null>(null);
   const [activePath, setActivePath] = useState("");
   const [activeView, setActiveView] = useState<OutputView>("functions");
@@ -229,7 +263,13 @@ export function CobbleDemo() {
     setCopied(null);
 
     window.setTimeout(() => {
-      const compiled = wasm.compile_cobble(source, namespace, description);
+      const compiled = wasm.compile_cobble(
+        source,
+        namespace,
+        description,
+        experimentalResourcePack,
+        experimentalPythonCompat
+      );
       setResult(compiled);
       setStatus(compiled.ok ? "ready" : "error");
       const nextView = compiled.ok ? activeView : "diagnostics";
@@ -243,6 +283,8 @@ export function CobbleDemo() {
     setSelectedExample(index);
     setSource(example.source);
     setNamespace(example.namespace);
+    setExperimentalResourcePack(example.experimentalResourcePack ?? false);
+    setExperimentalPythonCompat(example.experimentalPythonCompat ?? false);
     setCopied(null);
   }
 
@@ -351,6 +393,22 @@ export function CobbleDemo() {
                     spellCheck={false}
                   />
                 </label>
+                <label className="toggle-field">
+                  <input
+                    type="checkbox"
+                    checked={experimentalResourcePack}
+                    onChange={(event) => setExperimentalResourcePack(event.target.checked)}
+                  />
+                  <span>resource pack</span>
+                </label>
+                <label className="toggle-field">
+                  <input
+                    type="checkbox"
+                    checked={experimentalPythonCompat}
+                    onChange={(event) => setExperimentalPythonCompat(event.target.checked)}
+                  />
+                  <span>python compat</span>
+                </label>
                 <button
                   className="icon-button"
                   type="button"
@@ -448,8 +506,9 @@ export function CobbleDemo() {
             </div>
 
             {activeView === "diagnostics" || !result?.ok ? (
-              diagnosticDetails.length ? (
+              result?.experimental_python_compat || diagnosticDetails.length ? (
                 <div className="diagnostics diagnostic-list">
+                  <PythonCompatibilityReport report={result?.experimental_python_compat} />
                   {diagnosticDetails.map((diagnostic, index) => (
                     <article className="diagnostic-card" key={`${diagnostic.kind}-${index}`}>
                       <div className="diagnostic-heading">
@@ -470,6 +529,9 @@ export function CobbleDemo() {
                       ) : null}
                     </article>
                   ))}
+                  {!diagnosticDetails.length ? (
+                    <p className="diagnostic-empty">{diagnostics.join("\n")}</p>
+                  ) : null}
                 </div>
               ) : (
                 <pre className="diagnostics">{diagnostics.join("\n")}</pre>
@@ -529,6 +591,53 @@ export function CobbleDemo() {
   );
 }
 
+function PythonCompatibilityReport({
+  report
+}: {
+  report: CompileResult["experimental_python_compat"];
+}) {
+  if (!report) {
+    return null;
+  }
+
+  const unsupported = report.unsupported_detected;
+
+  return (
+    <article className="compat-card">
+      <div className="diagnostic-heading">
+        <span className="compat-badge">experimental</span>
+        <strong>Python compatibility</strong>
+        <code>{report.mode}</code>
+      </div>
+      <div className="compat-grid">
+        <div>
+          <span>Supported</span>
+          <strong>{report.supported_constructs.length}</strong>
+        </div>
+        <div>
+          <span>Unsupported</span>
+          <strong>{unsupported.length}</strong>
+        </div>
+      </div>
+      <ul className="compat-list">
+        {report.supported_constructs.map((construct) => (
+          <li key={construct}>{construct}</li>
+        ))}
+      </ul>
+      {unsupported.length ? (
+        <ul className="compat-list warning">
+          {unsupported.map((diagnostic, index) => (
+            <li key={`${diagnostic.kind}-${index}`}>
+              <code>{diagnostic.kind}</code>
+              <span>{diagnostic.message}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </article>
+  );
+}
+
 function StatusStrip({
   result,
   status
@@ -563,6 +672,7 @@ function StatusStrip({
       <span>{result.summary.resource_count} resources</span>
       <span>{result.summary.file_count} files</span>
       <span>pack {result.summary.pack_format}</span>
+      {result.experimental_python_compat ? <span>python compat</span> : null}
     </div>
   );
 }
@@ -594,7 +704,12 @@ function fileMatchesView(file: CompileFile, view: OutputView) {
     case "functions":
       return file.kind === "function";
     case "resources":
-      return file.kind === "tag" || (file.kind === "json" && !file.path.startsWith(".cobble/"));
+      return (
+        file.kind === "tag" ||
+        file.kind === "resource-pack-model" ||
+        file.kind === "resource-pack-lang" ||
+        (file.kind === "json" && !file.path.startsWith(".cobble/"))
+      );
     case "metadata":
       return file.path === "pack.mcmeta" || file.kind === "source-map";
     case "manifest":

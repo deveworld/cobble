@@ -26,7 +26,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 1,
     "recipes": 0,
-    "source_map_entries": 7,
+    "source_map_entries": 10,
     "stdlib_function_tags": 1,
     "total_json_resources": 2
   },
@@ -150,6 +150,35 @@ expression: datapack_tree_snapshot(&output_dir)
         "column": 5
       },
       "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/load.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v2/predicate/checks/always.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 4,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v2/tags/function/utility.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 3,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
     }
   ]
 }

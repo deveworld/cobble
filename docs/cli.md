@@ -28,7 +28,7 @@ cobble init [OPTIONS]
 **Options:**
 - `--name <NAME>` - Set the project name (default: current directory name)
 - `--description <DESC>` - Set the project description
-- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble v0.8.0 requires Minecraft Java Edition 26.1.2)
+- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble currently requires Minecraft Java Edition 26.1.2)
 - `--template <NAME>` - Starter template: `minimal`, `stdlib`,
   `validation`, `resource-heavy`, `game-mechanic`, or `web-demo`
   (default: `stdlib`)
@@ -73,7 +73,7 @@ cobble build [SOURCE] [OPTIONS]
 - `-v, --verbose` - Show verbose output
 - `-q, --quiet` - Suppress successful build progress and summary output
 - `--zip` - Create a ZIP archive of the data pack
-- `--experimental-resource-pack` - Enable experimental `resource_pack.*` asset output under `assets/`
+- `--experimental-resource-pack` - Enable experimental `resource_pack.*` output and project `assets/` passthrough
 - `--validate` - Validate generated `.mcfunction` files after building
 - `--dry-run` - Compile and print the build summary without writing final output
 - `--commands-json <PATH>` - Path to `commands.json` for validation (default: `data/commands.json`)
@@ -160,9 +160,10 @@ version, Minecraft target, pack format, namespace, source input, configured
 entry points, compiled files, generated namespaces, generated function/resource
 counts, generated resource entries, and validation summary when validation ran.
 `.cobble/source_map.json` is written when generated commands are available to
-map generated commands back to Cobble source. Source-map file paths are written
-relative to the project/source root when Cobble can determine one, avoiding
-unnecessary absolute paths in generated metadata.
+map generated commands and generated JSON resources back to Cobble source.
+Source-map file paths are written relative to the project/source root when
+Cobble can determine one, avoiding unnecessary absolute paths in generated
+metadata.
 See [`metadata.md`](metadata.md) for the stable field list.
 
 ### `cobble check`
@@ -180,8 +181,13 @@ cobble check [SOURCE] [OPTIONS]
 ```
 
 **Options:**
-- `--json` - Print a machine-readable report with `schema_version`, `ok`, `files`, `diagnostics`, and `error_count`
+- `--json` - Print a machine-readable report with `schema_version`, `ok`,
+  `source`, `files_checked`, `files`, `diagnostics`, and `error_count`
 - `--symbols` - Include experimental document-symbol metadata; requires `--json`
+- `--experimental-plugins` - Enable the experimental diagnostics-only plugin
+  host skeleton
+- `--experimental-python-compat` - Include the experimental diagnostics-only
+  Python compatibility report
 
 **Example:**
 ```bash
@@ -189,13 +195,23 @@ cobble check src/main.cbl
 cobble check examples/
 cobble check --json src/main.cbl
 cobble check --json --symbols src/main.cbl
+cobble check --json --experimental-plugins src/main.cbl
+cobble check --json --experimental-python-compat src/main.cbl
 ```
 
 JSON output is written to stdout. On failure the process still exits non-zero;
 human-oriented error text may be written to stderr while stdout remains valid
 JSON. `--symbols` adds an `experimental_symbols` array for editor prototypes;
 that field is explicitly experimental even though the top-level JSON report has
-a stable `schema_version`.
+a stable `schema_version`. `--experimental-plugins` adds an
+`experimental_plugins` object and prints a warning in human output. The 0.9.0
+skeleton parses draft manifests from `plugins/*.toml` in read-only mode,
+reports their requested capabilities, rejects unknown manifest fields or
+capabilities, and does not run project plugin code.
+`--experimental-python-compat` adds an `experimental_python_compat` object.
+The 0.9 report is diagnostics-only: it lists the small supported Python-like
+surface, currently `pass` as an explicit no-op, and echoes detected unsupported
+Python-like constructs while keeping those constructs as errors.
 
 ### `cobble fmt`
 
@@ -271,6 +287,48 @@ Cobble build marker for the current project namespace and project identity. Link
 status is reported under `experimental_link`; it includes saved link state,
 whether the linked pack currently has Cobble build metadata, and whether that
 metadata matches the project namespace and `project_id`.
+
+### `cobble migrate`
+
+Report an experimental migration plan for moving Cobble projects between
+release tracks. This 0.9.0 experimental skeleton reports planned support for
+0.8 to 0.9 migrations; it does not rewrite project files yet.
+
+```bash
+cobble migrate [PATH] [OPTIONS]
+```
+
+**Arguments:**
+- `PATH` - Project path or source file to inspect (default: current directory)
+
+**Options:**
+- `--from <VERSION>` - Cobble version to migrate from (default: `0.8`)
+- `--to <VERSION>` - Cobble version to migrate to (default: `0.9`)
+- `--json` - Print a machine-readable report with `schema_version`, `ok`,
+  `changed`, `from`, `to`, `apply`, `project_path`, `config`, `source`,
+  `diagnostics`, and `actions`
+- `--apply` - Permit migration rewrites when supported by a migration action
+
+**Examples:**
+```bash
+cobble migrate
+cobble migrate path/to/project
+cobble migrate --from 0.8 --to 0.9 --json
+cobble migrate --from 0.8 --to 0.9 --apply
+```
+
+`migrate` is explicitly experimental. Dry-run/report mode is the default, and
+no files are changed unless `--apply` is supplied. The initial skeleton still
+has no automatic rewrites, so `--apply` reports that no rewrites are available
+and leaves `changed` as `false`.
+
+JSON output is written to stdout. For the supported experimental route, the
+report inspects `cobble.toml` when present, scans `.cbl` and `.cobble` files
+under configured `[build] source` or `src`, and reports deterministic planned
+actions for config inspection, source scanning, stdlib notes, resource-pack
+and Python compatibility experimental config notes, manual step reporting, and
+skipped rewrite application. Unsupported routes skip inspection, leave
+`changed` as `false`, and exit non-zero.
 
 ### `cobble clean`
 
@@ -376,7 +434,8 @@ cobble inspect <DATAPACK_DIR> [OPTIONS]
 - `DATAPACK_DIR` - Generated data pack directory containing `.cobble/build_manifest.json`
 
 **Options:**
-- `--json` - Print the manifest and source-map entry count as formatted JSON
+- `--json` - Print a machine-readable report with `schema_version`, `ok`,
+  `status`, `manifest`, and `source_map_entries`
 
 **Examples:**
 ```bash
@@ -387,8 +446,10 @@ cobble inspect output --json
 
 The command reads `.cobble/build_manifest.json` and, when present,
 `.cobble/source_map.json`. ZIP archives created by `cobble build --zip` include
-only data pack files (`pack.mcmeta` and `data/**`), so inspect a generated
-directory before or alongside ZIP packaging.
+pack files (`pack.mcmeta`, `data/**`, and resource-pack `assets/**` when
+present), so inspect a generated directory before or alongside ZIP packaging.
+JSON output is written to stdout and keeps `schema_version: 1` for the 0.9
+inspection contract.
 
 ### `cobble validate`
 
@@ -444,7 +505,7 @@ cobble watch [SOURCE] [OPTIONS]
 - `--description <DESC>` - Override pack description
 - `-v, --verbose` - Show verbose output
 - `--zip` - Create a ZIP archive after each build
-- `--experimental-resource-pack` - Enable experimental `resource_pack.*` asset output under `assets/`
+- `--experimental-resource-pack` - Enable experimental `resource_pack.*` output and project `assets/` passthrough
 - `--link` - Build into the pack path configured by `cobble link`
 - `--validate` - Validate generated `.mcfunction` files after each successful build
 - `--commands-json <PATH>` - Path to `commands.json` for validation (default: `data/commands.json`)
@@ -505,6 +566,11 @@ pack_format = "101.1"  # Minecraft Java Edition 26.1.2
 source = "src"
 output = "output"
 entry_points = []
+
+[experimental]
+resource_pack = false
+plugins = false
+python_compat = false
 ```
 
 **Configuration Options:**
@@ -517,6 +583,11 @@ entry_points = []
 - `build.output` - Default output directory
 - `build.source` - Source directory (default: "src")
 - `build.entry_points` - Main files or directories to compile when using `cobble build` from config. Imported files are resolved from these entry points and are not compiled independently.
+- `experimental.resource_pack` - Enable beta resource-pack output helpers and static asset passthrough
+- `experimental.plugins` - Enable the experimental diagnostics-only plugin host skeleton for `cobble check`
+- `experimental.python_compat` - Include the experimental diagnostics-only Python compatibility report for `cobble check`
+
+Unknown keys, misplaced keys, and invalid experimental flag types are rejected.
 
 ## Supported Minecraft Version
 
@@ -524,7 +595,7 @@ entry_points = []
 |-------------------|-------------|
 | Java Edition 26.1.2 | 101.1 |
 
-Cobble v0.8.0 targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
+Cobble currently targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
 
 **Note**: Pack format 101.1 is written to `pack.mcmeta` as `min_format` and `max_format` arrays: `[101, 1]`.
 
@@ -719,7 +790,7 @@ give {player} diamond 1
 cobble build --pack-format 101.1
 ```
 
-Note: Cobble v0.8.0 requires Minecraft Java Edition 26.1.2 and pack format 101.1.
+Note: Cobble currently requires Minecraft Java Edition 26.1.2 and pack format 101.1.
 
 ### Issue: Functions not found
 

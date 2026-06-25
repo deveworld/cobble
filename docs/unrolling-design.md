@@ -101,6 +101,10 @@ aggregate-iteration cap even though each individual loop is below 1024.
 Cobble also tracks commands produced by the outermost unroll and aborts if
 that one expansion emits more than 65,536 generated commands.
 
+`unroll-large-expansion` is advisory: it is printed as a build/check stderr
+warning when a single literal loop expands past 256 iterations. It does not
+fail the build and is not part of the structured JSON diagnostics contract.
+
 ## Variable Substitution
 
 During unrolling, the loop variable is substituted with the literal value

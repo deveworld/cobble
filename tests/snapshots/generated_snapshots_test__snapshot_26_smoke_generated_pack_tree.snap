@@ -10,12 +10,15 @@ expression: datapack_tree_snapshot(&output_dir)
     "datapack",
     "entity",
     "event",
+    "item_component",
     "math",
+    "position",
     "random",
     "resource_pack",
     "schedule",
     "score",
     "score.objective",
+    "selector",
     "storage",
     "team",
     "text",
@@ -35,7 +38,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 0,
     "recipes": 0,
-    "source_map_entries": 46,
+    "source_map_entries": 49,
     "stdlib_function_tags": 2,
     "total_json_resources": 1
   },
@@ -589,6 +592,31 @@ expression: datapack_tree_snapshot(&output_dir)
         "column": 9
       },
       "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/load.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/tick.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/dialog/notice.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 12,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
     }
   ]
 }

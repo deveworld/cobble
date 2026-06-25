@@ -138,9 +138,10 @@ a list and then reassigning the same variable to an integer, are reported
 before transpilation with source locations.
 `datapack.*` helper calls also report argument-shape diagnostics before
 transpilation when JSON resource values are not object literals or tag values
-are not arrays of string resource IDs. Literal datapack resource names and tag
-values are also checked for common ID mistakes such as `minecraft/load`,
-uppercase paths, invalid namespaces, and invalid path separators.
+are not arrays of string resource IDs or object entries. Literal datapack
+resource names and tag value IDs are also checked for common ID mistakes such
+as `minecraft/load`, uppercase paths, invalid namespaces, and invalid path
+separators.
 
 File-level diagnostic formatting includes the compact
 `file:line:column: severity[kind] message` header plus the source line, caret
@@ -155,6 +156,26 @@ The browser compiler response keeps `diagnostics: string[]` for existing UI
 code and also exposes `diagnostic_details`, a structured array with `file`,
 `line`, `column`, `severity`, `kind`, `message`, optional `help`, and formatted
 text. The `/try` page renders the structured fields when they are available.
+
+The WebAssembly binding is:
+
+```ts
+compile_cobble(
+  source: string,
+  namespace?: string,
+  description?: string,
+  experimentalResourcePack?: boolean,
+  experimentalPythonCompat?: boolean
+): CompileResponse
+```
+
+When `experimentalPythonCompat` is true, `CompileResponse` includes an
+`experimental_python_compat` object with `enabled`, `mode`,
+`supported_constructs`, and `unsupported_detected`. This mirrors
+`cobble check --experimental-python-compat`: the 0.9.0 report is
+diagnostics-only and does not change parser or transpiler behavior. The `/try`
+page exposes this option with the Python compatibility toggle and renders the
+report in the diagnostics view.
 
 ## Module: AST
 
@@ -469,14 +490,14 @@ pub struct DataPack {
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
     pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
-    pub pack_format: PackFormat,  // Cobble v0.8.0 requires 101.1
+    pub pack_format: PackFormat,  // Cobble currently requires 101.1
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
     pub source_display_root: Option<PathBuf>,
 }
 ```
 
-**Note**: `pack_format` uses the `PackFormat` enum. Cobble v0.8.0 targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
+**Note**: `pack_format` uses the `PackFormat` enum. Cobble currently targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
 
 #### Methods
 
@@ -491,8 +512,8 @@ Adds a function to the data pack.
 ##### `write(&self) -> std::io::Result<()>`
 
 Writes the data pack to the file system, including `.cobble/source_map.json`
-when generated command metadata exists and `.cobble/build_manifest.json` for
-build metadata. Source-map source paths are normalized against
+when generated command or generated JSON metadata exists and
+`.cobble/build_manifest.json` for build metadata. Source-map source paths are normalized against
 `source_display_root` when available.
 
 ##### `set_source_display_root(&mut self, root: PathBuf)`
@@ -603,6 +624,8 @@ Handles project configuration.
 pub struct CobbleConfig {
     pub project: ProjectConfig,
     pub build: BuildConfig,
+    pub stdlib: StdlibConfig,
+    pub experimental: ExperimentalConfig,
 }
 
 pub struct ProjectConfig {
@@ -618,6 +641,16 @@ pub struct BuildConfig {
     pub output: String,
     pub entry_points: Vec<String>,
 }
+
+pub struct StdlibConfig {
+    pub version: u8,
+}
+
+pub struct ExperimentalConfig {
+    pub resource_pack: bool,
+    pub plugins: bool,
+    pub python_compat: bool,
+}
 ```
 
 #### Functions
@@ -625,10 +658,14 @@ pub struct BuildConfig {
 ##### `CobbleConfig::load(path: impl AsRef<Path>) -> Result<CobbleConfig, String>`
 
 Loads and validates configuration from a `cobble.toml` file.
+Unknown keys, misplaced keys, and invalid experimental flag types are rejected
+instead of being ignored.
 
 ##### `CobbleConfig::load_unvalidated(path: impl AsRef<Path>) -> Result<CobbleConfig, String>`
 
-Loads configuration without enforcing the current release's pack format. The build command uses this only when the user explicitly overrides `--pack-format`.
+Loads configuration without enforcing the current release's pack format. The
+schema is still validated. The build command uses this only when the user
+explicitly overrides `--pack-format`.
 
 ##### `CobbleConfig::default_with_name(name: String) -> CobbleConfig`
 
@@ -683,6 +720,23 @@ a stable `schema_version` and top-level `status`. `experimental_link` reports
 project-local link state and linked-pack marker status when a `cobble.toml` is
 available.
 
+### `commands/migrate.rs`
+
+Handles the experimental migration report command.
+
+#### Function: `migrate(options: MigrateOptions) -> Result<(), String>`
+
+Reports the planned 0.8 to 0.9 migration surface without rewriting files.
+`MigrateOptions::path` selects the project path or source file to inspect and
+defaults to the current directory. For the supported route, the command reads
+`cobble.toml` when present, scans `.cbl` and `.cobble` files under configured
+`[build] source` or `src`, and reports stdlib, resource-pack, Python
+compatibility config, and language-support notes. `MigrateOptions::json` emits
+a machine-readable report with `schema_version`, `ok`, `changed`, `from`, `to`,
+`project_path`, `config`, `apply`, `source`, `diagnostics`, and `actions`.
+`MigrateOptions::apply` is required for future rewrite actions; the initial
+skeleton still leaves `changed` as `false`.
+
 ### `commands/clean.rs`
 
 Handles generated-output cleanup.
@@ -712,7 +766,9 @@ Handles generated metadata inspection.
 #### Function: `inspect(options: InspectOptions) -> Result<(), String>`
 
 Reads `.cobble/build_manifest.json` and `.cobble/source_map.json` from a
-generated data pack directory and prints either a text summary or formatted JSON.
+generated data pack directory and prints either a text summary or formatted
+JSON. `InspectOptions::json` emits `schema_version`, `ok`, `status`,
+`manifest`, and `source_map_entries`.
 
 ### `commands/check.rs`
 
@@ -723,10 +779,20 @@ Handles the `check` command.
 Checks source files with the shared source diagnostics and import-tree
 preflight path. The text mode prints per-file import/function/command counts.
 `CheckOptions::json` emits a schema-versioned machine-readable report with
-`ok`, `files`, `diagnostics`, and `error_count` while preserving a non-zero exit
-status for failed checks. `CheckOptions::symbols` requires JSON output and adds
+`ok`, `source`, `files_checked`, `files`, `diagnostics`, and `error_count`
+while preserving a non-zero exit status for failed checks. `CheckOptions::symbols` requires JSON output and adds
 an `experimental_symbols` array derived from the same source files used by the
-diagnostic path.
+diagnostic path. `CheckOptions::experimental_plugins` enables the 0.9.0
+diagnostics-only plugin host skeleton and adds an `experimental_plugins` JSON
+object. The skeleton parses draft manifests from `plugins/*.toml` in read-only
+mode, reports manifest metadata and capability requests, rejects unknown
+capabilities through experimental diagnostics, and does not execute project
+plugins.
+`CheckOptions::experimental_python_compat` adds an
+`experimental_python_compat` JSON object. The 0.9.0 implementation is
+diagnostics-only: it lists the deliberately supported Python-like no-op surface
+and summarizes unsupported Python-like diagnostics without changing parser or
+transpiler behavior.
 
 ### `commands/watch.rs`
 

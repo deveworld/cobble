@@ -115,7 +115,10 @@ pub(in crate::transpiler) const ALL_STDLIB_MODULES: &[&str] = &[
     "random",
     "timer",
     "storage",
+    "item_component",
     "schedule",
+    "selector",
+    "position",
     "bossbar",
     "team",
     "entity",
@@ -437,7 +440,7 @@ impl Transpiler {
         depth
     }
 
-    fn source_line_key(source: &str) -> String {
+    pub(crate) fn source_line_key(source: &str) -> String {
         match crate::parser::tokenize(source) {
             Ok(tokens) => tokens
                 .into_iter()
@@ -477,19 +480,7 @@ impl Transpiler {
             Statement::If(if_stmt) => {
                 format!("if{}:", Self::expression_source_key(&if_stmt.condition))
             }
-            Statement::For(for_loop) => {
-                let mut source = format!(
-                    "for{}in{}",
-                    for_loop.target,
-                    Self::expression_source_key(&for_loop.iter)
-                );
-                if let Some(step) = &for_loop.step {
-                    source.push_str("by");
-                    source.push_str(&Self::expression_source_key(step));
-                }
-                source.push(':');
-                source
-            }
+            Statement::For(for_loop) => Self::for_loop_source_key(for_loop),
             Statement::While(while_loop) => {
                 format!(
                     "while{}:",
@@ -528,6 +519,20 @@ impl Transpiler {
         };
 
         Some(Self::normalize_source_key(&source))
+    }
+
+    pub(in crate::transpiler) fn for_loop_source_key(for_loop: &ForLoop) -> String {
+        let mut source = format!(
+            "for{}in{}",
+            for_loop.target,
+            Self::expression_source_key(&for_loop.iter)
+        );
+        if let Some(step) = &for_loop.step {
+            source.push_str("by");
+            source.push_str(&Self::expression_source_key(step));
+        }
+        source.push(':');
+        Self::normalize_source_key(&source)
     }
 
     fn execute_modifier_source_key(modifier: &ExecuteModifier) -> String {
@@ -1430,7 +1435,10 @@ impl Transpiler {
                         | "random"
                         | "timer"
                         | "storage"
+                        | "item_component"
                         | "schedule"
+                        | "selector"
+                        | "position"
                         | "bossbar"
                         | "team"
                         | "entity"
@@ -1821,9 +1829,18 @@ impl Transpiler {
                             } else if module_name == "storage" {
                                 self.require_stdlib_module("storage")?;
                                 self.process_storage_intrinsic(method, args)?;
+                            } else if module_name == "item_component" {
+                                self.require_stdlib_module("item_component")?;
+                                self.process_item_component_intrinsic(method, args)?;
                             } else if module_name == "schedule" {
                                 self.require_stdlib_module("schedule")?;
                                 self.process_schedule_intrinsic(method, args)?;
+                            } else if module_name == "selector" {
+                                self.require_stdlib_module("selector")?;
+                                self.process_selector_intrinsic(method, args)?;
+                            } else if module_name == "position" {
+                                self.require_stdlib_module("position")?;
+                                self.process_position_intrinsic(method, args)?;
                             } else if module_name == "bossbar" {
                                 self.require_stdlib_module("bossbar")?;
                                 self.process_bossbar_intrinsic(method, args)?;
@@ -1886,6 +1903,17 @@ impl Transpiler {
             Expression::String(s) | Expression::Identifier(s) => Ok(s.clone()),
             Expression::Number(n) if n.fract() == 0.0 => Ok((*n as i32).to_string()),
             Expression::Number(n) => Ok(n.to_string()),
+            Expression::Call(func, args) => {
+                if let Some(value) = self.storage_path_helper_string(func, args)? {
+                    Ok(value)
+                } else if let Some(value) = self.selector_helper_string(func, args)? {
+                    Ok(value)
+                } else if let Some(value) = self.position_helper_string(func, args)? {
+                    Ok(value)
+                } else {
+                    Err(format!("{} must be a string, identifier, or number", label))
+                }
+            }
             _ => Err(format!("{} must be a string, identifier, or number", label)),
         }
     }
@@ -1937,10 +1965,12 @@ impl Transpiler {
                 Ok(serde_json::Value::Object(object))
             }
             Expression::Call(func, args) => {
-                if let Some(value) = self.text_component_helper_json(func, args)? {
+                if let Some(value) = self.item_component_helper_json(func, args)? {
+                    Ok(value)
+                } else if let Some(value) = self.text_component_helper_json(func, args)? {
                     Ok(value)
                 } else {
-                    Err("Only text.plain(), text.colored(), text.score(), and text.selector() can be serialized to JSON here".to_string())
+                    Err("Only text.* component helpers and item_component.* helpers can be serialized to JSON here".to_string())
                 }
             }
             Expression::Identifier(name) => {
@@ -1962,11 +1992,15 @@ impl Transpiler {
     }
 
     fn expr_to_text_component(&self, expr: &Expression) -> Result<String, String> {
-        let value = match expr {
-            Expression::String(s) => serde_json::json!({ "text": s }),
-            _ => self.expr_to_json_value(expr)?,
-        };
+        let value = self.expr_to_text_component_value(expr)?;
         serde_json::to_string(&value).map_err(|e| format!("Failed to encode text component: {}", e))
+    }
+
+    fn expr_to_text_component_value(&self, expr: &Expression) -> Result<serde_json::Value, String> {
+        match expr {
+            Expression::String(s) => Ok(serde_json::json!({ "text": s })),
+            _ => self.expr_to_json_value(expr),
+        }
     }
 
     fn text_component_helper_json(
@@ -1984,6 +2018,7 @@ impl Transpiler {
             return Ok(None);
         }
 
+        self.require_stdlib_module("text")?;
         let value = match method.as_str() {
             "plain" => {
                 if args.len() != 1 {
@@ -2019,6 +2054,330 @@ impl Transpiler {
             _ => return Ok(None),
         };
         Ok(Some(value))
+    }
+
+    fn item_component_helper_json(
+        &self,
+        func: &Expression,
+        args: &[Expression],
+    ) -> Result<Option<serde_json::Value>, String> {
+        let Expression::Attribute(obj, method) = func else {
+            return Ok(None);
+        };
+        let Some(module_name) = Self::expression_path(obj) else {
+            return Ok(None);
+        };
+        if module_name != "item_component" {
+            return Ok(None);
+        }
+
+        self.require_stdlib_module("item_component")?;
+        let value = match method.as_str() {
+            "components" => {
+                if args.is_empty() {
+                    return Err("item_component.components() takes at least 1 argument".to_string());
+                }
+                let mut merged = serde_json::Map::new();
+                for arg in args {
+                    let component_map = self.expr_to_item_component_map(arg)?;
+                    for (key, value) in component_map {
+                        if merged.contains_key(&key) {
+                            return Err(format!(
+                                "item_component.components() duplicate component '{}'",
+                                key
+                            ));
+                        }
+                        merged.insert(key, value);
+                    }
+                }
+                serde_json::Value::Object(merged)
+            }
+            "custom_name" => {
+                if args.len() != 1 {
+                    return Err("item_component.custom_name() takes 1 argument".to_string());
+                }
+                serde_json::json!({
+                    "minecraft:custom_name": self.expr_to_text_component_value(&args[0])?
+                })
+            }
+            "lore" => {
+                if args.len() != 1 {
+                    return Err("item_component.lore() takes 1 argument".to_string());
+                }
+                let Expression::Array(entries) = &args[0] else {
+                    return Err("item_component.lore() argument must be an array".to_string());
+                };
+                let lore = entries
+                    .iter()
+                    .map(|entry| self.expr_to_text_component_value(entry))
+                    .collect::<Result<Vec<_>, _>>()?;
+                serde_json::json!({ "minecraft:lore": lore })
+            }
+            "unbreakable" => {
+                if !args.is_empty() {
+                    return Err("item_component.unbreakable() takes 0 arguments".to_string());
+                }
+                serde_json::json!({ "minecraft:unbreakable": {} })
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(value))
+    }
+
+    fn expr_to_item_component_map(
+        &self,
+        expr: &Expression,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        let value = self.expr_to_json_value(expr)?;
+        value.as_object().cloned().ok_or_else(|| {
+            "item_component.components() arguments must be component objects".to_string()
+        })
+    }
+
+    fn process_item_component_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        let func = Expression::Attribute(
+            Box::new(Expression::Identifier("item_component".to_string())),
+            method.to_string(),
+        );
+        if self.item_component_helper_json(&func, args)?.is_some() {
+            return Err(format!(
+                "item_component.{}() returns an item component JSON object; pass it to datapack.item_modifier() or another JSON value",
+                method
+            ));
+        }
+        Err(format!(
+            "Unknown item component function: item_component.{}",
+            method
+        ))
+    }
+
+    fn storage_path_helper_string(
+        &self,
+        func: &Expression,
+        args: &[Expression],
+    ) -> Result<Option<String>, String> {
+        let Expression::Attribute(obj, method) = func else {
+            return Ok(None);
+        };
+        let Some(module_name) = Self::expression_path(obj) else {
+            return Ok(None);
+        };
+        if module_name != "storage" {
+            return Ok(None);
+        }
+
+        self.require_stdlib_module("storage")?;
+        let path = match method.as_str() {
+            "path" => {
+                if args.is_empty() {
+                    return Err("storage.path() takes at least 1 argument".to_string());
+                }
+                args.iter()
+                    .map(|arg| self.expr_to_storage_path_component(arg, "storage path component"))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(".")
+            }
+            "child" => {
+                if args.len() != 2 {
+                    return Err("storage.child() takes 2 arguments".to_string());
+                }
+                let base = self.expr_to_plain_arg(&args[0], "storage base path")?;
+                let child = self.expr_to_storage_path_component(&args[1], "storage child path")?;
+                format!("{}.{}", base, child)
+            }
+            "index" => {
+                if args.len() != 2 {
+                    return Err("storage.index() takes 2 arguments".to_string());
+                }
+                let base = self.expr_to_plain_arg(&args[0], "storage base path")?;
+                let index = self.expr_to_i32(&args[1], "storage list index")?;
+                format!("{}[{}]", base, index)
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(path))
+    }
+
+    fn expr_to_storage_path_component(
+        &self,
+        expr: &Expression,
+        label: &str,
+    ) -> Result<String, String> {
+        let component = self.expr_to_plain_arg(expr, label)?;
+        if component.is_empty() {
+            return Err(format!("{} cannot be empty", label));
+        }
+        if component
+            .chars()
+            .any(|ch| ch == '.' || ch == '[' || ch == ']')
+        {
+            return Err(format!(
+                "{} must be a single unqualified path component",
+                label
+            ));
+        }
+        Ok(component)
+    }
+
+    fn selector_helper_string(
+        &self,
+        func: &Expression,
+        args: &[Expression],
+    ) -> Result<Option<String>, String> {
+        let Expression::Attribute(obj, method) = func else {
+            return Ok(None);
+        };
+        let Some(module_name) = Self::expression_path(obj) else {
+            return Ok(None);
+        };
+        if module_name != "selector" {
+            return Ok(None);
+        }
+
+        self.require_stdlib_module("selector")?;
+        let selector = match method.as_str() {
+            "current" => {
+                if !args.is_empty() {
+                    return Err("selector.current() takes 0 arguments".to_string());
+                }
+                "@s".to_string()
+            }
+            "nearest_player" => {
+                if !args.is_empty() {
+                    return Err("selector.nearest_player() takes 0 arguments".to_string());
+                }
+                "@p".to_string()
+            }
+            "all_players" => {
+                if !args.is_empty() {
+                    return Err("selector.all_players() takes 0 arguments".to_string());
+                }
+                "@a".to_string()
+            }
+            "all_entities" => {
+                if !args.is_empty() {
+                    return Err("selector.all_entities() takes 0 arguments".to_string());
+                }
+                "@e".to_string()
+            }
+            "tagged" | "players_tagged" => {
+                if args.len() != 1 {
+                    return Err(format!("selector.{}() takes 1 argument", method));
+                }
+                let tag = self.expr_to_plain_arg(&args[0], "selector tag")?;
+                if method == "players_tagged" {
+                    format!("@a[tag={}]", tag)
+                } else {
+                    format!("@e[tag={}]", tag)
+                }
+            }
+            "entity_type" => {
+                if args.len() != 1 {
+                    return Err("selector.entity_type() takes 1 argument".to_string());
+                }
+                let entity_type = self.expr_to_plain_arg(&args[0], "selector entity type")?;
+                format!("@e[type={}]", entity_type)
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(selector))
+    }
+
+    fn position_helper_string(
+        &self,
+        func: &Expression,
+        args: &[Expression],
+    ) -> Result<Option<String>, String> {
+        let Expression::Attribute(obj, method) = func else {
+            return Ok(None);
+        };
+        let Some(module_name) = Self::expression_path(obj) else {
+            return Ok(None);
+        };
+        if module_name != "position" {
+            return Ok(None);
+        }
+
+        self.require_stdlib_module("position")?;
+        let position = match method.as_str() {
+            "here" => {
+                if !args.is_empty() {
+                    return Err("position.here() takes 0 arguments".to_string());
+                }
+                "~ ~ ~".to_string()
+            }
+            "absolute" => self.format_position_args(method, args, "")?,
+            "relative" => self.format_position_args(method, args, "~")?,
+            "local" => self.format_position_args(method, args, "^")?,
+            _ => return Ok(None),
+        };
+        Ok(Some(position))
+    }
+
+    fn format_position_args(
+        &self,
+        method: &str,
+        args: &[Expression],
+        prefix: &str,
+    ) -> Result<String, String> {
+        if args.len() != 3 {
+            return Err(format!("position.{}() takes 3 arguments", method));
+        }
+        args.iter()
+            .map(|arg| self.format_position_component(arg, prefix))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|parts| parts.join(" "))
+    }
+
+    fn format_position_component(&self, expr: &Expression, prefix: &str) -> Result<String, String> {
+        let value = self.expr_to_plain_arg(expr, "position component")?;
+        if prefix.is_empty() {
+            Ok(value)
+        } else if value == "0" {
+            Ok(prefix.to_string())
+        } else {
+            Ok(format!("{}{}", prefix, value))
+        }
+    }
+
+    fn process_selector_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        let func = Expression::Attribute(
+            Box::new(Expression::Identifier("selector".to_string())),
+            method.to_string(),
+        );
+        if self.selector_helper_string(&func, args)?.is_some() {
+            return Err(format!(
+                "selector.{}() returns a selector string; pass it to a helper that accepts a selector",
+                method
+            ));
+        }
+        Err(format!("Unknown selector function: selector.{}", method))
+    }
+
+    fn process_position_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), String> {
+        let func = Expression::Attribute(
+            Box::new(Expression::Identifier("position".to_string())),
+            method.to_string(),
+        );
+        if self.position_helper_string(&func, args)?.is_some() {
+            return Err(format!(
+                "position.{}() returns a coordinate string; pass it to a helper that accepts a position",
+                method
+            ));
+        }
+        Err(format!("Unknown position function: position.{}", method))
     }
 
     fn process_text_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
@@ -2350,6 +2709,19 @@ impl Transpiler {
                     self.data_pack.namespace, dst, source_type, source_id, source_path
                 )
             }
+            "path" | "child" | "index" => {
+                let func = Expression::Attribute(
+                    Box::new(Expression::Identifier("storage".to_string())),
+                    method.to_string(),
+                );
+                if self.storage_path_helper_string(&func, args)?.is_some() {
+                    return Err(format!(
+                        "storage.{}() returns a storage path string; pass it to a helper that accepts a storage path",
+                        method
+                    ));
+                }
+                return Err(format!("Unknown storage function: storage.{}", method));
+            }
             _ => return Err(format!("Unknown storage function: storage.{}", method)),
         };
         self.push_current_command(command)
@@ -2634,6 +3006,14 @@ impl Transpiler {
                 let value = self.expr_to_plain_arg(&args[2], "attribute value")?;
                 format!("attribute {} {} base set {}", target, attribute, value)
             }
+            "teleport" => {
+                if args.len() != 2 {
+                    return Err("entity.teleport() takes 2 arguments".to_string());
+                }
+                let target = self.expr_to_plain_arg(&args[0], "teleport target")?;
+                let destination = self.expr_to_plain_arg(&args[1], "teleport destination")?;
+                format!("tp {} {}", target, destination)
+            }
             _ => return Err(format!("Unknown entity function: entity.{}", method)),
         };
         self.push_current_command(command)
@@ -2702,6 +3082,7 @@ impl Transpiler {
                 model_type
             ));
         }
+        Self::validate_resource_pack_model_json(model_type, &json)?;
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode resource-pack model JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
@@ -2712,6 +3093,98 @@ impl Transpiler {
                 content,
                 self.current_statement_source.clone(),
             )
+    }
+
+    fn validate_resource_pack_model_json(
+        model_type: &str,
+        json: &serde_json::Value,
+    ) -> Result<(), String> {
+        let object = json.as_object().ok_or_else(|| {
+            format!(
+                "resource_pack.{}_model() JSON value must be an object",
+                model_type
+            )
+        })?;
+        Self::require_optional_json_string(
+            object,
+            "parent",
+            &format!("resource_pack.{}_model()", model_type),
+        )?;
+        Self::require_optional_json_string(
+            object,
+            "gui_light",
+            &format!("resource_pack.{}_model()", model_type),
+        )?;
+        Self::require_optional_json_string(
+            object,
+            "credit",
+            &format!("resource_pack.{}_model()", model_type),
+        )?;
+        Self::require_optional_json_object(
+            object,
+            "display",
+            &format!("resource_pack.{}_model()", model_type),
+        )?;
+        Self::require_optional_json_array(
+            object,
+            "elements",
+            &format!("resource_pack.{}_model()", model_type),
+        )?;
+        Self::require_optional_json_array(
+            object,
+            "overrides",
+            &format!("resource_pack.{}_model()", model_type),
+        )?;
+        if let Some(textures) = object.get("textures") {
+            let Some(textures) = textures.as_object() else {
+                return Err(format!(
+                    "resource_pack.{}_model() field 'textures' must be an object",
+                    model_type
+                ));
+            };
+            for (texture_key, texture_value) in textures {
+                if !texture_value.is_string() {
+                    return Err(format!(
+                        "resource_pack.{}_model() texture '{}' must be a string",
+                        model_type, texture_key
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn require_optional_json_string(
+        object: &serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        context: &str,
+    ) -> Result<(), String> {
+        if object.get(field).is_some_and(|value| !value.is_string()) {
+            return Err(format!("{context} field '{field}' must be a string"));
+        }
+        Ok(())
+    }
+
+    fn require_optional_json_object(
+        object: &serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        context: &str,
+    ) -> Result<(), String> {
+        if object.get(field).is_some_and(|value| !value.is_object()) {
+            return Err(format!("{context} field '{field}' must be an object"));
+        }
+        Ok(())
+    }
+
+    fn require_optional_json_array(
+        object: &serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        context: &str,
+    ) -> Result<(), String> {
+        if object.get(field).is_some_and(|value| !value.is_array()) {
+            return Err(format!("{context} field '{field}' must be an array"));
+        }
+        Ok(())
     }
 
     fn add_resource_pack_lang(&mut self, args: &[Expression]) -> Result<(), String> {
@@ -2757,8 +3230,11 @@ impl Transpiler {
         tag_type: &str,
         args: &[Expression],
     ) -> Result<(), String> {
-        if args.len() != 2 {
-            return Err(format!("datapack.{}_tag() takes 2 arguments", tag_type));
+        if !(2..=3).contains(&args.len()) {
+            return Err(format!(
+                "datapack.{}_tag() takes 2 or 3 arguments",
+                tag_type
+            ));
         }
 
         let (namespace, name) = self.expr_to_resource_id(&args[0], "tag name")?;
@@ -2768,17 +3244,18 @@ impl Transpiler {
         }
         if let Some(values) = values.as_array() {
             for value in values {
-                let Some(id) = value.as_str() else {
-                    return Err(
-                        "Tag values must be string resource IDs such as \"minecraft:stone\""
-                            .to_string(),
-                    );
-                };
-                self.plain_resource_id_to_parts(id, "tag value")?;
+                self.validate_datapack_tag_value(value)?;
             }
         }
 
-        let json = serde_json::json!({ "values": values });
+        let mut json = serde_json::Map::new();
+        json.insert("values".to_string(), values);
+        if let Some(replace_arg) = args.get(2) {
+            json.insert(
+                "replace".to_string(),
+                serde_json::Value::Bool(self.expr_to_bool(replace_arg, "tag replace")?),
+            );
+        }
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode tag JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
@@ -2788,6 +3265,43 @@ impl Transpiler {
             content,
             self.current_statement_source.clone(),
         )
+    }
+
+    fn validate_datapack_tag_value(&self, value: &serde_json::Value) -> Result<(), String> {
+        if let Some(id) = value.as_str() {
+            self.plain_resource_id_to_parts(id, "tag value")?;
+            return Ok(());
+        }
+
+        let Some(object) = value.as_object() else {
+            return Err(
+                "Tag values must be string resource IDs or objects with string \"id\" fields"
+                    .to_string(),
+            );
+        };
+
+        for key in object.keys() {
+            if key != "id" && key != "required" {
+                return Err(format!(
+                    "Tag object values may only contain \"id\" and \"required\" fields; found \"{}\"",
+                    key
+                ));
+            }
+        }
+
+        let Some(id) = object.get("id").and_then(|value| value.as_str()) else {
+            return Err("Tag object values must include a string \"id\" resource ID".to_string());
+        };
+        self.plain_resource_id_to_parts(id, "tag value")?;
+
+        if object
+            .get("required")
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err("Tag object value \"required\" must be a boolean".to_string());
+        }
+
+        Ok(())
     }
 
     fn add_datapack_json_resource(

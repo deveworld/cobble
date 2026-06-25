@@ -80,7 +80,7 @@ export function CobbleHome() {
             functions, events, resources, validation, and generated metadata.
           </p>
           <p className="release-install">
-            0.8.0 stable · Minecraft Java Edition 26.1.2
+            0.9.0 stable · Minecraft Java Edition 26.1.2
           </p>
           <div className="hero-actions">
             <Link className="command-button hero-command" href="/try">

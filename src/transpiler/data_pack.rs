@@ -1,12 +1,12 @@
+use crate::fs_safety::write_file_atomic;
 use crate::pack_format::{
     PackFormat, COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT,
 };
 use crate::stdlib::{EventType, StdLib};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 fn stable_relative_path(path: &Path, root: &Path) -> PathBuf {
@@ -135,6 +135,8 @@ pub struct BuildManifestGenerated {
     pub resource_pack_models: usize,
     #[serde(skip_serializing_if = "is_zero_usize", default)]
     pub resource_pack_langs: usize,
+    #[serde(skip_serializing_if = "is_zero_usize", default)]
+    pub resource_pack_static_assets: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
@@ -172,6 +174,7 @@ pub struct DataPack {
     pub json_resource_origins: HashMap<String, Vec<SourceLocation>>,
     pub resource_pack_models: HashMap<String, String>,
     pub resource_pack_langs: HashMap<String, String>,
+    pub resource_pack_static_assets: HashSet<String>,
     pub resource_pack_resource_origins: HashMap<String, Vec<SourceLocation>>,
     pub pack_format: PackFormat,
     pub stdlib: StdLib,
@@ -189,6 +192,8 @@ pub struct DataPack {
     pub unrolled_loops: usize,
     /// Experimental features enabled for this build.
     pub experimental_features: Vec<String>,
+    /// Whether previous generated resource-pack output may be cleaned.
+    pub clean_previous_resource_pack_outputs: bool,
 }
 
 impl DataPack {
@@ -209,6 +214,7 @@ impl DataPack {
             json_resource_origins: HashMap::new(),
             resource_pack_models: HashMap::new(),
             resource_pack_langs: HashMap::new(),
+            resource_pack_static_assets: HashSet::new(),
             resource_pack_resource_origins: HashMap::new(),
             pack_format: SUPPORTED_PACK_FORMAT,
             stdlib: StdLib::new(),
@@ -222,6 +228,7 @@ impl DataPack {
             active_stdlib_modules: Vec::new(),
             unrolled_loops: 0,
             experimental_features: Vec::new(),
+            clean_previous_resource_pack_outputs: true,
         }
     }
 
@@ -252,14 +259,25 @@ impl DataPack {
 
     pub fn generated_counts(&self) -> BuildManifestGenerated {
         let resources = self.generated_resource_entries();
-        let source_map_entry_count = self.functions.values().map(Vec::len).sum();
+        let source_map_entry_count = self.source_map_entry_count_snapshot();
         self.generated_counts_with_source_map(source_map_entry_count, &resources)
     }
 
     pub fn build_manifest_snapshot(&self) -> BuildManifest {
         let generated_namespaces = self.generated_namespaces();
-        let source_map_entry_count = self.functions.values().map(Vec::len).sum();
+        let source_map_entry_count = self.source_map_entry_count_snapshot();
         self.build_manifest(source_map_entry_count, &generated_namespaces)
+    }
+
+    pub fn set_resource_pack_static_assets<I>(&mut self, assets: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.resource_pack_static_assets = assets.into_iter().collect();
+    }
+
+    pub fn set_clean_previous_resource_pack_outputs(&mut self, enabled: bool) {
+        self.clean_previous_resource_pack_outputs = enabled;
     }
 
     fn metadata_for_commands(
@@ -637,23 +655,106 @@ impl DataPack {
     ) -> Result<(), String> {
         let relative_path = format!("lang/{}", locale);
         let key = Self::json_resource_key(&namespace, &relative_path);
-        let source_display_root = self.source_display_root.clone();
-        Self::insert_pass_through_resource(
-            &mut self.resource_pack_langs,
-            &mut self.resource_pack_resource_origins,
-            key,
-            namespace,
-            relative_path,
-            json,
-            source,
-            |namespace, relative_path| {
-                format!(
-                    "Duplicate resource pack language file '{}:{}'",
-                    namespace, relative_path
-                )
-            },
-            |source| Self::format_source_location_with_root(&source_display_root, source),
-        )
+        self.merge_resource_pack_lang(&key, &namespace, &relative_path, &json, source)
+    }
+
+    fn merge_resource_pack_lang(
+        &mut self,
+        key: &str,
+        namespace: &str,
+        relative_path: &str,
+        new_json: &str,
+        source: Option<SourceLocation>,
+    ) -> Result<(), String> {
+        let new_entries = Self::parse_resource_pack_lang_json(namespace, relative_path, new_json)?;
+        let merged_entries = if let Some(existing_json) = self.resource_pack_langs.get(key) {
+            let mut merged_entries =
+                Self::parse_resource_pack_lang_json(namespace, relative_path, existing_json)?;
+            for (translation_key, new_value) in new_entries {
+                match merged_entries.get(&translation_key) {
+                    Some(existing_value) if existing_value == &new_value => {}
+                    Some(_) => {
+                        let mut message = format!(
+                            "Duplicate resource pack language file '{}:{}' \
+                             (invalid overwrite for translation key '{}')",
+                            namespace, relative_path, translation_key
+                        );
+                        if let Some(first_source) = self
+                            .resource_pack_resource_origins
+                            .get(key)
+                            .and_then(|v| v.first())
+                        {
+                            message.push_str(&format!(
+                                "\n  first declaration: {}",
+                                self.format_source_location(first_source)
+                            ));
+                        }
+                        if let Some(second_source) = source.as_ref() {
+                            message.push_str(&format!(
+                                "\n  second declaration: {}",
+                                self.format_source_location(second_source)
+                            ));
+                        }
+                        return Err(message);
+                    }
+                    None => {
+                        merged_entries.insert(translation_key, new_value);
+                    }
+                }
+            }
+            merged_entries
+        } else {
+            new_entries
+        };
+
+        let merged_json = Self::serialize_resource_pack_lang_json(&merged_entries)?;
+        self.resource_pack_langs
+            .insert(key.to_string(), merged_json);
+        if let Some(source) = source {
+            self.resource_pack_resource_origins
+                .entry(key.to_string())
+                .or_default()
+                .push(source);
+        }
+        Ok(())
+    }
+
+    fn parse_resource_pack_lang_json(
+        namespace: &str,
+        relative_path: &str,
+        json: &str,
+    ) -> Result<BTreeMap<String, String>, String> {
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+            format!(
+                "Failed to parse resource-pack language JSON for '{}:{}': {}",
+                namespace, relative_path, e
+            )
+        })?;
+        let Some(object) = value.as_object() else {
+            return Err(format!(
+                "Invalid resource-pack language file '{}:{}': top-level value must be an object",
+                namespace, relative_path
+            ));
+        };
+
+        let mut entries = BTreeMap::new();
+        for (translation_key, value) in object {
+            let Some(value) = value.as_str() else {
+                return Err(format!(
+                    "Invalid resource-pack language file '{}:{}': value for '{}' must be a string",
+                    namespace, relative_path, translation_key
+                ));
+            };
+            entries.insert(translation_key.clone(), value.to_string());
+        }
+        Ok(entries)
+    }
+
+    fn serialize_resource_pack_lang_json(
+        entries: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        serde_json::to_string_pretty(entries)
+            .map_err(|e| format!("Failed to serialize merged resource-pack lang JSON: {}", e))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -718,6 +819,8 @@ impl DataPack {
 
     /// Merge a typed tag resource. Duplicate declarations for the same tag
     /// ID have their `values` arrays combined, deduplicated, and sorted.
+    /// Object entries with `required: true` are normalized to the equivalent
+    /// string entry; `required: false` entries stay distinct.
     fn merge_tag_resource(
         &mut self,
         key: &str,
@@ -732,27 +835,22 @@ impl DataPack {
                 namespace, relative_path, e
             )
         })?;
-        let new_values = new_value
+        let raw_new_values = new_value
             .get("values")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
 
-        // Validate tag schema: values must be an array of string resource IDs.
+        // Validate tag schema: values must be an array of string resource IDs
+        // or object entries with id/required fields.
         if new_value.get("values").is_some() && !new_value.get("values").unwrap().is_array() {
             return Err(format!(
                 "Invalid tag '{}:{}': 'values' must be an array",
                 namespace, relative_path
             ));
         }
-        for (idx, entry) in new_values.iter().enumerate() {
-            if !entry.is_string() {
-                return Err(format!(
-                    "Invalid tag '{}:{}': 'values[{}]' must be a string resource ID",
-                    namespace, relative_path, idx
-                ));
-            }
-        }
+        let new_values = Self::normalize_tag_values(namespace, relative_path, &raw_new_values)?;
+        let new_replace = Self::tag_replace(namespace, relative_path, &new_value)?;
 
         let merged_json = if let Some(existing_json) = self.json_resources.get(key) {
             let existing_value: serde_json::Value =
@@ -762,68 +860,40 @@ impl DataPack {
                         namespace, relative_path, e
                     )
                 })?;
-            let existing_values = existing_value
+            let raw_existing_values = existing_value
                 .get("values")
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
+            let existing_values =
+                Self::normalize_tag_values(namespace, relative_path, &raw_existing_values)?;
+            let existing_replace = Self::tag_replace(namespace, relative_path, &existing_value)?;
 
-            let mut merged: Vec<serde_json::Value> = existing_values.clone();
-            for entry in &new_values {
-                if !merged.contains(entry) {
-                    merged.push(entry.clone());
-                }
-            }
-            merged.sort_by(|a, b| a.as_str().unwrap_or("").cmp(b.as_str().unwrap_or("")));
+            let mut merged: Vec<serde_json::Value> = existing_values;
+            merged.extend(new_values);
+            Self::sort_and_dedup_tag_values(&mut merged);
 
             let mut merged_obj = serde_json::Map::new();
             merged_obj.insert("values".to_string(), serde_json::Value::Array(merged));
 
-            // Preserve replace if present in either declaration.
-            if let Some(replace) = existing_value.get("replace") {
-                merged_obj.insert("replace".to_string(), replace.clone());
-            }
-            if let Some(replace) = new_value.get("replace") {
-                merged_obj.insert("replace".to_string(), replace.clone());
-            }
-
-            // Warn about replace if any declaration used true.
-            if existing_value
-                .get("replace")
-                .or_else(|| new_value.get("replace"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
-                eprintln!(
-                    "warning: tag '{}:{}' declared with replace=true.\n\
-                     replace semantics are deferred in 0.8.0; the value is serialized as given\n\
-                     but does not change merge behavior.",
-                    namespace, relative_path
-                );
+            if let Some(replace) = Self::merged_tag_replace(existing_replace, new_replace) {
+                merged_obj.insert("replace".to_string(), serde_json::Value::Bool(replace));
             }
 
             serde_json::to_string_pretty(&serde_json::Value::Object(merged_obj))
                 .map_err(|e| format!("Failed to serialize merged tag JSON: {}", e))?
         } else {
-            // First declaration: validate and store as-is, sorting values.
-            let mut sorted_values = new_values.clone();
-            sorted_values.sort_by(|a, b| a.as_str().unwrap_or("").cmp(b.as_str().unwrap_or("")));
+            // First declaration: store canonical values in deterministic order.
+            let mut sorted_values = new_values;
+            Self::sort_and_dedup_tag_values(&mut sorted_values);
 
             let mut obj = serde_json::Map::new();
             obj.insert(
                 "values".to_string(),
                 serde_json::Value::Array(sorted_values),
             );
-            if let Some(replace) = new_value.get("replace") {
-                obj.insert("replace".to_string(), replace.clone());
-                if replace.as_bool().unwrap_or(false) {
-                    eprintln!(
-                        "warning: tag '{}:{}' declared with replace=true.\n\
-                         replace semantics are deferred in 0.8.0; the value is serialized as given\n\
-                         but does not change merge behavior.",
-                        namespace, relative_path
-                    );
-                }
+            if let Some(replace) = new_replace {
+                obj.insert("replace".to_string(), serde_json::Value::Bool(replace));
             }
             serde_json::to_string_pretty(&serde_json::Value::Object(obj))
                 .map_err(|e| format!("Failed to serialize tag JSON: {}", e))?
@@ -884,20 +954,22 @@ impl DataPack {
                 }
             }
         }
-        if let Ok(content) = fs::read_to_string(&generated_asset_namespaces_path) {
-            if let Ok(previous_namespaces) = serde_json::from_str::<Vec<String>>(&content) {
-                for namespace in previous_namespaces {
-                    if !Self::is_safe_namespace_path(&namespace) {
-                        continue;
-                    }
-
-                    if !generated_asset_namespaces.contains(&namespace) {
-                        let old_namespace_dir = assets_dir.join(namespace);
-                        if old_namespace_dir.exists() {
-                            fs::remove_dir_all(old_namespace_dir)?;
+        if self.clean_previous_resource_pack_outputs {
+            if let Ok(content) = fs::read_to_string(&generated_asset_namespaces_path) {
+                if let Ok(previous_namespaces) = serde_json::from_str::<Vec<String>>(&content) {
+                    for namespace in previous_namespaces {
+                        if !Self::is_safe_namespace_path(&namespace) {
+                            continue;
                         }
-                    } else {
-                        Self::clean_generated_asset_dirs(&assets_dir.join(namespace))?;
+
+                        if !generated_asset_namespaces.contains(&namespace) {
+                            let old_namespace_dir = assets_dir.join(namespace);
+                            if old_namespace_dir.exists() {
+                                fs::remove_dir_all(old_namespace_dir)?;
+                            }
+                        } else {
+                            Self::clean_generated_asset_dirs(&assets_dir.join(namespace))?;
+                        }
                     }
                 }
             }
@@ -926,14 +998,18 @@ impl DataPack {
         for namespace in &generated_namespaces {
             Self::clean_generated_resource_dirs(&data_dir.join(namespace))?;
         }
-        for namespace in &generated_asset_namespaces {
-            Self::clean_generated_asset_dirs(&assets_dir.join(namespace))?;
+        if self.clean_previous_resource_pack_outputs {
+            for namespace in &generated_asset_namespaces {
+                Self::clean_generated_asset_dirs(&assets_dir.join(namespace))?;
+            }
         }
 
         fs::create_dir_all(&function_dir)?;
 
         // Write pack.mcmeta
         self.write_pack_mcmeta()?;
+
+        let stdlib_tags = self.stdlib.generate_tags(&self.namespace);
 
         // Write all functions
         let mut source_map_entries = Vec::new();
@@ -942,10 +1018,11 @@ impl DataPack {
         for name in function_names {
             let commands = &self.functions[name];
             let file_path = function_dir.join(format!("{}.mcfunction", name));
-            let mut file = fs::File::create(file_path)?;
             let generated_path = format!("data/{}/function/{}.mcfunction", self.namespace, name);
+            let mut file_content = String::new();
             for (index, command) in commands.iter().enumerate() {
-                writeln!(file, "{}", command)?;
+                file_content.push_str(command);
+                file_content.push('\n');
                 let metadata = self
                     .command_metadata
                     .get(name)
@@ -968,7 +1045,9 @@ impl DataPack {
                     kind: metadata.kind,
                 });
             }
+            write_file_atomic(&file_path, file_content)?;
         }
+        self.extend_json_resource_source_map_entries(&mut source_map_entries, &stdlib_tags);
 
         let source_map_entry_count = source_map_entries.len();
         if !source_map_entries.is_empty() {
@@ -977,33 +1056,32 @@ impl DataPack {
                 entries: source_map_entries,
             };
             fs::create_dir_all(&source_map_dir)?;
-            fs::write(
-                source_map_dir.join("source_map.json"),
+            write_file_atomic(
+                &source_map_dir.join("source_map.json"),
                 serde_json::to_string_pretty(&source_map).unwrap(),
             )?;
         }
         fs::create_dir_all(&source_map_dir)?;
-        fs::write(
-            source_map_dir.join("generated_namespaces.json"),
+        write_file_atomic(
+            &source_map_dir.join("generated_namespaces.json"),
             serde_json::to_string_pretty(&generated_namespaces).unwrap(),
         )?;
         if !generated_asset_namespaces.is_empty() {
-            fs::write(
-                source_map_dir.join("generated_asset_namespaces.json"),
+            write_file_atomic(
+                &source_map_dir.join("generated_asset_namespaces.json"),
                 serde_json::to_string_pretty(&generated_asset_namespaces).unwrap(),
             )?;
         }
 
-        let stdlib_tags = self.stdlib.generate_tags(&self.namespace);
         let build_manifest = self.build_manifest(source_map_entry_count, &generated_namespaces);
-        fs::write(
-            source_map_dir.join("build_manifest.json"),
+        write_file_atomic(
+            &source_map_dir.join("build_manifest.json"),
             serde_json::to_string_pretty(&build_manifest).unwrap(),
         )?;
 
         // Write tags from stdlib
-        for (tag_name, functions) in stdlib_tags {
-            Self::write_function_tag(&data_dir, &self.namespace, &tag_name, &functions)?;
+        for (tag_name, functions) in &stdlib_tags {
+            Self::write_function_tag(&data_dir, &self.namespace, tag_name, functions)?;
         }
         let mut custom_tag_names: Vec<_> = self.tags.keys().collect();
         custom_tag_names.sort();
@@ -1057,7 +1135,7 @@ impl DataPack {
                 fs::create_dir_all(parent)?;
             }
             let content = Self::merge_tag_json_if_existing(&file_path, relative_path, json)?;
-            fs::write(file_path, content)?;
+            write_file_atomic(&file_path, content)?;
         }
 
         self.write_resource_pack_assets(&assets_dir)?;
@@ -1210,9 +1288,203 @@ impl DataPack {
                 path,
             ));
         }
+        for key in &self.resource_pack_static_assets {
+            let Some((namespace, path)) = Self::split_json_resource_key(key) else {
+                continue;
+            };
+            entries.push(BuildManifestResourceEntry {
+                kind: "resource_pack_static_asset".to_string(),
+                namespace: namespace.to_string(),
+                path: path.to_string(),
+            });
+        }
 
         Self::sort_and_dedup_resource_entries(&mut entries);
         entries
+    }
+
+    fn source_map_entry_count_snapshot(&self) -> usize {
+        let mut json_entries = Vec::new();
+        let stdlib_tags = self.stdlib.generate_tags(&self.namespace);
+        self.extend_json_resource_source_map_entries(&mut json_entries, &stdlib_tags);
+        self.functions.values().map(Vec::len).sum::<usize>() + json_entries.len()
+    }
+
+    fn extend_json_resource_source_map_entries(
+        &self,
+        entries: &mut Vec<SourceMapEntry>,
+        stdlib_tags: &HashMap<String, Vec<String>>,
+    ) {
+        let mut stdlib_tag_names: Vec<_> = stdlib_tags.keys().collect();
+        stdlib_tag_names.sort();
+        for tag_name in stdlib_tag_names {
+            let Some((path, json)) =
+                self.function_tag_source_map_data(tag_name, &stdlib_tags[tag_name])
+            else {
+                continue;
+            };
+            entries.push(self.json_source_map_entry(path, &json, None));
+        }
+
+        let mut custom_tag_names: Vec<_> = self.tags.keys().collect();
+        custom_tag_names.sort();
+        for tag_name in custom_tag_names {
+            let Some((path, json)) =
+                self.function_tag_source_map_data(tag_name, &self.tags[tag_name])
+            else {
+                continue;
+            };
+            entries.push(self.json_source_map_entry(path, &json, None));
+        }
+
+        self.extend_json_resource_map_source_entries(
+            entries,
+            "advancement",
+            &self.advancements,
+            &HashMap::new(),
+            true,
+        );
+        self.extend_json_resource_map_source_entries(
+            entries,
+            "loot_table",
+            &self.loot_tables,
+            &HashMap::new(),
+            true,
+        );
+        self.extend_json_resource_map_source_entries(
+            entries,
+            "recipe",
+            &self.recipes,
+            &HashMap::new(),
+            true,
+        );
+        self.extend_json_resource_map_source_entries(
+            entries,
+            "predicate",
+            &self.predicates,
+            &HashMap::new(),
+            true,
+        );
+        self.extend_json_resource_map_source_entries(
+            entries,
+            "item_modifier",
+            &self.item_modifiers,
+            &HashMap::new(),
+            true,
+        );
+
+        self.extend_json_resource_map_source_entries(
+            entries,
+            "",
+            &self.json_resources,
+            &self.json_resource_origins,
+            false,
+        );
+        self.extend_asset_resource_map_source_entries(
+            entries,
+            &self.resource_pack_models,
+            &self.resource_pack_resource_origins,
+        );
+        self.extend_asset_resource_map_source_entries(
+            entries,
+            &self.resource_pack_langs,
+            &self.resource_pack_resource_origins,
+        );
+    }
+
+    fn function_tag_source_map_data(
+        &self,
+        tag_name: &str,
+        functions: &[String],
+    ) -> Option<(String, String)> {
+        let (namespace, relative_tag_name) = tag_name
+            .split_once(':')
+            .unwrap_or((&self.namespace, tag_name));
+        if Self::validate_namespace_for_write(namespace, "function tag").is_err()
+            || Self::validate_resource_path_for_write(relative_tag_name, "function tag").is_err()
+        {
+            return None;
+        }
+        let json = serde_json::to_string_pretty(&json!({ "values": functions })).ok()?;
+        Some((
+            format!("data/{namespace}/tags/function/{relative_tag_name}.json"),
+            json,
+        ))
+    }
+
+    fn extend_json_resource_map_source_entries(
+        &self,
+        entries: &mut Vec<SourceMapEntry>,
+        resource_dir: &str,
+        resources: &HashMap<String, String>,
+        origins: &HashMap<String, Vec<SourceLocation>>,
+        default_namespace: bool,
+    ) {
+        let mut keys: Vec<_> = resources.keys().collect();
+        keys.sort();
+        for key in keys {
+            let (namespace, relative_path) = if default_namespace {
+                (self.namespace.as_str(), key.as_str())
+            } else {
+                let Some(parts) = Self::split_json_resource_key(key) else {
+                    continue;
+                };
+                parts
+            };
+            let generated_path = if resource_dir.is_empty() {
+                format!("data/{namespace}/{relative_path}.json")
+            } else {
+                format!("data/{namespace}/{resource_dir}/{relative_path}.json")
+            };
+            let source = origins
+                .get(key)
+                .and_then(|sources| sources.first())
+                .cloned();
+            entries.push(self.json_source_map_entry(
+                generated_path,
+                resources[key].as_str(),
+                source,
+            ));
+        }
+    }
+
+    fn extend_asset_resource_map_source_entries(
+        &self,
+        entries: &mut Vec<SourceMapEntry>,
+        resources: &HashMap<String, String>,
+        origins: &HashMap<String, Vec<SourceLocation>>,
+    ) {
+        let mut keys: Vec<_> = resources.keys().collect();
+        keys.sort();
+        for key in keys {
+            let Some((namespace, relative_path)) = Self::split_json_resource_key(key) else {
+                continue;
+            };
+            let source = origins
+                .get(key)
+                .and_then(|sources| sources.first())
+                .cloned();
+            entries.push(self.json_source_map_entry(
+                format!("assets/{namespace}/{relative_path}.json"),
+                resources[key].as_str(),
+                source,
+            ));
+        }
+    }
+
+    fn json_source_map_entry(
+        &self,
+        generated_path: String,
+        json: &str,
+        source: Option<SourceLocation>,
+    ) -> SourceMapEntry {
+        SourceMapEntry {
+            generated_path,
+            generated_line: 1,
+            command: json.lines().next().unwrap_or("").to_string(),
+            source: source.map(|source| self.normalize_source_location(source)),
+            kind: GeneratedCommandKind::JsonGenerated,
+        }
     }
 
     fn stdlib_function_tag_entries(&self) -> Vec<BuildManifestResourceEntry> {
@@ -1414,6 +1686,7 @@ impl DataPack {
             total_json_resources: legacy_typed_json_resources + self.json_resources.len(),
             resource_pack_models: self.resource_pack_models.len(),
             resource_pack_langs: self.resource_pack_langs.len(),
+            resource_pack_static_assets: self.resource_pack_static_assets.len(),
         }
     }
 
@@ -1525,6 +1798,16 @@ impl DataPack {
             Self::validate_resource_path_for_write(relative_path, "resource-pack language")?;
         }
 
+        for key in &self.resource_pack_static_assets {
+            let Some((namespace, relative_path)) = Self::split_json_resource_key(key) else {
+                return Err(Self::invalid_path_error(format!(
+                    "Invalid resource-pack static asset key `{key}`"
+                )));
+            };
+            Self::validate_namespace_for_write(namespace, "resource-pack static asset")?;
+            Self::validate_resource_path_for_write(relative_path, "resource-pack static asset")?;
+        }
+
         for namespace in self.generated_namespaces() {
             Self::validate_namespace_for_write(&namespace, "generated")?;
         }
@@ -1533,6 +1816,127 @@ impl DataPack {
         }
 
         Ok(())
+    }
+
+    fn normalize_tag_values(
+        namespace: &str,
+        relative_path: &str,
+        values: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| Self::normalize_tag_value(namespace, relative_path, idx, entry))
+            .collect()
+    }
+
+    fn normalize_tag_value(
+        namespace: &str,
+        relative_path: &str,
+        idx: usize,
+        entry: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        if entry.is_string() {
+            return Ok(entry.clone());
+        }
+
+        let Some(object) = entry.as_object() else {
+            return Err(format!(
+                "Invalid tag '{}:{}': 'values[{}]' must be a string resource ID or object entry",
+                namespace, relative_path, idx
+            ));
+        };
+
+        for key in object.keys() {
+            if key != "id" && key != "required" {
+                return Err(format!(
+                    "Invalid tag '{}:{}': 'values[{}]' object may only contain 'id' and 'required'",
+                    namespace, relative_path, idx
+                ));
+            }
+        }
+
+        let Some(id) = object.get("id").and_then(|value| value.as_str()) else {
+            return Err(format!(
+                "Invalid tag '{}:{}': 'values[{}]' object must include a string 'id'",
+                namespace, relative_path, idx
+            ));
+        };
+        let required = object
+            .get("required")
+            .map(|value| {
+                value.as_bool().ok_or_else(|| {
+                    format!(
+                        "Invalid tag '{}:{}': 'values[{}].required' must be a boolean",
+                        namespace, relative_path, idx
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(true);
+
+        if required {
+            Ok(serde_json::Value::String(id.to_string()))
+        } else {
+            let mut normalized = serde_json::Map::new();
+            normalized.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+            normalized.insert("required".to_string(), serde_json::Value::Bool(false));
+            Ok(serde_json::Value::Object(normalized))
+        }
+    }
+
+    fn sort_and_dedup_tag_values(values: &mut Vec<serde_json::Value>) {
+        values.sort_by(|a, b| {
+            let (a_id, a_required_rank) = Self::tag_value_sort_key(a);
+            let (b_id, b_required_rank) = Self::tag_value_sort_key(b);
+            a_id.cmp(b_id).then(a_required_rank.cmp(&b_required_rank))
+        });
+        values.dedup();
+    }
+
+    fn tag_value_sort_key(value: &serde_json::Value) -> (&str, u8) {
+        if let Some(id) = value.as_str() {
+            return (id, 0);
+        }
+
+        let Some(object) = value.as_object() else {
+            return ("", 2);
+        };
+        let id = object
+            .get("id")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let required = object
+            .get("required")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+        (id, if required { 0 } else { 1 })
+    }
+
+    fn tag_replace(
+        namespace: &str,
+        relative_path: &str,
+        value: &serde_json::Value,
+    ) -> Result<Option<bool>, String> {
+        value
+            .get("replace")
+            .map(|replace| {
+                replace.as_bool().ok_or_else(|| {
+                    format!(
+                        "Invalid tag '{}:{}': 'replace' must be a boolean",
+                        namespace, relative_path
+                    )
+                })
+            })
+            .transpose()
+    }
+
+    fn merged_tag_replace(existing: Option<bool>, new: Option<bool>) -> Option<bool> {
+        match (existing, new) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (None, None) => None,
+        }
     }
 
     fn json_resource_key(namespace: &str, relative_path: &str) -> String {
@@ -1661,6 +2065,20 @@ impl DataPack {
             }
         }
 
+        let replace = merged_value
+            .get("replace")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+            || new_value
+                .get("replace")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+        if replace {
+            if let Some(object) = merged_value.as_object_mut() {
+                object.insert("replace".to_string(), serde_json::Value::Bool(true));
+            }
+        }
+
         serde_json::to_string_pretty(&merged_value)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }
@@ -1692,11 +2110,9 @@ impl DataPack {
         if let Some(parent) = tag_file.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut file = fs::File::create(tag_file)?;
-        writeln!(
-            file,
-            "{}",
-            serde_json::to_string_pretty(&tag_content).unwrap()
+        write_file_atomic(
+            &tag_file,
+            format!("{}\n", serde_json::to_string_pretty(&tag_content).unwrap()),
         )?;
         Ok(())
     }
@@ -1710,7 +2126,7 @@ impl DataPack {
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(file_path, json)
+        write_file_atomic(&file_path, json)
     }
 
     fn write_json_resource_map(
@@ -1769,7 +2185,7 @@ impl DataPack {
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(file_path, json)
+        write_file_atomic(&file_path, json)
     }
 
     fn write_pack_mcmeta(&self) -> std::io::Result<()> {
@@ -1795,11 +2211,12 @@ impl DataPack {
             }
         };
 
-        let mut file = fs::File::create(mcmeta_path)?;
-        writeln!(
-            file,
-            "{}",
-            serde_json::to_string_pretty(&mcmeta_content).unwrap()
+        write_file_atomic(
+            &mcmeta_path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&mcmeta_content).unwrap()
+            ),
         )?;
         Ok(())
     }

@@ -65,6 +65,23 @@ test("try page renders structured diagnostics for invalid source", async ({ page
   await expect(page.locator(".diagnostic-snippet")).toContainText("^");
 });
 
+test("try page exposes the experimental Python compatibility report", async ({ page }) => {
+  await page.goto("/cobble/try/");
+
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page.getByRole("checkbox", { name: "python compat" }).check();
+  await page
+    .getByLabel("Cobble source")
+    .fill("def reward(player, amount=1):\n    /say reward\n");
+  await page.getByRole("button", { name: /compile/i }).click();
+
+  const report = page.locator(".compat-card");
+  await expect(report).toContainText("Python compatibility");
+  await expect(report).toContainText("diagnostics-only");
+  await expect(report).toContainText("pass statement as an explicit no-op");
+  await expect(report).toContainText("unsupported-function-parameter");
+});
+
 test("try page diagnostic sample reports placeholder errors", async ({ page }) => {
   await page.goto("/cobble/try/");
 
@@ -112,6 +129,50 @@ test("try page renders resource sample outputs and ZIP entries", async ({ page }
   );
   expect(entries.map((entry) => entry.name)).toContain("data/resource_demo/dialog/notice.json");
   expect(entries.map((entry) => entry.name)).toContain("data/minecraft/tags/function/load.json");
+});
+
+test("try page renders resource-pack assets and ZIP entries", async ({ page }) => {
+  await page.goto("/cobble/try/");
+
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page.getByLabel("sample").selectOption({ label: "Resource Pack" });
+  await page.getByRole("button", { name: /compile/i }).click();
+
+  await expect(page.getByText("3 resources")).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "resource pack" })).toBeChecked();
+  await page.getByRole("button", { name: /resources/i }).click();
+  const itemModelButton = page.getByRole("button", {
+    name: "assets/resource_pack_demo/models/item/custom_sword.json"
+  });
+  await expect(itemModelButton).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "assets/resource_pack_demo/models/block/display_block.json"
+    })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "assets/resource_pack_demo/lang/en_us.json" })
+  ).toBeVisible();
+  await itemModelButton.click();
+  await expect(page.locator(".output-code")).toContainText("minecraft:item/generated");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "ZIP" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("resource_pack_demo.zip");
+
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const entries = readStoredZipEntries(await readFile(downloadPath!));
+  expect(entries.map((entry) => entry.name)).toContain(
+    "assets/resource_pack_demo/models/item/custom_sword.json"
+  );
+  expect(entries.map((entry) => entry.name)).toContain(
+    "assets/resource_pack_demo/models/block/display_block.json"
+  );
+  expect(entries.map((entry) => entry.name)).toContain(
+    "assets/resource_pack_demo/lang/en_us.json"
+  );
 });
 
 test("try page rejects invalid namespaces instead of sanitizing them", async ({ page }) => {

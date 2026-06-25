@@ -3,6 +3,7 @@ pub mod commands;
 pub mod config;
 pub mod diagnostics;
 pub mod error;
+pub(crate) mod fs_safety;
 pub mod pack_format;
 pub mod parser;
 pub mod stdlib;

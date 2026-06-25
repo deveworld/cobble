@@ -12,6 +12,9 @@ pub fn inspect(options: InspectOptions) -> Result<(), String> {
 
     if options.json {
         let output = serde_json::json!({
+            "schema_version": 1,
+            "ok": true,
+            "status": "ok",
             "manifest": summary.manifest,
             "source_map_entries": summary.source_map_entries,
         });
@@ -114,6 +117,11 @@ fn print_inspection(input: &Path, summary: &InspectionSummary) {
         manifest,
         &["generated", "resource_pack_langs"],
         "  Resource-pack lang files",
+    );
+    print_usize(
+        manifest,
+        &["generated", "resource_pack_static_assets"],
+        "  Resource-pack static assets",
     );
 
     match summary.source_map_entries {

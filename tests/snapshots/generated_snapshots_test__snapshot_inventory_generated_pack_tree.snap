@@ -1,5 +1,6 @@
 ---
 source: tests/generated_snapshots_test.rs
+assertion_line: 230
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -9,12 +10,15 @@ expression: datapack_tree_snapshot(&output_dir)
     "datapack",
     "entity",
     "event",
+    "item_component",
     "math",
+    "position",
     "random",
     "resource_pack",
     "schedule",
     "score",
     "score.objective",
+    "selector",
     "storage",
     "team",
     "text",

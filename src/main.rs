@@ -1,6 +1,7 @@
 use cobble::commands;
 use cobble::commands::{
     CheckOptions, CleanOptions, DoctorOptions, FmtOptions, InspectOptions, LinkOptions,
+    MigrateOptions,
 };
 
 use clap::{Parser, Subcommand};
@@ -148,6 +149,14 @@ enum Commands {
         /// Include experimental editor symbol metadata in JSON output
         #[arg(long)]
         symbols: bool,
+
+        /// Enable the experimental diagnostics-only plugin host skeleton
+        #[arg(long)]
+        experimental_plugins: bool,
+
+        /// Include the experimental Python compatibility report
+        #[arg(long)]
+        experimental_python_compat: bool,
     },
 
     /// Format Cobble source files
@@ -176,6 +185,28 @@ enum Commands {
         /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
+    },
+
+    /// Report an experimental Cobble project migration plan
+    Migrate {
+        /// Project path to inspect (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Cobble version to migrate from
+        #[arg(long, default_value = "0.8")]
+        from: String,
+
+        /// Cobble version to migrate to
+        #[arg(long, default_value = "0.9")]
+        to: String,
+
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Permit migration rewrites when supported by an action
+        #[arg(long)]
+        apply: bool,
     },
 
     /// Remove Cobble-generated project output after safety checks
@@ -328,10 +359,14 @@ fn main() {
             input,
             json,
             symbols,
+            experimental_plugins,
+            experimental_python_compat,
         } => commands::check(CheckOptions {
             input,
             json,
             symbols,
+            experimental_plugins,
+            experimental_python_compat,
         }),
         Commands::Fmt { input, check, diff } => {
             commands::format_sources(FmtOptions { input, check, diff })
@@ -344,6 +379,19 @@ fn main() {
             path,
             commands_json,
             json,
+        }),
+        Commands::Migrate {
+            path,
+            from,
+            to,
+            json,
+            apply,
+        } => commands::migrate(MigrateOptions {
+            path,
+            from,
+            to,
+            json,
+            apply,
         }),
         Commands::Clean {
             path,

@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::transpiler::{GeneratedCommand, GeneratedCommandKind, Transpiler};
+use crate::transpiler::{GeneratedCommand, GeneratedCommandKind, SourceLocation, Transpiler};
 use std::collections::HashMap;
 
 const UNROLL_LIMIT: usize = 1024;
@@ -34,20 +34,38 @@ impl UnrollValue {
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
-        let values = self.unroll_values(for_loop)?;
+        let loop_source_key = Self::for_loop_source_key(for_loop);
+        let values = self.unroll_values(for_loop).map_err(|error| {
+            annotate_unroll_error(
+                error,
+                &for_loop.target,
+                &loop_source_key,
+                self.current_statement_source.as_ref(),
+            )
+        })?;
         let previous_iteration_factor = self.unroll_iteration_factor;
         let projected_iterations = previous_iteration_factor
             .checked_mul(values.len())
             .ok_or_else(|| {
-                format!(
-                    "unroll-limit-exceeded: nested unrolling expands past {} aggregate iterations.",
-                    UNROLL_NESTED_ITERATION_LIMIT
+                annotate_unroll_error(
+                    format!(
+                        "unroll-limit-exceeded: nested unrolling expands past {} aggregate iterations.",
+                        UNROLL_NESTED_ITERATION_LIMIT
+                    ),
+                    &for_loop.target,
+                    &loop_source_key,
+                    self.current_statement_source.as_ref(),
                 )
             })?;
         if projected_iterations > UNROLL_NESTED_ITERATION_LIMIT {
-            return Err(format!(
-                "unroll-limit-exceeded: nested unrolling expands to {} aggregate iterations (limit {}).",
-                projected_iterations, UNROLL_NESTED_ITERATION_LIMIT
+            return Err(annotate_unroll_error(
+                format!(
+                    "unroll-limit-exceeded: nested unrolling expands to {} aggregate iterations (limit {}).",
+                    projected_iterations, UNROLL_NESTED_ITERATION_LIMIT
+                ),
+                &for_loop.target,
+                &loop_source_key,
+                self.current_statement_source.as_ref(),
             ));
         }
         if values.len() > UNROLL_WARNING_THRESHOLD {
@@ -87,7 +105,14 @@ impl Transpiler {
             self.unroll_command_baseline = None;
         }
 
-        result
+        result.map_err(|error| {
+            annotate_unroll_error(
+                error,
+                &for_loop.target,
+                &loop_source_key,
+                self.current_statement_source.as_ref(),
+            )
+        })
     }
 
     fn unroll_values(&self, for_loop: &ForLoop) -> Result<Vec<UnrollValue>, String> {
@@ -391,6 +416,33 @@ impl Transpiler {
         for (source_index, generated) in &capture.metadata {
             metadata.insert(start + source_index, generated.clone());
         }
+    }
+}
+
+fn annotate_unroll_error(
+    error: String,
+    target: &str,
+    source_key: &str,
+    location: Option<&SourceLocation>,
+) -> String {
+    if error.starts_with("unroll-") {
+        let mut annotated = if error.contains("\n  loop: for ") {
+            error
+        } else {
+            format!("{error}\n  loop: for {target}")
+        };
+        if !annotated.contains("\n  source-key: ") {
+            annotated.push_str(&format!("\n  source-key: {source_key}"));
+        }
+        if let Some(location) = location.filter(|_| !annotated.contains("\n  location: ")) {
+            annotated.push_str(&format!(
+                "\n  location: {}:{}",
+                location.line, location.column
+            ));
+        }
+        annotated
+    } else {
+        error
     }
 }
 

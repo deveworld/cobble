@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CobbleConfig {
     pub project: ProjectConfig,
     #[serde(default)]
@@ -15,6 +16,7 @@ pub struct CobbleConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     pub name: String,
     pub description: String,
@@ -26,6 +28,7 @@ pub struct ProjectConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BuildConfig {
     #[serde(default = "default_source")]
     pub source: String,
@@ -41,6 +44,7 @@ pub struct BuildConfig {
 /// `from stdlib import text, score, ...`. `version = 1` keeps the 0.7.x
 /// behavior where every module is always active.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StdlibConfig {
     #[serde(default = "default_stdlib_version")]
     pub version: u8,
@@ -56,9 +60,14 @@ impl Default for StdlibConfig {
 
 /// Experimental feature flags. All default off.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ExperimentalConfig {
     #[serde(default)]
     pub resource_pack: bool,
+    #[serde(default)]
+    pub plugins: bool,
+    #[serde(default)]
+    pub python_compat: bool,
 }
 
 fn default_version() -> String {
@@ -91,7 +100,10 @@ impl CobbleConfig {
     pub fn load_unvalidated<P: AsRef<Path>>(path: P) -> Result<Self, String> {
         let contents =
             fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
-        toml::from_str(&contents).map_err(|e| format!("Failed to parse config file: {}", e))
+        let config: Self =
+            toml::from_str(&contents).map_err(|e| format!("Failed to parse config file: {}", e))?;
+        config.validate_stdlib_version()?;
+        Ok(config)
     }
 
     pub fn validate_pack_format(&self) -> Result<(), String> {
@@ -121,6 +133,17 @@ impl CobbleConfig {
         }
 
         Ok(())
+    }
+
+    pub fn validate_stdlib_version(&self) -> Result<(), String> {
+        if matches!(self.stdlib.version, 1 | 2) {
+            return Ok(());
+        }
+
+        Err(format!(
+            "Invalid stdlib.version: {}. Supported values are 1 or 2.",
+            self.stdlib.version
+        ))
     }
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
@@ -177,5 +200,34 @@ impl CobbleConfig {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CobbleConfig;
+    use std::fs;
+
+    #[test]
+    fn load_rejects_unsupported_stdlib_versions() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("cobble.toml");
+        fs::write(
+            &config_path,
+            r#"
+[project]
+name = "bad_stdlib"
+description = "Bad stdlib"
+namespace = "bad_stdlib"
+pack_format = "101.1"
+
+[stdlib]
+version = 3
+"#,
+        )
+        .unwrap();
+
+        let error = CobbleConfig::load_unvalidated(&config_path).unwrap_err();
+        assert!(error.contains("Invalid stdlib.version: 3"));
     }
 }

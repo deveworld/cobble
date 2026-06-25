@@ -6,6 +6,7 @@ pub mod fmt;
 pub mod init;
 pub mod inspect;
 pub mod link;
+pub mod migrate;
 pub(crate) mod output_safety;
 pub mod validate;
 pub mod watch;
@@ -18,6 +19,7 @@ pub use fmt::{format as format_sources, FmtOptions};
 pub use init::init;
 pub use inspect::{inspect, InspectOptions};
 pub use link::{link, LinkOptions};
+pub use migrate::{migrate, MigrateOptions};
 pub use validate::validate;
 pub use watch::watch;
 

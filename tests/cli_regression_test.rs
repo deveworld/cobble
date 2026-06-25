@@ -243,6 +243,356 @@ fn cli_doctor_json_reports_configured_output_marker_status() {
 }
 
 #[test]
+fn cli_migrate_defaults_to_experimental_dry_run_report() {
+    let output = cobble().arg("migrate").output().unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "migrate failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "migrate should keep stderr quiet on success: {stderr}"
+    );
+    assert!(stdout.contains("Cobble migrate (experimental)"));
+    assert!(stdout.contains("From: 0.8"));
+    assert!(stdout.contains("To: 0.9"));
+    assert!(stdout.contains("Mode: dry-run/report"));
+    assert!(stdout.contains("Changed: false"));
+    assert!(stdout.contains("Source files scanned:"));
+    assert!(stdout.contains("File modifications require --apply"));
+    assert!(stdout.contains("No files were changed."));
+}
+
+#[test]
+fn cli_migrate_json_reports_project_scan_for_configured_source() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("migrate_project");
+    let source_dir = project_dir.join("cobble_src");
+    fs::create_dir_all(source_dir.join("nested")).unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "migrate_project"
+description = "Migration fixture"
+namespace = "migrate_project"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "cobble_src"
+output = "output"
+entry_points = []
+
+[stdlib]
+version = 1
+
+[experimental]
+resource_pack = true
+python_compat = true
+"#,
+    )
+    .unwrap();
+    fs::write(source_dir.join("z.cbl"), "import stdlib\n").unwrap();
+    fs::write(
+        source_dir.join("nested").join("a.cobble"),
+        "from stdlib import resource_pack\nresource_pack.lang(\"en_us\", {\"item.test\": \"Test\"})\n",
+    )
+    .unwrap();
+
+    let output = cobble()
+        .arg("migrate")
+        .arg(&project_dir)
+        .arg("--from")
+        .arg("0.8")
+        .arg("--to")
+        .arg("0.9")
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "migrate --json failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "migrate --json should keep stderr quiet on success: {stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["from"], "0.8");
+    assert_eq!(value["to"], "0.9");
+    assert_eq!(value["apply"], false);
+    assert_eq!(
+        value["project_path"],
+        project_dir.to_string_lossy().as_ref()
+    );
+    assert_eq!(value["config"]["status"], "found");
+    assert_eq!(
+        value["config"]["path"],
+        project_dir.join("cobble.toml").to_string_lossy().as_ref()
+    );
+    assert_eq!(value["config"]["source"], "cobble_src");
+    assert_eq!(value["config"]["stdlib_version"], 1);
+    assert_eq!(value["config"]["experimental_resource_pack"], true);
+    assert_eq!(value["config"]["experimental_python_compat"], true);
+    assert_eq!(value["source"]["status"], "scanned");
+    assert_eq!(
+        value["source"]["path"],
+        source_dir.to_string_lossy().as_ref()
+    );
+    assert_eq!(value["source"]["files_scanned"], 2);
+    assert_eq!(
+        value["source"]["files"],
+        serde_json::json!(["nested/a.cobble", "z.cbl"])
+    );
+    assert_eq!(value["source"]["resource_pack_references"], 1);
+    assert_eq!(value["source"]["legacy_stdlib_import_files"], 1);
+    assert_eq!(value["source"]["stdlib_module_import_files"], 1);
+    assert!(value["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == "experimental_migration_dry_run"));
+    assert!(value["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == "config_found"));
+    assert!(value["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == "source_scan_completed"));
+    assert!(value["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action["id"] == "scan_sources" && action["status"] == "scanned"));
+    assert!(value["actions"].as_array().unwrap().iter().any(|action| {
+        action["id"] == "candidate_resource_pack_config" && action["status"] == "configured"
+    }));
+}
+
+#[test]
+fn cli_migrate_json_scans_src_when_config_is_missing() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let source_dir = temp_dir.path().join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(source_dir.join("main.cbl"), "def main():\n    /say ok\n").unwrap();
+
+    let output = cobble()
+        .arg("migrate")
+        .arg("--json")
+        .arg(temp_dir.path())
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "migrate --json failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "migrate --json should keep stderr quiet on success: {stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["config"]["status"], "missing");
+    assert_eq!(value["config"]["source"], "src");
+    assert_eq!(value["config"]["stdlib_version"], 2);
+    assert_eq!(value["config"]["experimental_resource_pack"], false);
+    assert_eq!(value["config"]["experimental_python_compat"], false);
+    assert_eq!(value["source"]["status"], "scanned");
+    assert_eq!(value["source"]["files_scanned"], 1);
+    assert_eq!(value["source"]["files"], serde_json::json!(["main.cbl"]));
+}
+
+#[test]
+fn cli_migrate_json_reports_malformed_config_values_as_errors() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("migrate_bad_config");
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "bad"
+description = "Bad"
+namespace = "bad"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = 123
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .arg("migrate")
+        .arg(&project_dir)
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "migrate should fail on malformed config values\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.contains("Migration inspection failed"));
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["config"]["status"], "error");
+    assert!(value["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["code"] == "config_parse_failed"
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("invalid type")
+        }));
+}
+
+#[test]
+fn cli_migrate_json_reports_unknown_config_keys_as_errors() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("migrate_unknown_config");
+    fs::create_dir_all(project_dir.join("src")).unwrap();
+    fs::write(
+        project_dir.join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "bad"
+description = "Bad"
+namespace = "bad"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_packs = true
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .arg("migrate")
+        .arg(&project_dir)
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "migrate should fail on unknown config keys\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.contains("Migration inspection failed"));
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["config"]["status"], "error");
+    assert!(value["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["code"] == "config_parse_failed"
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("unknown field `resource_packs`")
+        }));
+}
+
+#[test]
+fn cli_migrate_apply_skeleton_does_not_modify_files() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let sentinel = temp_dir.path().join("sentinel.txt");
+    fs::write(&sentinel, "keep me").unwrap();
+
+    let output = cobble()
+        .arg("migrate")
+        .arg("--apply")
+        .current_dir(temp_dir.path())
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "migrate --apply failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "migrate --apply should keep stderr quiet on success: {stderr}"
+    );
+    assert!(stdout.contains("Mode: apply requested"));
+    assert!(stdout.contains("no automatic rewrites yet"));
+    assert!(stdout.contains("No files were changed."));
+    assert_eq!(fs::read_to_string(&sentinel).unwrap(), "keep me");
+}
+
+#[test]
+fn cli_migrate_json_reports_unsupported_routes_without_changes() {
+    let output = cobble()
+        .arg("migrate")
+        .arg("--from")
+        .arg("0.7")
+        .arg("--to")
+        .arg("0.9")
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "unsupported migrate route should fail\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.contains("Unsupported experimental migration route"));
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["from"], "0.7");
+    assert_eq!(value["to"], "0.9");
+    assert_eq!(value["config"]["status"], "skipped");
+    assert_eq!(value["source"]["status"], "skipped");
+    assert!(value["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == "unsupported_migration_route"));
+}
+
+#[test]
 fn cli_doctor_json_reports_link_status_and_marker() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_dir = temp_dir.path().join("linked_pack");
@@ -1700,6 +2050,565 @@ def setup():
 }
 
 #[test]
+fn cli_check_json_omits_experimental_plugin_host_by_default() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say ok\n");
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(value.get("experimental_plugins").is_none());
+}
+
+#[test]
+fn cli_check_json_omits_experimental_python_compat_by_default() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    pass\n");
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(value.get("experimental_python_compat").is_none());
+}
+
+#[test]
+fn cli_check_json_reports_experimental_python_compat_when_enabled() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    pass\n");
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-python-compat")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json --experimental-python-compat failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let compat = &value["experimental_python_compat"];
+    assert_eq!(compat["enabled"], true);
+    assert_eq!(compat["mode"], "diagnostics-only");
+    assert!(compat["supported_constructs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|construct| construct == "pass statement as an explicit no-op"));
+    assert!(compat["unsupported_detected"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn cli_check_json_reports_experimental_python_compat_diagnostics() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "class Game:\n    pass\n");
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-python-compat")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "check --json --experimental-python-compat unexpectedly passed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let detected = value["experimental_python_compat"]["unsupported_detected"]
+        .as_array()
+        .unwrap();
+    assert!(detected
+        .iter()
+        .any(|diagnostic| diagnostic["kind"] == "unsupported-python-syntax"));
+}
+
+#[test]
+fn cli_check_json_reports_experimental_python_compat_when_enabled_by_config() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "python_compat_config"
+description = "Python compatibility config"
+namespace = "python_compat_config"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+
+[experimental]
+python_compat = true
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    pass\n",
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json with python compat config failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["experimental_python_compat"]["enabled"], true);
+    assert_eq!(
+        value["experimental_python_compat"]["mode"],
+        "diagnostics-only"
+    );
+}
+
+#[test]
+fn cli_check_json_reports_experimental_plugin_host_when_enabled() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say ok\n");
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json --experimental-plugins failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let plugins = &value["experimental_plugins"];
+    assert_eq!(plugins["enabled"], true);
+    assert_eq!(plugins["manifests_checked"], 0);
+    assert!(plugins["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["kind"] == "experimental-plugin-diagnostic"
+                && diagnostic["plugin"] == "cobble.plugin_host"
+                && diagnostic["plugin_kind"] == "host-skeleton"
+        }));
+}
+
+#[test]
+fn cli_check_json_reports_experimental_plugin_host_when_enabled_by_config() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_config"
+description = "Plugin config"
+namespace = "plugin_config"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+
+[experimental]
+plugins = true
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json with config plugins failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["experimental_plugins"]["enabled"], true);
+    assert_eq!(value["experimental_plugins"]["manifests_checked"], 0);
+}
+
+#[test]
+fn cli_check_json_parses_experimental_plugin_manifests_without_running_code() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::create_dir_all(temp_dir.path().join("plugins")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_manifest"
+description = "Plugin manifest"
+namespace = "plugin_manifest"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("plugins/example_lints.toml"),
+        r#"
+plugin_version = 1
+name = "example_lints"
+kind = "diagnostics"
+
+[capabilities]
+read_project_metadata = true
+read_source_text = true
+emit_diagnostics = true
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json --experimental-plugins failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let plugins = &value["experimental_plugins"];
+    assert_eq!(plugins["enabled"], true);
+    assert_eq!(plugins["manifests_checked"], 1);
+    assert_eq!(plugins["manifests"][0]["name"], "example_lints");
+    assert_eq!(plugins["manifests"][0]["plugin_version"], 1);
+    assert_eq!(plugins["manifests"][0]["kind"], "diagnostics");
+    assert!(plugins["manifests"][0]["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|capability| capability == "emit_diagnostics"));
+    assert!(plugins["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["plugin"] == "example_lints"
+                && diagnostic["plugin_kind"] == "manifest-draft"
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("no plugin code was run")
+        }));
+}
+
+#[test]
+fn cli_check_json_rejects_unknown_experimental_plugin_capabilities() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::create_dir_all(temp_dir.path().join("plugins")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_manifest"
+description = "Plugin manifest"
+namespace = "plugin_manifest"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("plugins/unsafe.toml"),
+        r#"
+plugin_version = 1
+name = "unsafe"
+kind = "diagnostics"
+
+[capabilities]
+read_project_metadata = true
+open_network = true
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "check --json --experimental-plugins unexpectedly passed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error_count"], 1);
+    let plugins = &value["experimental_plugins"];
+    assert_eq!(plugins["manifests_checked"], 1);
+    assert!(plugins["manifests"].as_array().unwrap().is_empty());
+    assert!(plugins["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["severity"] == "error"
+                && diagnostic["plugin_kind"] == "manifest-parse"
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("unknown field")
+        }));
+}
+
+#[test]
+fn cli_check_rejects_unknown_and_invalid_config_schema() {
+    let cases = [
+        (
+            "unknown_project_key",
+            r#"
+[project]
+name = "bad_config"
+description = "Bad config"
+namespace = "bad_config"
+version = "1.0.0"
+pack_format = "101.1"
+typo = true
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+            "unknown field `typo`",
+        ),
+        (
+            "unknown_experimental_flag",
+            r#"
+[project]
+name = "bad_config"
+description = "Bad config"
+namespace = "bad_config"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+
+[experimental]
+resource_packs = true
+"#,
+            "unknown field `resource_packs`",
+        ),
+        (
+            "invalid_experimental_type",
+            r#"
+[project]
+name = "bad_config"
+description = "Bad config"
+namespace = "bad_config"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+
+[experimental]
+resource_pack = "yes"
+"#,
+            "invalid type",
+        ),
+    ];
+
+    for (name, config, expected) in cases {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+        fs::write(
+            temp_dir.path().join("src/main.cbl"),
+            "def main():\n    /say ok\n",
+        )
+        .unwrap();
+        fs::write(temp_dir.path().join("cobble.toml"), config).unwrap();
+
+        let output = cobble()
+            .current_dir(temp_dir.path())
+            .arg("check")
+            .output()
+            .unwrap();
+
+        let (stdout, stderr) = output_text(&output);
+        assert!(
+            !output.status.success(),
+            "{name} unexpectedly succeeded\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(expected),
+            "{name} stderr did not contain {expected:?}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn cli_check_json_reports_config_schema_errors_as_json() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "bad_config"
+description = "Bad config"
+namespace = "bad_config"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_packs = true
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "check --json unexpectedly passed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.contains("Config validation failed"));
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error_count"], 1);
+    assert_eq!(value["diagnostics"][0]["kind"], "config");
+    assert!(value["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("unknown field `resource_packs`"));
+}
+
+#[test]
+fn cli_check_human_reports_experimental_plugin_host_when_enabled() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say ok\n");
+
+    let output = cobble()
+        .arg("check")
+        .arg("--experimental-plugins")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --experimental-plugins failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.is_empty());
+    assert!(
+        stdout.contains("warning: experimental plugin cobble.plugin_host reported host-skeleton")
+    );
+    assert!(stdout.contains("no plugins were run"));
+}
+
+#[test]
 fn cli_check_symbols_requires_json() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(temp_dir.path(), "def main():\n    /say ok\n");
@@ -1780,6 +2689,140 @@ def main():
         .as_str()
         .unwrap()
         .contains("Unknown math function `math.nope`"));
+}
+
+#[test]
+fn cli_check_json_reports_unroll_budget_diagnostics() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"
+def main():
+    for i in range(64):
+        for j in range(64):
+            for k in range(64):
+                /say nested {i} {j} {k}
+"#,
+    );
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Validation failed with 1 error"));
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error_count"], 1);
+    assert_eq!(value["diagnostics"][0]["kind"], "unroll-limit-exceeded");
+    assert_eq!(value["diagnostics"][0]["line"], 5);
+    assert_eq!(value["diagnostics"][0]["column"], 13);
+    assert!(value["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("nested unrolling"));
+}
+
+#[test]
+fn cli_check_json_reports_unroll_diagnostic_on_failing_loop() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"
+def main():
+    for i in range(1):
+        /say ok {i}
+    for i in range(1025):
+        /say bad {i}
+"#,
+    );
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Validation failed with 1 error"));
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["diagnostics"][0]["kind"], "unroll-limit-exceeded");
+    assert_eq!(value["diagnostics"][0]["line"], 5);
+    assert_eq!(value["diagnostics"][0]["column"], 5);
+}
+
+#[test]
+fn cli_check_json_reports_semantic_stdlib_module_errors() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"
+from stdlib import datapack, item_component
+
+datapack.item_modifier("named", {
+    "function": "minecraft:set_components",
+    "components": item_component.custom_name(text.plain("Name"))
+})
+
+def main():
+    /say ok
+"#,
+    );
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Validation failed with 1 error"));
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error_count"], 1);
+    assert_eq!(value["diagnostics"][0]["kind"], "missing-stdlib-module");
+    assert!(value["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("module 'text' not imported"));
+}
+
+#[test]
+fn cli_check_json_python_compat_reports_duplicate_function_parameters() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"
+def main(player, player):
+    pass
+"#,
+    );
+
+    let output = cobble()
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-python-compat")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("Validation failed with 1 error"));
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(value["experimental_python_compat"]["unsupported_detected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["kind"] == "duplicate-function-parameter"));
 }
 
 #[test]
@@ -2603,6 +3646,9 @@ fn cli_inspect_json_reports_manifest_summary() {
     );
 
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["status"], "ok");
     assert_eq!(value["manifest"]["namespace"], "cli_regression");
     assert_eq!(value["manifest"]["generated"]["functions"], 1);
     assert_eq!(value["manifest"]["generated"]["commands"], 1);
@@ -2642,6 +3688,89 @@ fn cli_inspect_human_output_reports_manifest_summary() {
     assert!(stdout.contains("Functions: 1"));
     assert!(stdout.contains("Commands: 1"));
     assert!(stdout.contains("Validation: not recorded"));
+}
+
+#[test]
+fn cli_inspect_reports_resource_pack_static_asset_counts() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let asset_path = project_dir.join("assets/inspect_static/textures/item/icon.png");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def main():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"fake png bytes").unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "inspect_static"
+description = "Inspect static assets"
+namespace = "inspect_static"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let build = cobble()
+        .arg("build")
+        .arg(&project_dir)
+        .arg("--quiet")
+        .output()
+        .unwrap();
+    let (build_stdout, build_stderr) = output_text(&build);
+    assert!(
+        build.status.success(),
+        "build failed\nstdout:\n{build_stdout}\nstderr:\n{build_stderr}"
+    );
+
+    let output_dir = project_dir.join("output");
+    let inspect = cobble().arg("inspect").arg(&output_dir).output().unwrap();
+    let (stdout, stderr) = output_text(&inspect);
+    assert!(
+        inspect.status.success(),
+        "inspect failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("Resource-pack static assets: 1"));
+    assert!(stdout.contains("resource_pack_static_asset: inspect_static:textures/item/icon.png"));
+
+    let inspect_json = cobble()
+        .arg("inspect")
+        .arg(&output_dir)
+        .arg("--json")
+        .output()
+        .unwrap();
+    let (stdout, stderr) = output_text(&inspect_json);
+    assert!(
+        inspect_json.status.success(),
+        "inspect --json failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        value["manifest"]["generated"]["resource_pack_static_assets"],
+        1
+    );
+    assert!(value["manifest"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| {
+            resource["kind"] == "resource_pack_static_asset"
+                && resource["namespace"] == "inspect_static"
+                && resource["path"] == "textures/item/icon.png"
+        }));
 }
 
 #[test]

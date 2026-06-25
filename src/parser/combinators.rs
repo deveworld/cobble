@@ -233,6 +233,20 @@ pub fn token_parser<'a>(
         };
 
         // Import
+        let dotted_import_item = select_ref! { Token::Ident(s) => s.clone() }
+            .then(
+                just(&Token::Dot)
+                    .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+                    .repeated()
+                    .collect::<Vec<_>>(),
+            )
+            .map(|(head, tail)| {
+                if tail.is_empty() {
+                    head
+                } else {
+                    format!("{}.{}", head, tail.join("."))
+                }
+            });
         let import = choice((
             just(&Token::Import)
                 .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
@@ -246,7 +260,7 @@ pub fn token_parser<'a>(
                 .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
                 .then_ignore(just(&Token::Import))
                 .then(
-                    select_ref! { Token::Ident(s) => s.clone() }
+                    dotted_import_item
                         .separated_by(just(&Token::Comma))
                         .allow_trailing()
                         .collect(),

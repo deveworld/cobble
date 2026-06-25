@@ -64,7 +64,10 @@ The importable module names are:
 - `random`
 - `timer`
 - `storage`
+- `item_component` (0.9; see `stdlib-v3-design.md`)
 - `schedule`
+- `selector` (0.9; see `stdlib-v3-design.md`)
+- `position` (0.9; see `stdlib-v3-design.md`)
 - `bossbar`
 - `team`
 - `entity`
@@ -118,11 +121,14 @@ Helper names are unchanged from 0.7.x. The import form only gates availability.
 | `score.objective` | `score.objective.add`, `score.objective.remove`, `score.objective.display` |
 | `random` | `random.int`, `random.bool` |
 | `timer` | `timer.set`, `timer.tick`, `timer.done`, `timer.reset` |
-| `storage` | `storage.set`, `storage.merge`, `storage.remove`, `storage.copy`, `storage.append`, `storage.prepend`, `storage.insert`, `storage.get`, `storage.read_score`, `storage.copy_from` |
+| `storage` | `storage.set`, `storage.merge`, `storage.remove`, `storage.copy`, `storage.append`, `storage.prepend`, `storage.insert`, `storage.get`, `storage.read_score`, `storage.copy_from`, `storage.path`, `storage.child`, `storage.index` |
+| `item_component` | `item_component.components`, `item_component.custom_name`, `item_component.lore`, `item_component.unbreakable` |
 | `schedule` | `schedule.once`, `schedule.clear` |
+| `selector` | `selector.current`, `selector.nearest_player`, `selector.all_players`, `selector.all_entities`, `selector.tagged`, `selector.players_tagged`, `selector.entity_type` |
+| `position` | `position.here`, `position.absolute`, `position.relative`, `position.local` |
 | `bossbar` | `bossbar.add`, `bossbar.remove`, `bossbar.set_value`, `bossbar.set_max`, `bossbar.set_name`, `bossbar.set_color`, `bossbar.set_style`, `bossbar.set_visible`, `bossbar.set_players` |
 | `team` | `team.add`, `team.remove`, `team.join`, `team.leave`, `team.modify` |
-| `entity` | `entity.tag_add`, `entity.tag_remove`, `entity.effect_give`, `entity.effect_clear`, `entity.attribute_get`, `entity.attribute_base_set` |
+| `entity` | `entity.tag_add`, `entity.tag_remove`, `entity.effect_give`, `entity.effect_clear`, `entity.attribute_get`, `entity.attribute_base_set`, `entity.teleport` |
 | `math` | `math.abs`, `math.min`, `math.max`, `math.sqrt` |
 | `event` | `addEventListener` |
 | `datapack` | `datapack.function_tag`, `datapack.block_tag`, `datapack.item_tag`, `datapack.entity_type_tag`, `datapack.predicate`, `datapack.advancement`, `datapack.loot_table`, `datapack.recipe`, `datapack.item_modifier`, `datapack.dialog` |
@@ -220,7 +226,8 @@ These are not part of 0.8.0 unless a separate design is accepted:
 
 - Item component helper taxonomy.
 - Automatic load/tick setup.
-- Schedule cancellation.
+- Recurring schedule helpers beyond explicit `schedule.once` and
+  `schedule.clear`.
 - Broad vector math.
 - Registry-wide generated helper APIs.
 - Helpers requiring hidden temporary objectives, storage keys, or generated

@@ -34,6 +34,12 @@ declare module "@/src/wasm/pkg/cobble_web_wasm.js" {
     diagnostics: string[];
     diagnostic_details: CompileDiagnostic[];
     summary: CompileSummary;
+    experimental_python_compat?: {
+      enabled: boolean;
+      mode: string;
+      supported_constructs: string[];
+      unsupported_detected: CompileDiagnostic[];
+    };
   };
 
   export default function init(
@@ -42,7 +48,9 @@ declare module "@/src/wasm/pkg/cobble_web_wasm.js" {
 
   export function compile_cobble(
     source: string,
-    namespace?: string,
-    description?: string
+    namespace?: string | null,
+    description?: string | null,
+    experimentalResourcePack?: boolean | null,
+    experimentalPythonCompat?: boolean | null
   ): CompileResponse;
 }

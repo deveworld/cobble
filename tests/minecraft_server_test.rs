@@ -30,7 +30,7 @@ fn purpur_server_loads_and_runs_generated_datapack() {
     let datapack_dir = server_dir.join("world/datapacks").join(NAMESPACE);
 
     write_project(&project_dir);
-    fs::create_dir_all(&datapack_dir).unwrap();
+    fs::create_dir_all(datapack_dir.parent().unwrap()).unwrap();
     build_datapack(&repo_root, &project_dir, &datapack_dir);
 
     fs::write(

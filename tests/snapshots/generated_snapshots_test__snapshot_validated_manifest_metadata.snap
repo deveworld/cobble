@@ -1,5 +1,6 @@
 ---
 source: tests/generated_snapshots_test.rs
+assertion_line: 269
 expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json\")"
 ---
 {
@@ -8,12 +9,15 @@ expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json
     "datapack",
     "entity",
     "event",
+    "item_component",
     "math",
+    "position",
     "random",
     "resource_pack",
     "schedule",
     "score",
     "score.objective",
+    "selector",
     "storage",
     "team",
     "text",

@@ -450,7 +450,8 @@ h1 {
 }
 
 .select-field,
-.namespace-field {
+.namespace-field,
+.toggle-field {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -461,6 +462,18 @@ h1 {
   background: rgba(255, 255, 255, 0.06);
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.toggle-field {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.toggle-field input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--green);
 }
 
 .select-field select {
@@ -658,6 +671,68 @@ h1 {
 
 .diagnostic-card p {
   margin: 0;
+}
+
+.compat-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(123, 214, 111, 0.28);
+  border-radius: 8px;
+  background: rgba(123, 214, 111, 0.08);
+  color: #e6f7df;
+}
+
+.compat-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(123, 214, 111, 0.16);
+  color: #baf2a8;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.compat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compat-grid div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.compat-grid span,
+.compat-list span {
+  color: var(--muted);
+}
+
+.compat-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.compat-list.warning {
+  color: #ffd2ca;
+}
+
+.compat-list.warning li {
+  display: grid;
+  gap: 4px;
+}
+
+.diagnostic-empty {
+  margin: 0;
+  color: #e6f7df;
 }
 
 .diagnostic-heading {
@@ -933,7 +1008,8 @@ h1 {
   }
 
   .select-field,
-  .namespace-field {
+  .namespace-field,
+  .toggle-field {
     flex: 0 0 100%;
     width: 100%;
   }

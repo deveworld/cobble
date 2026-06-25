@@ -1,11 +1,11 @@
 # Resource Pack Design
 
-Status: 0.8.0 experimental implementation contract.
+Status: 0.9.0 beta implementation contract with experimental opt-in.
 
-This document defines the experimental resource-pack support added in
-0.8.0. Resource packs are not part of the stable 0.8 contract; they ship
-behind an explicit opt-in flag so the data-pack workflow stays unaffected
-for users who do not need assets.
+This document defines the beta resource-pack support for 0.9.0. Resource-pack
+output still ships behind an explicit opt-in flag so the data-pack workflow
+stays unaffected for users who do not need assets, but the CLI workflow, path
+safety rules, and ZIP behavior are treated as release-gated behavior.
 
 ## Goals
 
@@ -13,6 +13,8 @@ for users who do not need assets.
   `data/` and `assets/` for Minecraft 1.20+ combined packs.
 - Generate model and language JSON from Cobble source so authors can keep
   asset declarations alongside their data-pack logic.
+- Copy static resource-pack assets from the project `assets/` tree for beta
+  projects that already own textures, sounds, and other binary files.
 - Keep the feature opt-in and labeled experimental so 1.0 can reserve the
   right to change the helper surface.
 
@@ -21,9 +23,10 @@ for users who do not need assets.
 - Texture, audio, or other binary asset generation.
 - External asset processors or pipeline plugins.
 - Resource-pack-only output (no data pack).
-- Model or language JSON schema validation beyond the top-level object
-  check. Full schema validation is deferred until a per-kind schema source
-  and snapshot contract are accepted.
+- Full Minecraft model or language JSON schema validation. Cobble performs
+  beta-level type checks for common model fields and lang entries, but full
+  schema validation is deferred until a per-kind schema source and snapshot
+  contract are accepted.
 - Automatic asset deduplication or merging across declarations (model and
   language JSON are pass-through; duplicates are errors, like data-pack
   pass-through resources).
@@ -51,9 +54,10 @@ error: resource_pack.* requires --experimental-resource-pack or [experimental] r
   Source: src/main.cbl:4:5
 ```
 
-The web compiler (`/try`) never enables resource-pack output because it has
-no filesystem access. The same `resource_pack.*` call in `/try` emits the
-same error so users see the limitation before trying it locally.
+The web compiler (`/try`) can enable resource-pack output through its explicit
+experimental toggle and materializes generated model/lang assets in memory for
+download. It still has no project filesystem access, so native static
+`assets/` passthrough is CLI-only.
 
 ## Output Structure
 
@@ -73,8 +77,10 @@ output/
         ├── models/
         │   ├── item/<name>.json
         │   └── block/<name>.json
-        └── lang/
-            └── <locale>.json
+        ├── lang/
+        │   └── <locale>.json
+        └── textures/
+            └── ...
 ```
 
 `pack.mcmeta` is unchanged. Minecraft 1.20+ accepts a single pack containing
@@ -82,7 +88,26 @@ both `data/` and `assets/` as long as `pack_format` is set. Cobble uses the
 same `pack_format` (101.1) for both halves.
 
 When `--experimental-resource-pack` is not enabled, `assets/` is not created
-and the output is identical to a data-pack-only build.
+by Cobble and the output is identical to a data-pack-only build.
+
+## Static Asset Passthrough
+
+When resource-pack output is enabled, native CLI builds copy static files from
+the project `assets/` directory into the output `assets/` directory. For a
+configured project this means `assets/` next to `cobble.toml`; for direct
+file or directory builds without a config file, Cobble uses the inferred
+source root.
+
+Files are copied byte-for-byte. Cobble does not parse or rewrite textures,
+audio, font, atlas, blockstate, or other static asset formats. Static asset
+paths must be shaped like `assets/<namespace>/<path>`, use lowercase
+Minecraft-safe path segments, stay under the project `assets/` directory, and
+must not be symlinks. Cobble walks with symlink following disabled and refuses
+any symlink path it finds.
+
+Static passthrough runs after generated `resource_pack.*` JSON is written.
+A static file that would land on the same output path as a generated
+resource-pack asset is an error instead of an overwrite.
 
 ## Helper API
 
@@ -134,9 +159,10 @@ the project namespace when the locale string does not contain a colon. A
 resource ID form `my_ns:en_us` is also accepted and overrides the namespace.
 
 The lang JSON is a flat object mapping translation keys to string values.
-Cobble does not merge multiple `resource_pack.lang` calls for the same
-locale; the second call is an `invalid-overwrite` error (matching the
-pass-through resource contract in `resource-authoring-design.md`).
+Multiple `resource_pack.lang` calls for the same namespace and locale are
+merged deterministically. Repeated translation keys with the same value are
+accepted; repeated keys with different values are an `invalid-overwrite`
+error.
 
 ## Validation
 
@@ -149,23 +175,31 @@ empty, `.`, or `..` segments.
 
 ### JSON Content
 
-Model and lang JSON are pass-through. Cobble validates only that the
-top-level value is an object (JSON object). The content is serialized with
-`serde_json::to_string_pretty` without rewriting keys or reordering arrays.
+Model JSON is pass-through for unknown fields, but Cobble validates the
+top-level object and the type of common model fields when present: `parent`,
+`gui_light`, and `credit` must be strings; `display` and `textures` must be
+objects; `elements` and `overrides` must be arrays; texture values must be
+strings. The content is then serialized with `serde_json::to_string_pretty`
+without rewriting keys or reordering arrays. Lang JSON is validated as an
+object with string values, then normalized by translation key for deterministic
+merging.
 
 ### Filesystem Safety
 
 `assets/` output paths are validated with the same `is_safe_namespace_path`
 and `is_safe_resource_path` checks used for `data/`. Symlink refusal in
 `output_safety.rs` applies to the entire output directory including
-`assets/`.
+`assets/`. Static asset passthrough additionally rejects symlinks in the
+project `assets/` tree, verifies source containment under the project root,
+and rejects traversal-style relative paths before copying.
 
 ### Duplicate Resources
 
-Two declarations for the same `namespace:path` model or lang locale with
-identical JSON are accepted as an exact duplicate. Two declarations with
-different JSON are an `invalid-overwrite` error. This matches the
-pass-through data-pack resource contract.
+Two declarations for the same `namespace:path` model with identical JSON are
+accepted as an exact duplicate. Two model declarations with different JSON are
+an `invalid-overwrite` error. Language declarations for the same namespace and
+locale are merged by translation key: identical repeated keys are accepted,
+new keys are added, and conflicting values are an `invalid-overwrite` error.
 
 ## Build Manifest Impact
 
@@ -175,6 +209,7 @@ New optional `generated` fields:
 | --- | --- | --- |
 | `resource_pack_models` | number | Generated model JSON count. |
 | `resource_pack_langs` | number | Generated lang JSON count. |
+| `resource_pack_static_assets` | number | Static assets copied from project `assets/`. |
 
 New top-level optional field:
 
@@ -186,20 +221,27 @@ These fields are additive and do not require a schema version bump. They
 are omitted (or empty) when resource-pack output is not enabled.
 
 `resources` entries for resource-pack assets use `kind` values
-`resource_pack_model` and `resource_pack_lang`.
+`resource_pack_model`, `resource_pack_lang`, and
+`resource_pack_static_asset`.
+
+Static passthrough assets are counted in `generated.resource_pack_static_assets`,
+listed in `resources` as `resource_pack_static_asset`, and surfaced by
+`cobble inspect` through the manifest summary. Generated resource-pack JSON
+files are also represented in `.cobble/source_map.json` as `JsonGenerated`
+entries. Copied static passthrough assets are not source-mapped because Cobble
+does not generate their contents.
 
 ## ZIP Output
 
 When `--zip` is used with `--experimental-resource-pack`, the ZIP archive
-includes both `data/` and `assets/` entries plus `pack.mcmeta`. The
-existing `create_zip` filter (which currently keeps only `pack.mcmeta` and
-`data/`) is extended to also keep `assets/`.
+includes `data/`, copied/generated `assets/`, and `pack.mcmeta`.
 
 ## Inspect
 
 `cobble inspect` and `cobble inspect --json` report resource-pack assets
 alongside data-pack resources. The generated counts include
-`resource_pack_models` and `resource_pack_langs` when non-zero.
+`resource_pack_models`, `resource_pack_langs`, and
+`resource_pack_static_assets` when non-zero.
 
 ## Diagnostics
 
@@ -212,18 +254,18 @@ alongside data-pack resources. The generated counts include
 
 ## Stability
 
-Resource-pack support is experimental in 0.8.0:
+Resource-pack support is beta-gated in 0.9.0:
 
 - The helper names (`resource_pack.item_model`, `resource_pack.block_model`,
-  `resource_pack.lang`) may change in 0.9 or 1.0.
+  `resource_pack.lang`) may change before 1.0.
 - The `[experimental] resource_pack` config key may be renamed or moved.
-- The `--experimental-resource-pack` flag may be renamed.
+- The `--experimental-resource-pack` flag may be renamed before 1.0.
 - Generated `assets/` structure follows Minecraft conventions and is
   expected to remain stable, but Cobble reserves the right to add
   validation or change path handling.
 
-Users who rely on this feature should pin to `cobble-lang 0.8.x` and watch
-the changelog for 0.9 changes.
+Users who rely on this feature should pin to the 0.9 minor line and watch the
+changelog for beta changes.
 
 ## Implementation Checklist
 
@@ -237,10 +279,14 @@ the changelog for 0.9 changes.
 - [x] Extend `DataPack::write` to emit `assets/` when enabled.
 - [x] Extend `create_zip` and the web ZIP builder to include `assets/`
   entries.
-- [x] Add `resource_pack_models`, `resource_pack_langs`, and
-  `experimental_features` to the build manifest.
+- [x] Add `resource_pack_models`, `resource_pack_langs`,
+  `resource_pack_static_assets`, and `experimental_features` to the build
+  manifest.
 - [x] Add path and JSON validation for resource-pack assets.
+- [x] Add beta model-field and lang-entry validation.
 - [x] Add unit tests for opt-in, JSON pass-through, manifest metadata, and ZIP
   inclusion.
 - [x] Add `examples/resource_pack` with source.
 - [x] Document the feature in `docs/cli.md` and `docs/language.md`.
+- [x] Add bounded static `assets/` passthrough for native CLI builds.
+- [x] Add manifest and inspect entries for static passthrough asset counts.

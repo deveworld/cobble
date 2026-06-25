@@ -10,12 +10,15 @@ expression: datapack_tree_snapshot(&output_dir)
     "datapack",
     "entity",
     "event",
+    "item_component",
     "math",
+    "position",
     "random",
     "resource_pack",
     "schedule",
     "score",
     "score.objective",
+    "selector",
     "storage",
     "team",
     "text",
@@ -35,7 +38,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 1,
     "predicates": 1,
     "recipes": 1,
-    "source_map_entries": 8,
+    "source_map_entries": 20,
     "stdlib_function_tags": 2,
     "total_json_resources": 10
   },
@@ -219,6 +222,130 @@ expression: datapack_tree_snapshot(&output_dir)
         "column": 5
       },
       "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/load.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/tick.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/advancement/story/root.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 13,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/dialog/notice.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 26,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/item_modifier/items/reward_name.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 22,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/loot_table/chests/empty_reward.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 16,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/predicate/checks/always.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 9,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/recipe/stonecutting/polished_granite.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/tags/block/building_blocks.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 7,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/tags/entity_type/hostile_targets.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 8,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/tags/function/utility.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 5,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_resource_authoring/tags/item/reward_items.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 6,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
     }
   ]
 }

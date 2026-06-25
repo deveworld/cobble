@@ -85,6 +85,9 @@ def test():
     assert!(modules.iter().any(|v| v == "text"));
     assert!(modules.iter().any(|v| v == "score"));
     assert!(modules.iter().any(|v| v == "storage"));
+    assert!(modules.iter().any(|v| v == "item_component"));
+    assert!(modules.iter().any(|v| v == "selector"));
+    assert!(modules.iter().any(|v| v == "position"));
     assert!(modules.iter().any(|v| v == "datapack"));
     assert!(modules.iter().any(|v| v == "resource_pack"));
 }
@@ -108,6 +111,9 @@ def test():
     assert!(modules.iter().any(|v| v == "text"));
     assert!(modules.iter().any(|v| v == "score"));
     assert!(!modules.iter().any(|v| v == "storage"));
+    assert!(!modules.iter().any(|v| v == "item_component"));
+    assert!(!modules.iter().any(|v| v == "selector"));
+    assert!(!modules.iter().any(|v| v == "position"));
     assert!(!modules.iter().any(|v| v == "datapack"));
 }
 
@@ -126,6 +132,181 @@ def test():
 
     assert!(error.contains("module 'score' not imported"));
     assert!(error.contains("from stdlib import score"));
+}
+
+#[test]
+fn nested_value_helpers_require_their_own_modules() {
+    let (_temp, _output_dir) = compile_source(
+        r#"
+from stdlib import entity, selector, position
+
+def test():
+    entity.teleport(selector.current(), position.relative(0, 1, 0))
+"#,
+    )
+    .unwrap();
+
+    let selector_error = compile_source(
+        r#"
+from stdlib import entity, position
+
+def test():
+    entity.teleport(selector.current(), position.here())
+"#,
+    )
+    .unwrap_err();
+    assert!(selector_error.contains("module 'selector' not imported"));
+
+    let position_error = compile_source(
+        r#"
+from stdlib import entity, selector
+
+def test():
+    entity.teleport(selector.current(), position.here())
+"#,
+    )
+    .unwrap_err();
+    assert!(position_error.contains("module 'position' not imported"));
+}
+
+#[test]
+fn storage_path_value_helpers_follow_storage_module_gating() {
+    let (_temp, _output_dir) = compile_source(
+        r#"
+from stdlib import storage
+
+def test():
+    storage.set(storage.path("players", "current"), "alex")
+    storage.get(storage.index("players.events", 0))
+"#,
+    )
+    .unwrap();
+
+    let error = compile_source(
+        r#"
+from stdlib import text
+
+def test():
+    storage.set(storage.path("players", "current"), "alex")
+"#,
+    )
+    .unwrap_err();
+    assert!(error.contains("module 'storage' not imported"));
+}
+
+#[test]
+fn schedule_cancellation_helper_follows_schedule_module_gating() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+from stdlib import schedule
+
+def test():
+    schedule.once("tick", "20t", "replace")
+    schedule.clear("tick")
+"#,
+    )
+    .unwrap();
+
+    let content =
+        fs::read_to_string(output_dir.join("data/stdlib_v2/function/test.mcfunction")).unwrap();
+    assert!(content.contains("schedule function stdlib_v2:tick 20t replace"));
+    assert!(content.contains("schedule clear stdlib_v2:tick"));
+
+    let error = compile_source(
+        r#"
+from stdlib import text
+
+def test():
+    schedule.clear("tick")
+"#,
+    )
+    .unwrap_err();
+    assert!(error.contains("module 'schedule' not imported"));
+}
+
+#[test]
+fn item_component_value_helpers_follow_module_gating() {
+    let (_temp, _output_dir) = compile_source(
+        r#"
+from stdlib import datapack, item_component
+
+datapack.item_modifier("test", {
+    "function": "minecraft:set_components",
+    "components": item_component.components(item_component.unbreakable())
+})
+
+def test():
+    /say hi
+"#,
+    )
+    .unwrap();
+
+    let error = compile_source(
+        r#"
+from stdlib import datapack
+
+datapack.item_modifier("test", {
+    "function": "minecraft:set_components",
+    "components": item_component.components(item_component.unbreakable())
+})
+
+def test():
+    /say hi
+"#,
+    )
+    .unwrap_err();
+    assert!(error.contains("module 'item_component' not imported"));
+}
+
+#[test]
+fn nested_text_value_helpers_follow_text_module_gating() {
+    let (_temp, _output_dir) = compile_source(
+        r#"
+from stdlib import datapack, item_component, text
+
+datapack.item_modifier("named", {
+    "function": "minecraft:set_components",
+    "components": item_component.custom_name(text.plain("Name"))
+})
+
+def test():
+    /say hi
+"#,
+    )
+    .unwrap();
+
+    let error = compile_source(
+        r#"
+from stdlib import datapack, item_component
+
+datapack.item_modifier("named", {
+    "function": "minecraft:set_components",
+    "components": item_component.custom_name(text.plain("Name"))
+})
+
+def test():
+    /say hi
+"#,
+    )
+    .unwrap_err();
+    assert!(error.contains("module 'text' not imported"));
+}
+
+#[test]
+fn dotted_stdlib_modules_can_be_imported_explicitly() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+from stdlib import score.objective
+
+def test():
+    score.objective.add("points", "dummy", "Points")
+"#,
+    )
+    .unwrap();
+
+    let content =
+        fs::read_to_string(output_dir.join("data/stdlib_v2/function/test.mcfunction")).unwrap();
+    assert!(content.contains("scoreboard objectives add points dummy"));
 }
 
 #[test]

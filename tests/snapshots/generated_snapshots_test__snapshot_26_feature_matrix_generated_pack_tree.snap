@@ -10,12 +10,15 @@ expression: datapack_tree_snapshot(&output_dir)
     "datapack",
     "entity",
     "event",
+    "item_component",
     "math",
+    "position",
     "random",
     "resource_pack",
     "schedule",
     "score",
     "score.objective",
+    "selector",
     "storage",
     "team",
     "text",
@@ -35,7 +38,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 2,
     "recipes": 0,
-    "source_map_entries": 271,
+    "source_map_entries": 278,
     "stdlib_function_tags": 2,
     "total_json_resources": 5
   },
@@ -2409,6 +2412,75 @@ expression: datapack_tree_snapshot(&output_dir)
         "column": 5
       },
       "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/load.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/tick.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/dialog/notice.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 28,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/predicate/always_true.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 20,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/tags/function/utility.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 18,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/load.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 19,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/other_matrix/predicate/checks/always_true.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 24,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
     }
   ]
 }

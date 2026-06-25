@@ -1,10 +1,11 @@
 # Resource Authoring Design
 
-Status: 0.8.0 implementation contract.
+Status: 0.8.0 implementation contract with 0.9.0 v2 updates implemented.
 
 This document defines the 0.8.0 resource-authoring contract. The release
 makes existing data-pack resource declarations clearer and more deterministic
-before adding broad new resource kinds.
+before adding broad new resource kinds. The 0.9.0 line extends the typed tag
+contract with object-shaped tag entries and real `replace` merge semantics.
 
 ## Release Contract
 
@@ -33,24 +34,25 @@ duplicate declarations deterministically, and emits canonical JSON.
 
 | Kind | Schema | Merge | Source |
 | --- | --- | --- | --- |
-| `function_tag` | `{ "values": string[], "replace"?: boolean }` | auto-merge + dedup + sort | Cobble |
-| `block_tag` | `{ "values": string[], "replace"?: boolean }` | auto-merge + dedup + sort | Cobble |
-| `item_tag` | `{ "values": string[], "replace"?: boolean }` | auto-merge + dedup + sort | Cobble |
-| `entity_type_tag` | `{ "values": string[], "replace"?: boolean }` | auto-merge + dedup + sort | Cobble |
+| `function_tag` | `{ "values": (string \| object)[], "replace"?: boolean }` | auto-merge + dedup + sort | Cobble |
+| `block_tag` | `{ "values": (string \| object)[], "replace"?: boolean }` | auto-merge + dedup + sort | Cobble |
+| `item_tag` | `{ "values": (string \| object)[], "replace"?: boolean }` | auto-merge + dedup + sort | Cobble |
+| `entity_type_tag` | `{ "values": (string \| object)[], "replace"?: boolean }` | auto-merge + dedup + sort | Cobble |
 
 Typed tag contract:
 
-- `values` must be an array of string resource IDs in `namespace:path` form.
+- `values` must be an array of string resource IDs in `namespace:path` form or
+  object entries with string `id` and optional boolean `required`.
 - Duplicate `values` entries across declarations of the same tag ID are
-  removed. String equality is used; object-shaped tag entries (with `id` and
-  `required`) are deferred to 0.9 because their equality semantics need a
-  separate decision.
+  removed. String entries and object entries with `required: true` are
+  equivalent. Object entries with `required: false` stay distinct from required
+  entries with the same `id`.
 - Merged `values` are sorted lexicographically by byte order so repeated
-  builds produce identical JSON.
-- `replace` is accepted but ignored in 0.8.0. A `replace: true` declaration
-  emits a warning explaining that `replace` semantics are deferred; the value
-  is still serialized as given so existing packs are not broken. A separate
-  `replace` contract is a 0.9 or 1.0 decision.
+  builds produce identical JSON. Required entries sort before optional entries
+  for the same `id`.
+- `replace` is merged with true-wins semantics. If any declaration supplies
+  `replace: true`, the merged tag includes `replace: true`; otherwise
+  `replace: false` is preserved when supplied.
 - The merged JSON object key order is `values` then `replace` (when present),
   emitted deterministically by `serde_json::to_string_pretty`.
 
@@ -79,18 +81,22 @@ Pass-through contract:
 
 ## Tag Auto-Merge Semantics
 
-When `datapack.function_tag("namespace:path", [...])` is called more than
-once for the same `namespace:path`, Cobble merges the `values` arrays.
+When `datapack.function_tag("namespace:path", [...], replace?)` is called more
+than once for the same `namespace:path`, Cobble merges the `values` arrays.
+The optional third argument is a literal boolean and is available on all typed
+tag helpers.
 
 ### Algorithm
 
 1. Parse the existing JSON (if any) and extract its `values` array.
 2. Parse the new declaration's `values` array.
-3. Append new entries that are not already present (string equality).
-4. Sort the combined `values` lexicographically by byte order.
-5. Serialize the merged object with `values` first, then `replace` if any
-   declaration supplied it.
-6. Record every declaration's source location in `json_resource_origins` as
+3. Normalize object entries with `required: true` to string entries.
+4. Append new entries that are not already present after normalization.
+5. Sort the combined `values` lexicographically by `id`, with required entries
+   before optional entries for the same `id`.
+6. Serialize the merged object with `values` first, then `replace` if any
+   declaration supplied it. `replace: true` wins over `replace: false`.
+7. Record every declaration's source location in `json_resource_origins` as
    a `Vec<SourceLocation>` so diagnostics can list all contributors.
 
 ### Example
@@ -124,16 +130,9 @@ different namespaces or paths are independent resources and are never merged.
 ### `replace` Handling
 
 If any declaration supplies `"replace": true`, the merged output includes
-`"replace": true` and a warning is emitted:
-
-```
-warning: tag 'my_ns:custom' declared with replace=true.
-  replace semantics are deferred in 0.8.0; the value is serialized as given
-  but does not change merge behavior.
-```
-
-If declarations disagree on `replace`, the `true` value wins and the warning
-names the first `replace: true` declaration.
+`"replace": true`. If declarations disagree on `replace`, the `true` value
+wins. No warning is emitted in the 0.9.0 contract because `replace` is part of
+the typed tag merge semantics.
 
 ## Path Validation And Suggestions
 
@@ -216,18 +215,18 @@ Resource-pack support is experimental in 0.8.0 and documented separately in
 
 ## Implementation Checklist
 
-- Classify each resource kind as typed or pass-through (table above).
-- Extend `add_json_resource_in_namespace_with_source` to branch on `tags/`
+- [x] Classify each resource kind as typed or pass-through (table above).
+- [x] Extend `add_json_resource_in_namespace_with_source` to branch on `tags/`
   paths for the typed merge path.
-- Add `merge_tag_resource` for auto-merge + dedup + sort.
-- Change `json_resource_origins` to `Vec<SourceLocation>`.
-- Add `validate_tag` schema validation for typed tags.
-- Extend `json_resource_duplicate_kind` with `merge-compatible duplicate`.
-- Add path suggestions in `plain_resource_id_to_parts` for slash/uppercase
+- [x] Add `merge_tag_resource` for auto-merge + dedup + sort.
+- [x] Change `json_resource_origins` to `Vec<SourceLocation>`.
+- [x] Add `validate_tag` schema validation for typed tags.
+- [x] Extend `json_resource_duplicate_kind` with `merge-compatible duplicate`.
+- [x] Add path suggestions in `plain_resource_id_to_parts` for slash/uppercase
   mistakes.
-- Add `replace` warning emission for typed tags.
-- Add generated JSON snapshots for every changed kind.
-- Add positive and negative diagnostics tests for invalid names and
+- [x] Add `replace` merge semantics for typed tags.
+- [x] Add generated JSON snapshots for every changed kind.
+- [x] Add positive and negative diagnostics tests for invalid names and
   duplicate declarations.
-- Add manifest and `inspect --json` assertions for generated resources.
-- Add examples that build and validate when command data is available.
+- [x] Add manifest and `inspect --json` assertions for generated resources.
+- [x] Add examples that build and validate when command data is available.

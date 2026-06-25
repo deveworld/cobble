@@ -3,8 +3,8 @@
 ## Status
 
 - Planning date: 2026-06-16
-- Current stable release: `0.8.0`
-- Current development version: `0.8.0`
+- Current stable release: `0.9.0`
+- Current development version: `0.9.0`
 - Next planned release: `1.0.0`
 - Active pre-release: none
 - Current Minecraft target: Java Edition `26.1.2`
@@ -14,7 +14,7 @@
 - Website: <https://deveworld.github.io/cobble/>
 - Browser compiler: <https://deveworld.github.io/cobble/try/>
 
-This roadmap tracks what Cobble should become after 0.7.3. Historical release
+This roadmap tracks what Cobble should become after 0.9.0. Historical release
 details and completed version plans belong in `CHANGELOG.md`.
 
 ## North Star

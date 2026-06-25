@@ -6,14 +6,18 @@ use crate::commands::output_safety::{
 use crate::commands::validate::{print_validation_report, run_validation};
 use crate::config::CobbleConfig;
 use crate::diagnostics::{format_file_diagnostics, parse_source_files};
+use crate::fs_safety::{
+    copy_file_atomic, create_temp_output_file, replace_with_temp_file, write_file_atomic,
+};
 use crate::pack_format::{
     PackFormat, COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT,
 };
 use crate::transpiler::{BuildManifestInput, BuildManifestValidation, Transpiler};
 use crate::validator::ValidationReport;
+use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::io::{ErrorKind, Write};
+use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
@@ -156,6 +160,11 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         .map(|_| config_dir.clone())
         .unwrap_or_else(|| source_display_root.clone());
     let (project_root_marker, project_id) = project_marker_identity(&project_root_for_marker);
+    let asset_passthrough_files = if experimental_resource_pack {
+        collect_resource_pack_asset_passthrough_files(&project_root_for_marker)?
+    } else {
+        Vec::new()
+    };
 
     if options.verbose {
         println!("Building {} file(s)...", files_to_compile.len());
@@ -196,6 +205,14 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
 
     if files_to_compile.is_empty() {
         if !options.dry_run {
+            if options.validate && final_output_dir.exists() {
+                ensure_output_dir_does_not_contain_project_root(
+                    &final_output_dir,
+                    &project_root_for_marker,
+                )?;
+                ensure_replace_output_dir_safe(&final_output_dir, &namespace, &project_id)?;
+                ensure_no_symlink_descendants(&final_output_dir, "empty validated build output")?;
+            }
             transpiler
                 .write_data_pack()
                 .map_err(|e| format!("Failed to clean data pack output: {}", e))?;
@@ -225,6 +242,31 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         transpiler
             .transpile(&parsed.program)
             .map_err(|e| format!("Transpilation failed for {:?}: {}", file_path, e))?;
+    }
+
+    let generated_asset_paths = generated_resource_pack_asset_paths(&transpiler);
+    let current_static_asset_paths = resource_pack_static_asset_paths(&asset_passthrough_files);
+    let previous_static_asset_paths = read_resource_pack_static_asset_manifest(&final_output_dir)?;
+    let output_assets_overlap_project_assets =
+        output_assets_tree_overlaps_project_assets(&final_output_dir, &project_root_for_marker)?;
+    transpiler
+        .data_pack
+        .set_clean_previous_resource_pack_outputs(
+            experimental_resource_pack || !output_assets_overlap_project_assets,
+        );
+    if experimental_resource_pack {
+        ensure_no_resource_pack_asset_passthrough_conflicts(
+            &asset_passthrough_files,
+            &generated_asset_paths,
+        )?;
+        ensure_no_resource_pack_asset_passthrough_output_cleaning_overlap(
+            &asset_passthrough_files,
+            &final_output_dir,
+            &generated_asset_paths,
+        )?;
+        transpiler
+            .data_pack
+            .set_resource_pack_static_assets(resource_pack_asset_keys(&current_static_asset_paths));
     }
 
     if !options.dry_run || options.validate {
@@ -298,11 +340,11 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     if options.validate {
         if build_output_dir != final_output_dir {
             if let Err(error) = publish_validated_output(
-                &mut transpiler,
                 &build_output_dir,
                 &final_output_dir,
                 &namespace,
                 &project_id,
+                &project_root_for_marker,
             ) {
                 let _ = fs::remove_dir_all(&build_output_dir);
                 return Err(error);
@@ -316,9 +358,50 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         println!("✓ Data pack generated at {:?}", final_output_dir);
     }
 
+    let clean_static_assets = experimental_resource_pack || !output_assets_overlap_project_assets;
+    let copied_assets = {
+        if clean_static_assets {
+            clean_stale_resource_pack_asset_passthrough(
+                &previous_static_asset_paths,
+                &current_static_asset_paths,
+                &generated_asset_paths,
+                &final_output_dir,
+            )?;
+        }
+        if experimental_resource_pack {
+            let copied = copy_resource_pack_asset_passthrough(
+                &asset_passthrough_files,
+                &final_output_dir,
+                &generated_asset_paths,
+            )?;
+            if !current_static_asset_paths.is_empty() {
+                write_resource_pack_static_asset_manifest(
+                    &final_output_dir,
+                    &current_static_asset_paths,
+                )?;
+            }
+            copied
+        } else {
+            0
+        }
+    };
+    if copied_assets > 0 && !options.quiet {
+        println!("✓ Copied {} resource-pack asset(s)", copied_assets);
+    }
+
     // Create zip if requested
     let zip_path = if options.zip {
-        let zip_path = create_zip(&final_output_dir, &namespace)?;
+        let zip_asset_paths = if experimental_resource_pack {
+            Some(
+                generated_asset_paths
+                    .union(&current_static_asset_paths)
+                    .cloned()
+                    .collect::<HashSet<_>>(),
+            )
+        } else {
+            None
+        };
+        let zip_path = create_zip(&final_output_dir, &namespace, zip_asset_paths.as_ref())?;
         if !options.quiet {
             println!("✓ Created {}", zip_path.display());
         }
@@ -510,30 +593,49 @@ fn staging_output_dir(output_dir: &Path) -> Result<PathBuf, String> {
 }
 
 fn publish_validated_output(
-    transpiler: &mut Transpiler,
     staging_dir: &Path,
     output_dir: &Path,
     namespace: &str,
     project_id: &str,
+    project_root: &Path,
 ) -> Result<(), String> {
     if output_dir.exists() {
+        ensure_validated_output_has_replaceable_name(output_dir)?;
+        ensure_output_dir_does_not_contain_project_root(output_dir, project_root)?;
         ensure_replace_output_dir_safe(output_dir, namespace, project_id)?;
+        ensure_no_symlink_descendants(output_dir, "publish validated output")?;
 
-        let previous_output_dir = std::mem::replace(
-            &mut transpiler.data_pack.output_dir,
-            output_dir.to_path_buf(),
-        );
-        let write_result = transpiler
-            .write_data_pack()
-            .map_err(|e| format!("Failed to write validated data pack: {}", e));
-        if write_result.is_err() {
-            transpiler.data_pack.output_dir = previous_output_dir;
-            return write_result;
+        let publish_dir = replacement_publish_dir(output_dir)?;
+        if let Err(error) = prepare_validated_publish_dir(output_dir, staging_dir, &publish_dir) {
+            let _ = fs::remove_dir_all(&publish_dir);
+            return Err(error);
         }
-        if staging_dir.exists() {
-            fs::remove_dir_all(staging_dir)
-                .map_err(|e| format!("Failed to clean staging output {:?}: {}", staging_dir, e))?;
+
+        let backup_dir = replacement_backup_dir(output_dir)?;
+        fs::rename(output_dir, &backup_dir).map_err(|e| {
+            format!(
+                "Failed to move existing output {:?} to backup {:?}: {}",
+                output_dir, backup_dir, e
+            )
+        })?;
+
+        if let Err(error) = fs::rename(&publish_dir, output_dir) {
+            let _ = fs::rename(&backup_dir, output_dir);
+            let _ = fs::remove_dir_all(&publish_dir);
+            return Err(format!(
+                "Failed to move validated data pack from {:?} to {:?}: {}",
+                publish_dir, output_dir, error
+            ));
         }
+
+        fs::remove_dir_all(&backup_dir).map_err(|e| {
+            format!(
+                "Failed to clean previous output backup {:?}: {}",
+                backup_dir, e
+            )
+        })?;
+        fs::remove_dir_all(staging_dir)
+            .map_err(|e| format!("Failed to clean staging output {:?}: {}", staging_dir, e))?;
         return Ok(());
     }
 
@@ -543,6 +645,291 @@ fn publish_validated_output(
             staging_dir, output_dir, e
         )
     })
+}
+
+fn ensure_validated_output_has_replaceable_name(output_dir: &Path) -> Result<(), String> {
+    if output_dir.file_name().is_some() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Refusing to replace validated output directory {} because it is not a named child path; use a separate build output directory",
+        output_dir.display()
+    ))
+}
+
+fn prepare_validated_publish_dir(
+    output_dir: &Path,
+    staging_dir: &Path,
+    publish_dir: &Path,
+) -> Result<(), String> {
+    copy_dir_contents(output_dir, publish_dir)?;
+    clean_publish_generated_paths(publish_dir, staging_dir)?;
+    copy_dir_contents(staging_dir, publish_dir)
+}
+
+fn copy_dir_contents(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(source_dir).map_err(|error| {
+        format!(
+            "Failed to inspect directory {} while preparing validated output: {}",
+            source_dir.display(),
+            error
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "Expected directory while preparing validated output: {}",
+            source_dir.display()
+        ));
+    }
+
+    for entry in WalkDir::new(source_dir).follow_links(false).min_depth(1) {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Failed to inspect {} while preparing validated output: {}",
+                source_dir.display(),
+                error
+            )
+        })?;
+        let path = entry.path();
+        if entry.file_type().is_symlink() {
+            return Err(format!(
+                "Refusing to publish validated output through symlink: {}",
+                path.display()
+            ));
+        }
+        let relative_path = path.strip_prefix(source_dir).map_err(|error| {
+            format!(
+                "Failed to calculate validated output path for {}: {}",
+                path.display(),
+                error
+            )
+        })?;
+        let target_path = target_dir.join(relative_path);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&target_path).map_err(|error| {
+                format!(
+                    "Failed to create validated output directory {}: {}",
+                    target_path.display(),
+                    error
+                )
+            })?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "Failed to create validated output directory {}: {}",
+                        parent.display(),
+                        error
+                    )
+                })?;
+            }
+            if target_path.is_dir() {
+                fs::remove_dir_all(&target_path).map_err(|error| {
+                    format!(
+                        "Failed to replace validated output directory {}: {}",
+                        target_path.display(),
+                        error
+                    )
+                })?;
+            }
+            copy_file_atomic(path, &target_path).map_err(|error| {
+                format!(
+                    "Failed to copy validated output {} to {}: {}",
+                    path.display(),
+                    target_path.display(),
+                    error
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn clean_publish_generated_paths(publish_dir: &Path, staging_dir: &Path) -> Result<(), String> {
+    let previous_namespaces = read_generated_namespaces_from_output(publish_dir)?;
+    let current_namespaces = read_generated_namespaces_from_output(staging_dir)?;
+    let previous_asset_namespaces = read_generated_asset_namespaces_from_output(publish_dir)?;
+    let current_asset_namespaces = read_generated_asset_namespaces_from_output(staging_dir)?;
+
+    remove_path_if_exists(&publish_dir.join("pack.mcmeta"))?;
+    remove_path_if_exists(&publish_dir.join(".cobble"))?;
+
+    let data_dir = publish_dir.join("data");
+    for namespace in previous_namespaces.union(&current_namespaces) {
+        if !is_safe_namespace_path(namespace) {
+            continue;
+        }
+        let namespace_dir = data_dir.join(namespace);
+        if current_namespaces.contains(namespace) {
+            clean_generated_data_dirs(&namespace_dir)?;
+        } else {
+            remove_path_if_exists(&namespace_dir)?;
+        }
+    }
+
+    let assets_dir = publish_dir.join("assets");
+    for namespace in previous_asset_namespaces.union(&current_asset_namespaces) {
+        if !is_safe_namespace_path(namespace) {
+            continue;
+        }
+        clean_generated_asset_dirs(&assets_dir.join(namespace))?;
+    }
+
+    Ok(())
+}
+
+fn clean_generated_data_dirs(namespace_dir: &Path) -> Result<(), String> {
+    for resource_dir in [
+        "function",
+        "functions",
+        "tags",
+        "advancement",
+        "advancements",
+        "loot_table",
+        "loot_tables",
+        "recipe",
+        "recipes",
+        "predicate",
+        "predicates",
+        "item_modifier",
+        "item_modifiers",
+        "dialog",
+    ] {
+        remove_path_if_exists(&namespace_dir.join(resource_dir))?;
+    }
+    Ok(())
+}
+
+fn clean_generated_asset_dirs(namespace_dir: &Path) -> Result<(), String> {
+    for asset_dir in ["models", "lang"] {
+        remove_path_if_exists(&namespace_dir.join(asset_dir))?;
+    }
+    Ok(())
+}
+
+fn read_generated_namespaces_from_output(output_dir: &Path) -> Result<HashSet<String>, String> {
+    read_string_set_json(output_dir.join(".cobble/generated_namespaces.json"))
+}
+
+fn read_generated_asset_namespaces_from_output(
+    output_dir: &Path,
+) -> Result<HashSet<String>, String> {
+    read_string_set_json(output_dir.join(".cobble/generated_asset_namespaces.json"))
+}
+
+fn read_string_set_json(path: PathBuf) -> Result<HashSet<String>, String> {
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(HashSet::new()),
+        Err(error) => {
+            return Err(format!("Failed to read {}: {}", path.display(), error));
+        }
+    };
+    let values = serde_json::from_str::<Vec<String>>(&content)
+        .map_err(|error| format!("Failed to parse {}: {}", path.display(), error))?;
+    Ok(values.into_iter().collect())
+}
+
+fn is_safe_namespace_path(namespace: &str) -> bool {
+    validate_namespace(namespace).is_ok()
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!("Failed to inspect {}: {}", path.display(), error));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "Refusing to remove generated output through symlink: {}",
+            path.display()
+        ));
+    }
+    if metadata.is_dir() {
+        fs::remove_dir_all(path)
+            .map_err(|error| format!("Failed to remove {}: {}", path.display(), error))
+    } else {
+        fs::remove_file(path)
+            .map_err(|error| format!("Failed to remove {}: {}", path.display(), error))
+    }
+}
+
+fn replacement_backup_dir(output_dir: &Path) -> Result<PathBuf, String> {
+    let parent = output_dir.parent().unwrap_or_else(|| Path::new("."));
+    let name = output_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("output");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("System clock error while creating output backup: {}", e))?
+        .as_nanos();
+    let backup_dir = parent.join(format!(
+        ".{}.cobble-backup-{}-{}",
+        name,
+        std::process::id(),
+        stamp
+    ));
+    if backup_dir.exists() {
+        fs::remove_dir_all(&backup_dir)
+            .map_err(|e| format!("Failed to clean output backup {:?}: {}", backup_dir, e))?;
+    }
+    Ok(backup_dir)
+}
+
+fn replacement_publish_dir(output_dir: &Path) -> Result<PathBuf, String> {
+    let parent = output_dir.parent().unwrap_or_else(|| Path::new("."));
+    let name = output_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("output");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("System clock error while creating publish output: {}", e))?
+        .as_nanos();
+    let publish_dir = parent.join(format!(
+        ".{}.cobble-publish-{}-{}",
+        name,
+        std::process::id(),
+        stamp
+    ));
+    if publish_dir.exists() {
+        fs::remove_dir_all(&publish_dir)
+            .map_err(|e| format!("Failed to clean publish output {:?}: {}", publish_dir, e))?;
+    }
+    Ok(publish_dir)
+}
+
+fn ensure_output_dir_does_not_contain_project_root(
+    output_dir: &Path,
+    project_root: &Path,
+) -> Result<(), String> {
+    let output = output_dir.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve existing output directory {}: {}",
+            output_dir.display(),
+            error
+        )
+    })?;
+    let project = project_root.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve project root {}: {}",
+            project_root.display(),
+            error
+        )
+    })?;
+    if project.starts_with(&output) {
+        return Err(format!(
+            "Refusing to replace validated output directory {} because it contains the project root {}; use a separate build output directory",
+            output_dir.display(),
+            project_root.display()
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_replace_output_dir_safe(
@@ -574,6 +961,569 @@ fn ensure_replace_output_dir_safe(
             error
         )
     })
+}
+
+#[derive(Debug, Clone)]
+struct AssetPassthroughFile {
+    source_path: PathBuf,
+    relative_path: PathBuf,
+}
+
+fn collect_resource_pack_asset_passthrough_files(
+    project_root: &Path,
+) -> Result<Vec<AssetPassthroughFile>, String> {
+    let assets_dir = project_root.join("assets");
+    let metadata = match fs::symlink_metadata(&assets_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect resource-pack assets directory {}: {}",
+                assets_dir.display(),
+                error
+            ));
+        }
+    };
+    ensure_no_symlink_components(&assets_dir, "copy resource-pack assets")?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "Refusing to copy resource-pack assets from non-directory path: {}",
+            assets_dir.display()
+        ));
+    }
+
+    let canonical_project_root = project_root.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve project root while copying resource-pack assets {}: {}",
+            project_root.display(),
+            error
+        )
+    })?;
+    let canonical_assets_dir = assets_dir.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve resource-pack assets directory {}: {}",
+            assets_dir.display(),
+            error
+        )
+    })?;
+    if !canonical_assets_dir.starts_with(&canonical_project_root) {
+        return Err(format!(
+            "Refusing to copy resource-pack assets outside the project: {}",
+            assets_dir.display()
+        ));
+    }
+
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&assets_dir)
+        .follow_links(false)
+        .sort_by_file_name()
+    {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Failed to inspect resource-pack assets under {}: {}",
+                assets_dir.display(),
+                error
+            )
+        })?;
+        let path = entry.path();
+        if entry.file_type().is_symlink() {
+            return Err(format!(
+                "Refusing to copy resource-pack assets through symlink: {}",
+                path.display()
+            ));
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let relative_path = path.strip_prefix(&assets_dir).map_err(|error| {
+            format!(
+                "Failed to calculate resource-pack asset path for {}: {}",
+                path.display(),
+                error
+            )
+        })?;
+        validate_asset_passthrough_relative_path(relative_path)?;
+
+        let canonical_file = path.canonicalize().map_err(|error| {
+            format!(
+                "Failed to resolve resource-pack asset {}: {}",
+                path.display(),
+                error
+            )
+        })?;
+        if !canonical_file.starts_with(&canonical_assets_dir)
+            || !canonical_file.starts_with(&canonical_project_root)
+        {
+            return Err(format!(
+                "Refusing to copy resource-pack asset outside the project: {}",
+                path.display()
+            ));
+        }
+
+        files.push(AssetPassthroughFile {
+            source_path: path.to_path_buf(),
+            relative_path: relative_path.to_path_buf(),
+        });
+    }
+
+    Ok(files)
+}
+
+fn ensure_no_resource_pack_asset_passthrough_conflicts(
+    files: &[AssetPassthroughFile],
+    generated_assets: &HashSet<PathBuf>,
+) -> Result<(), String> {
+    for file in files {
+        if generated_assets.contains(&file.relative_path) {
+            return Err(resource_pack_asset_conflict_message(&file.relative_path));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_no_resource_pack_asset_passthrough_output_cleaning_overlap(
+    files: &[AssetPassthroughFile],
+    output_dir: &Path,
+    generated_assets: &HashSet<PathBuf>,
+) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let output_assets_dir = output_dir.join("assets");
+    let Ok(canonical_output_assets_dir) = output_assets_dir.canonicalize() else {
+        return Ok(());
+    };
+    let generated_namespaces = generated_resource_pack_asset_namespaces(generated_assets);
+    let previous_generated_namespaces = read_generated_resource_pack_asset_namespaces(output_dir)?;
+
+    for file in files {
+        let Some((namespace, top_dir)) = asset_namespace_and_top_dir(&file.relative_path) else {
+            continue;
+        };
+
+        let canonical_source = file.source_path.canonicalize().map_err(|error| {
+            format!(
+                "Failed to resolve resource-pack asset {}: {}",
+                file.source_path.display(),
+                error
+            )
+        })?;
+        if !canonical_source.starts_with(&canonical_output_assets_dir) {
+            continue;
+        }
+
+        if previous_generated_namespaces.contains(&namespace) {
+            return Err(format!(
+                "Refusing to copy resource-pack assets from output assets tree: {}. Previous generated resource-pack output may clean assets/{}; use a separate build output directory.",
+                file.source_path.display(),
+                namespace
+            ));
+        }
+
+        if generated_namespaces.contains(&namespace) && (top_dir == "models" || top_dir == "lang") {
+            return Err(format!(
+                "Refusing to copy resource-pack assets from output assets tree: {}. Generated resource-pack output cleans assets/{}/{}; use a separate build output directory.",
+                file.source_path.display(),
+                namespace,
+                top_dir
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn resource_pack_static_asset_paths(files: &[AssetPassthroughFile]) -> HashSet<PathBuf> {
+    files
+        .iter()
+        .map(|file| file.relative_path.clone())
+        .collect()
+}
+
+fn output_assets_tree_overlaps_project_assets(
+    output_dir: &Path,
+    project_root: &Path,
+) -> Result<bool, String> {
+    let output_assets_dir = output_dir.join("assets");
+    let project_assets_dir = project_root.join("assets");
+    let canonical_project_assets = match project_assets_dir.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Failed to resolve project resource-pack assets directory {}: {}",
+                project_assets_dir.display(),
+                error
+            ));
+        }
+    };
+    let canonical_output_assets = match output_assets_dir.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Failed to resolve output resource-pack assets directory {}: {}",
+                output_assets_dir.display(),
+                error
+            ));
+        }
+    };
+
+    Ok(
+        canonical_output_assets.starts_with(&canonical_project_assets)
+            || canonical_project_assets.starts_with(&canonical_output_assets),
+    )
+}
+
+fn read_generated_resource_pack_asset_namespaces(
+    output_dir: &Path,
+) -> Result<HashSet<String>, String> {
+    let path = output_dir
+        .join(".cobble")
+        .join("generated_asset_namespaces.json");
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(HashSet::new()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to read previous generated resource-pack namespaces {}: {}",
+                path.display(),
+                error
+            ));
+        }
+    };
+    let namespaces = serde_json::from_str::<Vec<String>>(&content).map_err(|error| {
+        format!(
+            "Failed to parse previous generated resource-pack namespaces {}: {}",
+            path.display(),
+            error
+        )
+    })?;
+    Ok(namespaces
+        .into_iter()
+        .filter(|namespace| validate_namespace(namespace).is_ok())
+        .collect())
+}
+
+fn read_resource_pack_static_asset_manifest(output_dir: &Path) -> Result<HashSet<PathBuf>, String> {
+    let path = resource_pack_static_asset_manifest_path(output_dir);
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(HashSet::new()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to read previous static resource-pack asset manifest {}: {}",
+                path.display(),
+                error
+            ));
+        }
+    };
+    let entries = serde_json::from_str::<Vec<String>>(&content).map_err(|error| {
+        format!(
+            "Failed to parse previous static resource-pack asset manifest {}: {}",
+            path.display(),
+            error
+        )
+    })?;
+    let mut paths = HashSet::new();
+    for entry in entries {
+        let relative_path = PathBuf::from(&entry);
+        validate_asset_passthrough_relative_path(&relative_path).map_err(|error| {
+            format!(
+                "Invalid previous static resource-pack asset manifest entry `{}` in {}: {}",
+                entry,
+                path.display(),
+                error
+            )
+        })?;
+        paths.insert(relative_path);
+    }
+    Ok(paths)
+}
+
+fn write_resource_pack_static_asset_manifest(
+    output_dir: &Path,
+    current_assets: &HashSet<PathBuf>,
+) -> Result<(), String> {
+    let path = resource_pack_static_asset_manifest_path(output_dir);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create static resource-pack asset manifest directory {}: {}",
+                parent.display(),
+                error
+            )
+        })?;
+    }
+    let entries = resource_pack_asset_keys(current_assets);
+    write_file_atomic(
+        &path,
+        serde_json::to_string_pretty(&entries).map_err(|error| {
+            format!(
+                "Failed to serialize static resource-pack asset manifest {}: {}",
+                path.display(),
+                error
+            )
+        })?,
+    )
+    .map_err(|error| {
+        format!(
+            "Failed to write static resource-pack asset manifest {}: {}",
+            path.display(),
+            error
+        )
+    })
+}
+
+fn resource_pack_static_asset_manifest_path(output_dir: &Path) -> PathBuf {
+    output_dir
+        .join(".cobble")
+        .join("static_asset_passthrough.json")
+}
+
+fn clean_stale_resource_pack_asset_passthrough(
+    previous_assets: &HashSet<PathBuf>,
+    current_assets: &HashSet<PathBuf>,
+    generated_assets: &HashSet<PathBuf>,
+    output_dir: &Path,
+) -> Result<usize, String> {
+    let mut removed = 0;
+    let output_assets_dir = output_dir.join("assets");
+
+    for relative_path in previous_assets {
+        if current_assets.contains(relative_path) || generated_assets.contains(relative_path) {
+            continue;
+        }
+
+        let target_path = output_assets_dir.join(relative_path);
+        ensure_no_symlink_components(&target_path, "clean stale resource-pack assets")?;
+        let metadata = match fs::symlink_metadata(&target_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Failed to inspect stale resource-pack asset {}: {}",
+                    target_path.display(),
+                    error
+                ));
+            }
+        };
+        if !metadata.is_file() {
+            return Err(format!(
+                "Refusing to clean stale resource-pack asset at non-file path: {}",
+                target_path.display()
+            ));
+        }
+        fs::remove_file(&target_path).map_err(|error| {
+            format!(
+                "Failed to remove stale resource-pack asset {}: {}",
+                target_path.display(),
+                error
+            )
+        })?;
+        removed += 1;
+        clean_empty_asset_parent_dirs(&output_assets_dir, &target_path)?;
+    }
+
+    Ok(removed)
+}
+
+fn clean_empty_asset_parent_dirs(
+    output_assets_dir: &Path,
+    removed_file: &Path,
+) -> Result<(), String> {
+    let mut current = removed_file.parent();
+    while let Some(dir) = current {
+        if dir == output_assets_dir || !dir.starts_with(output_assets_dir) {
+            break;
+        }
+        ensure_no_symlink_components(dir, "clean stale resource-pack assets")?;
+        match fs::remove_dir(dir) {
+            Ok(()) => current = dir.parent(),
+            Err(error) if error.kind() == ErrorKind::NotFound => break,
+            Err(error) if error.kind() == ErrorKind::DirectoryNotEmpty => break,
+            Err(error) => {
+                return Err(format!(
+                    "Failed to remove empty stale resource-pack asset directory {}: {}",
+                    dir.display(),
+                    error
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn copy_resource_pack_asset_passthrough(
+    files: &[AssetPassthroughFile],
+    output_dir: &Path,
+    generated_assets: &HashSet<PathBuf>,
+) -> Result<usize, String> {
+    if files.is_empty() {
+        return Ok(0);
+    }
+
+    let output_assets_dir = output_dir.join("assets");
+    let mut copied = 0;
+    for file in files {
+        if generated_assets.contains(&file.relative_path) {
+            return Err(resource_pack_asset_conflict_message(&file.relative_path));
+        }
+
+        let target_path = output_assets_dir.join(&file.relative_path);
+        ensure_no_symlink_components(&target_path, "copy resource-pack assets")?;
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "Failed to create resource-pack asset directory {}: {}",
+                    parent.display(),
+                    error
+                )
+            })?;
+            ensure_no_symlink_components(parent, "copy resource-pack assets")?;
+        }
+
+        if target_path.exists() {
+            let source = file.source_path.canonicalize().map_err(|error| {
+                format!(
+                    "Failed to resolve resource-pack asset {}: {}",
+                    file.source_path.display(),
+                    error
+                )
+            })?;
+            let target = target_path.canonicalize().map_err(|error| {
+                format!(
+                    "Failed to resolve resource-pack asset target {}: {}",
+                    target_path.display(),
+                    error
+                )
+            })?;
+            if source == target {
+                continue;
+            }
+        }
+
+        copy_file_atomic(&file.source_path, &target_path).map_err(|error| {
+            format!(
+                "Failed to copy resource-pack asset {} to {}: {}",
+                file.source_path.display(),
+                target_path.display(),
+                error
+            )
+        })?;
+        copied += 1;
+    }
+
+    Ok(copied)
+}
+
+fn resource_pack_asset_conflict_message(relative_path: &Path) -> String {
+    format!(
+        "Static resource-pack asset assets/{} conflicts with generated resource-pack output",
+        path_display(relative_path)
+    )
+}
+
+fn generated_resource_pack_asset_paths(transpiler: &Transpiler) -> HashSet<PathBuf> {
+    transpiler
+        .data_pack
+        .resource_pack_models
+        .keys()
+        .chain(transpiler.data_pack.resource_pack_langs.keys())
+        .filter_map(|key| {
+            let (namespace, relative_path) = key.split_once('/')?;
+            Some(PathBuf::from(namespace).join(format!("{}.json", relative_path)))
+        })
+        .collect()
+}
+
+fn resource_pack_asset_keys(paths: &HashSet<PathBuf>) -> Vec<String> {
+    let mut keys: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            path.components()
+                .filter_map(component_to_string)
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .collect();
+    keys.sort();
+    keys
+}
+
+fn generated_resource_pack_asset_namespaces(
+    generated_assets: &HashSet<PathBuf>,
+) -> HashSet<String> {
+    generated_assets
+        .iter()
+        .filter_map(|path| asset_namespace_and_top_dir(path).map(|(namespace, _)| namespace))
+        .collect()
+}
+
+fn asset_namespace_and_top_dir(path: &Path) -> Option<(String, String)> {
+    let mut components = path.components();
+    let namespace = component_to_string(components.next()?)?;
+    let top_dir = component_to_string(components.next()?)?;
+    Some((namespace, top_dir))
+}
+
+fn component_to_string(component: Component<'_>) -> Option<String> {
+    let Component::Normal(value) = component else {
+        return None;
+    };
+    value.to_str().map(ToString::to_string)
+}
+
+fn validate_asset_passthrough_relative_path(path: &Path) -> Result<(), String> {
+    if path.is_absolute() {
+        return Err(format!(
+            "Invalid resource-pack asset path `{}`: assets must use relative paths",
+            path.display()
+        ));
+    }
+
+    let mut segments = Vec::new();
+    for component in path.components() {
+        let Component::Normal(segment) = component else {
+            return Err(format!(
+                "Invalid resource-pack asset path `{}`: no '.', '..', root, or prefix components are allowed",
+                path.display()
+            ));
+        };
+        let Some(segment) = segment.to_str() else {
+            return Err(format!(
+                "Invalid resource-pack asset path `{}`: path must be valid UTF-8",
+                path.display()
+            ));
+        };
+        if segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains('\\')
+            || segment.contains(':')
+            || !segment.chars().all(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' || c == '.'
+            })
+        {
+            return Err(format!(
+                "Invalid resource-pack asset path `{}`: use lowercase asset paths with '/', '_', '-', or '.', and no empty, '.', or '..' segments",
+                path.display()
+            ));
+        }
+        segments.push(segment);
+    }
+
+    if segments.len() < 2 {
+        return Err(format!(
+            "Invalid resource-pack asset path `{}`: expected assets/<namespace>/<path>",
+            path.display()
+        ));
+    }
+    validate_namespace(segments[0])?;
+
+    Ok(())
 }
 
 fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
@@ -769,6 +1719,127 @@ mod tests {
         let content =
             fs::read_to_string(output_dir.join("data/cobble/function/test.mcfunction")).unwrap();
         assert_eq!(content.trim(), "say valid");
+    }
+
+    #[test]
+    fn validated_publish_restores_previous_output_when_staging_move_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let output_dir = temp_dir.path().join("output");
+        let missing_staging = temp_dir.path().join("missing-staging");
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::create_dir_all(output_dir.join(".cobble")).unwrap();
+        fs::write(output_dir.join("sentinel.txt"), "keep\n").unwrap();
+
+        let namespace = "restore";
+        let (_, project_id) = project_marker_identity(&project_dir);
+        fs::write(
+            output_dir.join(".cobble/build_manifest.json"),
+            format!(
+                r#"{{"version":1,"cobble_version":"test","namespace":"{namespace}","project_id":"{project_id}"}}"#
+            ),
+        )
+        .unwrap();
+
+        let error = publish_validated_output(
+            &missing_staging,
+            &output_dir,
+            namespace,
+            &project_id,
+            &project_dir,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("preparing validated output"));
+        assert_eq!(
+            fs::read_to_string(output_dir.join("sentinel.txt")).unwrap(),
+            "keep\n"
+        );
+        assert!(!temp_dir
+            .path()
+            .read_dir()
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .contains(".output.cobble-backup-")));
+    }
+
+    #[test]
+    fn validated_publish_refuses_to_replace_project_root() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let staging_dir = temp_dir.path().join("staging");
+        fs::create_dir_all(project_dir.join(".cobble")).unwrap();
+        fs::create_dir_all(&staging_dir).unwrap();
+        fs::write(project_dir.join("main.cbl"), "def main():\n    /say keep\n").unwrap();
+
+        let namespace = "project_root";
+        let (_, project_id) = project_marker_identity(&project_dir);
+        fs::write(
+            project_dir.join(".cobble/build_manifest.json"),
+            format!(
+                r#"{{"version":1,"cobble_version":"test","namespace":"{namespace}","project_id":"{project_id}"}}"#
+            ),
+        )
+        .unwrap();
+
+        let error = publish_validated_output(
+            &staging_dir,
+            &project_dir,
+            namespace,
+            &project_id,
+            &project_dir,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Refusing to replace validated output directory"));
+        assert!(project_dir.join("main.cbl").exists());
+        assert!(staging_dir.exists());
+    }
+
+    #[test]
+    fn validated_publish_refuses_current_directory_without_publish_artifact() {
+        let _lock = CWD_LOCK.lock().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let output_dir = temp_dir.path().join("output");
+        let project_dir = temp_dir.path().join("project");
+        let staging_dir = temp_dir.path().join("staging");
+        fs::create_dir_all(output_dir.join(".cobble")).unwrap();
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::create_dir_all(&staging_dir).unwrap();
+
+        let namespace = "current_dir";
+        let (_, project_id) = project_marker_identity(&project_dir);
+        fs::write(
+            output_dir.join(".cobble/build_manifest.json"),
+            format!(
+                r#"{{"version":1,"cobble_version":"test","namespace":"{namespace}","project_id":"{project_id}"}}"#
+            ),
+        )
+        .unwrap();
+
+        let _guard = CurrentDirGuard::push(&output_dir);
+        let error = publish_validated_output(
+            Path::new("../staging"),
+            Path::new("."),
+            namespace,
+            &project_id,
+            &project_dir,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Refusing to replace validated output directory ."));
+        assert!(staging_dir.exists());
+        assert!(!output_dir
+            .read_dir()
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .contains(".output.cobble-publish-")));
     }
 
     #[test]
@@ -1111,6 +2182,69 @@ output = "../victim/keep"
             "keep\n"
         );
         assert!(!victim_dir.join("pack.mcmeta").exists());
+    }
+
+    #[test]
+    fn build_validate_empty_source_refuses_unowned_existing_output() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let source_dir = project_dir.join("src");
+        let victim_dir = temp_dir.path().join("victim").join("keep");
+        let commands_json = project_dir.join("commands.json");
+
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(victim_dir.join("data/empty/function")).unwrap();
+        fs::write(
+            victim_dir.join("data/empty/function/manual.mcfunction"),
+            "say keep\n",
+        )
+        .unwrap();
+        write_say_commands_json(&commands_json);
+        fs::write(
+            project_dir.join("cobble.toml"),
+            r#"
+[project]
+name = "empty"
+description = "empty"
+namespace = "empty"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "../victim/keep"
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::push(&project_dir);
+        let error = build(BuildOptions {
+            input: None,
+            output: None,
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            experimental_resource_pack: false,
+            validate: true,
+            dry_run: false,
+            commands_json,
+        })
+        .unwrap_err();
+
+        assert!(
+            error.contains("Refusing to replace existing output without Cobble ownership marker"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(victim_dir.join("data/empty/function/manual.mcfunction")).unwrap(),
+            "say keep\n"
+        );
+        assert!(!victim_dir.join("pack.mcmeta").exists());
+        assert!(!victim_dir.join(".cobble/build_manifest.json").exists());
     }
 
     #[test]
@@ -1599,46 +2733,267 @@ output = "output"
         assert!(!names.iter().any(|name| name == "zipped.zip"));
         assert!(!names.iter().any(|name| name.starts_with(".cobble/")));
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_zip_refuses_to_overwrite_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("main.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let victim_file = temp_dir.path().join("important.txt");
+        let zip_path = temp_dir.path().join("zipped.zip");
+        fs::write(&input_file, "def main():\n    /say hi\n").unwrap();
+        fs::write(&victim_file, "keep\n").unwrap();
+        symlink(&victim_file, &zip_path).unwrap();
+
+        let error = build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir),
+            namespace: Some("zipped".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: true,
+            experimental_resource_pack: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Refusing to create zip file through symlink"));
+        assert_eq!(fs::read_to_string(victim_file).unwrap(), "keep\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_zip_replaces_hardlink_without_overwriting_target_inode() {
+        use std::fs::hard_link;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let source_dir = project_dir.join("src");
+        let output_dir = project_dir.join("output");
+        let outside_dir = temp_dir.path().join("outside");
+        let victim_file = outside_dir.join("important.txt");
+        let zip_path = project_dir.join("resources.zip");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(&outside_dir).unwrap();
+        fs::write(
+            source_dir.join("main.cbl"),
+            "def main():\n    /say hardlink\n",
+        )
+        .unwrap();
+        fs::write(&victim_file, "keep\n").unwrap();
+        hard_link(&victim_file, &zip_path).unwrap();
+
+        build(BuildOptions {
+            input: Some(source_dir),
+            output: Some(output_dir),
+            namespace: Some("resources".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: true,
+            experimental_resource_pack: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&victim_file).unwrap(), "keep\n");
+        assert!(fs::read(&zip_path).unwrap().starts_with(b"PK"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_pack_mcmeta_replaces_hardlink_without_overwriting_target_inode() {
+        use std::fs::hard_link;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let input_file = temp_dir.path().join("main.cbl");
+        let output_dir = temp_dir.path().join("output");
+        let outside_dir = temp_dir.path().join("outside");
+        let victim_file = outside_dir.join("pack_target.txt");
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::create_dir_all(&outside_dir).unwrap();
+        fs::write(&input_file, "def main():\n    /say hardlink\n").unwrap();
+        fs::write(&victim_file, "keep\n").unwrap();
+        hard_link(&victim_file, output_dir.join("pack.mcmeta")).unwrap();
+
+        build(BuildOptions {
+            input: Some(input_file),
+            output: Some(output_dir.clone()),
+            namespace: Some("hardpack".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            experimental_resource_pack: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&victim_file).unwrap(), "keep\n");
+        assert!(fs::read_to_string(output_dir.join("pack.mcmeta"))
+            .unwrap()
+            .contains("Generated by Cobble"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resource_pack_asset_passthrough_replaces_hardlink_without_overwriting_target_inode() {
+        use std::fs::hard_link;
+
+        let _guard = CWD_LOCK.lock().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        let source_dir = project_dir.join("src");
+        let source_asset = project_dir.join("assets/resources/textures/item/icon.png");
+        let output_asset = project_dir.join("output/assets/resources/textures/item/icon.png");
+        let outside_dir = temp_dir.path().join("outside");
+        let victim_file = outside_dir.join("asset_target.txt");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(source_asset.parent().unwrap()).unwrap();
+        fs::create_dir_all(output_asset.parent().unwrap()).unwrap();
+        fs::create_dir_all(&outside_dir).unwrap();
+        fs::write(source_dir.join("main.cbl"), "def main():\n    /say asset\n").unwrap();
+        fs::write(&source_asset, "source-asset\n").unwrap();
+        fs::write(&victim_file, "keep\n").unwrap();
+        hard_link(&victim_file, &output_asset).unwrap();
+        fs::write(
+            project_dir.join("cobble.toml"),
+            r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::push(&project_dir);
+        build(BuildOptions {
+            input: None,
+            output: None,
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            experimental_resource_pack: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&victim_file).unwrap(), "keep\n");
+        assert_eq!(fs::read_to_string(&output_asset).unwrap(), "source-asset\n");
+    }
+
+    #[test]
+    fn asset_passthrough_relative_path_validation_rejects_traversal() {
+        for path in [
+            "../outside.png",
+            "resources/../outside.png",
+            "/resources/textures/item/outside.png",
+            "resources",
+            "BadNamespace/textures/item/test.png",
+        ] {
+            assert!(
+                validate_asset_passthrough_relative_path(Path::new(path)).is_err(),
+                "{path} should be rejected"
+            );
+        }
+
+        validate_asset_passthrough_relative_path(Path::new(
+            "resources/textures/item/custom_sword.png",
+        ))
+        .unwrap();
+    }
 }
 
-fn create_zip(output_dir: &Path, namespace: &str) -> Result<PathBuf, String> {
+fn create_zip(
+    output_dir: &Path,
+    namespace: &str,
+    asset_paths: Option<&HashSet<PathBuf>>,
+) -> Result<PathBuf, String> {
     let zip_path = output_dir.with_file_name(format!("{}.zip", namespace));
-    let file =
-        fs::File::create(&zip_path).map_err(|e| format!("Failed to create zip file: {}", e))?;
+    ensure_no_symlink_components(&zip_path, "create zip file")?;
+    let (file, temp_zip_path) = create_temp_output_file(&zip_path)
+        .map_err(|e| format!("Failed to create temporary zip file: {}", e))?;
 
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // Add all files from output directory to zip
-    for entry in WalkDir::new(output_dir).into_iter().filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.is_file() {
-            let relative_path = path
-                .strip_prefix(output_dir)
-                .map_err(|e| format!("Failed to get relative path: {}", e))?;
+    let zip_result = (|| {
+        for entry in WalkDir::new(output_dir).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_file() {
+                let relative_path = path
+                    .strip_prefix(output_dir)
+                    .map_err(|e| format!("Failed to get relative path: {}", e))?;
 
-            // Convert path to use forward slashes for ZIP (required by Minecraft)
-            let zip_path = relative_path.to_string_lossy().replace('\\', "/");
-            if zip_path != "pack.mcmeta"
-                && !zip_path.starts_with("data/")
-                && !zip_path.starts_with("assets/")
-            {
-                continue;
+                // Convert path to use forward slashes for ZIP (required by Minecraft)
+                let include_asset = asset_paths
+                    .and_then(|paths| {
+                        relative_path
+                            .strip_prefix("assets")
+                            .ok()
+                            .map(|asset_path| paths.contains(asset_path))
+                    })
+                    .unwrap_or(false);
+                if relative_path != Path::new("pack.mcmeta")
+                    && !relative_path.starts_with("data")
+                    && !include_asset
+                {
+                    continue;
+                }
+
+                let zip_path = relative_path.to_string_lossy().replace('\\', "/");
+                let file_data =
+                    fs::read(path).map_err(|e| format!("Failed to read file for zip: {}", e))?;
+
+                zip.start_file(zip_path, options)
+                    .map_err(|e| format!("Failed to add file to zip: {}", e))?;
+
+                zip.write_all(&file_data)
+                    .map_err(|e| format!("Failed to write file to zip: {}", e))?;
             }
-
-            let file_data =
-                fs::read(path).map_err(|e| format!("Failed to read file for zip: {}", e))?;
-
-            zip.start_file(zip_path, options)
-                .map_err(|e| format!("Failed to add file to zip: {}", e))?;
-
-            zip.write_all(&file_data)
-                .map_err(|e| format!("Failed to write file to zip: {}", e))?;
         }
-    }
 
-    zip.finish()
-        .map_err(|e| format!("Failed to finalize zip: {}", e))?;
+        zip.finish()
+            .map_err(|e| format!("Failed to finalize zip: {}", e))?;
+        Ok(())
+    })();
+    if let Err(error) = zip_result {
+        let _ = fs::remove_file(&temp_zip_path);
+        return Err(error);
+    }
+    replace_with_temp_file(&temp_zip_path, &zip_path).map_err(|e| {
+        let _ = fs::remove_file(&temp_zip_path);
+        format!("Failed to move temporary zip into place: {}", e)
+    })?;
 
     Ok(zip_path)
 }

@@ -28,4 +28,4 @@ if [[ ! -f data/commands.json ]]; then
   scripts/setup_commands_json.sh 26.1.2
 fi
 
-cargo test --test minecraft_server_test -- --ignored --nocapture
+cargo test --locked --test minecraft_server_test -- --ignored --nocapture

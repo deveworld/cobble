@@ -1,0 +1,239 @@
+---
+source: tests/generated_snapshots_test.rs
+expression: datapack_tree_snapshot(&output_dir)
+---
+===== .cobble/build_manifest.json =====
+{
+  "active_stdlib_modules": [
+    "datapack",
+    "entity",
+    "event",
+    "item_component",
+    "position",
+    "schedule",
+    "selector",
+    "storage",
+    "text"
+  ],
+  "cobble_version": "<cobble-version>",
+  "description": "Cobble stdlib v3 fixture",
+  "generated": {
+    "advancements": 0,
+    "commands": 8,
+    "custom_function_tags": 0,
+    "function_tags": 1,
+    "functions": 1,
+    "item_modifiers": 1,
+    "json_function_tags": 0,
+    "json_resources": 1,
+    "loot_tables": 0,
+    "predicates": 0,
+    "recipes": 0,
+    "source_map_entries": 10,
+    "stdlib_function_tags": 1,
+    "total_json_resources": 1
+  },
+  "generated_at_unix_epoch_ms": "<generated-at-unix-epoch-ms>",
+  "generated_namespaces": [
+    "cobble_stdlib_v3",
+    "minecraft"
+  ],
+  "input": {
+    "compiled_files": [
+      "src/main.cbl"
+    ],
+    "entry_points": [
+      "main.cbl"
+    ],
+    "source": "src"
+  },
+  "minecraft_version": "26.1.2",
+  "namespace": "cobble_stdlib_v3",
+  "pack_format": 101.1,
+  "pack_format_text": "101.1",
+  "project_id": "<project-id>",
+  "project_root": "<project-root>",
+  "resources": [
+    {
+      "kind": "function_tag",
+      "namespace": "minecraft",
+      "path": "load"
+    },
+    {
+      "kind": "item_modifier",
+      "namespace": "cobble_stdlib_v3",
+      "path": "items/reward_components"
+    }
+  ],
+  "stdlib_version": 2,
+  "validation": null,
+  "version": 1
+}
+
+===== .cobble/generated_namespaces.json =====
+[
+  "cobble_stdlib_v3",
+  "minecraft"
+]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
+      "generated_line": 1,
+      "command": "gamerule max_command_sequence_length 1000000000",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
+      "generated_line": 2,
+      "command": "data modify storage cobble_stdlib_v3:global players.current set value \"alex\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 16,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
+      "generated_line": 3,
+      "command": "data modify storage cobble_stdlib_v3:global players.current.score set value 10",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
+      "generated_line": 4,
+      "command": "data get storage cobble_stdlib_v3:global players.events[0]",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 18,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
+      "generated_line": 5,
+      "command": "tellraw @a {\"color\":\"gold\",\"text\":\"Stdlib v3 helpers ready\"}",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 19,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
+      "generated_line": 6,
+      "command": "tp @s ~ ~1 ~",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 20,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
+      "generated_line": 7,
+      "command": "schedule function cobble_stdlib_v3:load 20t replace",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 21,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
+      "generated_line": 8,
+      "command": "schedule clear cobble_stdlib_v3:load",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 22,
+        "column": 5
+      },
+      "kind": "StdLib"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/load.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/cobble_stdlib_v3/item_modifier/items/reward_components.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 3,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    }
+  ]
+}
+
+===== data/cobble_stdlib_v3/function/load.mcfunction =====
+gamerule max_command_sequence_length 1000000000
+data modify storage cobble_stdlib_v3:global players.current set value "alex"
+data modify storage cobble_stdlib_v3:global players.current.score set value 10
+data get storage cobble_stdlib_v3:global players.events[0]
+tellraw @a {"color":"gold","text":"Stdlib v3 helpers ready"}
+tp @s ~ ~1 ~
+schedule function cobble_stdlib_v3:load 20t replace
+schedule clear cobble_stdlib_v3:load
+
+===== data/cobble_stdlib_v3/item_modifier/items/reward_components.json =====
+{
+  "components": {
+    "minecraft:custom_name": {
+      "color": "gold",
+      "text": "Cobble Reward"
+    },
+    "minecraft:lore": [
+      {
+        "text": "Generated by Cobble"
+      },
+      {
+        "color": "gray",
+        "text": "Visible stdlib v3 JSON"
+      }
+    ],
+    "minecraft:unbreakable": {}
+  },
+  "function": "minecraft:set_components"
+}
+
+===== data/minecraft/tags/function/load.json =====
+{
+  "values": [
+    "cobble_stdlib_v3:load"
+  ]
+}
+
+===== pack.mcmeta =====
+{
+  "pack": {
+    "description": "Cobble stdlib v3 fixture",
+    "max_format": [
+      101,
+      1
+    ],
+    "min_format": [
+      101,
+      1
+    ]
+  }
+}

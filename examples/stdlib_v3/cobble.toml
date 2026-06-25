@@ -1,0 +1,14 @@
+[project]
+name = "cobble_stdlib_v3"
+description = "Cobble stdlib v3 fixture"
+namespace = "cobble_stdlib_v3"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = ["main.cbl"]
+
+[stdlib]
+version = 2

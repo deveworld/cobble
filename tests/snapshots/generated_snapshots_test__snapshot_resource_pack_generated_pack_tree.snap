@@ -28,7 +28,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "recipes": 0,
     "resource_pack_langs": 1,
     "resource_pack_models": 2,
-    "source_map_entries": 2,
+    "source_map_entries": 6,
     "stdlib_function_tags": 1,
     "total_json_resources": 0
   },
@@ -111,6 +111,46 @@ expression: datapack_tree_snapshot(&output_dir)
         "column": 5
       },
       "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/minecraft/tags/function/load.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "assets/cobble_resource_pack/models/block/display_block.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 10,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "assets/cobble_resource_pack/models/item/custom_sword.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 3,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "assets/cobble_resource_pack/lang/en_us.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
     }
   ]
 }

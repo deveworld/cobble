@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-25
+
+### Added
+- Added an experimental `cobble check --experimental-plugins` diagnostics-only
+  plugin host skeleton with read-only `plugins/*.toml` manifest parsing and
+  capability validation.
+- Added an experimental diagnostics-only Python compatibility report through
+  `cobble check --experimental-python-compat` and `[experimental]
+  python_compat = true`; unsupported Python-like constructs remain errors.
+- Added an experimental `cobble migrate` command skeleton that scans project
+  config and source files to report planned 0.8 to 0.9 migration support
+  without rewriting files.
+- Added stdlib v3 JSON-only `item_component.*` helpers,
+  `storage.path/child/index`, `selector.*`, and `position.*` value helpers plus
+  `entity.teleport()` as thin, visible command expansions.
+
+### Changed
+- `cobble check --json` now reports config/schema, plugin-manifest, and
+  semantic stdlib module errors through the same top-level JSON failure
+  contract used for source diagnostics.
+- `cobble migrate --json` now uses the strict Cobble config schema when
+  inspecting projects, so unknown keys are reported as migration errors.
+
+### Security
+- Hardened validated output publishing so existing owned outputs are published
+  through a staged merge and rename flow that preserves unrelated files while
+  avoiding direct post-validation rewrites of the final output tree.
+- Hardened resource-pack opt-out rebuilds so previous static/generated asset
+  manifests cannot cause project `assets/` source trees to be deleted or stale
+  asset files to be included in data-pack ZIPs.
+- Enforced stdlib module gating for nested `text.*` JSON helpers and aligned
+  `check` with build-time stdlib gating.
+
 ## [0.8.0] - 2026-06-24
 
 ### Added

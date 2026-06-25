@@ -1,6 +1,6 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 229
+assertion_line: 256
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -10,12 +10,15 @@ expression: datapack_tree_snapshot(&output_dir)
     "datapack",
     "entity",
     "event",
+    "item_component",
     "math",
+    "position",
     "random",
     "resource_pack",
     "schedule",
     "score",
     "score.objective",
+    "selector",
     "storage",
     "team",
     "text",
@@ -35,7 +38,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 1,
     "predicates": 0,
     "recipes": 1,
-    "source_map_entries": 0,
+    "source_map_entries": 8,
     "stdlib_function_tags": 0,
     "total_json_resources": 8
   },
@@ -109,6 +112,101 @@ expression: datapack_tree_snapshot(&output_dir)
   "minecraft",
   "resource_only"
 ]
+
+===== .cobble/source_map.json =====
+{
+  "version": 1,
+  "entries": [
+    {
+      "generated_path": "data/resource_only/advancement/root.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "main.cbl",
+        "line": 6,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/resource_only/dialog/notice.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "main.cbl",
+        "line": 14,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/resource_only/item_modifier/set_name.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "main.cbl",
+        "line": 13,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/resource_only/loot_table/empty.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "main.cbl",
+        "line": 7,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/resource_only/recipe/stonecutting/test.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "main.cbl",
+        "line": 8,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/resource_only/tags/block/mineable/test.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "main.cbl",
+        "line": 3,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/resource_only/tags/entity_type/targets.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "main.cbl",
+        "line": 5,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "data/resource_only/tags/item/rewards.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "main.cbl",
+        "line": 4,
+        "column": 1
+      },
+      "kind": "JsonGenerated"
+    }
+  ]
+}
 
 ===== data/resource_only/advancement/root.json =====
 {

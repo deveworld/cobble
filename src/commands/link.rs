@@ -3,6 +3,7 @@ use super::output_safety::{
     read_build_manifest, require_manifest_ownership,
 };
 use crate::config::CobbleConfig;
+use crate::fs_safety::write_file_atomic;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -214,7 +215,7 @@ fn write_link_state(config_dir: &Path, state: &LinkState) -> Result<(), String> 
     }
     let content = serde_json::to_string_pretty(state)
         .map_err(|error| format!("Failed to serialize link state: {error}"))?;
-    fs::write(&path, content)
+    write_file_atomic(&path, content)
         .map_err(|error| format!("Failed to write {}: {error}", path.display()))
 }
 
@@ -465,6 +466,35 @@ mod tests {
 
         write_link_state(temp_dir.path(), &state).unwrap();
 
+        assert_eq!(read_link_state(temp_dir.path()).unwrap(), Some(state));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_link_state_replaces_hardlink_without_overwriting_target_inode() {
+        use std::fs::hard_link;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let cobble_dir = temp_dir.path().join(".cobble");
+        let outside_dir = temp_dir.path().join("outside");
+        let victim_file = outside_dir.join("link_state_target.txt");
+        let state_path = cobble_dir.join("link_state.json");
+        fs::create_dir_all(&cobble_dir).unwrap();
+        fs::create_dir_all(&outside_dir).unwrap();
+        fs::write(&victim_file, "keep\n").unwrap();
+        hard_link(&victim_file, &state_path).unwrap();
+
+        let state = LinkState {
+            version: 1,
+            target_kind: "datapacks".to_string(),
+            target_path: "world/datapacks".to_string(),
+            pack_name: "linked_pack".to_string(),
+            pack_path: "world/datapacks/linked_pack".to_string(),
+        };
+
+        write_link_state(temp_dir.path(), &state).unwrap();
+
+        assert_eq!(fs::read_to_string(&victim_file).unwrap(), "keep\n");
         assert_eq!(read_link_state(temp_dir.path()).unwrap(), Some(state));
     }
 

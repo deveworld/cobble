@@ -126,7 +126,7 @@ def setup():
     );
     assert_eq!(manifest["generated"]["functions"], 1);
     assert_eq!(manifest["generated"]["commands"], 1);
-    assert_eq!(manifest["generated"]["source_map_entries"], 1);
+    assert_eq!(manifest["generated"]["source_map_entries"], 3);
     assert_eq!(manifest["generated"]["json_function_tags"], 1);
     assert_eq!(manifest["generated"]["predicates"], 1);
     assert_eq!(manifest["generated"]["json_resources"], 2);
@@ -251,6 +251,38 @@ stdlib.addEventListener(event.LOAD, load)
 }
 
 #[test]
+fn datapack_function_tag_replace_survives_stdlib_event_tag_merge() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+import stdlib
+from stdlib import event
+
+datapack.function_tag("minecraft:load", ["resources:extra_load"], True)
+
+def load():
+    /say load
+
+def extra_load():
+    /say extra
+
+stdlib.addEventListener(event.LOAD, load)
+"#,
+    )
+    .unwrap();
+
+    let tag: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("data/minecraft/tags/function/load.json")).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(tag["replace"], true);
+    assert_eq!(
+        tag["values"],
+        serde_json::json!(["resources:load", "resources:extra_load"])
+    );
+}
+
+#[test]
 fn datapack_json_resources_require_object_values() {
     let error = compile_source(
         r#"
@@ -346,6 +378,174 @@ datapack.function_tag("utility", ["resources:tick", "resources:init"])
     assert_eq!(values[0], "resources:init");
     assert_eq!(values[1], "resources:setup");
     assert_eq!(values[2], "resources:tick");
+}
+
+#[test]
+fn datapack_tag_replace_argument_merges_with_true_wins_semantics() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+import stdlib
+datapack.item_tag("rewards", ["minecraft:diamond"], False)
+datapack.item_tag("rewards", ["minecraft:emerald"], True)
+"#,
+    )
+    .unwrap();
+
+    let tag_path = output_dir.join("data/resources/tags/item/rewards.json");
+    let tag: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
+    assert_eq!(tag["replace"], true);
+    assert_eq!(
+        tag["values"].as_array().unwrap(),
+        &vec![
+            serde_json::json!("minecraft:diamond"),
+            serde_json::json!("minecraft:emerald"),
+        ]
+    );
+}
+
+#[test]
+fn datapack_tag_replace_false_is_preserved_when_supplied() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+import stdlib
+datapack.block_tag("solid", ["minecraft:stone"], False)
+"#,
+    )
+    .unwrap();
+
+    let tag_path = output_dir.join("data/resources/tags/block/solid.json");
+    let tag: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
+    assert_eq!(tag["replace"], false);
+    assert_eq!(
+        tag["values"].as_array().unwrap(),
+        &vec![serde_json::json!("minecraft:stone")]
+    );
+}
+
+#[test]
+fn datapack_tag_same_id_with_different_required_values_are_preserved() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+import stdlib
+datapack.item_tag("rewards", [
+    "minecraft:diamond",
+    {"id": "minecraft:diamond", "required": False},
+])
+"#,
+    )
+    .unwrap();
+
+    let tag_path = output_dir.join("data/resources/tags/item/rewards.json");
+    let tag: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
+    let values = tag["values"].as_array().unwrap();
+
+    assert_eq!(
+        values,
+        &vec![
+            serde_json::json!("minecraft:diamond"),
+            serde_json::json!({"id": "minecraft:diamond", "required": false}),
+        ]
+    );
+}
+
+#[test]
+fn datapack_tag_duplicate_object_entries_with_same_id_and_required_dedupe() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+import stdlib
+datapack.item_tag("rewards", [
+    {"id": "minecraft:diamond", "required": False},
+    {"id": "minecraft:diamond", "required": False},
+])
+datapack.item_tag("rewards", [
+    {"id": "minecraft:diamond", "required": False},
+    {"id": "minecraft:emerald", "required": True},
+    "minecraft:emerald",
+])
+"#,
+    )
+    .unwrap();
+
+    let tag_path = output_dir.join("data/resources/tags/item/rewards.json");
+    let tag: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
+    let values = tag["values"].as_array().unwrap();
+
+    assert_eq!(
+        values,
+        &vec![
+            serde_json::json!({"id": "minecraft:diamond", "required": false}),
+            serde_json::json!("minecraft:emerald"),
+        ]
+    );
+}
+
+#[test]
+fn datapack_tag_mixed_string_and_object_entries_sort_deterministically() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+import stdlib
+datapack.item_tag("rewards", [
+    {"id": "minecraft:gold_ingot", "required": False},
+    "minecraft:emerald",
+])
+datapack.item_tag("rewards", [
+    {"id": "minecraft:diamond", "required": False},
+    "minecraft:gold_ingot",
+    "minecraft:diamond",
+])
+"#,
+    )
+    .unwrap();
+
+    let tag_path = output_dir.join("data/resources/tags/item/rewards.json");
+    let tag: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
+    let values = tag["values"].as_array().unwrap();
+
+    assert_eq!(
+        values,
+        &vec![
+            serde_json::json!("minecraft:diamond"),
+            serde_json::json!({"id": "minecraft:diamond", "required": false}),
+            serde_json::json!("minecraft:emerald"),
+            serde_json::json!("minecraft:gold_ingot"),
+            serde_json::json!({"id": "minecraft:gold_ingot", "required": false}),
+        ]
+    );
+}
+
+#[test]
+fn datapack_tag_object_entries_reject_invalid_shapes() {
+    let missing_id_error = compile_source(
+        r#"
+import stdlib
+datapack.item_tag("rewards", [{"required": False}])
+"#,
+    )
+    .unwrap_err();
+    assert!(missing_id_error.contains("Tag object values must include a string \"id\""));
+
+    let non_boolean_required_error = compile_source(
+        r#"
+import stdlib
+datapack.item_tag("rewards", [{"id": "minecraft:diamond", "required": "no"}])
+"#,
+    )
+    .unwrap_err();
+    assert!(non_boolean_required_error.contains("Tag object value \"required\" must be a boolean"));
+
+    let extra_field_error = compile_source(
+        r#"
+import stdlib
+datapack.item_tag("rewards", [{"id": "minecraft:diamond", "optional": False}])
+"#,
+    )
+    .unwrap_err();
+    assert!(extra_field_error.contains("may only contain \"id\" and \"required\" fields"));
 }
 
 #[test]
@@ -650,7 +850,709 @@ def setup():
 }
 
 #[test]
-fn duplicate_resource_pack_pass_through_resources_follow_json_policy() {
+fn resource_pack_zip_excludes_untracked_stale_assets() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.cbl");
+    let output_dir = temp_dir.path().join("output");
+    let stale_asset = output_dir.join("assets/resources/textures/item/stale.png");
+    fs::create_dir_all(stale_asset.parent().unwrap()).unwrap();
+    fs::write(&stale_asset, b"stale").unwrap();
+    fs::write(
+        &input_file,
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("resources:test_item", {"parent": "minecraft:item/generated"})
+
+def setup():
+    /say zip
+"#,
+    )
+    .unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file),
+        output: Some(output_dir.clone()),
+        namespace: Some("resources".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: false,
+        zip: true,
+        experimental_resource_pack: true,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    let zip_file = fs::File::open(temp_dir.path().join("resources.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+
+    assert!(stale_asset.exists());
+    assert!(names
+        .iter()
+        .any(|name| name == "assets/resources/models/item/test_item.json"));
+    assert!(!names
+        .iter()
+        .any(|name| name == "assets/resources/textures/item/stale.png"));
+}
+
+#[test]
+fn resource_pack_asset_passthrough_copies_project_assets_and_zip() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let asset_path = project_dir.join("assets/resources/textures/item/custom_sword.png");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"fake png bytes").unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: true,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    let copied_asset = output_dir.join("assets/resources/textures/item/custom_sword.png");
+    assert_eq!(fs::read(&copied_asset).unwrap(), b"fake png bytes");
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["generated"]["resource_pack_static_assets"], 1);
+    assert!(manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| {
+            resource["kind"] == "resource_pack_static_asset"
+                && resource["namespace"] == "resources"
+                && resource["path"] == "textures/item/custom_sword.png"
+        }));
+
+    let zip_file = fs::File::open(project_dir.join("resources.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+
+    assert!(names
+        .iter()
+        .any(|name| name == "assets/resources/textures/item/custom_sword.png"));
+    assert!(names
+        .iter()
+        .any(|name| name == "data/resources/function/setup.mcfunction"));
+}
+
+#[cfg(unix)]
+#[test]
+fn resource_pack_asset_passthrough_rejects_symlinked_assets() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let outside_dir = temp_dir.path().join("outside");
+    let symlink_path = project_dir.join("assets/resources/textures/item/leak.png");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(&outside_dir).unwrap();
+    fs::create_dir_all(symlink_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(outside_dir.join("secret.png"), b"secret").unwrap();
+    symlink(outside_dir.join("secret.png"), &symlink_path).unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let error = cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap_err();
+
+    assert!(error.contains("Refusing to copy resource-pack assets through symlink"));
+    assert!(!output_dir
+        .join("assets/resources/textures/item/leak.png")
+        .exists());
+}
+
+#[test]
+fn resource_pack_asset_passthrough_rejects_generated_asset_collision() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let asset_path = project_dir.join("assets/resources/models/item/test_item.json");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("resources:test_item", {"parent": "minecraft:item/generated"})
+"#,
+    )
+    .unwrap();
+    fs::write(&asset_path, r#"{"parent":"minecraft:item/handheld"}"#).unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let error = cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap_err();
+
+    assert!(error.contains("conflicts with generated resource-pack output"));
+    assert!(!output_dir.exists());
+}
+
+#[test]
+fn resource_pack_asset_passthrough_rejects_generated_output_cleaning_overlap() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let asset_path = project_dir.join("assets/resources/models/item/static_item.json");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("resources:generated_item", {"parent": "minecraft:item/generated"})
+"#,
+    )
+    .unwrap();
+    fs::write(&asset_path, r#"{"parent":"minecraft:item/handheld"}"#).unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "."
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let error = cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir),
+        output: Some(project_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap_err();
+
+    assert!(error.contains("Refusing to copy resource-pack assets from output assets tree"));
+    assert!(asset_path.exists());
+    assert!(!project_dir.join("pack.mcmeta").exists());
+}
+
+#[test]
+fn resource_pack_asset_passthrough_rejects_previous_generated_output_overlap() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let asset_path = project_dir.join("assets/resources/textures/item/static_item.png");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(project_dir.join(".cobble")).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"keep").unwrap();
+    fs::write(
+        project_dir.join(".cobble/generated_asset_namespaces.json"),
+        r#"["resources"]"#,
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "."
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let error = cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir),
+        output: Some(project_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap_err();
+
+    assert!(error.contains("Previous generated resource-pack output may clean assets/resources"));
+    assert_eq!(fs::read(&asset_path).unwrap(), b"keep");
+    assert!(!project_dir.join("pack.mcmeta").exists());
+}
+
+#[test]
+fn disabling_resource_pack_cleans_stale_static_assets_from_output_and_zip() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let asset_path = project_dir.join("assets/resources/textures/item/stale.png");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"stale").unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let build_options = |zip| cobble::commands::build::BuildOptions {
+        input: Some(source_dir.clone()),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    };
+
+    cobble::commands::build::build(build_options(false)).unwrap();
+    assert!(output_dir
+        .join("assets/resources/textures/item/stale.png")
+        .exists());
+
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = false
+"#,
+    )
+    .unwrap();
+
+    cobble::commands::build::build(build_options(true)).unwrap();
+
+    assert_eq!(fs::read(&asset_path).unwrap(), b"stale");
+    assert!(!output_dir
+        .join("assets/resources/textures/item/stale.png")
+        .exists());
+
+    let zip_file = fs::File::open(project_dir.join("resources.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+    assert!(!names
+        .iter()
+        .any(|name| name == "assets/resources/textures/item/stale.png"));
+}
+
+#[test]
+fn disabling_resource_pack_preserves_project_assets_when_output_is_project_root() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let asset_path = project_dir.join("assets/resources/models/item/source_item.json");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(project_dir.join(".cobble")).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, r#"{"parent":"minecraft:item/generated"}"#).unwrap();
+    fs::write(
+        project_dir.join(".cobble/generated_asset_namespaces.json"),
+        r#"["resources"]"#,
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join(".cobble/static_asset_passthrough.json"),
+        r#"["resources/models/item/source_item.json"]"#,
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "."
+
+[experimental]
+resource_pack = false
+"#,
+    )
+    .unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir),
+        output: Some(project_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: true,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&asset_path).unwrap(),
+        r#"{"parent":"minecraft:item/generated"}"#
+    );
+    assert!(!project_dir
+        .join(".cobble/generated_asset_namespaces.json")
+        .exists());
+
+    let zip_file = fs::File::open(temp_dir.path().join("resources.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+    assert!(!names
+        .iter()
+        .any(|name| name == "assets/resources/models/item/source_item.json"));
+}
+
+#[test]
+fn resource_pack_asset_passthrough_cleans_removed_static_assets_and_zip() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let asset_path = project_dir.join("assets/resources/textures/item/old.png");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"old").unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let build_options = |zip| cobble::commands::build::BuildOptions {
+        input: Some(source_dir.clone()),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    };
+
+    cobble::commands::build::build(build_options(false)).unwrap();
+    assert!(output_dir
+        .join("assets/resources/textures/item/old.png")
+        .exists());
+
+    fs::remove_file(&asset_path).unwrap();
+    cobble::commands::build::build(build_options(true)).unwrap();
+
+    assert!(!output_dir
+        .join("assets/resources/textures/item/old.png")
+        .exists());
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        manifest["generated"]["resource_pack_static_assets"]
+            .as_u64()
+            .unwrap_or(0),
+        0
+    );
+
+    let zip_file = fs::File::open(project_dir.join("resources.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+    assert!(!names
+        .iter()
+        .any(|name| name == "assets/resources/textures/item/old.png"));
+}
+
+#[test]
+fn resource_pack_lang_declarations_merge_deterministically() {
+    let (_temp, output_dir) = compile_resource_pack_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.lang("en_us", {
+    "item.resources.zeta": "Zeta",
+    "item.resources.same": "Same"
+})
+resource_pack.lang("en_us", {
+    "block.resources.alpha": "Alpha",
+    "item.resources.same": "Same"
+})
+"#,
+    )
+    .unwrap();
+
+    let lang_path = output_dir.join("assets/resources/lang/en_us.json");
+    let lang_contents = fs::read_to_string(&lang_path).unwrap();
+    let lang: serde_json::Value = serde_json::from_str(&lang_contents).unwrap();
+    assert_eq!(lang["block.resources.alpha"], "Alpha");
+    assert_eq!(lang["item.resources.same"], "Same");
+    assert_eq!(lang["item.resources.zeta"], "Zeta");
+
+    let alpha_index = lang_contents.find("\"block.resources.alpha\"").unwrap();
+    let same_index = lang_contents.find("\"item.resources.same\"").unwrap();
+    let zeta_index = lang_contents.find("\"item.resources.zeta\"").unwrap();
+    assert!(alpha_index < same_index);
+    assert!(same_index < zeta_index);
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["generated"]["resource_pack_langs"], 1);
+    let lang_resources: Vec<_> = manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|resource| resource["kind"] == "resource_pack_lang")
+        .collect();
+    assert_eq!(lang_resources.len(), 1);
+}
+
+#[test]
+fn resource_pack_model_declarations_validate_known_field_types() {
+    let parent_error = compile_resource_pack_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("bad_parent", {"parent": 3})
+"#,
+    )
+    .unwrap_err();
+    assert!(parent_error.contains("field 'parent' must be a string"));
+
+    let textures_error = compile_resource_pack_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.block_model("bad_textures", {"textures": {"all": 7}})
+"#,
+    )
+    .unwrap_err();
+    assert!(textures_error.contains("texture 'all' must be a string"));
+
+    let elements_error = compile_resource_pack_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.block_model("bad_elements", {"elements": {"from": [0, 0, 0]}})
+"#,
+    )
+    .unwrap_err();
+    assert!(elements_error.contains("field 'elements' must be an array"));
+}
+
+#[test]
+fn conflicting_resource_pack_lang_entries_report_duplicate_diagnostic() {
     compile_resource_pack_source(
         r#"
 from stdlib import resource_pack
@@ -671,8 +1573,102 @@ resource_pack.lang("en_us", {"item.resources.test": "Changed"})
 
     assert!(error.contains("Duplicate resource pack language file"));
     assert!(error.contains("invalid overwrite"));
+    assert!(error.contains("translation key 'item.resources.test'"));
     assert!(error.contains("first declaration: main.cbl:3:1"));
     assert!(error.contains("second declaration: main.cbl:4:1"));
+}
+
+#[test]
+fn item_component_helpers_generate_item_modifier_component_json() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+from stdlib import datapack, item_component, text
+
+datapack.item_modifier("items/reward_components", {
+    "function": "minecraft:set_components",
+    "components": item_component.components(
+        item_component.custom_name(text.colored("Cobble Reward", "gold")),
+        item_component.lore([
+            text.plain("Generated by Cobble"),
+            text.colored("Keep this item", "gray")
+        ]),
+        item_component.unbreakable()
+    )
+})
+
+def setup():
+    /say setup
+"#,
+    )
+    .unwrap();
+
+    let item_modifier_path =
+        output_dir.join("data/resources/item_modifier/items/reward_components.json");
+    let item_modifier: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(item_modifier_path).unwrap()).unwrap();
+
+    assert_eq!(item_modifier["function"], "minecraft:set_components");
+    assert_eq!(
+        item_modifier["components"]["minecraft:custom_name"],
+        serde_json::json!({"color": "gold", "text": "Cobble Reward"})
+    );
+    assert_eq!(
+        item_modifier["components"]["minecraft:lore"],
+        serde_json::json!([
+            {"text": "Generated by Cobble"},
+            {"color": "gray", "text": "Keep this item"}
+        ])
+    );
+    assert_eq!(
+        item_modifier["components"]["minecraft:unbreakable"],
+        serde_json::json!({})
+    );
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["generated"]["item_modifiers"], 1);
+    assert_eq!(manifest["generated"]["total_json_resources"], 1);
+    assert!(manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| resource["kind"] == "item_modifier"
+            && resource["namespace"] == "resources"
+            && resource["path"] == "items/reward_components"));
+}
+
+#[test]
+fn item_component_helpers_reject_duplicate_components_and_standalone_calls() {
+    let duplicate_error = compile_source(
+        r#"
+from stdlib import datapack, item_component
+
+datapack.item_modifier("duplicate", {
+    "function": "minecraft:set_components",
+    "components": item_component.components(
+        item_component.unbreakable(),
+        item_component.unbreakable()
+    )
+})
+"#,
+    )
+    .unwrap_err();
+    assert!(duplicate_error
+        .contains("item_component.components() duplicate component 'minecraft:unbreakable'"));
+
+    let standalone_error = compile_source(
+        r#"
+from stdlib import item_component
+
+def standalone():
+    item_component.unbreakable()
+"#,
+    )
+    .unwrap_err();
+    assert!(standalone_error
+        .contains("item_component.unbreakable() returns an item component JSON object"));
 }
 
 #[test]

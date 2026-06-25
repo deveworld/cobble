@@ -62,6 +62,9 @@ def use_stdlib():
     storage.set("status", {"ready": True, "count": 3})
     storage.merge("status", {"extra": "ok"})
     storage.copy("status_copy", "status")
+    storage.set(storage.path("players", "current"), "alex")
+    storage.append(storage.child("players", "events"), "joined")
+    storage.get(storage.index("players.events", 0))
     storage.remove("status.extra")
 "#,
     )
@@ -100,6 +103,11 @@ def use_stdlib():
     assert!(content.contains(
         "data modify storage stdlib_v1:global status_copy set from storage stdlib_v1:global status"
     ));
+    assert!(content
+        .contains(r#"data modify storage stdlib_v1:global players.current set value "alex""#));
+    assert!(content
+        .contains(r#"data modify storage stdlib_v1:global players.events append value "joined""#));
+    assert!(content.contains("data get storage stdlib_v1:global players.events[0]"));
     assert!(content.contains("data remove storage stdlib_v1:global status.extra"));
 }
 
@@ -138,6 +146,7 @@ def helpers():
     entity.effect_clear("@s", "minecraft:speed")
     entity.attribute_get("@s", "minecraft:max_health", 1)
     entity.attribute_base_set("@s", "minecraft:max_health", 20)
+    entity.teleport(selector.current(), position.relative(0, 1, 0))
 "#,
     )
     .unwrap();
@@ -182,6 +191,7 @@ def helpers():
     assert!(content.contains("effect clear @s minecraft:speed"));
     assert!(content.contains("attribute @s minecraft:max_health get 1"));
     assert!(content.contains("attribute @s minecraft:max_health base set 20"));
+    assert!(content.contains("tp @s ~ ~1 ~"));
 }
 
 #[test]
@@ -226,6 +236,71 @@ def standalone():
     assert!(standalone_error.contains("unsupported-function-call-expression"));
     assert!(standalone_error
         .contains("`text.plain` returns a value and cannot be used as a standalone statement"));
+}
+
+#[test]
+fn selector_and_position_helpers_expand_as_values() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+def selector_position():
+    text.tellraw("@a", text.selector(selector.nearest_player()))
+    entity.tag_add(selector.players_tagged("runner"), "ready")
+    entity.teleport(selector.current(), position.here())
+    entity.teleport(selector.all_entities(), position.absolute(10, 64, -2))
+    entity.teleport(selector.entity_type("minecraft:zombie"), position.local(0, 0, 1))
+"#,
+    )
+    .unwrap();
+
+    let content = read_function(&output_dir, "selector_position");
+    assert!(content.contains(r#"tellraw @a {"selector":"@p"}"#));
+    assert!(content.contains("tag @a[tag=runner] add ready"));
+    assert!(content.contains("tp @s ~ ~ ~"));
+    assert!(content.contains("tp @e 10 64 -2"));
+    assert!(content.contains("tp @e[type=minecraft:zombie] ^ ^ ^1"));
+}
+
+#[test]
+fn selector_and_position_helpers_must_be_used_as_values() {
+    let selector_error = compile_source(
+        r#"
+def standalone_selector():
+    selector.nearest_player()
+"#,
+    )
+    .unwrap_err();
+    assert!(selector_error.contains("selector.nearest_player() returns a selector string"));
+
+    let position_error = compile_source(
+        r#"
+def standalone_position():
+    position.here()
+"#,
+    )
+    .unwrap_err();
+    assert!(position_error.contains("position.here() returns a coordinate string"));
+}
+
+#[test]
+fn storage_path_helpers_must_be_used_as_values_and_validate_components() {
+    let standalone_error = compile_source(
+        r#"
+def standalone_storage_path():
+    storage.path("players", "current")
+"#,
+    )
+    .unwrap_err();
+    assert!(standalone_error.contains("storage.path() returns a storage path string"));
+
+    let bad_component_error = compile_source(
+        r#"
+def bad_storage_path():
+    storage.set(storage.path("players.current"), "alex")
+"#,
+    )
+    .unwrap_err();
+    assert!(bad_component_error
+        .contains("storage path component must be a single unqualified path component"));
 }
 
 #[test]

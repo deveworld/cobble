@@ -203,6 +203,15 @@ fn snapshot_stdlib_v2_generated_pack_tree() {
 }
 
 #[test]
+fn snapshot_stdlib_v3_generated_pack_tree() {
+    let (_temp, output_dir) = build_project_fixture("examples/stdlib_v3", false);
+    insta::assert_snapshot!(
+        "snapshot_stdlib_v3_generated_pack_tree",
+        datapack_tree_snapshot(&output_dir)
+    );
+}
+
+#[test]
 fn snapshot_resource_pack_generated_pack_tree() {
     let (_temp, output_dir) = build_project_fixture("examples/resource_pack", false);
     insta::assert_snapshot!(

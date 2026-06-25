@@ -53,6 +53,7 @@ cargo run --locked -- build /tmp/cobble-qa-init-game -o /tmp/cobble-qa-init-game
 cargo run --locked -- build /tmp/cobble-qa-init-web -o /tmp/cobble-qa-init-web-output
 cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
 cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
+cargo run --locked -- build examples/stdlib_v3 --validate -o /tmp/cobble-qa-stdlib-v3
 cargo run --locked -- build examples/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
 cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
 cargo run --locked -- doctor
@@ -231,7 +232,7 @@ available. It reads the version from `Cargo.toml` by default.
 Useful overrides:
 
 ```bash
-COBBLE_POST_RELEASE_VERSION=0.8.0 scripts/qa_post_release_smoke.sh
+COBBLE_POST_RELEASE_VERSION=0.9.0 scripts/qa_post_release_smoke.sh
 COBBLE_POST_RELEASE_SITE_URL=https://deveworld.github.io/cobble scripts/qa_post_release_smoke.sh
 COBBLE_QA_SKIP_GITHUB=1 scripts/qa_post_release_smoke.sh
 COBBLE_QA_SKIP_WEB=1 scripts/qa_post_release_smoke.sh
@@ -338,4 +339,61 @@ QA scripts, the validated build matrix above, resource snapshot and schema
 checks, the full web gate, optional server smoke when EULA acceptance is
 provided, and Cargo package dry-runs. After publishing and deploying 0.8.x,
 run `scripts/qa_post_release_smoke.sh` to verify the released crate and
-deployed web demo.
+web package.
+
+## 0.9.0 QA Gate
+
+The 0.9.0 line widens Cobble into an authoring-platform beta. It keeps the
+0.8 gates and adds resource-pack beta checks, schema-versioned tooling JSON,
+experimental plugin/migration skeleton checks, security regressions, stdlib v3
+value helpers, and the browser ZIP/export gate.
+
+### Focused 0.9.0 Workflow QA
+
+```bash
+scripts/qa_security_regressions.sh
+scripts/qa_08_stdlib_v2.sh
+scripts/qa_08_resource_authoring.sh
+scripts/qa_08_unrolling.sh
+scripts/qa_08_resource_pack.sh
+scripts/check_resource_snapshots.sh
+scripts/check_resource_schemas.sh
+```
+
+Additional 0.9 checks are embedded in `scripts/qa_09_release_gate.sh`:
+
+- `cobble inspect --json` reports `schema_version`, `ok`, `status`,
+  `manifest`, and `source_map_entries`.
+- `cobble check --json --symbols --experimental-plugins` keeps schema version
+  1, reports the diagnostics-only experimental plugin host, and validates the
+  read-only plugin manifest draft.
+- `cobble check --json --experimental-python-compat` reports the
+  diagnostics-only Python compatibility surface without changing compile
+  semantics.
+- `cobble migrate --json` reports the experimental 0.8 to 0.9 dry-run schema
+  without rewriting files.
+- Stdlib v3 value helpers generate visible storage commands, teleport commands,
+  and item modifier JSON resources without hidden load/tick behavior.
+- `examples/stdlib_v3` validates as a checked-in fixture for storage path,
+  item component, selector, position, entity teleport, and schedule helpers.
+
+The 0.9 validated build matrix adds the stdlib v3 fixture to the 0.8 matrix:
+
+```bash
+cargo run --locked -- build examples/stdlib_v3 --validate -o /tmp/cobble-qa-stdlib-v3
+cargo run --locked -- inspect /tmp/cobble-qa-stdlib-v3 --json
+```
+
+### 0.9.0 Aggregate Release Gate
+
+```bash
+scripts/qa_09_release_gate.sh
+```
+
+This composes the core Rust gate, clippy with `-D warnings`, existing focused
+authoring gates, security regressions, 0.9 tooling checks, validated builds,
+the full web gate, optional server smoke when EULA acceptance is provided, and
+Cargo package dry-runs. Use `COBBLE_QA_ALLOW_DIRTY=1` only for local release
+candidate rehearsal before the final clean-tree run. After publishing and
+deploying 0.9.x, run `scripts/qa_post_release_smoke.sh` to verify the released
+crate and deployed web demo.

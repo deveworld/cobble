@@ -14,7 +14,7 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Cobble 0.8.0** targets Minecraft Java Edition 26.1.2 and pack format
+**Cobble 0.9.0** targets Minecraft Java Edition 26.1.2 and pack format
 101.1. It is the current stable crates.io release.
 
 ## Website And Web Demo
@@ -40,8 +40,9 @@ metadata, diagnostics, and data pack ZIP output without installing the CLI.
   tables, recipes, item modifiers, and dialogs
 - Minecraft command handling with JSON safety, macro parameters, and command
   validation
-- Standard library helpers for events, text, scoreboards, storage, schedules,
-  bossbars, teams, and entities
+- Standard library helpers for events, text, scoreboards, storage, item
+  components, schedules, selector and position values, bossbars, teams, and
+  entities
 - CLI workflow for project templates, formatting, build, check, watch,
   validation, and ZIP output
 - Browser playground powered by Rust and WebAssembly
@@ -58,7 +59,7 @@ cobble --version
 For an exact version:
 
 ```bash
-cargo install cobble-lang --version 0.8.0 --locked
+cargo install cobble-lang --version 0.9.0 --locked
 cobble --help
 ```
 
@@ -116,10 +117,13 @@ Copy the generated output to your world's `datapacks` directory:
 | `cobble build` | Build source files into a data pack |
 | `cobble check` | Check Cobble syntax without building |
 | `cobble check --json --symbols` | Emit diagnostic JSON with experimental editor symbols |
+| `cobble check --experimental-plugins` | Enable the experimental diagnostics-only plugin host and read-only manifest checks |
+| `cobble check --experimental-python-compat` | Include the experimental Python compatibility report |
 | `cobble fmt` | Format Cobble source files |
 | `cobble fmt --diff` | Preview formatter changes without writing files |
 | `cobble doctor` | Inspect project and validation environment status |
 | `cobble doctor --json` | Emit machine-readable project health status |
+| `cobble migrate` | Scan a project and report an experimental 0.8 to 0.9 migration plan without rewriting files |
 | `cobble clean` | Remove marked Cobble-generated output |
 | `cobble link` | Configure a local datapacks target |
 | `cobble inspect` | Summarize generated build metadata |
