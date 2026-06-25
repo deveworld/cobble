@@ -133,6 +133,29 @@ Coverage:
   full web, optional server, and package dry-run checks into one
   release-candidate gate.
 
+## Security Regression Gate
+
+Run the focused security regression gate after touching output paths, namespace
+validation, link/clean/watch safety, execute guard translation, command
+validation staging, compile-time unrolling, or the WASM compiler wrapper:
+
+```bash
+scripts/qa_security_regressions.sh
+```
+
+Coverage:
+
+- Build output safety: namespace traversal, ZIP path escape, validated
+  staging-and-replace ownership, unowned output preservation, existing file
+  output refusal, and symlink parent/descendant refusal.
+- Link and clean safety: linked output ownership markers, tampered link state,
+  namespace/project identity mismatch, unmarked cleanup refusal, and symlinked
+  link/clean/watch paths.
+- Execute guard translation: raw Python-style `if`/`unless`, `and`/`or`,
+  `!=`, and out-of-range integer boundary conditions.
+- Expansion budget safety: per-loop, nested aggregate, generated-command, and
+  WASM compile-path unrolling limits.
+
 ## Watch Smoke
 
 Run this manually before a workflow-focused release candidate:

@@ -825,6 +825,40 @@ stdlib.addEventListener(event.TICK, tick)
     }
 
     #[test]
+    fn validate_namespace_rejects_path_like_namespaces() {
+        for namespace in ["../escape", "/tmp/escape", "nested/escape", "bad\\escape"] {
+            let diagnostic =
+                validate_namespace(namespace).expect_err("path namespace should fail");
+
+            assert_eq!(diagnostic.kind, "invalid-namespace");
+            assert!(diagnostic.message.contains("Invalid namespace"));
+        }
+    }
+
+    #[test]
+    fn compile_reports_nested_unroll_budget_errors() {
+        let diagnostics = match compile(
+            r#"
+def main():
+    for i in range(64):
+        for j in range(64):
+            for k in range(64):
+                /say nested {i} {j} {k}
+"#,
+            "web_test",
+            "Web test",
+        ) {
+            Ok(_) => panic!("nested expansion bomb should fail"),
+            Err(diagnostics) => diagnostics,
+        };
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, "transpile");
+        assert!(diagnostics[0].message.contains("unroll-limit-exceeded"));
+        assert!(diagnostics[0].message.contains("nested unrolling"));
+    }
+
+    #[test]
     fn default_namespace_matches_cli_build_default() {
         assert_eq!(DEFAULT_NAMESPACE, "cobble");
         let response = compile("def load():\n    /say hi\n", DEFAULT_NAMESPACE, "Web test")
