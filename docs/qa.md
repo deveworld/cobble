@@ -190,6 +190,30 @@ The GitHub Pages workflow runs the web gate on pull requests that touch the
 compiler, WASM wrapper, or `web/` sources. It only uploads and deploys Pages
 artifacts on `main` pushes or manual dispatches.
 
+## Post-Release Verification
+
+After publishing crates.io, creating the GitHub release, and letting GitHub
+Pages deploy, run the networked post-release smoke:
+
+```bash
+scripts/qa_post_release_smoke.sh
+```
+
+The script installs the released crate into a temporary Cargo root, verifies
+`cobble --version`, builds and validates a generated smoke pack with the
+installed binary, checks that the GitHub release is not draft or prerelease, and
+confirms the deployed home page, `/try/` page, and WebAssembly asset are
+available. It reads the version from `Cargo.toml` by default.
+
+Useful overrides:
+
+```bash
+COBBLE_POST_RELEASE_VERSION=0.8.0 scripts/qa_post_release_smoke.sh
+COBBLE_POST_RELEASE_SITE_URL=https://deveworld.github.io/cobble scripts/qa_post_release_smoke.sh
+COBBLE_QA_SKIP_GITHUB=1 scripts/qa_post_release_smoke.sh
+COBBLE_QA_SKIP_WEB=1 scripts/qa_post_release_smoke.sh
+```
+
 ## Command Tree Live E2E
 
 Default tests use local fixtures. Before a final release candidate, also verify
@@ -289,4 +313,6 @@ scripts/qa_08_release_gate.sh
 This composes the 0.7.x Rust/example/workflow gates with the 0.8.0 focused
 QA scripts, the validated build matrix above, resource snapshot and schema
 checks, the full web gate, optional server smoke when EULA acceptance is
-provided, and Cargo package dry-runs.
+provided, and Cargo package dry-runs. After publishing and deploying 0.8.x,
+run `scripts/qa_post_release_smoke.sh` to verify the released crate and
+deployed web demo.
