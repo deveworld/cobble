@@ -1,3 +1,5 @@
+use crate::ast::SourceSpan;
+
 /// Token type for indentation-based parsing
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Token {
@@ -76,6 +78,21 @@ pub enum Token {
     Eof,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SpannedToken {
+    pub token: Token,
+    pub span: SourceSpan,
+}
+
+impl SpannedToken {
+    fn new(token: Token, start: usize, end: usize, line: usize, column: usize) -> Self {
+        Self {
+            token,
+            span: SourceSpan::new(start, end, line, column),
+        }
+    }
+}
+
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
@@ -149,11 +166,20 @@ impl std::fmt::Display for Token {
 
 /// Manual tokenizer that handles indentation
 pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
+    Ok(tokenize_spanned(source)?
+        .into_iter()
+        .map(|token| token.token)
+        .collect())
+}
+
+/// Manual tokenizer that preserves source byte spans for each token.
+pub fn tokenize_spanned(source: &str) -> Result<Vec<SpannedToken>, String> {
     let mut tokens = Vec::new();
     let mut indent_stack: Vec<usize> = vec![0];
     let mut paren_depth = 0;
 
-    for (line_idx, line) in source.lines().enumerate() {
+    for (line_idx, (line_start, line)) in source_lines_with_offsets(source).into_iter().enumerate()
+    {
         // Skip empty lines and comments
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -169,11 +195,25 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             // Handle indentation changes
             if indent_level > current_indent {
                 indent_stack.push(indent_level);
-                tokens.push(Token::Indent);
+                push_token(
+                    &mut tokens,
+                    Token::Indent,
+                    line_start + indent_level,
+                    line_start + indent_level,
+                    line_idx + 1,
+                    indent_level + 1,
+                );
             } else if indent_level < current_indent {
                 while indent_stack.len() > 1 && *indent_stack.last().unwrap() > indent_level {
                     indent_stack.pop();
-                    tokens.push(Token::Dedent);
+                    push_token(
+                        &mut tokens,
+                        Token::Dedent,
+                        line_start + indent_level,
+                        line_start + indent_level,
+                        line_idx + 1,
+                        indent_level + 1,
+                    );
                 }
                 if *indent_stack.last().unwrap() != indent_level {
                     return Err(format!("Indentation error at line {}", line_idx + 1));
@@ -183,30 +223,72 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
 
         // Tokenize the line content
         let line_content = line.trim();
-        tokenize_line(line_content, &mut tokens, &mut paren_depth)?;
+        let content_offset = line.find(line_content).unwrap_or(0);
+        tokenize_line(
+            line_content,
+            line_start + content_offset,
+            content_offset,
+            line_idx + 1,
+            &mut tokens,
+            &mut paren_depth,
+        )?;
 
         // Only emit Newline if not inside parentheses/brackets/braces
         if paren_depth == 0 {
-            tokens.push(Token::Newline);
+            push_token(
+                &mut tokens,
+                Token::Newline,
+                line_start + line.len(),
+                line_start + line.len(),
+                line_idx + 1,
+                line.chars().count() + 1,
+            );
         }
     }
 
     // Add remaining dedents
     while indent_stack.len() > 1 {
         indent_stack.pop();
-        tokens.push(Token::Dedent);
+        push_token(&mut tokens, Token::Dedent, source.len(), source.len(), 1, 1);
     }
 
-    tokens.push(Token::Eof);
+    push_token(&mut tokens, Token::Eof, source.len(), source.len(), 1, 1);
     Ok(tokens)
+}
+
+fn push_token(
+    tokens: &mut Vec<SpannedToken>,
+    token: Token,
+    start: usize,
+    end: usize,
+    line: usize,
+    column: usize,
+) {
+    tokens.push(SpannedToken::new(token, start, end, line, column));
+}
+
+fn source_lines_with_offsets(source: &str) -> Vec<(usize, &str)> {
+    let mut lines = Vec::new();
+    let mut offset = 0;
+
+    for segment in source.split_inclusive('\n') {
+        let mut line = segment.strip_suffix('\n').unwrap_or(segment);
+        if let Some(without_cr) = line.strip_suffix('\r') {
+            line = without_cr;
+        }
+        lines.push((offset, line));
+        offset += segment.len();
+    }
+
+    lines
 }
 
 /// Check if the minus sign should be treated as a binary operator
 /// based on the previous token context
-fn should_be_binary_minus(tokens: &[Token]) -> bool {
+fn should_be_binary_minus(tokens: &[SpannedToken]) -> bool {
     // If previous token is one of these, minus is a binary operator:
     // Number, Ident, RParen, RBracket, True_, False_, None_
-    if let Some(last_token) = tokens.last() {
+    if let Some(last_token) = tokens.last().map(|token| &token.token) {
         matches!(
             last_token,
             Token::Number(_)
@@ -225,10 +307,10 @@ fn should_be_binary_minus(tokens: &[Token]) -> bool {
 
 /// Check if the caret should be treated as a power operator
 /// based on the previous token context
-fn should_be_power_operator(tokens: &[Token]) -> bool {
+fn should_be_power_operator(tokens: &[SpannedToken]) -> bool {
     // Similar to should_be_binary_minus - if previous token can be an operand,
     // then ^ is the power operator, not a coordinate marker
-    if let Some(last_token) = tokens.last() {
+    if let Some(last_token) = tokens.last().map(|token| &token.token) {
         matches!(
             last_token,
             Token::Number(_)
@@ -245,10 +327,17 @@ fn should_be_power_operator(tokens: &[Token]) -> bool {
 }
 
 /// Tokenize a single line
-fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> Result<(), String> {
-    let mut chars = line.chars().peekable();
+fn tokenize_line(
+    line: &str,
+    line_offset: usize,
+    column_offset: usize,
+    line_number: usize,
+    tokens: &mut Vec<SpannedToken>,
+    paren_depth: &mut i32,
+) -> Result<(), String> {
+    let mut chars = line.char_indices().peekable();
 
-    while let Some(&ch) = chars.peek() {
+    while let Some(&(start, ch)) = chars.peek() {
         match ch {
             ' ' | '\t' => {
                 chars.next();
@@ -257,31 +346,52 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> 
                 // Check if this is a Minecraft command (starts with / followed by letter)
                 // or a division operator
                 chars.next();
-                if let Some(&next_ch) = chars.peek() {
+                if let Some(&(next_index, next_ch)) = chars.peek() {
                     // Minecraft command only if followed immediately by a letter (no space)
                     if next_ch.is_alphabetic() {
                         // Minecraft command - consume rest of line
-                        let mut cmd: String = chars.collect();
-                        cmd = strip_minecraft_inline_comment(&cmd).to_string();
-                        cmd = cmd.trim_end().to_string();
-
-                        tokens.push(Token::MinecraftCommand(cmd));
+                        let rest = &line[next_index..];
+                        let stripped = strip_minecraft_inline_comment(rest).trim_end();
+                        push_token(
+                            tokens,
+                            Token::MinecraftCommand(stripped.to_string()),
+                            line_offset + start,
+                            line_offset + next_index + stripped.len(),
+                            line_number,
+                            column_from_byte(line, start, column_offset),
+                        );
                         break;
                     } else {
                         // Division operator or other use
-                        tokens.push(Token::Slash);
+                        push_token(
+                            tokens,
+                            Token::Slash,
+                            line_offset + start,
+                            line_offset + start + ch.len_utf8(),
+                            line_number,
+                            column_from_byte(line, start, column_offset),
+                        );
                     }
                 } else {
                     // End of line after /, treat as Slash
-                    tokens.push(Token::Slash);
+                    push_token(
+                        tokens,
+                        Token::Slash,
+                        line_offset + start,
+                        line_offset + start + ch.len_utf8(),
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 }
             }
             '"' | '\'' => {
                 // String literal
-                let quote = chars.next().unwrap();
+                let (quote_index, quote) = chars.next().unwrap();
                 let mut s = String::new();
                 let mut escaped = false;
-                for ch in chars.by_ref() {
+                let mut end = quote_index + quote.len_utf8();
+                for (index, ch) in chars.by_ref() {
+                    end = index + ch.len_utf8();
                     if escaped {
                         s.push(ch);
                         escaped = false;
@@ -293,26 +403,38 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> 
                         s.push(ch);
                     }
                 }
-                tokens.push(Token::String(s));
+                push_token(
+                    tokens,
+                    Token::String(s),
+                    line_offset + start,
+                    line_offset + end,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '0'..='9' => {
                 // Number
                 let mut num = String::new();
-                while let Some(&ch) = chars.peek() {
+                let mut end = start;
+                while let Some(&(index, ch)) = chars.peek() {
                     if ch.is_ascii_digit() {
-                        num.push(chars.next().unwrap());
+                        let (_, consumed) = chars.next().unwrap();
+                        num.push(consumed);
+                        end = index + consumed.len_utf8();
                     } else if ch == '.' {
                         // Check if this is a range operator (..)
                         let mut temp_chars = chars.clone();
                         temp_chars.next(); // skip first dot
-                        if let Some(&next_ch) = temp_chars.peek() {
+                        if let Some(&(_, next_ch)) = temp_chars.peek() {
                             if next_ch == '.' {
                                 // This is "..", stop parsing number
                                 break;
                             }
                         }
                         // Single dot, part of decimal number
-                        num.push(chars.next().unwrap());
+                        let (_, consumed) = chars.next().unwrap();
+                        num.push(consumed);
+                        end = index + consumed.len_utf8();
                     } else {
                         break;
                     }
@@ -324,22 +446,34 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> 
                         num, line
                     ));
                 }
-                tokens.push(Token::Number(num));
+                push_token(
+                    tokens,
+                    Token::Number(num),
+                    line_offset + start,
+                    line_offset + end,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             'a'..='z' | 'A'..='Z' | '_' => {
                 // Identifier or keyword (may include namespace like minecraft:stone)
                 let mut ident = String::new();
-                while let Some(&ch) = chars.peek() {
+                let mut end = start;
+                while let Some(&(index, ch)) = chars.peek() {
                     if ch.is_alphanumeric() || ch == '_' {
-                        ident.push(chars.next().unwrap());
+                        let (_, consumed) = chars.next().unwrap();
+                        ident.push(consumed);
+                        end = index + consumed.len_utf8();
                     } else if ch == ':' {
                         // Check if this is a namespace separator (followed by identifier)
                         let mut temp_chars = chars.clone();
                         temp_chars.next(); // skip the colon
-                        if let Some(&next_ch) = temp_chars.peek() {
+                        if let Some(&(_, next_ch)) = temp_chars.peek() {
                             if next_ch.is_alphabetic() || next_ch == '_' {
                                 // This is a namespace separator
-                                ident.push(chars.next().unwrap()); // add the colon
+                                let (_, consumed) = chars.next().unwrap();
+                                ident.push(consumed); // add the colon
+                                end = index + consumed.len_utf8();
                                 continue;
                             }
                         }
@@ -383,28 +517,40 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> 
                     "None" => Token::None_,
                     _ => Token::Ident(ident),
                 };
-                tokens.push(token);
+                push_token(
+                    tokens,
+                    token,
+                    line_offset + start,
+                    line_offset + end,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '@' => {
                 // Selector (e.g., @a, @p, @s, @e[...], @Player)
                 let mut selector = String::new();
-                selector.push(chars.next().unwrap()); // @
-                                                      // Collect all alphanumeric characters (for @Player, @Boss, etc.)
-                while let Some(&ch) = chars.peek() {
+                let (_, at) = chars.next().unwrap();
+                selector.push(at); // @
+                                   // Collect all alphanumeric characters (for @Player, @Boss, etc.)
+                let mut end = start + at.len_utf8();
+                while let Some(&(index, ch)) = chars.peek() {
                     if ch.is_alphanumeric() || ch == '_' {
-                        selector.push(chars.next().unwrap());
+                        let (_, consumed) = chars.next().unwrap();
+                        selector.push(consumed);
+                        end = index + consumed.len_utf8();
                     } else {
                         break;
                     }
                 }
                 // Handle selector arguments
-                if chars.peek() == Some(&'[') {
+                if chars.peek().map(|(_, ch)| ch) == Some(&'[') {
                     let mut bracket_depth = 0;
-                    while let Some(ch) = chars.peek() {
-                        selector.push(*ch);
-                        if *ch == '[' {
+                    while let Some(&(index, ch)) = chars.peek() {
+                        selector.push(ch);
+                        end = index + ch.len_utf8();
+                        if ch == '[' {
                             bracket_depth += 1;
-                        } else if *ch == ']' {
+                        } else if ch == ']' {
                             bracket_depth -= 1;
                             chars.next();
                             if bracket_depth == 0 {
@@ -415,20 +561,38 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> 
                         chars.next();
                     }
                 }
-                tokens.push(Token::Ident(selector));
+                push_token(
+                    tokens,
+                    Token::Ident(selector),
+                    line_offset + start,
+                    line_offset + end,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '~' => {
                 // Coordinate marker
                 let mut coord = String::new();
-                coord.push(chars.next().unwrap());
-                while let Some(&ch) = chars.peek() {
+                let (_, tilde) = chars.next().unwrap();
+                coord.push(tilde);
+                let mut end = start + tilde.len_utf8();
+                while let Some(&(index, ch)) = chars.peek() {
                     if ch.is_ascii_digit() || ch == '.' || ch == '-' {
-                        coord.push(chars.next().unwrap());
+                        let (_, consumed) = chars.next().unwrap();
+                        coord.push(consumed);
+                        end = index + consumed.len_utf8();
                     } else {
                         break;
                     }
                 }
-                tokens.push(Token::Ident(coord));
+                push_token(
+                    tokens,
+                    Token::Ident(coord),
+                    line_offset + start,
+                    line_offset + end,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '^' => {
                 chars.next();
@@ -436,128 +600,276 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> 
                 // If previous token suggests binary operator context, it's power operator
                 if should_be_power_operator(tokens) {
                     // It's a power operator
-                    tokens.push(Token::Caret);
-                } else if let Some(&ch) = chars.peek() {
+                    push_token(
+                        tokens,
+                        Token::Caret,
+                        line_offset + start,
+                        line_offset + start + ch.len_utf8(),
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
+                } else if let Some(&(_, ch)) = chars.peek() {
                     if ch.is_ascii_digit() || ch == '.' || ch == '-' {
                         // It's a coordinate marker (in execute commands)
                         let mut coord = String::from("^");
-                        while let Some(&ch) = chars.peek() {
+                        let mut end = start + '^'.len_utf8();
+                        while let Some(&(index, ch)) = chars.peek() {
                             if ch.is_ascii_digit() || ch == '.' || ch == '-' {
-                                coord.push(chars.next().unwrap());
+                                let (_, consumed) = chars.next().unwrap();
+                                coord.push(consumed);
+                                end = index + consumed.len_utf8();
                             } else {
                                 break;
                             }
                         }
-                        tokens.push(Token::Ident(coord));
+                        push_token(
+                            tokens,
+                            Token::Ident(coord),
+                            line_offset + start,
+                            line_offset + end,
+                            line_number,
+                            column_from_byte(line, start, column_offset),
+                        );
                     } else {
                         // It's a power operator
-                        tokens.push(Token::Caret);
+                        push_token(
+                            tokens,
+                            Token::Caret,
+                            line_offset + start,
+                            line_offset + start + '^'.len_utf8(),
+                            line_number,
+                            column_from_byte(line, start, column_offset),
+                        );
                     }
                 } else {
                     // End of input, it's a power operator
-                    tokens.push(Token::Caret);
+                    push_token(
+                        tokens,
+                        Token::Caret,
+                        line_offset + start,
+                        line_offset + start + '^'.len_utf8(),
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 }
             }
             '=' => {
                 chars.next();
-                if chars.peek() == Some(&'=') {
+                if chars.peek().map(|(_, ch)| ch) == Some(&'=') {
                     chars.next();
-                    tokens.push(Token::EqEq);
+                    push_token(
+                        tokens,
+                        Token::EqEq,
+                        line_offset + start,
+                        line_offset + start + 2,
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 } else {
-                    tokens.push(Token::Equals);
+                    push_token(
+                        tokens,
+                        Token::Equals,
+                        line_offset + start,
+                        line_offset + start + 1,
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 }
             }
             '!' => {
                 chars.next();
-                if chars.peek() == Some(&'=') {
+                if chars.peek().map(|(_, ch)| ch) == Some(&'=') {
                     chars.next();
-                    tokens.push(Token::NotEq);
+                    push_token(
+                        tokens,
+                        Token::NotEq,
+                        line_offset + start,
+                        line_offset + start + 2,
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 } else {
                     return Err("Unexpected '!' character".to_string());
                 }
             }
             '<' => {
                 chars.next();
-                if chars.peek() == Some(&'=') {
+                if chars.peek().map(|(_, ch)| ch) == Some(&'=') {
                     chars.next();
-                    tokens.push(Token::LtEq);
+                    push_token(
+                        tokens,
+                        Token::LtEq,
+                        line_offset + start,
+                        line_offset + start + 2,
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 } else {
-                    tokens.push(Token::Lt);
+                    push_token(
+                        tokens,
+                        Token::Lt,
+                        line_offset + start,
+                        line_offset + start + 1,
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 }
             }
             '>' => {
                 chars.next();
-                if chars.peek() == Some(&'=') {
+                if chars.peek().map(|(_, ch)| ch) == Some(&'=') {
                     chars.next();
-                    tokens.push(Token::GtEq);
+                    push_token(
+                        tokens,
+                        Token::GtEq,
+                        line_offset + start,
+                        line_offset + start + 2,
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 } else {
-                    tokens.push(Token::Gt);
+                    push_token(
+                        tokens,
+                        Token::Gt,
+                        line_offset + start,
+                        line_offset + start + 1,
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 }
             }
             '(' => {
                 chars.next();
-                tokens.push(Token::LParen);
+                push_token(
+                    tokens,
+                    Token::LParen,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
                 *paren_depth += 1;
             }
             ')' => {
                 chars.next();
-                tokens.push(Token::RParen);
+                push_token(
+                    tokens,
+                    Token::RParen,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
                 *paren_depth -= 1;
             }
             '[' => {
                 chars.next();
-                tokens.push(Token::LBracket);
+                push_token(
+                    tokens,
+                    Token::LBracket,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
                 *paren_depth += 1;
             }
             ']' => {
                 chars.next();
-                tokens.push(Token::RBracket);
+                push_token(
+                    tokens,
+                    Token::RBracket,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
                 *paren_depth -= 1;
             }
             ':' => {
                 chars.next();
-                tokens.push(Token::Colon);
+                push_token(
+                    tokens,
+                    Token::Colon,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             ';' => {
                 chars.next();
-                tokens.push(Token::SemiColon);
+                push_token(
+                    tokens,
+                    Token::SemiColon,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             ',' => {
                 chars.next();
-                tokens.push(Token::Comma);
+                push_token(
+                    tokens,
+                    Token::Comma,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '.' => {
                 chars.next();
-                tokens.push(Token::Dot);
+                push_token(
+                    tokens,
+                    Token::Dot,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '+' => {
                 chars.next();
-                tokens.push(Token::Plus);
+                push_token(
+                    tokens,
+                    Token::Plus,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '-' => {
                 chars.next();
                 // Context-aware parsing: check if this should be binary minus or unary negative
-                if let Some(&next_ch) = chars.peek() {
+                if let Some(&(_, next_ch)) = chars.peek() {
                     // Only treat as negative number if:
                     // 1. Next char is a digit
                     // 2. Previous token suggests unary context (not a binary operator context)
                     if next_ch.is_ascii_digit() && !should_be_binary_minus(tokens) {
                         let mut num = String::from("-");
-                        while let Some(&ch) = chars.peek() {
+                        let mut end = start + '-'.len_utf8();
+                        while let Some(&(index, ch)) = chars.peek() {
                             if ch.is_ascii_digit() {
-                                num.push(chars.next().unwrap());
+                                let (_, consumed) = chars.next().unwrap();
+                                num.push(consumed);
+                                end = index + consumed.len_utf8();
                             } else if ch == '.' {
                                 // Check if this is a range operator (..)
                                 let mut temp_chars = chars.clone();
                                 temp_chars.next(); // skip first dot
-                                if let Some(&next_ch) = temp_chars.peek() {
+                                if let Some(&(_, next_ch)) = temp_chars.peek() {
                                     if next_ch == '.' {
                                         // This is "..", stop parsing number
                                         break;
                                     }
                                 }
                                 // Single dot, part of decimal number
-                                num.push(chars.next().unwrap());
+                                let (_, consumed) = chars.next().unwrap();
+                                num.push(consumed);
+                                end = index + consumed.len_utf8();
                             } else {
                                 break;
                             }
@@ -569,31 +881,80 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> 
                                 num, line
                             ));
                         }
-                        tokens.push(Token::Number(num));
+                        push_token(
+                            tokens,
+                            Token::Number(num),
+                            line_offset + start,
+                            line_offset + end,
+                            line_number,
+                            column_from_byte(line, start, column_offset),
+                        );
                     } else {
                         // Binary minus operator
-                        tokens.push(Token::Minus);
+                        push_token(
+                            tokens,
+                            Token::Minus,
+                            line_offset + start,
+                            line_offset + start + 1,
+                            line_number,
+                            column_from_byte(line, start, column_offset),
+                        );
                     }
                 } else {
-                    tokens.push(Token::Minus);
+                    push_token(
+                        tokens,
+                        Token::Minus,
+                        line_offset + start,
+                        line_offset + start + 1,
+                        line_number,
+                        column_from_byte(line, start, column_offset),
+                    );
                 }
             }
             '*' => {
                 chars.next();
-                tokens.push(Token::Star);
+                push_token(
+                    tokens,
+                    Token::Star,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '%' => {
                 chars.next();
-                tokens.push(Token::Percent);
+                push_token(
+                    tokens,
+                    Token::Percent,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
             }
             '{' => {
                 chars.next();
-                tokens.push(Token::LBrace);
+                push_token(
+                    tokens,
+                    Token::LBrace,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
                 *paren_depth += 1;
             }
             '}' => {
                 chars.next();
-                tokens.push(Token::RBrace);
+                push_token(
+                    tokens,
+                    Token::RBrace,
+                    line_offset + start,
+                    line_offset + start + 1,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
                 *paren_depth -= 1;
             }
             '#' => {
@@ -607,6 +968,10 @@ fn tokenize_line(line: &str, tokens: &mut Vec<Token>, paren_depth: &mut i32) -> 
     }
 
     Ok(())
+}
+
+fn column_from_byte(line: &str, byte_index: usize, column_offset: usize) -> usize {
+    column_offset + line[..byte_index].chars().count() + 1
 }
 
 fn strip_minecraft_inline_comment(command: &str) -> &str {
@@ -654,4 +1019,57 @@ fn strip_minecraft_inline_comment(command: &str) -> &str {
     }
 
     command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spanned_tokens_preserve_existing_token_sequence() {
+        let source = "def main():\n    x = -1\n    /say hi # comment\n";
+        let plain = tokenize(source).unwrap();
+        let spanned = tokenize_spanned(source)
+            .unwrap()
+            .into_iter()
+            .map(|token| token.token)
+            .collect::<Vec<_>>();
+
+        assert_eq!(plain, spanned);
+    }
+
+    #[test]
+    fn spanned_tokens_report_byte_range_line_and_column() {
+        let source = "def main():\n    /say hi # comment\n";
+        let tokens = tokenize_spanned(source).unwrap();
+
+        let def = &tokens[0];
+        assert_eq!(def.token, Token::Def);
+        assert_eq!(def.span, SourceSpan::new(0, 3, 1, 1));
+
+        let command = tokens
+            .iter()
+            .find(|token| matches!(token.token, Token::MinecraftCommand(_)))
+            .unwrap();
+        assert_eq!(command.token, Token::MinecraftCommand("say hi".to_string()));
+        assert_eq!(command.span, SourceSpan::new(16, 23, 2, 5));
+    }
+
+    #[test]
+    fn spanned_tokens_account_for_crlf_byte_offsets() {
+        let source = "x = 1\r\nabc = 2\n";
+        let tokens = tokenize_spanned(source).unwrap();
+
+        let abc = tokens
+            .iter()
+            .find(|token| token.token == Token::Ident("abc".to_string()))
+            .unwrap();
+        assert_eq!(abc.span, SourceSpan::new(7, 10, 2, 1));
+
+        let two = tokens
+            .iter()
+            .find(|token| token.token == Token::Number("2".to_string()))
+            .unwrap();
+        assert_eq!(two.span, SourceSpan::new(13, 14, 2, 7));
+    }
 }

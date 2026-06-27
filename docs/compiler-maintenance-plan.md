@@ -27,6 +27,9 @@ Target contract:
 Migration phases:
 
 1. Add span-capable token/parser plumbing while keeping existing AST fields.
+   `SourceSpan`, `SpannedToken`, and `tokenize_spanned` now provide byte
+   range, line, and column data without changing the existing `tokenize`/parser
+   API.
 2. Add spans to `Statement`, `Expression`, `Function`, and import nodes.
 3. Update diagnostics to consume spans where available.
 4. Update transpiler command/resource metadata to carry source spans.
@@ -48,14 +51,14 @@ historical modules, but they now carry enough unrelated behavior that small
 features can create broad regression risk.
 
 Current 0.9.0 hardening starts this by extracting Python compatibility helpers
-from `src/diagnostics.rs` into `src/diagnostics/python_compat.rs`.
+from `src/diagnostics.rs` into `src/diagnostics/python_compat.rs` and
+diagnostic reporting types/formatting into `src/diagnostics/reporting.rs`.
 
 Next extraction targets:
 
 - `diagnostics/imports.rs`: import graph loading, cycle/depth checks, and
   missing-symbol help.
 - `diagnostics/symbols.rs`: symbol collection and duplicate-name checks.
-- `diagnostics/formatting.rs`: source snippets and compact/human formatting.
 - `transpiler/functions.rs`: function registration, current function state, and
   command metadata insertion.
 - `transpiler/resources.rs`: data-pack/resource-pack declarations and manifest

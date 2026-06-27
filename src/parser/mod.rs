@@ -8,4 +8,4 @@ mod combinators;
 
 // Re-export public API
 pub use combinators::{parse, token_parser};
-pub use tokenizer::{tokenize, Token};
+pub use tokenizer::{tokenize, tokenize_spanned, SpannedToken, Token};

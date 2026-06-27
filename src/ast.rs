@@ -1,5 +1,24 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SourceSpan {
+    pub start: usize,
+    pub end: usize,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl SourceSpan {
+    pub fn new(start: usize, end: usize, line: usize, column: usize) -> Self {
+        Self {
+            start,
+            end: end.max(start),
+            line: line.max(1),
+            column: column.max(1),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Program {
     pub imports: Vec<Import>,
