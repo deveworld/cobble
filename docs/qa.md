@@ -96,6 +96,20 @@ Running `cobble check examples` treats the whole gallery as one project and is
 expected to reject duplicate names such as `init` or `tick` across unrelated
 examples.
 
+## Web Compiler Metadata
+
+The web home page reads `web/lib/compilerMetadata.ts`. Keep that file generated
+from `Cargo.toml` and `src/pack_format.rs` instead of editing it by hand:
+
+```bash
+npm --prefix web run sync:metadata
+npm --prefix web run check:metadata
+```
+
+`npm --prefix web run lint` checks the committed metadata before building the
+WASM package, so version, Minecraft target, and pack-format drift fails during
+the web gate.
+
 ## Focused 0.7.3 Workflow QA
 
 These scripts run the workflow-specific checks added for the 0.7.3 line. They
