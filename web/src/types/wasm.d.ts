@@ -17,6 +17,11 @@ declare module "@/src/wasm/pkg/cobble_web_wasm.js" {
     file_count: number;
   };
 
+  export type CompilerMetadata = {
+    pack_format: string;
+    minecraft_version: string;
+  };
+
   export type CompileDiagnostic = {
     file: string;
     line: number;
@@ -25,6 +30,7 @@ declare module "@/src/wasm/pkg/cobble_web_wasm.js" {
     kind: string;
     message: string;
     help?: string | null;
+    suggested_cobble_alternative?: string | null;
     formatted: string;
   };
 
@@ -38,6 +44,7 @@ declare module "@/src/wasm/pkg/cobble_web_wasm.js" {
       enabled: boolean;
       mode: string;
       supported_constructs: string[];
+      observed_constructs: string[];
       unsupported_detected: CompileDiagnostic[];
     };
   };
@@ -53,4 +60,6 @@ declare module "@/src/wasm/pkg/cobble_web_wasm.js" {
     experimentalResourcePack?: boolean | null,
     experimentalPythonCompat?: boolean | null
   ): CompileResponse;
+
+  export function compiler_metadata(): CompilerMetadata;
 }

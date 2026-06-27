@@ -32,7 +32,7 @@ enum Commands {
         #[arg(long)]
         pack_format: Option<String>,
 
-        /// Project template: minimal, stdlib, validation, resource-heavy, game-mechanic, or web-demo
+        /// Project template: minimal, stdlib, validation, resource-heavy, game-mechanic, web-demo, or plugin-diagnostics
         #[arg(long, default_value = "stdlib")]
         template: String,
 

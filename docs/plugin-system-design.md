@@ -5,10 +5,11 @@ Status: 0.9.0 experimental implementation contract.
 The 0.9.0 plugin system is an opt-in experiment. It exists to test extension
 points before 1.0, not to freeze a stable plugin API.
 
-The default experiment is diagnostics-only and read-only. A plugin can inspect
-project metadata and source text and return diagnostics. It cannot mutate the
-AST, write generated resources, run shell commands, open network connections,
-or modify files.
+The default experiment is diagnostics-only and read-only. In 0.9.0, Cobble
+parses project plugin manifests and can evaluate Cobble-owned declarative lint
+rules requested by those manifests. Project-supplied plugin code is not loaded
+or executed, and plugin manifests cannot mutate the AST, write generated
+resources, run shell commands, open network connections, or modify files.
 
 ## Goals
 
@@ -33,6 +34,7 @@ CLI flag or config opt-in:
 
 ```bash
 cobble check --experimental-plugins
+cobble init --template plugin-diagnostics
 ```
 
 The 0.9.0 config flag enables only the built-in host skeleton:
@@ -43,9 +45,10 @@ plugins = true
 ```
 
 Project config alone must not enable executable plugins. The 0.9.0 flag can
-parse draft manifests from `plugins/*.toml` in read-only mode, but it does not
-execute project-supplied code. If any future plugin prototype can execute local
-code, the CLI must require an explicit user action in the current invocation.
+parse draft manifests from `plugins/*.toml` in read-only mode and evaluate
+Cobble-owned declarative diagnostics rules, but it does not execute
+project-supplied code. If any future plugin prototype can execute local code,
+the CLI must require an explicit user action in the current invocation.
 
 ## Prototype Manifest
 
@@ -55,6 +58,14 @@ The manifest format is a draft and may change before 1.0.
 plugin_version = 1
 name = "example_lints"
 kind = "diagnostics"
+description = "Example diagnostics-only lint manifest"
+minimum_cobble_version = "0.9.0"
+diagnostic_rules = [
+  "example_lints.no_tellraw",
+  "example_lints.no_raw_op",
+  "example_lints.no_gamemode_creative",
+  "example_lints.max_raw_command_length",
+]
 
 [capabilities]
 read_project_metadata = true
@@ -63,11 +74,33 @@ emit_diagnostics = true
 ```
 
 The host must reject manifests that request unknown capabilities. Capability
-checks should be deny-by-default.
+checks should be deny-by-default. Draft metadata fields are read-only:
+`description`, `minimum_cobble_version`, and `diagnostic_rules` are reported by
+`check --json`. Supported `diagnostic_rules` are interpreted by Cobble as
+declarative built-in lints and do not cause plugin code to run.
 
 Cobble discovers draft manifests at `plugins/*.toml` relative to the project
 configuration directory. Discovery does not recurse and refuses symlinked
 manifest directories or manifest files.
+The `plugin-diagnostics` init template creates a read-only example manifest at
+`plugins/example_lints.toml` and enables `[experimental] plugins = true` so
+`cobble check` can exercise manifest parsing without running plugin code.
+
+## Declarative Rules
+
+0.9.0 supports a small set of example declarative diagnostics rules:
+
+| Rule | Behavior |
+| ---- | -------- |
+| `example_lints.no_tellraw` | Warns on raw `/tellraw` commands. |
+| `example_lints.no_raw_op` | Warns on raw `/op` commands. |
+| `example_lints.no_gamemode_creative` | Warns on commands that switch players into creative mode. |
+| `example_lints.max_raw_command_length` | Warns on raw command lines longer than 120 characters. |
+
+When declared by a diagnostics manifest with `read_source_text` and
+`emit_diagnostics`, Cobble checks source text and emits experimental plugin
+warnings. Unknown safe rule ids are skipped with a warning. These rules are
+implemented inside Cobble; manifest files cannot provide executable rule code.
 
 ## Diagnostics Contract
 
@@ -77,7 +110,7 @@ core Cobble diagnostics.
 Human output should include:
 
 ```text
-warning: experimental plugin example_lints reported custom-rule
+warning: experimental plugin example_lints reported declarative-rule
 ```
 
 `check --json` should include a stable wrapper shape even while the plugin API
@@ -87,7 +120,7 @@ is experimental:
 {
   "kind": "experimental-plugin-diagnostic",
   "plugin": "example_lints",
-  "plugin_kind": "custom-rule",
+  "plugin_kind": "declarative-rule",
   "severity": "warning",
   "message": "..."
 }
@@ -114,6 +147,8 @@ validation:
   `[experimental] plugins = true`.
 - A no-execution built-in host diagnostic that proves the JSON wrapper shape.
 - Read-only parsing of `plugins/*.toml` draft manifests.
+- Cobble-owned declarative diagnostics rule evaluation for
+  the `example_lints.*` rule slice.
 - Manifest diagnostics for unsupported versions, unsupported kinds, unknown
   capabilities, malformed TOML, and symlinked manifest paths.
 - JSON output shape for plugin diagnostics.

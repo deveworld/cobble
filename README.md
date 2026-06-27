@@ -123,7 +123,7 @@ Copy the generated output to your world's `datapacks` directory:
 | `cobble fmt --diff` | Preview formatter changes without writing files |
 | `cobble doctor` | Inspect project and validation environment status |
 | `cobble doctor --json` | Emit machine-readable project health status |
-| `cobble migrate` | Scan a project and report an experimental 0.8 to 0.9 migration plan without rewriting files |
+| `cobble migrate` | Scan a project and report/apply supported experimental 0.8 to 0.9 config migrations |
 | `cobble clean` | Remove marked Cobble-generated output |
 | `cobble link` | Configure a local datapacks target |
 | `cobble inspect` | Summarize generated build metadata |
@@ -175,6 +175,12 @@ npm run dev
 - [Language Reference](https://github.com/deveworld/cobble/blob/main/docs/language.md)
 - [CLI Documentation](https://github.com/deveworld/cobble/blob/main/docs/cli.md)
 - [API Reference](https://github.com/deveworld/cobble/blob/main/docs/api.md)
+- [0.8 to 0.9 Migration Notes](https://github.com/deveworld/cobble/blob/main/docs/migration-0.9.md)
+- [Resource Authoring Cookbook](https://github.com/deveworld/cobble/blob/main/docs/resource-authoring-cookbook.md)
+- [Resource Pack Cookbook](https://github.com/deveworld/cobble/blob/main/docs/resource-pack-cookbook.md)
+- [Plugin Diagnostics Cookbook](https://github.com/deveworld/cobble/blob/main/docs/plugin-cookbook.md)
+- [LSP Design Notes](https://github.com/deveworld/cobble/blob/main/docs/lsp-design.md)
+- [Compiler Maintenance Plan](https://github.com/deveworld/cobble/blob/main/docs/compiler-maintenance-plan.md)
 - [QA Checklist](https://github.com/deveworld/cobble/blob/main/docs/qa.md)
 - [Examples](examples/)
 - [Web Demo Source](https://github.com/deveworld/cobble/tree/main/web/)

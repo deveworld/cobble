@@ -150,6 +150,11 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     } else {
         return Err(format!("Source path does not exist: {:?}", source_path));
     };
+
+    if files_to_compile.is_empty() {
+        return Err("No Cobble files found to compile".to_string());
+    }
+
     if !options.dry_run || (options.validate && !files_to_compile.is_empty()) {
         ensure_build_output_path_safe(&output_dir)?;
     }
@@ -202,23 +207,6 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
             .map(|path| path_display_relative(path, &source_display_root))
             .collect(),
     });
-
-    if files_to_compile.is_empty() {
-        if !options.dry_run {
-            if options.validate && final_output_dir.exists() {
-                ensure_output_dir_does_not_contain_project_root(
-                    &final_output_dir,
-                    &project_root_for_marker,
-                )?;
-                ensure_replace_output_dir_safe(&final_output_dir, &namespace, &project_id)?;
-                ensure_no_symlink_descendants(&final_output_dir, "empty validated build output")?;
-            }
-            transpiler
-                .write_data_pack()
-                .map_err(|e| format!("Failed to clean data pack output: {}", e))?;
-        }
-        return Err("No Cobble files found to compile".to_string());
-    }
 
     let parsed_files = parse_source_files(&files_to_compile).map_err(|diagnostics| {
         format!(
@@ -337,6 +325,50 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         return Ok(());
     }
 
+    let asset_output_dir = if options.validate && build_output_dir != final_output_dir {
+        &build_output_dir
+    } else {
+        &final_output_dir
+    };
+    let clean_static_assets = experimental_resource_pack || !output_assets_overlap_project_assets;
+    let copied_assets = {
+        let result = (|| {
+            if clean_static_assets {
+                clean_stale_resource_pack_asset_passthrough(
+                    &previous_static_asset_paths,
+                    &current_static_asset_paths,
+                    &generated_asset_paths,
+                    asset_output_dir,
+                )?;
+            }
+            if experimental_resource_pack {
+                let copied = copy_resource_pack_asset_passthrough(
+                    &asset_passthrough_files,
+                    asset_output_dir,
+                    &generated_asset_paths,
+                )?;
+                if !current_static_asset_paths.is_empty() {
+                    write_resource_pack_static_asset_manifest(
+                        asset_output_dir,
+                        &current_static_asset_paths,
+                    )?;
+                }
+                Ok(copied)
+            } else {
+                Ok(0)
+            }
+        })();
+        match result {
+            Ok(copied) => copied,
+            Err(error) => {
+                if build_output_dir != final_output_dir {
+                    let _ = fs::remove_dir_all(&build_output_dir);
+                }
+                return Err(error);
+            }
+        }
+    };
+
     if options.validate {
         if build_output_dir != final_output_dir {
             if let Err(error) = publish_validated_output(
@@ -358,33 +390,6 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         println!("✓ Data pack generated at {:?}", final_output_dir);
     }
 
-    let clean_static_assets = experimental_resource_pack || !output_assets_overlap_project_assets;
-    let copied_assets = {
-        if clean_static_assets {
-            clean_stale_resource_pack_asset_passthrough(
-                &previous_static_asset_paths,
-                &current_static_asset_paths,
-                &generated_asset_paths,
-                &final_output_dir,
-            )?;
-        }
-        if experimental_resource_pack {
-            let copied = copy_resource_pack_asset_passthrough(
-                &asset_passthrough_files,
-                &final_output_dir,
-                &generated_asset_paths,
-            )?;
-            if !current_static_asset_paths.is_empty() {
-                write_resource_pack_static_asset_manifest(
-                    &final_output_dir,
-                    &current_static_asset_paths,
-                )?;
-            }
-            copied
-        } else {
-            0
-        }
-    };
     if copied_assets > 0 && !options.quiet {
         println!("✓ Copied {} resource-pack asset(s)", copied_assets);
     }
@@ -751,6 +756,8 @@ fn clean_publish_generated_paths(publish_dir: &Path, staging_dir: &Path) -> Resu
     let current_namespaces = read_generated_namespaces_from_output(staging_dir)?;
     let previous_asset_namespaces = read_generated_asset_namespaces_from_output(publish_dir)?;
     let current_asset_namespaces = read_generated_asset_namespaces_from_output(staging_dir)?;
+    let previous_static_assets = read_resource_pack_static_asset_manifest(publish_dir)?;
+    let current_static_assets = read_resource_pack_static_asset_manifest(staging_dir)?;
 
     remove_path_if_exists(&publish_dir.join("pack.mcmeta"))?;
     remove_path_if_exists(&publish_dir.join(".cobble"))?;
@@ -775,6 +782,13 @@ fn clean_publish_generated_paths(publish_dir: &Path, staging_dir: &Path) -> Resu
         }
         clean_generated_asset_dirs(&assets_dir.join(namespace))?;
     }
+
+    clean_stale_resource_pack_asset_passthrough(
+        &previous_static_assets,
+        &current_static_assets,
+        &HashSet::new(),
+        publish_dir,
+    )?;
 
     Ok(())
 }
@@ -2185,7 +2199,7 @@ output = "../victim/keep"
     }
 
     #[test]
-    fn build_validate_empty_source_refuses_unowned_existing_output() {
+    fn build_validate_empty_source_does_not_touch_existing_output() {
         let _guard = CWD_LOCK.lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let project_dir = temp_dir.path().join("project");
@@ -2235,10 +2249,7 @@ output = "../victim/keep"
         })
         .unwrap_err();
 
-        assert!(
-            error.contains("Refusing to replace existing output without Cobble ownership marker"),
-            "{error}"
-        );
+        assert!(error.contains("No Cobble files found"), "{error}");
         assert_eq!(
             fs::read_to_string(victim_dir.join("data/empty/function/manual.mcfunction")).unwrap(),
             "say keep\n"
@@ -2657,7 +2668,7 @@ output = "output"
     }
 
     #[test]
-    fn empty_source_directory_cleans_previous_output() {
+    fn empty_source_directory_does_not_clean_previous_output() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let source_dir = temp_dir.path().join("src");
         let output_dir = temp_dir.path().join("output");
@@ -2691,7 +2702,7 @@ output = "output"
         let error = build_once().unwrap_err();
 
         assert!(error.contains("No Cobble files found"));
-        assert!(!output_dir
+        assert!(output_dir
             .join("data/stale/function/main.mcfunction")
             .exists());
     }

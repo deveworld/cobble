@@ -345,13 +345,15 @@ web package.
 
 The 0.9.0 line widens Cobble into an authoring-platform beta. It keeps the
 0.8 gates and adds resource-pack beta checks, schema-versioned tooling JSON,
-experimental plugin/migration skeleton checks, security regressions, stdlib v3
-value helpers, and the browser ZIP/export gate.
+experimental plugin/migration checks, security regressions, stdlib v3 value
+helpers, template/watch workflow smoke tests, and the browser ZIP/export gate.
 
 ### Focused 0.9.0 Workflow QA
 
 ```bash
 scripts/qa_security_regressions.sh
+scripts/qa_07_templates.sh
+scripts/qa_07_watch_smoke.sh
 scripts/qa_08_stdlib_v2.sh
 scripts/qa_08_resource_authoring.sh
 scripts/qa_08_unrolling.sh
@@ -367,11 +369,17 @@ Additional 0.9 checks are embedded in `scripts/qa_09_release_gate.sh`:
 - `cobble check --json --symbols --experimental-plugins` keeps schema version
   1, reports the diagnostics-only experimental plugin host, and validates the
   read-only plugin manifest draft.
+- Declarative plugin rules such as `example_lints.no_tellraw` and
+  `example_lints.no_raw_op` can emit experimental diagnostics without running
+  project plugin code.
 - `cobble check --json --experimental-python-compat` reports the
-  diagnostics-only Python compatibility surface without changing compile
-  semantics.
-- `cobble migrate --json` reports the experimental 0.8 to 0.9 dry-run schema
-  without rewriting files.
+  diagnostics-only Python compatibility surface and observed supported
+  constructs without changing compile semantics.
+- `cobble migrate --json` reports the experimental 0.8 to 0.9 dry-run schema,
+  source-location review hints, and config before/after summaries without
+  rewriting files.
+- `cobble migrate --json --apply` performs only supported config-only changes,
+  writes a timestamped config backup, and preserves source files.
 - Stdlib v3 value helpers generate visible storage commands, teleport commands,
   and item modifier JSON resources without hidden load/tick behavior.
 - `examples/stdlib_v3` validates as a checked-in fixture for storage path,

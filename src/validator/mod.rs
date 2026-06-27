@@ -120,6 +120,7 @@ impl CommandValidator {
                             for (i, line) in content.lines().enumerate() {
                                 let trimmed = line.trim();
                                 if trimmed.is_empty() || trimmed.starts_with('#') {
+                                    report.commands_skipped += 1;
                                     continue;
                                 }
                                 report.commands_checked += 1;
@@ -430,7 +431,7 @@ mod tests {
         assert_eq!(report.files_checked, 1);
         assert_eq!(report.commands_checked, 2);
         assert_eq!(report.macro_commands_checked, 1);
-        assert_eq!(report.commands_skipped, 0);
+        assert_eq!(report.commands_skipped, 1);
         assert!(report.errors.is_empty());
     }
 

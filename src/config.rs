@@ -1,3 +1,4 @@
+use crate::fs_safety::write_file_atomic;
 use crate::pack_format::{COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -149,7 +150,8 @@ impl CobbleConfig {
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         let contents = toml::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        fs::write(path, contents).map_err(|e| format!("Failed to write config file: {}", e))
+        write_file_atomic(path.as_ref(), contents)
+            .map_err(|e| format!("Failed to write config file: {}", e))
     }
 
     pub fn default_with_name(name: String) -> Self {

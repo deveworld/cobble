@@ -1,7 +1,9 @@
 use super::{find_cobble_files, resolve_entry_points};
+use crate::commands::output_safety::ensure_no_symlink_components;
 use crate::config::CobbleConfig;
 use crate::diagnostics::{
-    parse_source_files, FileSourceDiagnostics, ParsedSourceFile, SourceDiagnostic,
+    parse_source_files, python_compat_observed_constructs, python_compat_suggestion_for_kind,
+    python_compat_supported_constructs, FileSourceDiagnostics, ParsedSourceFile, SourceDiagnostic,
 };
 use crate::error::report_file_source_diagnostics;
 use crate::pack_format::{PackFormat, SUPPORTED_PACK_FORMAT};
@@ -79,7 +81,16 @@ struct CheckPluginManifestReport {
     name: String,
     plugin_version: u32,
     kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_cobble_version: Option<String>,
+    diagnostic_rules: Vec<String>,
     capabilities: Vec<String>,
+    #[serde(skip)]
+    can_read_source_text: bool,
+    #[serde(skip)]
+    can_emit_diagnostics: bool,
     path: String,
 }
 
@@ -97,6 +108,7 @@ struct CheckPythonCompatReport {
     enabled: bool,
     mode: String,
     supported_constructs: Vec<String>,
+    observed_constructs: Vec<String>,
     unsupported_detected: Vec<CheckPythonCompatDiagnosticReport>,
 }
 
@@ -108,6 +120,7 @@ struct CheckPythonCompatDiagnosticReport {
     kind: String,
     message: String,
     help: Option<String>,
+    suggested_cobble_alternative: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -116,6 +129,12 @@ struct PluginManifestDraft {
     plugin_version: u32,
     name: String,
     kind: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    minimum_cobble_version: Option<String>,
+    #[serde(default)]
+    diagnostic_rules: Vec<String>,
     #[serde(default)]
     capabilities: PluginManifestCapabilities,
 }
@@ -130,6 +149,8 @@ struct PluginManifestCapabilities {
     #[serde(default)]
     emit_diagnostics: bool,
 }
+
+const MAX_PLUGIN_MANIFEST_BYTES: u64 = 64 * 1024;
 
 pub fn check(options: CheckOptions) -> Result<(), String> {
     if options.symbols && !options.json {
@@ -168,7 +189,7 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
             .as_ref()
             .map(|cfg| cfg.experimental.python_compat)
             .unwrap_or(false);
-    let plugin_report = plugin_report(experimental_plugins, &config_dir);
+    let mut plugin_report = plugin_report(experimental_plugins, &config_dir);
 
     // Determine source path
     let source_path = if let Some(ref input_path) = options.input {
@@ -216,12 +237,13 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                 experimental_plugins: plugin_report,
                 experimental_python_compat: python_compat_report_success(
                     experimental_python_compat,
+                    Vec::new(),
                 ),
             })?;
         } else {
             println!("No Cobble files found to check");
             print_python_compat_report_human(
-                python_compat_report_success(experimental_python_compat).as_ref(),
+                python_compat_report_success(experimental_python_compat, Vec::new()).as_ref(),
             );
             print_plugin_report_human(plugin_report.as_ref());
         }
@@ -245,6 +267,13 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                 .iter()
                 .map(|file| file.diagnostics.len())
                 .sum::<usize>();
+            apply_declarative_plugin_rules(
+                plugin_report.as_mut(),
+                file_diagnostics
+                    .iter()
+                    .map(|file| (file.path.as_path(), file.source.as_str())),
+                &config_dir,
+            );
             let plugin_errors = plugin_error_count(plugin_report.as_ref());
             if options.json {
                 print_check_json(&CheckReport {
@@ -264,6 +293,7 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                     experimental_python_compat: python_compat_report_from_diagnostics(
                         experimental_python_compat,
                         &file_diagnostics,
+                        observed_constructs_from_diagnostics(&file_diagnostics),
                         &config_dir,
                     ),
                 })?;
@@ -287,6 +317,7 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                     python_compat_report_from_diagnostics(
                         experimental_python_compat,
                         &file_diagnostics,
+                        observed_constructs_from_diagnostics(&file_diagnostics),
                         &config_dir,
                     )
                     .as_ref(),
@@ -301,6 +332,13 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
     };
 
     let files = check_file_reports(&files_to_check, &parsed_files, &config_dir);
+    apply_declarative_plugin_rules(
+        plugin_report.as_mut(),
+        parsed_files
+            .iter()
+            .map(|file| (file.path.as_path(), file.source.as_str())),
+        &config_dir,
+    );
     let semantic_diagnostics = semantic_check_diagnostics(
         &files_to_check,
         &parsed_files,
@@ -332,6 +370,7 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                 experimental_python_compat: python_compat_report_from_diagnostics(
                     experimental_python_compat,
                     &semantic_diagnostics,
+                    observed_constructs_from_parsed(&parsed_files),
                     &config_dir,
                 ),
             })?;
@@ -347,6 +386,7 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                 python_compat_report_from_diagnostics(
                     experimental_python_compat,
                     &semantic_diagnostics,
+                    observed_constructs_from_parsed(&parsed_files),
                     &config_dir,
                 )
                 .as_ref(),
@@ -375,7 +415,10 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                 options.symbols,
             ),
             experimental_plugins: plugin_report,
-            experimental_python_compat: python_compat_report_success(experimental_python_compat),
+            experimental_python_compat: python_compat_report_success(
+                experimental_python_compat,
+                observed_constructs_from_parsed(&parsed_files),
+            ),
         })?;
         return if plugin_errors == 0 {
             Ok(())
@@ -397,7 +440,11 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
     println!();
     println!("✓ All files passed validation!");
     print_python_compat_report_human(
-        python_compat_report_success(experimental_python_compat).as_ref(),
+        python_compat_report_success(
+            experimental_python_compat,
+            observed_constructs_from_parsed(&parsed_files),
+        )
+        .as_ref(),
     );
     print_plugin_report_human(plugin_report.as_ref());
 
@@ -600,11 +647,15 @@ fn find_for_loop_location(source: &str) -> Option<(usize, usize)> {
     })
 }
 
-fn python_compat_report_success(enabled: bool) -> Option<CheckPythonCompatReport> {
+fn python_compat_report_success(
+    enabled: bool,
+    observed_constructs: Vec<String>,
+) -> Option<CheckPythonCompatReport> {
     enabled.then(|| CheckPythonCompatReport {
         enabled: true,
         mode: "diagnostics-only".to_string(),
         supported_constructs: python_compat_supported_constructs(),
+        observed_constructs,
         unsupported_detected: Vec::new(),
     })
 }
@@ -612,6 +663,7 @@ fn python_compat_report_success(enabled: bool) -> Option<CheckPythonCompatReport
 fn python_compat_report_from_diagnostics(
     enabled: bool,
     file_diagnostics: &[FileSourceDiagnostics],
+    observed_constructs: Vec<String>,
     config_dir: &Path,
 ) -> Option<CheckPythonCompatReport> {
     if !enabled {
@@ -633,6 +685,11 @@ fn python_compat_report_from_diagnostics(
                     kind: diagnostic.kind.clone(),
                     message: diagnostic.message.clone(),
                     help: diagnostic.help.clone(),
+                    suggested_cobble_alternative: python_compat_suggestion_for_kind(
+                        &diagnostic.kind,
+                        &diagnostic.message,
+                        diagnostic.help.as_deref(),
+                    ),
                 })
         })
         .collect();
@@ -641,12 +698,29 @@ fn python_compat_report_from_diagnostics(
         enabled: true,
         mode: "diagnostics-only".to_string(),
         supported_constructs: python_compat_supported_constructs(),
+        observed_constructs,
         unsupported_detected,
     })
 }
 
-fn python_compat_supported_constructs() -> Vec<String> {
-    vec!["pass statement as an explicit no-op".to_string()]
+fn observed_constructs_from_diagnostics(file_diagnostics: &[FileSourceDiagnostics]) -> Vec<String> {
+    observed_constructs(file_diagnostics.iter().map(|file| file.source.as_str()))
+}
+
+fn observed_constructs_from_parsed(parsed_files: &[ParsedSourceFile]) -> Vec<String> {
+    observed_constructs(parsed_files.iter().map(|file| file.source.as_str()))
+}
+
+fn observed_constructs<'a>(sources: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut observed = std::collections::HashSet::new();
+    for source in sources {
+        observed.extend(python_compat_observed_constructs(source));
+    }
+
+    python_compat_supported_constructs()
+        .into_iter()
+        .filter(|construct| observed.contains(construct))
+        .collect()
 }
 
 fn is_python_compat_diagnostic(diagnostic: &SourceDiagnostic) -> bool {
@@ -679,6 +753,12 @@ fn plugin_report(enabled: bool, project_root: &Path) -> Option<CheckPluginReport
     };
 
     let plugins_dir = project_root.join("plugins");
+    if let Err(error) = ensure_no_symlink_components(&plugins_dir, "inspect plugin manifests") {
+        report
+            .diagnostics
+            .push(plugin_host_diagnostic("manifest-safety", "error", error));
+        return Some(report);
+    }
     match fs::symlink_metadata(&plugins_dir) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             report.diagnostics.push(plugin_host_diagnostic(
@@ -721,7 +801,7 @@ fn plugin_report(enabled: bool, project_root: &Path) -> Option<CheckPluginReport
         report.diagnostics.push(plugin_host_diagnostic(
             "host-skeleton",
             "warning",
-            "Experimental plugin manifests were parsed in read-only mode; execution is not implemented, so no plugins were run.".to_string(),
+            "Experimental plugin manifests were parsed in read-only mode; plugin code execution is not implemented.".to_string(),
         ));
     }
 
@@ -774,6 +854,15 @@ fn inspect_plugin_manifest_dir(plugins_dir: &Path, report: &mut CheckPluginRepor
 }
 
 fn inspect_plugin_manifest(manifest_path: &Path, report: &mut CheckPluginReport) {
+    if let Err(error) = ensure_no_symlink_components(manifest_path, "inspect plugin manifest") {
+        report.diagnostics.push(plugin_manifest_diagnostic(
+            manifest_path,
+            "manifest-safety",
+            "error",
+            error,
+        ));
+        return;
+    }
     match fs::symlink_metadata(manifest_path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             report.diagnostics.push(plugin_manifest_diagnostic(
@@ -801,6 +890,31 @@ fn inspect_plugin_manifest(manifest_path: &Path, report: &mut CheckPluginReport)
                 "manifest-safety",
                 "error",
                 format!("Failed to inspect experimental plugin manifest: {error}"),
+            ));
+            return;
+        }
+    }
+
+    match fs::metadata(manifest_path) {
+        Ok(metadata) if metadata.len() > MAX_PLUGIN_MANIFEST_BYTES => {
+            report.diagnostics.push(plugin_manifest_diagnostic(
+                manifest_path,
+                "manifest-read",
+                "error",
+                format!(
+                    "Refusing to read experimental plugin manifest larger than {} bytes.",
+                    MAX_PLUGIN_MANIFEST_BYTES
+                ),
+            ));
+            return;
+        }
+        Ok(_) => {}
+        Err(error) => {
+            report.diagnostics.push(plugin_manifest_diagnostic(
+                manifest_path,
+                "manifest-read",
+                "error",
+                format!("Failed to inspect experimental plugin manifest size: {error}"),
             ));
             return;
         }
@@ -835,7 +949,7 @@ fn inspect_plugin_manifest(manifest_path: &Path, report: &mut CheckPluginReport)
     if let Err(error) = validate_plugin_manifest(&manifest) {
         report.diagnostics.push(CheckPluginDiagnosticReport {
             kind: "experimental-plugin-diagnostic".to_string(),
-            plugin: manifest.name,
+            plugin: rejected_manifest_plugin_id(manifest_path, &manifest.name),
             plugin_kind: "manifest-draft".to_string(),
             severity: "error".to_string(),
             message: format!(
@@ -861,9 +975,165 @@ fn inspect_plugin_manifest(manifest_path: &Path, report: &mut CheckPluginReport)
         name: manifest.name,
         plugin_version: manifest.plugin_version,
         kind: manifest.kind,
+        description: manifest.description,
+        minimum_cobble_version: manifest.minimum_cobble_version,
+        diagnostic_rules: manifest.diagnostic_rules,
         capabilities: enabled_plugin_capabilities(&manifest.capabilities),
+        can_read_source_text: manifest.capabilities.read_source_text,
+        can_emit_diagnostics: manifest.capabilities.emit_diagnostics,
         path: path_display(manifest_path),
     });
+}
+
+fn apply_declarative_plugin_rules<'a>(
+    report: Option<&mut CheckPluginReport>,
+    sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
+    config_dir: &Path,
+) {
+    let Some(report) = report else {
+        return;
+    };
+
+    let manifest_rules = report
+        .manifests
+        .iter()
+        .flat_map(|manifest| {
+            manifest.diagnostic_rules.iter().map(|rule| {
+                (
+                    manifest.name.clone(),
+                    manifest.can_read_source_text,
+                    manifest.can_emit_diagnostics,
+                    rule.clone(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if manifest_rules.is_empty() {
+        return;
+    }
+
+    let sources = sources.into_iter().collect::<Vec<_>>();
+    for (plugin, can_read_source_text, can_emit_diagnostics, rule) in manifest_rules {
+        if !can_read_source_text || !can_emit_diagnostics {
+            report.diagnostics.push(CheckPluginDiagnosticReport {
+                kind: "experimental-plugin-diagnostic".to_string(),
+                plugin,
+                plugin_kind: "declarative-rule".to_string(),
+                severity: "warning".to_string(),
+                message: format!(
+                    "Experimental declarative rule {rule} requires read_source_text and emit_diagnostics capabilities; skipped."
+                ),
+            });
+            continue;
+        }
+        match rule.as_str() {
+            "example_lints.no_tellraw" => {
+                apply_line_match_rule(
+                    report,
+                    &plugin,
+                    &rule,
+                    &sources,
+                    config_dir,
+                    line_uses_tellraw,
+                    "avoid tellraw in this diagnostics profile",
+                );
+            }
+            "example_lints.no_raw_op" => {
+                apply_line_match_rule(
+                    report,
+                    &plugin,
+                    &rule,
+                    &sources,
+                    config_dir,
+                    |line| line_uses_command_word(line, "op"),
+                    "avoid raw operator-permission commands in checked source",
+                );
+            }
+            "example_lints.no_gamemode_creative" => {
+                apply_line_match_rule(
+                    report,
+                    &plugin,
+                    &rule,
+                    &sources,
+                    config_dir,
+                    line_uses_gamemode_creative,
+                    "avoid commands that switch players into creative mode",
+                );
+            }
+            "example_lints.max_raw_command_length" => {
+                apply_line_match_rule(
+                    report,
+                    &plugin,
+                    &rule,
+                    &sources,
+                    config_dir,
+                    line_has_long_raw_command,
+                    "split long raw commands or move structured JSON/resources into helpers",
+                );
+            }
+            _ => report.diagnostics.push(CheckPluginDiagnosticReport {
+                kind: "experimental-plugin-diagnostic".to_string(),
+                plugin,
+                plugin_kind: "declarative-rule".to_string(),
+                severity: "warning".to_string(),
+                message: format!(
+                    "Experimental declarative rule {rule} is not implemented in this Cobble build; skipped."
+                ),
+            }),
+        }
+    }
+}
+
+fn apply_line_match_rule(
+    report: &mut CheckPluginReport,
+    plugin: &str,
+    rule: &str,
+    sources: &[(&Path, &str)],
+    config_dir: &Path,
+    predicate: impl Fn(&str) -> bool,
+    guidance: &str,
+) {
+    for (path, source) in sources {
+        let relative_path = path.strip_prefix(config_dir).unwrap_or(path);
+        let file = path_display(relative_path);
+        for (line_index, line) in source.lines().enumerate() {
+            if !predicate(line) {
+                continue;
+            }
+            report.diagnostics.push(CheckPluginDiagnosticReport {
+                kind: "experimental-plugin-diagnostic".to_string(),
+                plugin: plugin.to_string(),
+                plugin_kind: "declarative-rule".to_string(),
+                severity: "warning".to_string(),
+                message: format!("Rule {rule} matched {file}:{}; {guidance}.", line_index + 1,),
+            });
+        }
+    }
+}
+
+fn line_uses_tellraw(line: &str) -> bool {
+    line_uses_command_word(line, "tellraw")
+}
+
+fn line_uses_command_word(line: &str, command: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with(&format!("/{command} "))
+        || line == format!("/{command}")
+        || line.contains(&format!(" run {command} "))
+        || line.ends_with(&format!(" run {command}"))
+}
+
+fn line_uses_gamemode_creative(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("/gamemode creative ")
+        || line == "/gamemode creative"
+        || line.contains(" run gamemode creative ")
+        || line.ends_with(" run gamemode creative")
+}
+
+fn line_has_long_raw_command(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with('/') && line.chars().count() > 120
 }
 
 fn validate_plugin_manifest(manifest: &PluginManifestDraft) -> Result<(), String> {
@@ -881,10 +1151,61 @@ fn validate_plugin_manifest(manifest: &PluginManifestDraft) -> Result<(), String
     if manifest.kind != "diagnostics" {
         return Err(format!(
             "unsupported plugin kind '{}'; expected 'diagnostics'",
-            manifest.kind
+            escape_diagnostic_field(&manifest.kind)
         ));
     }
+    if let Some(description) = &manifest.description {
+        if description.len() > 280 {
+            return Err("plugin description must be at most 280 bytes".to_string());
+        }
+        if description.chars().any(char::is_control) {
+            return Err("plugin description cannot contain control characters".to_string());
+        }
+    }
+    if let Some(version) = &manifest.minimum_cobble_version {
+        if !is_safe_plugin_version_requirement(version) {
+            return Err(
+                "minimum_cobble_version must be an ASCII version requirement up to 64 bytes"
+                    .to_string(),
+            );
+        }
+    }
+    if manifest.diagnostic_rules.len() > 64 {
+        return Err("diagnostic_rules can list at most 64 rule identifiers".to_string());
+    }
+    for rule in &manifest.diagnostic_rules {
+        if !is_safe_plugin_rule_id(rule) {
+            return Err(
+                "diagnostic rule identifiers must contain only lowercase letters, digits, '.', '_', or '-'"
+                    .to_string(),
+            );
+        }
+    }
     Ok(())
+}
+
+fn rejected_manifest_plugin_id(manifest_path: &Path, manifest_name: &str) -> String {
+    if is_safe_plugin_name(manifest_name) {
+        manifest_name.to_string()
+    } else {
+        path_display(manifest_path)
+    }
+}
+
+fn escape_diagnostic_field(value: &str) -> String {
+    value.chars().flat_map(char::escape_default).collect()
+}
+
+fn escape_human_diagnostic_field(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
 }
 
 fn enabled_plugin_capabilities(capabilities: &PluginManifestCapabilities) -> Vec<String> {
@@ -905,6 +1226,26 @@ fn is_safe_plugin_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().all(|ch| {
             ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-')
+        })
+}
+
+fn is_safe_plugin_rule_id(rule: &str) -> bool {
+    !rule.is_empty()
+        && rule.len() <= 64
+        && rule.chars().all(|ch| {
+            ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-')
+        })
+}
+
+fn is_safe_plugin_version_requirement(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= 64
+        && version.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '.' | '-' | '_' | '+' | '^' | '~' | '<' | '>' | '=' | ' ' | ','
+                )
         })
 }
 
@@ -945,7 +1286,10 @@ fn print_plugin_report_human(report: Option<&CheckPluginReport>) {
     for diagnostic in &report.diagnostics {
         println!(
             "{}: experimental plugin {} reported {}: {}",
-            diagnostic.severity, diagnostic.plugin, diagnostic.plugin_kind, diagnostic.message
+            escape_human_diagnostic_field(&diagnostic.severity),
+            escape_human_diagnostic_field(&diagnostic.plugin),
+            escape_human_diagnostic_field(&diagnostic.plugin_kind),
+            escape_human_diagnostic_field(&diagnostic.message)
         );
     }
 }
@@ -972,6 +1316,12 @@ fn print_python_compat_report_human(report: Option<&CheckPythonCompatReport>) {
         report.mode,
         report.supported_constructs.join(", ")
     );
+    if !report.observed_constructs.is_empty() {
+        println!(
+            "warning: experimental Python compatibility observed supported constructs: {}",
+            report.observed_constructs.join(", ")
+        );
+    }
     if !report.unsupported_detected.is_empty() {
         println!(
             "warning: experimental Python compatibility detected {} unsupported construct(s); these remain errors",

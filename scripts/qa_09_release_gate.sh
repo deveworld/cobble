@@ -30,6 +30,22 @@ if not eval(expression, {}, {"data": data}):
 PY
 }
 
+json_value() {
+  local file="$1"
+  local expression="$2"
+  python3 - "$file" "$expression" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+expression = sys.argv[2]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+value = eval(expression, {}, {"data": data})
+print(value)
+PY
+}
+
 package_args=(--locked)
 if [[ "${COBBLE_QA_ALLOW_DIRTY:-}" == "1" ]]; then
   package_args+=(--allow-dirty)
@@ -47,10 +63,13 @@ if [[ "$version_output" != *"0.9.0"* ]]; then
   echo "Expected cobble --version to report 0.9.0, got: $version_output" >&2
   exit 1
 fi
+run node scripts/check_web_metadata.mjs
 
 echo
 echo "== Examples, security, and focused authoring QA =="
 run scripts/check_examples.sh
+run scripts/qa_07_templates.sh
+run scripts/qa_07_watch_smoke.sh
 run scripts/qa_security_regressions.sh
 run scripts/qa_08_stdlib_v2.sh
 run scripts/qa_08_resource_authoring.sh
@@ -109,7 +128,7 @@ cargo run --locked --quiet -- check examples/26_smoke --json --symbols --experim
 assert_json_field \
   "check schema and experimental tooling skeletons" \
   "$check_json" \
-  'data["schema_version"] == 1 and data["ok"] is True and data["experimental_plugins"]["enabled"] is True and data["experimental_python_compat"]["enabled"] is True and data["experimental_python_compat"]["mode"] == "diagnostics-only"'
+  'data["schema_version"] == 1 and data["ok"] is True and data["experimental_plugins"]["enabled"] is True and data["experimental_python_compat"]["enabled"] is True and data["experimental_python_compat"]["mode"] == "diagnostics-only" and "def functions with Cobble-compatible bodies" in data["experimental_python_compat"]["observed_constructs"]'
 
 plugin_project="$work_dir/plugin-project"
 mkdir -p "$plugin_project/src" "$plugin_project/plugins"
@@ -128,12 +147,21 @@ entry_points = []
 TOML
 cat >"$plugin_project/src/main.cbl" <<'CBL'
 def main():
-    /say plugin manifest
+    /tellraw @a {"text":"plugin manifest"}
+    /op @s
 CBL
 cat >"$plugin_project/plugins/example_lints.toml" <<'TOML'
 plugin_version = 1
 name = "example_lints"
 kind = "diagnostics"
+description = "QA 0.9 declarative lint fixture"
+minimum_cobble_version = "0.9.0"
+diagnostic_rules = [
+  "example_lints.no_tellraw",
+  "example_lints.no_raw_op",
+  "example_lints.no_gamemode_creative",
+  "example_lints.max_raw_command_length",
+]
 
 [capabilities]
 read_project_metadata = true
@@ -144,9 +172,9 @@ plugin_manifest_json="$work_dir/check.plugin-manifest.json"
 echo "+ cargo run --locked --quiet -- check $plugin_project --json --experimental-plugins"
 cargo run --locked --quiet -- check "$plugin_project" --json --experimental-plugins >"$plugin_manifest_json"
 assert_json_field \
-  "plugin manifest draft schema" \
+  "plugin manifest draft schema and declarative rules" \
   "$plugin_manifest_json" \
-  'data["schema_version"] == 1 and data["ok"] is True and data["experimental_plugins"]["manifests_checked"] == 1 and data["experimental_plugins"]["manifests"][0]["name"] == "example_lints" and "emit_diagnostics" in data["experimental_plugins"]["manifests"][0]["capabilities"]'
+  'data["schema_version"] == 1 and data["ok"] is True and data["experimental_plugins"]["manifests_checked"] == 1 and data["experimental_plugins"]["manifests"][0]["name"] == "example_lints" and data["experimental_plugins"]["manifests"][0]["minimum_cobble_version"] == "0.9.0" and "example_lints.no_tellraw" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "example_lints.no_raw_op" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "emit_diagnostics" in data["experimental_plugins"]["manifests"][0]["capabilities"] and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_tellraw" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"]) and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_raw_op" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"])'
 
 migrate_json="$work_dir/migrate.json"
 echo "+ cargo run --locked --quiet -- migrate examples/resource_pack --json"
@@ -155,6 +183,45 @@ assert_json_field \
   "migrate schema" \
   "$migrate_json" \
   'data["schema_version"] == 1 and data["ok"] is True and data["from"] == "0.8" and data["to"] == "0.9" and data["changed"] is False and data["config"]["experimental_resource_pack"] is True and data["config"]["experimental_python_compat"] is False'
+
+migrate_apply_project="$work_dir/migrate-apply-project"
+mkdir -p "$migrate_apply_project/src"
+cat >"$migrate_apply_project/cobble.toml" <<'TOML'
+[project]
+name = "qa09_migrate_apply"
+description = "QA 0.9 migration apply fixture"
+namespace = "qa09_migrate_apply"
+version = "1.0.0"
+pack_format = "81"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+
+[experimental]
+resource_pack = false
+TOML
+cat >"$migrate_apply_project/src/main.cbl" <<'CBL'
+from stdlib import resource_pack
+resource_pack.lang("en_us", {"item.qa09.example": "Example"})
+CBL
+migrate_apply_source_before="$(cat "$migrate_apply_project/src/main.cbl")"
+migrate_apply_json="$work_dir/migrate.apply.json"
+echo "+ cargo run --locked --quiet -- migrate $migrate_apply_project --json --apply"
+cargo run --locked --quiet -- migrate "$migrate_apply_project" --json --apply >"$migrate_apply_json"
+assert_json_field \
+  "migrate apply config backup" \
+  "$migrate_apply_json" \
+  'data["schema_version"] == 1 and data["ok"] is True and data["apply"] is True and data["changed"] is True and data["config"]["pack_format"] == "101.1" and data["config"]["backup_path"] is not None and any(action["id"] == "apply_config" and action["status"] == "applied" for action in data["actions"])'
+migrate_backup_path="$(json_value "$migrate_apply_json" 'data["config"]["backup_path"]')"
+test -f "$migrate_backup_path"
+grep -q 'pack_format = "81"' "$migrate_backup_path"
+grep -q 'pack_format = "101.1"' "$migrate_apply_project/cobble.toml"
+if [[ "$(cat "$migrate_apply_project/src/main.cbl")" != "$migrate_apply_source_before" ]]; then
+  echo "migrate --apply rewrote source unexpectedly" >&2
+  exit 1
+fi
 
 echo
 echo "== 0.9 validated build matrix =="

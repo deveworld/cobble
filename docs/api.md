@@ -171,8 +171,9 @@ compile_cobble(
 
 When `experimentalPythonCompat` is true, `CompileResponse` includes an
 `experimental_python_compat` object with `enabled`, `mode`,
-`supported_constructs`, and `unsupported_detected`. This mirrors
-`cobble check --experimental-python-compat`: the 0.9.0 report is
+`supported_constructs`, `observed_constructs`, and `unsupported_detected`.
+Unsupported diagnostics may include `suggested_cobble_alternative`. This
+mirrors `cobble check --experimental-python-compat`: the 0.9.0 report is
 diagnostics-only and does not change parser or transpiler behavior. The `/try`
 page exposes this option with the Python compatibility toggle and renders the
 report in the diagnostics view.
@@ -482,6 +483,7 @@ pub struct DataPack {
     pub description: String,
     pub output_dir: PathBuf,
     pub functions: HashMap<String, Vec<String>>,
+    pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
     pub tags: HashMap<String, Vec<String>>,
     pub advancements: HashMap<String, String>,
     pub loot_tables: HashMap<String, String>,
@@ -489,11 +491,24 @@ pub struct DataPack {
     pub predicates: HashMap<String, String>,
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
-    pub command_metadata: HashMap<String, HashMap<usize, GeneratedCommand>>,
+    pub json_resource_origins: HashMap<String, Vec<SourceLocation>>,
+    pub resource_pack_models: HashMap<String, String>,
+    pub resource_pack_langs: HashMap<String, String>,
+    pub resource_pack_static_assets: HashSet<String>,
+    pub resource_pack_resource_origins: HashMap<String, Vec<SourceLocation>>,
     pub pack_format: PackFormat,  // Cobble currently requires 101.1
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
     pub source_display_root: Option<PathBuf>,
+    pub build_input: Option<BuildManifestInput>,
+    pub project_root: Option<String>,
+    pub project_id: Option<String>,
+    pub validation_summary: Option<BuildManifestValidation>,
+    pub stdlib_version: Option<u8>,
+    pub active_stdlib_modules: Vec<String>,
+    pub unrolled_loops: usize,
+    pub experimental_features: Vec<String>,
+    pub clean_previous_resource_pack_outputs: bool,
 }
 ```
 
@@ -536,11 +551,18 @@ pub struct BuildManifest {
     pub pack_format_text: String,
     pub namespace: String,
     pub description: String,
+    pub project_root: String,
+    pub project_id: String,
+    pub generated_at_unix_epoch_ms: u64,
     pub input: Option<BuildManifestInput>,
     pub generated_namespaces: Vec<String>,
     pub generated: BuildManifestGenerated,
     pub resources: Vec<BuildManifestResourceEntry>,
     pub validation: Option<BuildManifestValidation>,
+    pub stdlib_version: Option<u8>,
+    pub active_stdlib_modules: Vec<String>,
+    pub unrolled_loops: usize,
+    pub experimental_features: Vec<String>,
 }
 
 pub struct BuildManifestInput {
@@ -697,7 +719,8 @@ Handles the `init` command.
 Initializes a new Cobble project.
 `InitOptions::list_templates` prints the known template names and descriptions
 without creating project files. Built-in templates are `minimal`, `stdlib`,
-`validation`, `resource-heavy`, `game-mechanic`, and `web-demo`.
+`validation`, `resource-heavy`, `game-mechanic`, `web-demo`, and
+`plugin-diagnostics`.
 
 ### `commands/validate.rs`
 
@@ -734,8 +757,14 @@ defaults to the current directory. For the supported route, the command reads
 compatibility config, and language-support notes. `MigrateOptions::json` emits
 a machine-readable report with `schema_version`, `ok`, `changed`, `from`, `to`,
 `project_path`, `config`, `apply`, `source`, `diagnostics`, and `actions`.
-`MigrateOptions::apply` is required for future rewrite actions; the initial
-skeleton still leaves `changed` as `false`.
+`config.changes[]` and pack-format actions include before/after summaries.
+`source.file_details[]` includes per-file source-location review hints for
+migration-sensitive constructs.
+`MigrateOptions::apply` permits supported config-only actions such as updating
+`project.pack_format` to the 0.9 target. It does not rewrite source files or
+automatically enable experimental feature flags. Successful config writes create
+a timestamped backup next to `cobble.toml`; JSON reports the path as
+`config.backup_path`.
 
 ### `commands/clean.rs`
 
@@ -785,14 +814,17 @@ an `experimental_symbols` array derived from the same source files used by the
 diagnostic path. `CheckOptions::experimental_plugins` enables the 0.9.0
 diagnostics-only plugin host skeleton and adds an `experimental_plugins` JSON
 object. The skeleton parses draft manifests from `plugins/*.toml` in read-only
-mode, reports manifest metadata and capability requests, rejects unknown
-capabilities through experimental diagnostics, and does not execute project
-plugins.
+mode, reports manifest metadata, draft diagnostic rule ids, and capability
+requests, evaluates Cobble-owned declarative diagnostics rules, rejects unknown
+capabilities or invalid metadata through experimental diagnostics, and does not
+execute project plugin code.
 `CheckOptions::experimental_python_compat` adds an
 `experimental_python_compat` JSON object. The 0.9.0 implementation is
-diagnostics-only: it lists the deliberately supported Python-like no-op surface
-and summarizes unsupported Python-like diagnostics without changing parser or
-transpiler behavior.
+diagnostics-only: it lists the deliberately supported Python-like authoring
+surface, reports which supported constructs were observed in the checked
+sources, and summarizes unsupported Python-like diagnostics with suggested
+Cobble alternatives when available, without changing parser or transpiler
+behavior.
 
 ### `commands/watch.rs`
 

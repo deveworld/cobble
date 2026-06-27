@@ -4,6 +4,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "diagnostics/python_compat.rs"]
+mod python_compat;
+
+pub use python_compat::{
+    python_compat_observed_constructs, python_compat_suggestion_for_keyword,
+    python_compat_suggestion_for_kind, python_compat_supported_constructs,
+};
+
 // Keep diagnostics import traversal aligned with the transpiler guard so
 // preflight validation cannot recurse deeply enough to exhaust the stack.
 const MAX_IMPORT_DEPTH: usize = 50;

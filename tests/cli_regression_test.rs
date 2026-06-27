@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -301,6 +303,11 @@ python_compat = true
         "from stdlib import resource_pack\nresource_pack.lang(\"en_us\", {\"item.test\": \"Test\"})\n",
     )
     .unwrap();
+    fs::write(
+        source_dir.join("nested").join("pythonish.cbl"),
+        "class Game:\n    pass\n",
+    )
+    .unwrap();
 
     let output = cobble()
         .arg("migrate")
@@ -340,6 +347,7 @@ python_compat = true
         project_dir.join("cobble.toml").to_string_lossy().as_ref()
     );
     assert_eq!(value["config"]["source"], "cobble_src");
+    assert_eq!(value["config"]["pack_format"], "101.1");
     assert_eq!(value["config"]["stdlib_version"], 1);
     assert_eq!(value["config"]["experimental_resource_pack"], true);
     assert_eq!(value["config"]["experimental_python_compat"], true);
@@ -348,14 +356,64 @@ python_compat = true
         value["source"]["path"],
         source_dir.to_string_lossy().as_ref()
     );
-    assert_eq!(value["source"]["files_scanned"], 2);
+    assert_eq!(value["source"]["files_scanned"], 3);
     assert_eq!(
         value["source"]["files"],
-        serde_json::json!(["nested/a.cobble", "z.cbl"])
+        serde_json::json!(["nested/a.cobble", "nested/pythonish.cbl", "z.cbl"])
     );
     assert_eq!(value["source"]["resource_pack_references"], 1);
     assert_eq!(value["source"]["legacy_stdlib_import_files"], 1);
     assert_eq!(value["source"]["stdlib_module_import_files"], 1);
+    assert_eq!(value["source"]["unsupported_python_constructs"], 1);
+    assert!(value["source"]["file_details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| {
+            file["file"] == "nested/a.cobble"
+                && file["locations"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|location| {
+                        location["kind"] == "resource-pack-reference"
+                            && location["line"] == 2
+                            && location["suggested_cobble_alternative"]
+                                .as_str()
+                                .unwrap()
+                                .contains("--experimental-resource-pack")
+                    })
+        }));
+    assert!(value["source"]["file_details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| {
+            file["file"] == "nested/pythonish.cbl"
+                && file["unsupported_python_constructs"] == 1
+                && file["locations"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|location| {
+                        location["kind"] == "unsupported-python-syntax"
+                            && location["line"] == 1
+                            && location["suggested_cobble_alternative"]
+                                .as_str()
+                                .unwrap()
+                                .contains("instead of classes")
+                    })
+        }));
+    assert!(value["config"]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|change| {
+            change["field"] == "project.pack_format"
+                && change["before"] == "101.1"
+                && change["after"] == "101.1"
+                && change["status"] == "not_needed"
+        }));
     assert!(value["diagnostics"]
         .as_array()
         .unwrap()
@@ -371,11 +429,22 @@ python_compat = true
         .unwrap()
         .iter()
         .any(|diagnostic| diagnostic["code"] == "source_scan_completed"));
+    assert!(value["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == "unsupported_python_constructs"));
     assert!(value["actions"]
         .as_array()
         .unwrap()
         .iter()
         .any(|action| action["id"] == "scan_sources" && action["status"] == "scanned"));
+    assert!(value["actions"].as_array().unwrap().iter().any(|action| {
+        action["id"] == "update_pack_format"
+            && action["status"] == "not_needed"
+            && action["before"] == "101.1"
+            && action["after"] == "101.1"
+    }));
     assert!(value["actions"].as_array().unwrap().iter().any(|action| {
         action["id"] == "candidate_resource_pack_config" && action["status"] == "configured"
     }));
@@ -410,6 +479,7 @@ fn cli_migrate_json_scans_src_when_config_is_missing() {
     assert_eq!(value["changed"], false);
     assert_eq!(value["config"]["status"], "missing");
     assert_eq!(value["config"]["source"], "src");
+    assert_eq!(value["config"]["pack_format"], "101.1");
     assert_eq!(value["config"]["stdlib_version"], 2);
     assert_eq!(value["config"]["experimental_resource_pack"], false);
     assert_eq!(value["config"]["experimental_python_compat"], false);
@@ -531,15 +601,43 @@ resource_packs = true
 }
 
 #[test]
-fn cli_migrate_apply_skeleton_does_not_modify_files() {
+fn cli_migrate_apply_updates_pack_format_without_source_rewrites() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let sentinel = temp_dir.path().join("sentinel.txt");
-    fs::write(&sentinel, "keep me").unwrap();
+    let project_dir = temp_dir.path().join("migrate_apply_project");
+    let source_dir = project_dir.join("src");
+    let config_path = project_dir.join("cobble.toml");
+    let source = "from stdlib import resource_pack\nresource_pack.lang(\"en_us\", {\"item.test\": \"Test\"})\n";
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(source_dir.join("main.cbl"), source).unwrap();
+    fs::write(
+        &config_path,
+        r#"
+# preserve this project comment
+[project]
+name = "migrate_apply_project"
+description = "Migration apply fixture"
+namespace = "migrate_apply_project"
+version = "1.0.0"
+pack_format = "81"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+
+[experimental]
+resource_pack = false
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&config_path, fs::Permissions::from_mode(0o600)).unwrap();
 
     let output = cobble()
         .arg("migrate")
+        .arg(&project_dir)
         .arg("--apply")
-        .current_dir(temp_dir.path())
+        .arg("--json")
         .output()
         .unwrap();
 
@@ -552,10 +650,65 @@ fn cli_migrate_apply_skeleton_does_not_modify_files() {
         stderr.is_empty(),
         "migrate --apply should keep stderr quiet on success: {stderr}"
     );
-    assert!(stdout.contains("Mode: apply requested"));
-    assert!(stdout.contains("no automatic rewrites yet"));
-    assert!(stdout.contains("No files were changed."));
-    assert_eq!(fs::read_to_string(&sentinel).unwrap(), "keep me");
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["changed"], true);
+    assert_eq!(value["apply"], true);
+    assert_eq!(value["config"]["pack_format"], "101.1");
+    let backup_path = PathBuf::from(value["config"]["backup_path"].as_str().unwrap());
+    assert!(backup_path.exists());
+    let backup_config = fs::read_to_string(&backup_path).unwrap();
+    assert!(backup_config.contains("pack_format = \"81\""));
+    assert!(backup_config.contains("resource_pack = false"));
+    assert!(backup_config.contains("# preserve this project comment"));
+    #[cfg(unix)]
+    assert_eq!(
+        fs::metadata(&backup_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(value["actions"].as_array().unwrap().iter().any(|action| {
+        action["id"] == "update_pack_format"
+            && action["status"] == "candidate"
+            && action["before"] == "81"
+            && action["after"] == "101.1"
+    }));
+    assert!(value["actions"].as_array().unwrap().iter().any(|action| {
+        action["id"] == "apply_config"
+            && action["status"] == "applied"
+            && action["before"] == "81"
+            && action["after"] == "101.1"
+    }));
+    assert!(value["config"]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|change| {
+            change["field"] == "project.pack_format"
+                && change["before"] == "81"
+                && change["after"] == "101.1"
+                && change["status"] == "applied"
+        }));
+
+    let config = fs::read_to_string(project_dir.join("cobble.toml")).unwrap();
+    assert!(config.contains("pack_format = \"101.1\""));
+    assert!(config.contains("resource_pack = false"));
+    assert!(config.contains("# preserve this project comment"));
+    assert!(!config.contains("[stdlib]"));
+    assert!(!config.contains("python_compat = false"));
+    #[cfg(unix)]
+    assert_eq!(
+        fs::metadata(project_dir.join("cobble.toml"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(
+        fs::read_to_string(source_dir.join("main.cbl")).unwrap(),
+        source
+    );
 }
 
 #[test]
@@ -788,6 +941,7 @@ fn cli_init_lists_templates_without_creating_project_files() {
     assert!(stdout.contains("resource-heavy"));
     assert!(stdout.contains("game-mechanic"));
     assert!(stdout.contains("web-demo"));
+    assert!(stdout.contains("plugin-diagnostics"));
     assert!(!project_dir.exists());
 }
 
@@ -2118,10 +2272,40 @@ fn cli_check_json_reports_experimental_python_compat_when_enabled() {
         .unwrap()
         .iter()
         .any(|construct| construct == "pass statement as an explicit no-op"));
+    assert_eq!(
+        compat["observed_constructs"],
+        serde_json::json!([
+            "def functions with Cobble-compatible bodies",
+            "pass statement as an explicit no-op"
+        ])
+    );
     assert!(compat["unsupported_detected"]
         .as_array()
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn cli_check_human_reports_observed_python_compat_constructs() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    pass\n");
+
+    let output = cobble()
+        .arg("check")
+        .arg("--experimental-python-compat")
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --experimental-python-compat failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.is_empty());
+    assert!(stdout.contains("observed supported constructs"));
+    assert!(stdout.contains("def functions with Cobble-compatible bodies"));
+    assert!(stdout.contains("pass statement as an explicit no-op"));
 }
 
 #[test]
@@ -2149,6 +2333,13 @@ fn cli_check_json_reports_experimental_python_compat_diagnostics() {
     assert!(detected
         .iter()
         .any(|diagnostic| diagnostic["kind"] == "unsupported-python-syntax"));
+    assert!(detected.iter().any(|diagnostic| {
+        diagnostic["kind"] == "unsupported-python-syntax"
+            && diagnostic["suggested_cobble_alternative"]
+                .as_str()
+                .unwrap()
+                .contains("instead of classes")
+    }));
 }
 
 #[test]
@@ -2316,6 +2507,9 @@ entry_points = []
 plugin_version = 1
 name = "example_lints"
 kind = "diagnostics"
+description = "Example diagnostics-only lint manifest"
+minimum_cobble_version = "0.9.0"
+diagnostic_rules = ["example_lints.no_tellraw"]
 
 [capabilities]
 read_project_metadata = true
@@ -2346,6 +2540,15 @@ emit_diagnostics = true
     assert_eq!(plugins["manifests"][0]["name"], "example_lints");
     assert_eq!(plugins["manifests"][0]["plugin_version"], 1);
     assert_eq!(plugins["manifests"][0]["kind"], "diagnostics");
+    assert_eq!(
+        plugins["manifests"][0]["description"],
+        "Example diagnostics-only lint manifest"
+    );
+    assert_eq!(plugins["manifests"][0]["minimum_cobble_version"], "0.9.0");
+    assert_eq!(
+        plugins["manifests"][0]["diagnostic_rules"],
+        serde_json::json!(["example_lints.no_tellraw"])
+    );
     assert!(plugins["manifests"][0]["capabilities"]
         .as_array()
         .unwrap()
@@ -2362,6 +2565,323 @@ emit_diagnostics = true
                     .as_str()
                     .unwrap()
                     .contains("no plugin code was run")
+        }));
+}
+
+#[test]
+fn cli_check_json_runs_experimental_declarative_plugin_rules_without_plugin_code() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::create_dir_all(temp_dir.path().join("plugins")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_rule"
+description = "Plugin rule"
+namespace = "plugin_rule"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+    let long_command = format!("/say {}", "a".repeat(130));
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        format!(
+            "def main():\n    /tellraw @a {{\"text\":\"hello\"}}\n    /op @s\n    /gamemode creative @s\n    {long_command}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("plugins/example_lints.toml"),
+        r#"
+plugin_version = 1
+name = "example_lints"
+kind = "diagnostics"
+diagnostic_rules = [
+    "example_lints.no_tellraw",
+    "example_lints.no_raw_op",
+    "example_lints.no_gamemode_creative",
+    "example_lints.max_raw_command_length",
+]
+
+[capabilities]
+read_source_text = true
+emit_diagnostics = true
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json --experimental-plugins failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.is_empty());
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["error_count"], 0);
+    assert!(value["experimental_plugins"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["plugin"] == "example_lints"
+                && diagnostic["plugin_kind"] == "declarative-rule"
+                && diagnostic["severity"] == "warning"
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("main.cbl:2")
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("example_lints.no_tellraw")
+        }));
+    for rule in [
+        "example_lints.no_raw_op",
+        "example_lints.no_gamemode_creative",
+        "example_lints.max_raw_command_length",
+    ] {
+        assert!(value["experimental_plugins"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| {
+                diagnostic["plugin"] == "example_lints"
+                    && diagnostic["plugin_kind"] == "declarative-rule"
+                    && diagnostic["severity"] == "warning"
+                    && diagnostic["message"].as_str().unwrap().contains(rule)
+            }));
+    }
+}
+
+#[test]
+fn cli_check_json_skips_declarative_plugin_rules_without_required_capabilities() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::create_dir_all(temp_dir.path().join("plugins")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_rule"
+description = "Plugin rule"
+namespace = "plugin_rule"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    /tellraw @a {\"text\":\"hello\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("plugins/example_lints.toml"),
+        r#"
+plugin_version = 1
+name = "example_lints"
+kind = "diagnostics"
+diagnostic_rules = ["example_lints.no_tellraw"]
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "check --json --experimental-plugins failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.is_empty());
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let diagnostics = value["experimental_plugins"]["diagnostics"]
+        .as_array()
+        .unwrap();
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["plugin_kind"] == "declarative-rule"
+            && diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains("requires read_source_text and emit_diagnostics")
+    }));
+    assert!(!diagnostics.iter().any(|diagnostic| {
+        diagnostic["plugin_kind"] == "declarative-rule"
+            && diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains("main.cbl:2")
+    }));
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_check_json_rejects_plugin_manifests_through_symlinked_parent() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let real_project = temp_dir.path().join("real_project");
+    let symlink_project = temp_dir.path().join("symlink_project");
+    fs::create_dir_all(real_project.join("src")).unwrap();
+    fs::create_dir_all(real_project.join("plugins")).unwrap();
+    fs::write(
+        real_project.join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_symlink"
+description = "Plugin symlink"
+namespace = "plugin_symlink"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        real_project.join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+    fs::write(
+        real_project.join("plugins/example_lints.toml"),
+        r#"
+plugin_version = 1
+name = "example_lints"
+kind = "diagnostics"
+"#,
+    )
+    .unwrap();
+    symlink(&real_project, &symlink_project).unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg(&symlink_project)
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "check --json --experimental-plugins unexpectedly passed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(value["experimental_plugins"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["severity"] == "error"
+                && diagnostic["plugin_kind"] == "manifest-safety"
+                && diagnostic["message"].as_str().unwrap().contains("symlink")
+        }));
+}
+
+#[test]
+fn cli_check_json_rejects_invalid_experimental_plugin_rule_ids() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::create_dir_all(temp_dir.path().join("plugins")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_manifest"
+description = "Plugin manifest"
+namespace = "plugin_manifest"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("plugins/unsafe.toml"),
+        r#"
+plugin_version = 1
+name = "unsafe"
+kind = "diagnostics"
+diagnostic_rules = ["../outside"]
+
+[capabilities]
+emit_diagnostics = true
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "check --json --experimental-plugins unexpectedly passed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error_count"], 1);
+    assert!(value["experimental_plugins"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["severity"] == "error"
+                && diagnostic["plugin_kind"] == "manifest-draft"
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("diagnostic rule identifiers")
         }));
 }
 
@@ -2437,6 +2957,156 @@ open_network = true
                     .as_str()
                     .unwrap()
                     .contains("unknown field")
+        }));
+}
+
+#[test]
+fn cli_check_escapes_rejected_plugin_manifest_fields_in_human_output() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::create_dir_all(temp_dir.path().join("plugins")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_manifest"
+description = "Plugin manifest"
+namespace = "plugin_manifest"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+    let unsafe_name_manifest_path = temp_dir.path().join("plugins/unsafe_name.toml");
+    let unsafe_kind_manifest_path = temp_dir.path().join("plugins/unsafe_kind.toml");
+    fs::write(
+        &unsafe_name_manifest_path,
+        "plugin_version = 1\nname = \"bad\\nname\"\nkind = \"diagnostics\"\n",
+    )
+    .unwrap();
+    fs::write(
+        &unsafe_kind_manifest_path,
+        "plugin_version = 1\nname = \"bad_kind\"\nkind = \"bad\\rkind\"\n",
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "check --experimental-plugins unexpectedly passed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stderr.contains("Plugin manifest inspection failed"));
+    assert!(stdout.contains("bad\\rkind"));
+    assert!(!stdout.contains("bad\rkind"));
+    assert!(!stdout.contains("bad\nname reported"));
+    assert!(stdout.contains("unsafe_name.toml"));
+
+    let json_output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+    let (json_stdout, _) = output_text(&json_output);
+    let value: serde_json::Value = serde_json::from_str(&json_stdout).unwrap();
+    assert!(value["experimental_plugins"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["plugin"]
+                .as_str()
+                .is_some_and(|plugin| plugin.ends_with("plugins/unsafe_name.toml"))
+        }));
+    assert!(value["experimental_plugins"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["plugin"] == "bad_kind"
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("bad\\rkind")
+        }));
+}
+
+#[test]
+fn cli_check_rejects_oversized_experimental_plugin_manifest() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+    fs::create_dir_all(temp_dir.path().join("plugins")).unwrap();
+    fs::write(
+        temp_dir.path().join("cobble.toml"),
+        r#"
+[project]
+name = "plugin_manifest"
+description = "Plugin manifest"
+namespace = "plugin_manifest"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+entry_points = []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.cbl"),
+        "def main():\n    /say ok\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("plugins/huge.toml"),
+        "a".repeat(70 * 1024),
+    )
+    .unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .arg("check")
+        .arg("--json")
+        .arg("--experimental-plugins")
+        .output()
+        .unwrap();
+
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        !output.status.success(),
+        "check --json --experimental-plugins unexpectedly passed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(value["experimental_plugins"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["severity"] == "error"
+                && diagnostic["plugin_kind"] == "manifest-read"
+                && diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("larger than")
         }));
 }
 

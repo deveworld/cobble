@@ -30,7 +30,8 @@ cobble init [OPTIONS]
 - `--description <DESC>` - Set the project description
 - `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble currently requires Minecraft Java Edition 26.1.2)
 - `--template <NAME>` - Starter template: `minimal`, `stdlib`,
-  `validation`, `resource-heavy`, `game-mechanic`, or `web-demo`
+  `validation`, `resource-heavy`, `game-mechanic`, `web-demo`, or
+  `plugin-diagnostics`
   (default: `stdlib`)
 - `--list-templates` - List available templates and exit without writing files
 
@@ -39,6 +40,7 @@ cobble init [OPTIONS]
 cobble init --name my_datapack --description "My awesome data pack"
 cobble init --name smoke_pack --template validation
 cobble init --name demo_pack --template web-demo
+cobble init --name plugin_pack --template plugin-diagnostics
 cobble init --list-templates
 ```
 
@@ -206,12 +208,17 @@ that field is explicitly experimental even though the top-level JSON report has
 a stable `schema_version`. `--experimental-plugins` adds an
 `experimental_plugins` object and prints a warning in human output. The 0.9.0
 skeleton parses draft manifests from `plugins/*.toml` in read-only mode,
-reports their requested capabilities, rejects unknown manifest fields or
+reports their requested capabilities, evaluates Cobble-owned declarative
+diagnostics rules such as `example_lints.no_tellraw`,
+`example_lints.no_raw_op`, `example_lints.no_gamemode_creative`, and
+`example_lints.max_raw_command_length`, rejects unknown manifest fields or
 capabilities, and does not run project plugin code.
 `--experimental-python-compat` adds an `experimental_python_compat` object.
 The 0.9 report is diagnostics-only: it lists the small supported Python-like
-surface, currently `pass` as an explicit no-op, and echoes detected unsupported
-Python-like constructs while keeping those constructs as errors.
+authoring surface, reports which supported constructs were observed in the
+checked sources, and echoes detected unsupported Python-like constructs while
+keeping those constructs as errors. Unsupported entries include a
+`suggested_cobble_alternative` when Cobble can provide a direct rewrite hint.
 
 ### `cobble fmt`
 
@@ -291,8 +298,8 @@ metadata matches the project namespace and `project_id`.
 ### `cobble migrate`
 
 Report an experimental migration plan for moving Cobble projects between
-release tracks. This 0.9.0 experimental skeleton reports planned support for
-0.8 to 0.9 migrations; it does not rewrite project files yet.
+release tracks. This 0.9.0 experimental path supports 0.8 to 0.9 project
+inspection and a narrow config-only apply mode.
 
 ```bash
 cobble migrate [PATH] [OPTIONS]
@@ -318,17 +325,25 @@ cobble migrate --from 0.8 --to 0.9 --apply
 ```
 
 `migrate` is explicitly experimental. Dry-run/report mode is the default, and
-no files are changed unless `--apply` is supplied. The initial skeleton still
-has no automatic rewrites, so `--apply` reports that no rewrites are available
-and leaves `changed` as `false`.
+no files are changed unless `--apply` is supplied. In 0.9.0, `--apply` only
+updates supported `cobble.toml` settings such as `project.pack_format`; it does
+not rewrite source files or automatically enable experimental feature flags.
+Before writing a migrated config, Cobble creates a timestamped backup next to
+`cobble.toml` and reports the backup path in text and JSON output.
 
 JSON output is written to stdout. For the supported experimental route, the
 report inspects `cobble.toml` when present, scans `.cbl` and `.cobble` files
 under configured `[build] source` or `src`, and reports deterministic planned
-actions for config inspection, source scanning, stdlib notes, resource-pack
-and Python compatibility experimental config notes, manual step reporting, and
-skipped rewrite application. Unsupported routes skip inspection, leave
-`changed` as `false`, and exit non-zero.
+actions for config inspection, pack-format updates, source scanning, stdlib
+notes, resource-pack and Python compatibility experimental config notes, manual
+step reporting, and config-only apply. Reports also include config before/after
+change summaries and source-location details for migration-sensitive constructs
+such as `resource_pack.*`, legacy `import stdlib`, and unsupported Python-like
+syntax. Unsupported routes skip inspection, leave `changed` as `false`, and
+exit non-zero.
+
+See [`migration-0.9.md`](migration-0.9.md) for the 0.8 to 0.9 upgrade flow and
+manual review checklist.
 
 ### `cobble clean`
 

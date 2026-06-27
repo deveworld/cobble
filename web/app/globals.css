@@ -696,7 +696,7 @@ h1 {
 
 .compat-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -721,6 +721,13 @@ h1 {
   padding-left: 18px;
 }
 
+.compat-list.observed {
+  padding: 10px 10px 10px 28px;
+  border: 1px solid rgba(123, 214, 111, 0.18);
+  border-radius: 8px;
+  background: rgba(8, 20, 18, 0.28);
+}
+
 .compat-list.warning {
   color: #ffd2ca;
 }
@@ -728,6 +735,11 @@ h1 {
 .compat-list.warning li {
   display: grid;
   gap: 4px;
+}
+
+.compat-list.warning small {
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .diagnostic-empty {

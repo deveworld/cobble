@@ -2,6 +2,7 @@ use super::{find_cobble_files, output_safety::ensure_no_symlink_components};
 use crate::config::CobbleConfig;
 use crate::diagnostics::{parse_source, FileSourceDiagnostics, SourceDiagnostic};
 use crate::error::report_file_source_diagnostics;
+use crate::fs_safety::write_file_atomic;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -158,7 +159,7 @@ pub fn format(options: FmtOptions) -> Result<(), String> {
     }
 
     for candidate in &changed {
-        fs::write(&candidate.path, &candidate.formatted)
+        write_file_atomic(&candidate.path, &candidate.formatted)
             .map_err(|error| format!("Failed to write {}: {error}", candidate.path.display()))?;
         println!("Formatted {}", display_path(&candidate.path, &config_dir));
     }

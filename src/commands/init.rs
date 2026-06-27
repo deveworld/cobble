@@ -1,5 +1,6 @@
 use super::output_safety::ensure_no_symlink_components;
 use crate::config::CobbleConfig;
+use crate::fs_safety::write_file_atomic;
 use std::fs;
 use std::path::PathBuf;
 
@@ -17,7 +18,8 @@ pub fn init(options: InitOptions) -> Result<(), String> {
         return Ok(());
     }
 
-    let sample_code = sample_code_for_template(&options.template)?;
+    let template = template_for_name(&options.template)?;
+    let sample_code = template.source;
     let requested_name = options.name.clone();
     let has_name = requested_name.is_some();
     let project_name = requested_name
@@ -50,6 +52,9 @@ pub fn init(options: InitOptions) -> Result<(), String> {
 
     // Create cobble.toml
     let mut config = CobbleConfig::default_with_name(project_name);
+    if template.experimental_plugins {
+        config.experimental.plugins = true;
+    }
 
     // Apply custom description and pack_format if provided
     if let Some(desc) = options.description {
@@ -85,6 +90,10 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     for path in [&config_path, &src_dir, &main_file, &gitignore] {
         ensure_no_symlink_components(path, "initialize project")?;
     }
+    for extra_file in template.extra_files {
+        let path = project_dir.join(extra_file.path);
+        ensure_no_symlink_components(&path, "initialize project")?;
+    }
 
     if config_path.exists() {
         return Err("cobble.toml already exists".to_string());
@@ -96,7 +105,8 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     fs::create_dir_all(&src_dir).map_err(|e| format!("Failed to create src directory: {}", e))?;
 
     // Create main.cbl with sample code
-    fs::write(&main_file, sample_code).map_err(|e| format!("Failed to create main.cbl: {}", e))?;
+    write_file_atomic(&main_file, sample_code)
+        .map_err(|e| format!("Failed to create main.cbl: {}", e))?;
 
     // Create .gitignore
     let gitignore_content = r#"# Cobble output
@@ -115,8 +125,20 @@ output/
 Thumbs.db
 "#;
 
-    fs::write(&gitignore, gitignore_content)
+    write_file_atomic(&gitignore, gitignore_content)
         .map_err(|e| format!("Failed to create .gitignore: {}", e))?;
+
+    for extra_file in template.extra_files {
+        let path = project_dir.join(extra_file.path);
+        if let Some(parent) = path.parent() {
+            ensure_no_symlink_components(parent, "initialize project")?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+        }
+        write_file_atomic(&path, extra_file.content)
+            .map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
+        println!("✓ Created {}", extra_file.path);
+    }
 
     println!("✓ Created cobble.toml");
     println!("✓ Created src/main.cbl");
@@ -134,11 +156,11 @@ Thumbs.db
     Ok(())
 }
 
-fn sample_code_for_template(template: &str) -> Result<&'static str, String> {
+fn template_for_name(template: &str) -> Result<InitTemplate, String> {
     templates()
         .iter()
         .find(|candidate| candidate.name == template)
-        .map(|candidate| candidate.source)
+        .copied()
         .ok_or_else(|| {
             format!(
                 "Unknown template '{}'. Expected one of: {}",
@@ -166,6 +188,14 @@ struct InitTemplate {
     description: &'static str,
     default: bool,
     source: &'static str,
+    experimental_plugins: bool,
+    extra_files: &'static [InitExtraFile],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InitExtraFile {
+    path: &'static str,
+    content: &'static str,
 }
 
 fn templates() -> &'static [InitTemplate] {
@@ -174,6 +204,8 @@ fn templates() -> &'static [InitTemplate] {
             name: "minimal",
             description: "Small single-function pack with no imports",
             default: false,
+            experimental_plugins: false,
+            extra_files: &[],
             source: r#"def main():
     /say Hello from Cobble
 "#,
@@ -182,6 +214,8 @@ fn templates() -> &'static [InitTemplate] {
             name: "stdlib",
             description: "Event-ready starter using stdlib load and tick hooks",
             default: true,
+            experimental_plugins: false,
+            extra_files: &[],
             source: r#"import stdlib
 from stdlib import event
 
@@ -207,6 +241,8 @@ stdlib.addEventListener(event.TICK, tick)
             name: "validation",
             description: "Validation-ready pack that exercises common helpers",
             default: false,
+            experimental_plugins: false,
+            extra_files: &[],
             source: r#"import stdlib
 from stdlib import event
 
@@ -230,6 +266,8 @@ stdlib.addEventListener(event.TICK, tick)
             name: "resource-heavy",
             description: "Starter with tags, predicates, recipes, loot, and dialogs",
             default: false,
+            experimental_plugins: false,
+            extra_files: &[],
             source: r#"import stdlib
 from stdlib import event
 
@@ -266,6 +304,8 @@ stdlib.addEventListener(event.LOAD, init)
             name: "game-mechanic",
             description: "Small score loop with selectors, events, and actionbar feedback",
             default: false,
+            experimental_plugins: false,
+            extra_files: &[],
             source: r#"import stdlib
 from stdlib import event
 
@@ -287,6 +327,8 @@ stdlib.addEventListener(event.TICK, tick)
             name: "web-demo",
             description: "Compact starter matching the browser /try default sample",
             default: false,
+            experimental_plugins: false,
+            extra_files: &[],
             source: r#"def on_load():
     /tellraw @a {"text":"Cobble demo loaded","color":"green"}
     /scoreboard objectives add demo dummy
@@ -295,6 +337,35 @@ stdlib.addEventListener(event.TICK, tick)
 def reward_player():
     /give @p minecraft:diamond 1
     /title @p title {"text":"Reward unlocked","color":"aqua"}
+"#,
+        },
+        InitTemplate {
+            name: "plugin-diagnostics",
+            description: "Experimental diagnostics-only plugin manifest starter",
+            default: false,
+            experimental_plugins: true,
+            extra_files: &[InitExtraFile {
+                path: "plugins/example_lints.toml",
+                content: r#"plugin_version = 1
+name = "example_lints"
+kind = "diagnostics"
+description = "Example diagnostics-only lint manifest"
+minimum_cobble_version = "0.9.0"
+diagnostic_rules = [
+    "example_lints.no_tellraw",
+    "example_lints.no_raw_op",
+    "example_lints.no_gamemode_creative",
+    "example_lints.max_raw_command_length",
+]
+
+[capabilities]
+read_project_metadata = true
+read_source_text = true
+emit_diagnostics = true
+"#,
+            }],
+            source: r#"def main():
+    /say plugin diagnostics manifest loaded
 "#,
         },
     ]
@@ -358,6 +429,31 @@ mod tests {
         let config = fs::read_to_string(project_dir.join("cobble.toml")).unwrap();
         assert!(config.contains(r#"name = "pack_name""#));
         assert!(config.contains(r#"namespace = "pack_name""#));
+    }
+
+    #[test]
+    fn init_plugin_diagnostics_template_creates_manifest_and_enables_config() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("plugin_pack");
+
+        init(InitOptions {
+            name: Some(project_dir.display().to_string()),
+            description: None,
+            pack_format: None,
+            template: "plugin-diagnostics".to_string(),
+            list_templates: false,
+        })
+        .unwrap();
+
+        let config = fs::read_to_string(project_dir.join("cobble.toml")).unwrap();
+        assert!(config.contains("plugins = true"));
+
+        let manifest = fs::read_to_string(project_dir.join("plugins/example_lints.toml")).unwrap();
+        assert!(manifest.contains("plugin_version = 1"));
+        assert!(manifest.contains(r#""example_lints.no_tellraw""#));
+        assert!(manifest.contains(r#""example_lints.no_raw_op""#));
+        assert!(manifest.contains(r#""example_lints.no_gamemode_creative""#));
+        assert!(manifest.contains(r#""example_lints.max_raw_command_length""#));
     }
 
     #[test]

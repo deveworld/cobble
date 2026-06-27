@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use cobble::transpiler::DataPack;
@@ -1475,6 +1477,284 @@ resource_pack = true
     assert!(!names
         .iter()
         .any(|name| name == "assets/resources/textures/item/old.png"));
+}
+
+#[test]
+fn validated_resource_pack_rebuild_cleans_removed_static_assets_and_zip() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let asset_path = project_dir.join("assets/resources/textures/item/old.png");
+    let valid_commands_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("data")
+        .join("commands.json");
+    if !valid_commands_json.exists() {
+        return;
+    }
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"old").unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let build_options = |zip| cobble::commands::build::BuildOptions {
+        input: Some(source_dir.clone()),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip,
+        experimental_resource_pack: false,
+        validate: true,
+        dry_run: false,
+        commands_json: valid_commands_json.clone(),
+    };
+
+    cobble::commands::build::build(build_options(false)).unwrap();
+    assert!(output_dir
+        .join("assets/resources/textures/item/old.png")
+        .exists());
+
+    fs::remove_file(&asset_path).unwrap();
+    cobble::commands::build::build(build_options(true)).unwrap();
+
+    assert!(!output_dir
+        .join("assets/resources/textures/item/old.png")
+        .exists());
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        manifest["generated"]["resource_pack_static_assets"]
+            .as_u64()
+            .unwrap_or(0),
+        0
+    );
+
+    let zip_file = fs::File::open(project_dir.join("resources.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+    assert!(!names
+        .iter()
+        .any(|name| name == "assets/resources/textures/item/old.png"));
+}
+
+#[test]
+fn validated_resource_pack_opt_out_cleans_stale_static_assets_and_zip() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let asset_path = project_dir.join("assets/resources/textures/item/old.png");
+    let valid_commands_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("data")
+        .join("commands.json");
+    if !valid_commands_json.exists() {
+        return;
+    }
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say assets\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"old").unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let build_options = |zip| cobble::commands::build::BuildOptions {
+        input: Some(source_dir.clone()),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip,
+        experimental_resource_pack: false,
+        validate: true,
+        dry_run: false,
+        commands_json: valid_commands_json.clone(),
+    };
+
+    cobble::commands::build::build(build_options(false)).unwrap();
+    assert!(output_dir
+        .join("assets/resources/textures/item/old.png")
+        .exists());
+
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = false
+"#,
+    )
+    .unwrap();
+    cobble::commands::build::build(build_options(true)).unwrap();
+
+    assert!(!output_dir
+        .join("assets/resources/textures/item/old.png")
+        .exists());
+    assert!(!output_dir
+        .join(".cobble/static_asset_passthrough.json")
+        .exists());
+
+    let zip_file = fs::File::open(project_dir.join("resources.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+    assert!(!names
+        .iter()
+        .any(|name| name == "assets/resources/textures/item/old.png"));
+}
+
+#[cfg(unix)]
+#[test]
+fn validated_resource_pack_asset_failure_preserves_previous_output() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let asset_path = project_dir.join("assets/resources/textures/item/icon.png");
+    let valid_commands_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("data")
+        .join("commands.json");
+    if !valid_commands_json.exists() {
+        return;
+    }
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say first\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"old asset").unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "101.1"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    let build_options = || cobble::commands::build::BuildOptions {
+        input: Some(source_dir.clone()),
+        output: Some(output_dir.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: true,
+        dry_run: false,
+        commands_json: valid_commands_json.clone(),
+    };
+
+    cobble::commands::build::build(build_options()).unwrap();
+    assert_eq!(
+        fs::read_to_string(output_dir.join("data/resources/function/setup.mcfunction")).unwrap(),
+        "say first\n"
+    );
+    assert_eq!(
+        fs::read(output_dir.join("assets/resources/textures/item/icon.png")).unwrap(),
+        b"old asset"
+    );
+
+    fs::write(
+        source_dir.join("main.cbl"),
+        "def setup():\n    /say second\n",
+    )
+    .unwrap();
+    fs::write(&asset_path, b"new asset").unwrap();
+    fs::set_permissions(&asset_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let error = cobble::commands::build::build(build_options()).unwrap_err();
+    assert!(error.contains("Failed to copy resource-pack asset"));
+    assert_eq!(
+        fs::read_to_string(output_dir.join("data/resources/function/setup.mcfunction")).unwrap(),
+        "say first\n"
+    );
+    assert_eq!(
+        fs::read(output_dir.join("assets/resources/textures/item/icon.png")).unwrap(),
+        b"old asset"
+    );
 }
 
 #[test]

@@ -9,6 +9,11 @@ import {
   Terminal
 } from "lucide-react";
 import Link from "next/link";
+import {
+  COBBLE_VERSION,
+  SUPPORTED_MINECRAFT_VERSION,
+  SUPPORTED_PACK_FORMAT
+} from "@/lib/compilerMetadata";
 import { GitHubMark } from "./BrandIcons";
 import { CodeBlock } from "./SyntaxHighlighter";
 
@@ -73,14 +78,18 @@ export function CobbleHome() {
         </nav>
 
         <div className="home-hero-copy">
-          <p className="eyebrow">Minecraft Java Edition 26.1.2 · Pack Format 101.1</p>
+          <p className="eyebrow">
+            Minecraft Java Edition {SUPPORTED_MINECRAFT_VERSION} · Pack Format{" "}
+            {SUPPORTED_PACK_FORMAT}
+          </p>
           <h1>Cobble</h1>
           <p>
             A modern, Python-like language for creating Minecraft data packs with
             functions, events, resources, validation, and generated metadata.
           </p>
           <p className="release-install">
-            0.9.0 stable · Minecraft Java Edition 26.1.2
+            {COBBLE_VERSION} stable · Minecraft Java Edition{" "}
+            {SUPPORTED_MINECRAFT_VERSION}
           </p>
           <div className="hero-actions">
             <Link className="command-button hero-command" href="/try">

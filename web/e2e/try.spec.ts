@@ -78,8 +78,11 @@ test("try page exposes the experimental Python compatibility report", async ({ p
   const report = page.locator(".compat-card");
   await expect(report).toContainText("Python compatibility");
   await expect(report).toContainText("diagnostics-only");
+  await expect(report).toContainText("Observed");
+  await expect(report).toContainText("def functions with Cobble-compatible bodies");
   await expect(report).toContainText("pass statement as an explicit no-op");
   await expect(report).toContainText("unsupported-function-parameter");
+  await expect(report).toContainText("plain positional parameters");
 });
 
 test("try page diagnostic sample reports placeholder errors", async ({ page }) => {

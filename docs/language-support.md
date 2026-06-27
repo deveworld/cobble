@@ -17,9 +17,12 @@ pass for the unsupported constructs listed below when they can be detected from
 source text before parsing.
 `cobble check --experimental-python-compat` and `[experimental]
 python_compat = true` add an experimental diagnostics-only compatibility report
-to `check` output. The report currently lists `pass` as the deliberately
-supported Python-like no-op and summarizes unsupported Python-like diagnostics;
-it does not make unsupported syntax compile.
+to `check` output. The report lists the deliberately supported Python-like
+authoring surface, reports which supported constructs were observed in checked
+sources, and summarizes unsupported Python-like diagnostics; it does not make
+unsupported syntax compile. Unsupported entries include
+`suggested_cobble_alternative` when the compiler can provide a direct rewrite
+hint.
 
 ## Supported Syntax
 

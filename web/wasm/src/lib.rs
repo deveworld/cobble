@@ -44,6 +44,12 @@ struct CompileSummary {
     file_count: usize,
 }
 
+#[derive(Serialize)]
+struct CompilerMetadata {
+    pack_format: String,
+    minecraft_version: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct CompileDiagnostic {
     file: String,
@@ -53,6 +59,7 @@ struct CompileDiagnostic {
     kind: String,
     message: String,
     help: Option<String>,
+    suggested_cobble_alternative: Option<String>,
     formatted: String,
 }
 
@@ -72,12 +79,22 @@ struct CompilePythonCompatReport {
     enabled: bool,
     mode: String,
     supported_constructs: Vec<String>,
+    observed_constructs: Vec<String>,
     unsupported_detected: Vec<CompileDiagnostic>,
 }
 
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
+}
+
+#[wasm_bindgen]
+pub fn compiler_metadata() -> JsValue {
+    serde_wasm_bindgen::to_value(&CompilerMetadata {
+        pack_format: SUPPORTED_PACK_FORMAT.to_string(),
+        minecraft_version: SUPPORTED_MINECRAFT_VERSION.to_string(),
+    })
+    .unwrap_or(JsValue::NULL)
 }
 
 #[wasm_bindgen]
@@ -108,7 +125,7 @@ pub fn compile_cobble(
         Err(diagnostic_details) => {
             let diagnostics = formatted_diagnostics(&diagnostic_details);
             let experimental_python_compat =
-                python_compat_report(experimental_python_compat, &diagnostic_details);
+                python_compat_report(experimental_python_compat, source, &diagnostic_details);
             CompileResponse {
                 ok: false,
                 files: Vec::new(),
@@ -180,7 +197,7 @@ fn compile(
         files,
         diagnostics: Vec::new(),
         diagnostic_details: Vec::new(),
-        experimental_python_compat: python_compat_report(experimental_python_compat, &[]),
+        experimental_python_compat: python_compat_report(experimental_python_compat, source, &[]),
         summary: CompileSummary {
             namespace: namespace.to_string(),
             pack_format: SUPPORTED_PACK_FORMAT.to_string(),
@@ -195,12 +212,14 @@ fn compile(
 
 fn python_compat_report(
     enabled: bool,
+    source: &str,
     diagnostics: &[CompileDiagnostic],
 ) -> Option<CompilePythonCompatReport> {
     enabled.then(|| CompilePythonCompatReport {
         enabled: true,
         mode: "diagnostics-only".to_string(),
-        supported_constructs: vec!["pass statement as an explicit no-op".to_string()],
+        supported_constructs: diagnostics::python_compat_supported_constructs(),
+        observed_constructs: diagnostics::python_compat_observed_constructs(source),
         unsupported_detected: diagnostics
             .iter()
             .filter(|diagnostic| is_python_compat_diagnostic_kind(&diagnostic.kind))
@@ -675,6 +694,11 @@ fn source_diagnostics(
                 line: diagnostic.line,
                 column: diagnostic.column,
                 severity: diagnostic.severity.as_str().to_string(),
+                suggested_cobble_alternative: diagnostics::python_compat_suggestion_for_kind(
+                    &diagnostic.kind,
+                    &diagnostic.message,
+                    diagnostic.help.as_deref(),
+                ),
                 kind: diagnostic.kind,
                 message: diagnostic.message,
                 help: diagnostic.help,
@@ -1389,21 +1413,30 @@ def main():
             Err(diagnostics) => diagnostics,
         };
 
-        let report = python_compat_report(true, &diagnostic_details)
+        let source = "def reward(player, amount=1):\n    /say reward\n";
+        let report = python_compat_report(true, source, &diagnostic_details)
             .expect("enabled report should be emitted");
         assert!(report.enabled);
         assert_eq!(report.mode, "diagnostics-only");
+        assert!(report
+            .supported_constructs
+            .contains(&"pass statement as an explicit no-op".to_string()));
         assert_eq!(
-            report.supported_constructs,
-            vec!["pass statement as an explicit no-op".to_string()]
+            report.observed_constructs,
+            vec!["def functions with Cobble-compatible bodies".to_string()]
         );
         assert_eq!(report.unsupported_detected.len(), 1);
         assert_eq!(
             report.unsupported_detected[0].kind,
             "unsupported-function-parameter"
         );
+        assert!(report.unsupported_detected[0]
+            .suggested_cobble_alternative
+            .as_ref()
+            .unwrap()
+            .contains("plain positional parameters"));
 
-        assert!(python_compat_report(false, &diagnostic_details).is_none());
+        assert!(python_compat_report(false, source, &diagnostic_details).is_none());
     }
 
     #[test]
@@ -1418,8 +1451,12 @@ def main():
         };
 
         assert_eq!(diagnostic_details[0].kind, "duplicate-function-parameter");
-        let report = python_compat_report(true, &diagnostic_details)
-            .expect("enabled report should be emitted");
+        let report = python_compat_report(
+            true,
+            "def reward(player, player):\n    /say reward\n",
+            &diagnostic_details,
+        )
+        .expect("enabled report should be emitted");
         assert_eq!(report.unsupported_detected.len(), 1);
         assert_eq!(
             report.unsupported_detected[0].kind,

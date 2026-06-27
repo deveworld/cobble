@@ -43,6 +43,14 @@ when not applicable and do not require a schema version bump.
 | `stdlib_version` | number | Stdlib version declared in `cobble.toml`. `1` or `2`. Omitted when no stdlib helpers are used. |
 | `active_stdlib_modules` | array | Stdlib modules activated by imports. Empty when `import stdlib` is used (all modules active). |
 | `unrolled_loops` | number | Number of `for` loops expanded at compile time. Omitted when zero. |
+
+### 0.9.0 Additive Top-Level Fields
+
+The following optional top-level fields are added in 0.9.0. They are omitted
+when not applicable and do not require a schema version bump.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
 | `experimental_features` | array | Experimental features enabled for this build, e.g. `["resource_pack"]`. Omitted when empty. |
 
 Native CLI builds set `project_root` to the canonical project/source root and
@@ -80,7 +88,7 @@ ownership checks.
 | `json_resources` | Generic `datapack.*` JSON resources. |
 | `total_json_resources` | Legacy typed resources plus generic JSON resources. |
 
-### 0.8.0 Additive `generated` Fields
+### 0.9.0 Additive `generated` Fields
 
 | Field | Meaning |
 | --- | --- |

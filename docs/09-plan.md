@@ -1,6 +1,6 @@
 # Cobble 0.9.0 Plan
 
-Status: implementation draft.
+Status: implemented release contract.
 
 0.9.0 is the authoring-platform beta release. The release should make Cobble
 feel less like a data-pack command transpiler and more like a project system
@@ -45,7 +45,8 @@ experimental opt-in.
 - Add asset passthrough under `assets/` with path containment checks.
 - Merge compatible `lang` declarations deterministically.
 - Add stricter validation for item models, block models, and language files.
-- Include resource-pack assets in ZIP output, build manifests, source maps, and
+- Include generated resource-pack resources in source maps; include generated
+  and static resource-pack assets in ZIP output, build manifests, and
   `inspect --json`.
 - Add web and CLI examples that demonstrate data-pack and resource-pack output
   together.
@@ -56,8 +57,8 @@ experimental opt-in.
   projects, and web-demo projects.
 - Add clearer build profile language for development, validation, release, and
   web workflows.
-- Strengthen config schema diagnostics for unknown keys, misplaced sections,
-  invalid experimental flags, and unsafe paths.
+- Strengthen config schema and runtime diagnostics for unknown keys, misplaced
+  sections, invalid experimental flags, and unsafe paths.
 - Keep no-write checks and dry-run behavior reliable for CI.
 
 ### CLI And Tooling Contracts
@@ -208,9 +209,9 @@ Not in 0.9.0:
 Goal: help users move projects across Cobble and Minecraft target versions
 without silently changing build behavior.
 
-The first implementation should be a migration report, not a rewriter. It can
-identify changes that a future migration would make and produce stable JSON for
-CI, while preserving all source files by default.
+The first implementation should be report-first, with only narrow config-only
+apply actions. It can identify changes that a future migration would make,
+produce stable JSON for CI, and preserve all source files by default.
 
 0.9.0 scope:
 
@@ -226,8 +227,15 @@ cobble migrate --from 0.8 --to 0.9 --apply
 
 - Make dry-run/report mode the default for the experiment.
 - Require an explicit apply flag before modifying files.
-- Include source locations, before/after summaries, and skipped changes.
+- Allow `--apply` only for supported config-only changes, such as updating
+  `project.pack_format` to the current target.
+- Write a timestamped backup next to `cobble.toml` before applying config
+  changes, and report that backup path in JSON and human output.
+- Include source file summaries, planned/applied/skipped actions, and manual
+  changes that cannot be automated.
 - Add migration diagnostics to explain manual edits that cannot be automated.
+- Include config before/after summaries, source-location review hints, and
+  Python compatibility suggestions in migration JSON.
 
 Auto-upgrade boundaries:
 
@@ -243,7 +251,11 @@ Prototype acceptance criteria:
   diagnostics, and `changed: false` when no apply flag is supplied.
 - Apply mode requires an explicit flag and refuses unknown source/target
   versions.
-- Migration reports are deterministic across repeated runs.
+- Apply mode does not rewrite source files or enable experimental feature flags.
+- Successful config apply reports `changed: true`, the resulting
+  `project.pack_format`, and `config.backup_path`.
+- Dry-run migration reports are deterministic across repeated runs; apply
+  reports include a timestamped backup path.
 
 Not in 0.9.0:
 
@@ -258,12 +270,13 @@ Not in 0.9.0:
 - Browser-side resource-pack ZIP export with generated assets.
 - Resource authoring cookbook examples.
 - Resource-pack cookbook examples.
+- Plugin diagnostics cookbook examples.
 - 0.8 to 0.9 migration notes.
 - A release-candidate QA script for the 0.9 gate.
 
 ## Stretch
 
-- Initial LSP design document or local prototype.
+- Initial LSP design document.
 - Resource-pack-only planning document.
 - Additional typed builders for predicates, loot tables, recipes, advancements,
   and dialogs.

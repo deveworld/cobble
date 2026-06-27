@@ -27,7 +27,8 @@ import { createStoredZip, isDataPackZipFile } from "@/lib/datapackZip";
 import type {
   CompileFile,
   CompileResponse as CompileResult,
-  CompileSummary
+  CompileSummary,
+  CompilerMetadata
 } from "@/src/wasm/pkg/cobble_web_wasm.js";
 import { GitHubMark } from "./BrandIcons";
 import { HighlightedCode } from "./SyntaxHighlighter";
@@ -176,6 +177,7 @@ export function CobbleDemo() {
     examples[0].experimentalPythonCompat ?? false
   );
   const [result, setResult] = useState<CompileResult | null>(null);
+  const [compilerMetadata, setCompilerMetadata] = useState<CompilerMetadata | null>(null);
   const [activePath, setActivePath] = useState("");
   const [activeView, setActiveView] = useState<OutputView>("functions");
   const [wasm, setWasm] = useState<WasmModule | null>(null);
@@ -193,6 +195,7 @@ export function CobbleDemo() {
         const mod = await import("@/src/wasm/pkg/cobble_web_wasm.js");
         await mod.default({ module_or_path: `${basePath}/wasm/cobble_web_wasm_bg.wasm` });
         if (active) {
+          setCompilerMetadata(mod.compiler_metadata());
           setWasm(mod);
           setStatus("ready");
         }
@@ -204,7 +207,7 @@ export function CobbleDemo() {
             files: [],
             diagnostics: [error instanceof Error ? error.message : String(error)],
             diagnostic_details: [],
-            summary: emptySummary(namespace)
+            summary: emptySummary(namespace, null)
           });
         }
       }
@@ -357,7 +360,11 @@ export function CobbleDemo() {
         </nav>
 
         <div className="hero-copy">
-          <p className="eyebrow">Minecraft Java Edition 26.1.2 · Pack Format 101.1</p>
+          <p className="eyebrow">
+            {compilerMetadata
+              ? `Minecraft Java Edition ${compilerMetadata.minecraft_version} · Pack Format ${compilerMetadata.pack_format}`
+              : "Loading compiler metadata"}
+          </p>
           <h1>Cobble</h1>
           <p>
             A Python-like language that compiles into Minecraft data pack functions.
@@ -601,6 +608,7 @@ function PythonCompatibilityReport({
   }
 
   const unsupported = report.unsupported_detected;
+  const observed = report.observed_constructs;
 
   return (
     <article className="compat-card">
@@ -615,10 +623,21 @@ function PythonCompatibilityReport({
           <strong>{report.supported_constructs.length}</strong>
         </div>
         <div>
+          <span>Observed</span>
+          <strong>{observed.length}</strong>
+        </div>
+        <div>
           <span>Unsupported</span>
           <strong>{unsupported.length}</strong>
         </div>
       </div>
+      {observed.length ? (
+        <ul className="compat-list observed">
+          {observed.map((construct) => (
+            <li key={construct}>{construct}</li>
+          ))}
+        </ul>
+      ) : null}
       <ul className="compat-list">
         {report.supported_constructs.map((construct) => (
           <li key={construct}>{construct}</li>
@@ -630,6 +649,9 @@ function PythonCompatibilityReport({
             <li key={`${diagnostic.kind}-${index}`}>
               <code>{diagnostic.kind}</code>
               <span>{diagnostic.message}</span>
+              {diagnostic.suggested_cobble_alternative ? (
+                <small>{diagnostic.suggested_cobble_alternative}</small>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -687,11 +709,14 @@ function FileIcon({ file }: { file: CompileFile }) {
   return <Braces size={14} />;
 }
 
-function emptySummary(namespace: string): CompileSummary {
+function emptySummary(
+  namespace: string,
+  compilerMetadata: CompilerMetadata | null
+): CompileSummary {
   return {
     namespace,
-    pack_format: "101.1",
-    minecraft_version: "26.1.2",
+    pack_format: compilerMetadata?.pack_format ?? "",
+    minecraft_version: compilerMetadata?.minecraft_version ?? "",
     function_count: 0,
     command_count: 0,
     resource_count: 0,

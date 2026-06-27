@@ -7,18 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-06-25
+## [0.9.0] - 2026-06-27
 
 ### Added
 - Added an experimental `cobble check --experimental-plugins` diagnostics-only
   plugin host skeleton with read-only `plugins/*.toml` manifest parsing and
-  capability validation.
+  capability validation, plus built-in declarative lint rules for raw
+  `tellraw`, `op`, creative-mode, and long-command checks.
 - Added an experimental diagnostics-only Python compatibility report through
   `cobble check --experimental-python-compat` and `[experimental]
-  python_compat = true`; unsupported Python-like constructs remain errors.
-- Added an experimental `cobble migrate` command skeleton that scans project
-  config and source files to report planned 0.8 to 0.9 migration support
-  without rewriting files.
+  python_compat = true`; unsupported Python-like constructs remain errors and
+  include suggested Cobble alternatives when available.
+- Added an experimental `cobble migrate` command that scans project config and
+  source files by default and supports explicit config-only 0.8 to 0.9
+  `--apply` updates with a timestamped `cobble.toml` backup, before/after
+  change summaries, and source-location review hints.
+- Added resource-authoring, resource-pack, plugin diagnostics, and editor/LSP
+  design documentation for the 0.9 tooling surface.
 - Added stdlib v3 JSON-only `item_component.*` helpers,
   `storage.path/child/index`, `selector.*`, and `position.*` value helpers plus
   `entity.teleport()` as thin, visible command expansions.

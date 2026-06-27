@@ -1,5 +1,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn write_file_atomic(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
@@ -9,6 +11,29 @@ pub(crate) fn write_file_atomic(path: &Path, contents: impl AsRef<[u8]>) -> io::
         file.flush()?;
         drop(file);
         replace_with_temp_file(&temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+#[allow(dead_code)]
+pub(crate) fn write_file_atomic_with_permissions(
+    path: &Path,
+    contents: impl AsRef<[u8]>,
+    permissions: fs::Permissions,
+) -> io::Result<()> {
+    let (mut file, temp_path) = create_temp_output_file_with_permissions(path, Some(&permissions))?;
+    let result = (|| {
+        #[cfg(not(unix))]
+        fs::set_permissions(&temp_path, permissions.clone())?;
+        file.write_all(contents.as_ref())?;
+        file.flush()?;
+        drop(file);
+        replace_with_temp_file(&temp_path, path)?;
+        fs::set_permissions(path, permissions)?;
+        Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
@@ -34,6 +59,16 @@ pub(crate) fn copy_file_atomic(source: &Path, target: &Path) -> io::Result<u64> 
 }
 
 pub(crate) fn create_temp_output_file(path: &Path) -> io::Result<(File, PathBuf)> {
+    create_temp_output_file_with_permissions(path, None)
+}
+
+fn create_temp_output_file_with_permissions(
+    path: &Path,
+    permissions: Option<&fs::Permissions>,
+) -> io::Result<(File, PathBuf)> {
+    #[cfg(not(unix))]
+    let _ = permissions;
+
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
@@ -47,11 +82,13 @@ pub(crate) fn create_temp_output_file(path: &Path) -> io::Result<(File, PathBuf)
             timestamp_nanos(),
             attempt
         ));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-        {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        if let Some(permissions) = permissions {
+            options.mode(permissions.mode() & 0o777);
+        }
+        match options.open(&temp_path) {
             Ok(file) => return Ok((file, temp_path)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
