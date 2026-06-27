@@ -128,7 +128,9 @@ else
   run curl -fsSL "$site_url/try/?verify=$version" -o "$try_html"
   run curl -fsSL "$site_url/wasm/cobble_web_wasm_bg.wasm?verify=$version" -o "$wasm_file"
 
-  if ! grep -F "$version stable" "$home_html" >/dev/null; then
+  normalized_home_html="$work_dir/home.normalized.html"
+  perl -0pe 's/<!-- -->//g' "$home_html" > "$normalized_home_html"
+  if ! grep -F "$version stable" "$normalized_home_html" >/dev/null; then
     echo "Deployed home page does not advertise $version stable" >&2
     exit 1
   fi
