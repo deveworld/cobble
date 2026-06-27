@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const writeMode = process.argv.includes("--write");
 
 function read(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
@@ -20,7 +21,6 @@ function requiredMatch(label, content, regex) {
 
 const cargoToml = read("Cargo.toml");
 const packFormatRs = read("src/pack_format.rs");
-const webMetadata = read("web/lib/compilerMetadata.ts");
 
 const cargoVersion = requiredMatch(
   "Cargo package version",
@@ -45,6 +45,21 @@ const packFormat = decimalPackFormat
 if (!packFormat) {
   throw new Error("Could not find SUPPORTED_PACK_FORMAT");
 }
+
+const generatedWebMetadata = `export const COBBLE_VERSION = ${JSON.stringify(cargoVersion)};\nexport const SUPPORTED_MINECRAFT_VERSION = ${JSON.stringify(minecraftVersion)};\nexport const SUPPORTED_PACK_FORMAT = ${JSON.stringify(packFormat)};\n`;
+
+if (writeMode) {
+  fs.writeFileSync(
+    path.join(repoRoot, "web/lib/compilerMetadata.ts"),
+    generatedWebMetadata
+  );
+  console.log(
+    `wrote web metadata from Cargo/Rust constants: ${cargoVersion}, Minecraft ${minecraftVersion}, pack ${packFormat}`
+  );
+  process.exit(0);
+}
+
+const webMetadata = read("web/lib/compilerMetadata.ts");
 
 const webVersion = requiredMatch(
   "web COBBLE_VERSION",

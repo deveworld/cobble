@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "npm run build:wasm && next dev --webpack",
-    "build:wasm": "rm -rf src/wasm/pkg public/wasm && wasm-pack build wasm --target web --out-dir ../src/wasm/pkg --release && mkdir -p public/wasm && cp src/wasm/pkg/cobble_web_wasm_bg.wasm public/wasm/cobble_web_wasm_bg.wasm",
+    "sync:metadata": "node ../scripts/check_web_metadata.mjs --write",
+    "check:metadata": "node ../scripts/check_web_metadata.mjs",
+    "build:wasm": "npm run sync:metadata && rm -rf src/wasm/pkg public/wasm && wasm-pack build wasm --target web --out-dir ../src/wasm/pkg --release && mkdir -p public/wasm && cp src/wasm/pkg/cobble_web_wasm_bg.wasm public/wasm/cobble_web_wasm_bg.wasm",
     "build": "npm run build:wasm && next build --webpack",
     "build:github": "NEXT_PUBLIC_BASE_PATH=/cobble npm run build",
     "start": "next start",
@@ -17,7 +19,7 @@
     "test:wasm": "cargo test --manifest-path wasm/Cargo.toml --locked",
     "check:wasm": "cargo check --manifest-path wasm/Cargo.toml --locked",
     "typecheck": "tsc --noEmit",
-    "lint": "npm run build:wasm && npm run typecheck"
+    "lint": "npm run check:metadata && npm run build:wasm && npm run typecheck"
   },
   "dependencies": {
     "lucide-react": "^1.17.0",
