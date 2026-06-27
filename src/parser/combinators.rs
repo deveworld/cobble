@@ -1,8 +1,14 @@
-use super::tokenizer::{tokenize, Token};
+use super::tokenizer::{tokenize_spanned, SpannedToken, Token};
 use crate::ast::*;
 use chumsky::prelude::*;
 
 const MAX_UNARY_OPERATORS: usize = 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseDiagnostic {
+    pub span: SourceSpan,
+    pub message: String,
+}
 
 /// Token parser using chumsky
 pub fn token_parser<'a>(
@@ -691,17 +697,50 @@ pub fn token_parser<'a>(
 
 /// Parse source code into AST
 pub fn parse(source: &str) -> Result<Program, Vec<String>> {
-    let tokens = tokenize(source).map_err(|e| vec![e])?;
+    parse_with_diagnostics(source).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+    })
+}
 
+/// Parse source code into AST with source spans for parser diagnostics.
+pub fn parse_with_diagnostics(source: &str) -> Result<Program, Vec<ParseDiagnostic>> {
+    let spanned_tokens = tokenize_spanned(source).map_err(|error| {
+        vec![ParseDiagnostic {
+            span: SourceSpan::new(0, 0, 1, 1),
+            message: error,
+        }]
+    })?;
+    let tokens = spanned_tokens
+        .iter()
+        .map(|token| token.token.clone())
+        .collect::<Vec<_>>();
     let result = token_parser().parse(&tokens);
 
     match result.into_result() {
         Ok(program) => Ok(program),
         Err(errors) => Err(errors
             .into_iter()
-            .map(|e| format!("{}", e.reason()))
+            .map(|error| ParseDiagnostic {
+                span: parse_error_source_span(error.span().start, &spanned_tokens),
+                message: format!("{}", error.reason()),
+            })
             .collect()),
     }
+}
+
+fn parse_error_source_span(token_index: usize, tokens: &[SpannedToken]) -> SourceSpan {
+    tokens
+        .get(token_index)
+        .or_else(|| {
+            token_index
+                .checked_sub(1)
+                .and_then(|index| tokens.get(index))
+        })
+        .map(|token| token.span)
+        .unwrap_or_else(|| SourceSpan::new(0, 0, 1, 1))
 }
 
 #[cfg(test)]
@@ -797,5 +836,15 @@ from stdlib import event
         );
 
         assert!(parse(&source).is_err());
+    }
+
+    #[test]
+    fn parse_diagnostics_use_token_source_spans() {
+        let source = "def main():\n    x = \n";
+        let errors = parse_with_diagnostics(source).unwrap_err();
+
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0].span.line, 2);
+        assert_eq!(errors[0].span.column, 9);
     }
 }

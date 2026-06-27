@@ -1,5 +1,5 @@
 use crate::ast::{CobbleType, Expression, Import, Program, Statement};
-use crate::parser::parse;
+use crate::parser::{parse, parse_with_diagnostics};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,10 +28,17 @@ pub fn parse_source(source: &str) -> Result<Program, Vec<SourceDiagnostic>> {
         return Err(diagnostics);
     }
 
-    parse(source).map_err(|errors| {
+    parse_with_diagnostics(source).map_err(|errors| {
         errors
             .into_iter()
-            .map(|error| SourceDiagnostic::error("parse", 1, 1, format!("Parse error: {error}")))
+            .map(|error| {
+                SourceDiagnostic::error(
+                    "parse",
+                    error.span.line,
+                    error.span.column,
+                    format!("Parse error: {}", error.message),
+                )
+            })
             .collect()
     })
 }
@@ -6093,6 +6100,17 @@ def main():
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].kind, "unsupported-return");
+    }
+
+    #[test]
+    fn parse_source_preserves_parser_diagnostic_location() {
+        let diagnostics = parse_source("def main():\n    x = \n")
+            .expect_err("parse_source should reject incomplete assignments");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, "parse");
+        assert_eq!(diagnostics[0].line, 2);
+        assert_eq!(diagnostics[0].column, 9);
     }
 
     #[test]

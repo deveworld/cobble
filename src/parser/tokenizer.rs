@@ -246,13 +246,29 @@ pub fn tokenize_spanned(source: &str) -> Result<Vec<SpannedToken>, String> {
         }
     }
 
+    let (end_line, end_column) = source_end_line_column(source);
+
     // Add remaining dedents
     while indent_stack.len() > 1 {
         indent_stack.pop();
-        push_token(&mut tokens, Token::Dedent, source.len(), source.len(), 1, 1);
+        push_token(
+            &mut tokens,
+            Token::Dedent,
+            source.len(),
+            source.len(),
+            end_line,
+            end_column,
+        );
     }
 
-    push_token(&mut tokens, Token::Eof, source.len(), source.len(), 1, 1);
+    push_token(
+        &mut tokens,
+        Token::Eof,
+        source.len(),
+        source.len(),
+        end_line,
+        end_column,
+    );
     Ok(tokens)
 }
 
@@ -281,6 +297,22 @@ fn source_lines_with_offsets(source: &str) -> Vec<(usize, &str)> {
     }
 
     lines
+}
+
+fn source_end_line_column(source: &str) -> (usize, usize) {
+    let mut line = 1;
+    let mut column = 1;
+
+    for ch in source.chars() {
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+
+    (line, column)
 }
 
 /// Check if the minus sign should be treated as a binary operator
@@ -1071,5 +1103,9 @@ mod tests {
             .find(|token| token.token == Token::Number("2".to_string()))
             .unwrap();
         assert_eq!(two.span, SourceSpan::new(13, 14, 2, 7));
+
+        let eof = tokens.last().unwrap();
+        assert_eq!(eof.token, Token::Eof);
+        assert_eq!(eof.span, SourceSpan::new(source.len(), source.len(), 3, 1));
     }
 }
