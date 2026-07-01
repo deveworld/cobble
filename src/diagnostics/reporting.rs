@@ -1,4 +1,5 @@
-use crate::ast::Program;
+use crate::ast::{Program, SourceSpan};
+use crate::parser::ProgramSpanTable;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,7 @@ pub struct ParsedSourceFile {
     pub path: PathBuf,
     pub source: String,
     pub program: Program,
+    pub spans: ProgramSpanTable,
 }
 
 impl SourceDiagnostic {
@@ -77,6 +79,14 @@ impl SourceDiagnostic {
             message: message.into(),
             help: None,
         }
+    }
+
+    pub fn error_at_span(
+        kind: impl Into<String>,
+        span: SourceSpan,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::error(kind, span.line, span.column, message)
     }
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
@@ -181,4 +191,24 @@ fn format_help(help: &str) -> String {
         output.push_str(line);
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_at_span_preserves_existing_line_column_shape() {
+        let diagnostic = SourceDiagnostic::error_at_span(
+            "parse",
+            SourceSpan::new(10, 15, 3, 7),
+            "unexpected token",
+        );
+
+        assert_eq!(diagnostic.kind, "parse");
+        assert_eq!(diagnostic.line, 3);
+        assert_eq!(diagnostic.column, 7);
+        assert_eq!(diagnostic.message, "unexpected token");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+    }
 }

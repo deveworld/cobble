@@ -1,6 +1,6 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 217
+assertion_line: 226
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -75,8 +75,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say range index 0",
       "source": {
         "file": "src/main.cbl",
-        "line": 6,
-        "column": 5
+        "line": 7,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -86,8 +86,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say range index 1",
       "source": {
         "file": "src/main.cbl",
-        "line": 6,
-        "column": 5
+        "line": 7,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -97,8 +97,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say range index 2",
       "source": {
         "file": "src/main.cbl",
-        "line": 6,
-        "column": 5
+        "line": 7,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -108,8 +108,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say array value north",
       "source": {
         "file": "src/main.cbl",
-        "line": 8,
-        "column": 5
+        "line": 9,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -119,8 +119,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say array value south",
       "source": {
         "file": "src/main.cbl",
-        "line": 8,
-        "column": 5
+        "line": 9,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -130,8 +130,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say stepped value 1",
       "source": {
         "file": "src/main.cbl",
-        "line": 10,
-        "column": 5
+        "line": 11,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -141,8 +141,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say stepped value 3",
       "source": {
         "file": "src/main.cbl",
-        "line": 10,
-        "column": 5
+        "line": 11,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -152,8 +152,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say stepped value 5",
       "source": {
         "file": "src/main.cbl",
-        "line": 10,
-        "column": 5
+        "line": 11,
+        "column": 9
       },
       "kind": "Unrolled"
     },

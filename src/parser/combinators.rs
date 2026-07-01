@@ -10,6 +10,24 @@ pub struct ParseDiagnostic {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocatedProgram {
+    pub program: Program,
+    pub spans: ProgramSpanTable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProgramSpanTable {
+    pub imports: Vec<SourceSpan>,
+    pub statements: Vec<StatementSpan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementSpan {
+    pub span: SourceSpan,
+    pub children: Vec<StatementSpan>,
+}
+
 /// Token parser using chumsky
 pub fn token_parser<'a>(
 ) -> impl Parser<'a, &'a [Token], Program, extra::Err<Rich<'a, Token>>> + Clone {
@@ -731,6 +749,37 @@ pub fn parse_with_diagnostics(source: &str) -> Result<Program, Vec<ParseDiagnost
     }
 }
 
+/// Parse source code into AST plus a non-breaking source provenance sidecar.
+pub fn parse_located_with_diagnostics(
+    source: &str,
+) -> Result<LocatedProgram, Vec<ParseDiagnostic>> {
+    let spanned_tokens = tokenize_spanned(source).map_err(|error| {
+        vec![ParseDiagnostic {
+            span: SourceSpan::new(0, 0, 1, 1),
+            message: error,
+        }]
+    })?;
+    let tokens = spanned_tokens
+        .iter()
+        .map(|token| token.token.clone())
+        .collect::<Vec<_>>();
+    let result = token_parser().parse(&tokens);
+
+    match result.into_result() {
+        Ok(program) => Ok(LocatedProgram {
+            program,
+            spans: collect_program_span_table(&spanned_tokens),
+        }),
+        Err(errors) => Err(errors
+            .into_iter()
+            .map(|error| ParseDiagnostic {
+                span: parse_error_source_span(error.span().start, &spanned_tokens),
+                message: format!("{}", error.reason()),
+            })
+            .collect()),
+    }
+}
+
 fn parse_error_source_span(token_index: usize, tokens: &[SpannedToken]) -> SourceSpan {
     tokens
         .get(token_index)
@@ -741,6 +790,87 @@ fn parse_error_source_span(token_index: usize, tokens: &[SpannedToken]) -> Sourc
         })
         .map(|token| token.span)
         .unwrap_or_else(|| SourceSpan::new(0, 0, 1, 1))
+}
+
+fn collect_program_span_table(tokens: &[SpannedToken]) -> ProgramSpanTable {
+    let mut index = 0;
+    collect_span_block(tokens, &mut index, true)
+}
+
+fn collect_span_block(
+    tokens: &[SpannedToken],
+    index: &mut usize,
+    top_level: bool,
+) -> ProgramSpanTable {
+    let mut table = ProgramSpanTable::default();
+
+    while let Some(token) = tokens.get(*index) {
+        match token.token {
+            Token::Newline => {
+                *index += 1;
+            }
+            Token::Dedent | Token::Eof => break,
+            Token::Indent => {
+                *index += 1;
+            }
+            _ => {
+                let starts_top_level_import =
+                    top_level && matches!(token.token, Token::Import | Token::From);
+                let span = collect_statement_header_span(tokens, index);
+                let children = if matches!(
+                    tokens.get(*index).map(|token| &token.token),
+                    Some(Token::Indent)
+                ) {
+                    *index += 1;
+                    let child_table = collect_span_block(tokens, index, false);
+                    if matches!(
+                        tokens.get(*index).map(|token| &token.token),
+                        Some(Token::Dedent)
+                    ) {
+                        *index += 1;
+                    }
+                    child_table.statements
+                } else {
+                    Vec::new()
+                };
+
+                if starts_top_level_import {
+                    table.imports.push(span);
+                } else {
+                    table.statements.push(StatementSpan { span, children });
+                }
+            }
+        }
+    }
+
+    table
+}
+
+fn collect_statement_header_span(tokens: &[SpannedToken], index: &mut usize) -> SourceSpan {
+    let start = tokens
+        .get(*index)
+        .map(|token| token.span)
+        .unwrap_or_else(|| SourceSpan::new(0, 0, 1, 1));
+    let mut end = start;
+
+    while let Some(token) = tokens.get(*index) {
+        match token.token {
+            Token::Newline | Token::Indent | Token::Dedent | Token::Eof => break,
+            _ => {
+                end = token.span;
+                *index += 1;
+            }
+        }
+    }
+
+    if matches!(
+        tokens.get(*index).map(|token| &token.token),
+        Some(Token::Newline)
+    ) {
+        *index += 1;
+    }
+
+    SourceSpan::new(start.start, end.end, start.line, start.column)
 }
 
 #[cfg(test)]
@@ -846,5 +976,37 @@ from stdlib import event
         assert!(!errors.is_empty());
         assert_eq!(errors[0].span.line, 2);
         assert_eq!(errors[0].span.column, 9);
+    }
+
+    #[test]
+    fn parse_located_tracks_import_and_nested_statement_spans() {
+        let source = "import helper\n\ndef main():\n    /say hi\n";
+        let located = parse_located_with_diagnostics(source).unwrap();
+
+        assert_eq!(located.program.imports.len(), 1);
+        assert_eq!(located.program.statements.len(), 1);
+        assert_eq!(located.spans.imports, vec![SourceSpan::new(0, 13, 1, 1)]);
+        assert_eq!(located.spans.statements.len(), 1);
+        assert_eq!(located.spans.statements[0].span.line, 3);
+        assert_eq!(located.spans.statements[0].span.column, 1);
+        assert_eq!(located.spans.statements[0].children.len(), 1);
+        assert_eq!(located.spans.statements[0].children[0].span.line, 4);
+        assert_eq!(located.spans.statements[0].children[0].span.column, 5);
+    }
+
+    #[test]
+    fn parse_located_preserves_crlf_byte_offsets() {
+        let source = "def main():\r\n    /say hi\r\n";
+        let located = parse_located_with_diagnostics(source).unwrap();
+
+        assert_eq!(located.spans.statements.len(), 1);
+        assert_eq!(
+            located.spans.statements[0].span,
+            SourceSpan::new(0, 11, 1, 1)
+        );
+        assert_eq!(
+            located.spans.statements[0].children[0].span,
+            SourceSpan::new(17, 24, 2, 5)
+        );
     }
 }

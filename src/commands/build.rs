@@ -225,7 +225,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         }
 
         // Set current file for import resolution and source tracking
-        transpiler.set_current_file_with_source(file_path, &parsed.source);
+        transpiler.set_current_file_with_source_spans(file_path, &parsed.source, &parsed.spans);
 
         transpiler
             .transpile(&parsed.program)

@@ -442,8 +442,8 @@ fn source_map_tracks_user_commands_through_control_flow_rewrites() {
         "say step",
         "test.mcfunction",
         GeneratedCommandKind::Unrolled,
+        10,
         9,
-        5,
     );
     assert_entry(
         "say zero",
@@ -466,6 +466,46 @@ fn source_map_tracks_user_commands_through_control_flow_rewrites() {
         18,
         9,
     );
+}
+
+#[test]
+fn source_map_tracks_commands_from_imported_files() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let main_file = temp_dir.path().join("main.cbl");
+    let helper_file = temp_dir.path().join("helper.cbl");
+    let output_dir = temp_dir.path().join("output");
+    fs::write(&main_file, "import helper\n\ndef test():\n    helper()\n").unwrap();
+    fs::write(&helper_file, "def helper():\n    /say from helper\n").unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(main_file.clone()),
+        output: Some(output_dir.clone()),
+        namespace: Some("source_map".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: false,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    let source_map_path = output_dir.join(".cobble/source_map.json");
+    let source_map: SourceMap =
+        serde_json::from_str(&fs::read_to_string(source_map_path).unwrap()).unwrap();
+    let entry = source_map
+        .entries
+        .iter()
+        .find(|entry| entry.command == "say from helper")
+        .expect("source map entry for imported helper command missing");
+
+    let source = entry.source.as_ref().expect("source location missing");
+    assert_eq!(source.file, PathBuf::from("helper.cbl"));
+    assert_eq!(source.line, 2);
+    assert_eq!(source.column, 5);
 }
 
 #[test]
@@ -735,6 +775,113 @@ fn source_map_tracks_while_condition_helper_metadata() {
     assert_eq!(source.file, expected_source);
     assert_eq!(source.line, 4);
     assert_eq!(source.column, 5);
+}
+
+#[test]
+fn source_map_tracks_datapack_json_resource_entries() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.cbl");
+    let output_dir = temp_dir.path().join("output");
+    fs::write(
+        &input_file,
+        r#"
+from stdlib import datapack
+datapack.predicate("always", {
+    "condition": "minecraft:random_chance",
+    "chance": 1
+})
+
+def test():
+    /say json
+"#,
+    )
+    .unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file),
+        output: Some(output_dir.clone()),
+        namespace: Some("source_map".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: false,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    let source_map: SourceMap = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/source_map.json")).unwrap(),
+    )
+    .unwrap();
+    let entry = source_map
+        .entries
+        .iter()
+        .find(|entry| entry.generated_path == "data/source_map/predicate/always.json")
+        .expect("datapack JSON resource source map entry missing");
+
+    assert_eq!(entry.generated_line, 1);
+    assert_eq!(entry.kind, GeneratedCommandKind::JsonGenerated);
+    assert_eq!(entry.command, "{");
+    let source = entry.source.as_ref().expect("source location missing");
+    assert_eq!(source.file, PathBuf::from("main.cbl"));
+    assert_eq!(source.line, 3);
+    assert_eq!(source.column, 1);
+}
+
+#[test]
+fn source_map_tracks_resource_pack_json_entries() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.cbl");
+    let output_dir = temp_dir.path().join("output");
+    fs::write(
+        &input_file,
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("source_map:custom_sword", {
+    "parent": "minecraft:item/handheld",
+    "textures": {"layer0": "source_map:item/custom_sword"}
+})
+"#,
+    )
+    .unwrap();
+
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file),
+        output: Some(output_dir.clone()),
+        namespace: Some("source_map".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: false,
+        zip: false,
+        experimental_resource_pack: true,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+
+    let source_map: SourceMap = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/source_map.json")).unwrap(),
+    )
+    .unwrap();
+    let entry = source_map
+        .entries
+        .iter()
+        .find(|entry| entry.generated_path == "assets/source_map/models/item/custom_sword.json")
+        .expect("resource-pack JSON source map entry missing");
+
+    assert_eq!(entry.generated_line, 1);
+    assert_eq!(entry.kind, GeneratedCommandKind::JsonGenerated);
+    assert_eq!(entry.command, "{");
+    let source = entry.source.as_ref().expect("source location missing");
+    assert_eq!(source.file, PathBuf::from("main.cbl"));
+    assert_eq!(source.line, 3);
+    assert_eq!(source.column, 1);
 }
 
 #[test]

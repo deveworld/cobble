@@ -512,7 +512,7 @@ fn semantic_check_diagnostics(
 
     let mut diagnostics = Vec::new();
     for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
-        transpiler.set_current_file_with_source(path, &parsed.source);
+        transpiler.set_current_file_with_source_spans(path, &parsed.source, &parsed.spans);
         if let Err(error) = transpiler.transpile(&parsed.program) {
             diagnostics.push(FileSourceDiagnostics::new(
                 path.clone(),

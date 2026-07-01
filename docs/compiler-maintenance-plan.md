@@ -6,23 +6,34 @@ This document tracks structural compiler work that should be staged separately
 from feature releases because it changes parser, diagnostics, source-map, and
 transpiler ownership boundaries.
 
-## AST Spans
+## Source Provenance And Spans
 
-Current AST nodes mostly store semantic values without source spans. Diagnostics
+Current AST nodes store semantic values without source provenance. Diagnostics
 and source maps therefore recover source positions through parser diagnostics,
-line scans, or command emission context. That works for many cases, but it can
-drift when a feature rewrites, unrolls, or moves source statements before
-commands are emitted.
+line scans, normalized statement keys, or command emission context. That works
+for many cases, but it can drift when a feature rewrites, unrolls, imports, or
+moves source statements before commands are emitted.
 
 Target contract:
 
-- Introduce a small `Span` type with file id, byte range, line, and column.
-- Add `Located<T>` or span fields to parser-level statements and expressions.
-- Preserve spans through imports, compile-time unrolling, resource helpers, and
-  generated command metadata.
+- Keep the public `Program`, `Statement`, and `Expression` AST shape stable
+  during 0.9.x hardening. These are public serde-derived API types and should
+  not gain direct span fields in a patch release.
+- Introduce additive located parser APIs such as `LocatedProgram` and
+  `SpanTable` sidecars. Sidecars should mirror source/AST structure explicitly;
+  they must not rely on pointer identity or semantic node hashing because later
+  passes clone and rewrite AST nodes.
+- Track file identity outside `SourceSpan`. `SourceSpan` is a byte/line/column
+  range within one source; multi-file provenance needs a file id/path supplied
+  by `ParsedSourceFile`, transpiler source context, or source-map metadata.
+- Preserve provenance through imports, compile-time unrolling, resource helpers,
+  and generated command metadata.
 - Prefer span-backed diagnostics over string/line heuristics.
-- Emit source-map entries from the originating AST span, not from the current
-  emitter's best-effort line state.
+- Emit source-map entries from the originating source span when available, not
+  from the current emitter's best-effort line state.
+- Keep `.cobble/source_map.json` stable initially as
+  `source: { file, line, column }`. Ranges or file ids in serialized metadata
+  should be optional or schema-versioned.
 
 Migration phases:
 
@@ -30,10 +41,20 @@ Migration phases:
    `SourceSpan`, `SpannedToken`, and `tokenize_spanned` now provide byte
    range, line, and column data without changing the existing `tokenize`/parser
    API.
-2. Add spans to `Statement`, `Expression`, `Function`, and import nodes.
-3. Update diagnostics to consume spans where available.
-4. Update transpiler command/resource metadata to carry source spans.
-5. Remove obsolete line-scan fallbacks only after source-map regression
+2. Add span-aware diagnostic constructors while preserving the existing
+   line/column diagnostic JSON and display shape.
+3. Add additive located parser APIs that return `Program` plus statement/import
+   provenance sidecars. Keep `parse`, `parse_with_diagnostics`, and
+   `token_parser` behavior unchanged.
+4. Add source-map provenance regression tests before changing behavior:
+   imported files, compile-time unrolling, raw commands, CRLF, Unicode, and
+   multiline calls.
+5. Update transpiler command/resource metadata to prefer located spans with
+   existing line-scan/source-key fallbacks.
+6. Migrate post-parse semantic diagnostics to consume spans where available.
+   Keep pre-parse line-scan checks for indentation, structural syntax, and
+   unsupported Python constructs.
+7. Remove obsolete line-scan fallbacks only after source-map regression
    snapshots cover imports, unrolling, resource JSON, and raw commands.
 
 Acceptance criteria:
@@ -43,6 +64,17 @@ Acceptance criteria:
 - Source maps remain stable for formatted source, compile-time unrolling,
   imported files, and generated resource JSON.
 - WASM and CLI diagnostics use the same span-backed formatted output.
+
+Release split:
+
+- `0.9.x`: safe bug/security fixes, docs, metadata sync, and
+  behavior-preserving module moves only. Do not change public AST shape or
+  source-map schema.
+- `0.10.0`: source provenance stabilization. Add located parser APIs, file
+  identity, parser/semantic diagnostic parity, and transpiler/source-map span
+  propagation with fallbacks.
+- `1.0.0`: only after one release cycle proves span-backed diagnostics and
+  source maps stable.
 
 ## Module Boundaries
 

@@ -85,14 +85,25 @@ impl Transpiler {
 
         let result = (|| {
             self.data_pack.unrolled_loops += 1;
+            let body_sources = for_loop
+                .body
+                .iter()
+                .map(|statement| self.take_unrolled_body_statement_source(statement))
+                .collect::<Vec<_>>();
             for value in values {
                 let substituted = substitute_statements(&for_loop.body, &for_loop.target, &value)?;
-                for statement in substituted {
+                for (statement, body_source) in substituted.into_iter().zip(body_sources.iter()) {
+                    let saved_statement_source = self.current_statement_source.clone();
+                    if body_source.is_some() {
+                        self.current_statement_source = body_source.clone();
+                    }
                     let start_index = self.current_function.as_ref().map(Vec::len);
-                    self.process_statement(&statement)?;
+                    let process_result = self.process_statement(&statement);
                     if let Some(start_index) = start_index {
                         self.mark_current_function_commands_as_unrolled(start_index);
                     }
+                    self.current_statement_source = saved_statement_source;
+                    process_result?;
                     self.ensure_unroll_command_budget()?;
                 }
             }
@@ -268,14 +279,33 @@ impl Transpiler {
         };
         let source = self.current_statement_source.clone();
         for (index, command) in commands.iter().enumerate().skip(start_index) {
-            metadata.insert(
-                index,
-                GeneratedCommand::new(
-                    command.clone(),
-                    source.clone(),
-                    GeneratedCommandKind::Unrolled,
-                ),
-            );
+            let command = command.clone();
+            metadata
+                .entry(index)
+                .and_modify(|generated| {
+                    generated.text = command.clone();
+                    if generated.source.is_none() {
+                        generated.source = source.clone();
+                    }
+                    generated.kind = GeneratedCommandKind::Unrolled;
+                })
+                .or_insert_with(|| {
+                    GeneratedCommand::new(command, source.clone(), GeneratedCommandKind::Unrolled)
+                });
+        }
+    }
+
+    fn take_unrolled_body_statement_source(
+        &mut self,
+        statement: &Statement,
+    ) -> Option<SourceLocation> {
+        match statement {
+            Statement::MinecraftCommand(command) => {
+                let clean_command = Self::strip_command_prefix(command);
+                self.take_raw_command_source(clean_command.trim())
+                    .or_else(|| self.take_raw_command_statement_source(clean_command.trim()))
+            }
+            _ => self.take_statement_source(statement),
         }
     }
 

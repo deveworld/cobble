@@ -555,8 +555,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say loop 0",
       "source": {
         "file": "src/main.cbl",
-        "line": 49,
-        "column": 5
+        "line": 50,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -566,8 +566,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say loop 1",
       "source": {
         "file": "src/main.cbl",
-        "line": 49,
-        "column": 5
+        "line": 50,
+        "column": 9
       },
       "kind": "Unrolled"
     },
@@ -577,8 +577,8 @@ expression: datapack_tree_snapshot(&output_dir)
       "command": "say loop 2",
       "source": {
         "file": "src/main.cbl",
-        "line": 49,
-        "column": 5
+        "line": 50,
+        "column": 9
       },
       "kind": "Unrolled"
     },
