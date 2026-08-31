@@ -1,5 +1,6 @@
 use crate::ast::{Program, SourceSpan};
 use crate::parser::ProgramSpanTable;
+use crate::transpiler::{TranspileError, TranspileErrorKind};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,60 +139,38 @@ impl SourceDiagnostic {
 }
 
 impl SourceDiagnostic {
-    /// Returns true when a transpiler error string matches one of the shapes
-    /// the shared classifier below recognizes (unroll/runtime-for prefixes and
-    /// stdlib-module wording). Callers that fall back to a generic diagnostic
-    /// for other transpiler errors gate on this predicate.
-    pub fn transpiler_error_is_recognized(error: &str) -> bool {
-        error.starts_with("unroll-")
-            || error.starts_with("runtime-for-")
-            || error.contains("not imported")
-            || error.contains("Unknown stdlib module")
-    }
-
-    /// Classifies a transpiler error string into a diagnostic kind:
-    /// `unroll-*` and `runtime-for-*` keys pass through, stdlib-module errors
-    /// map to `missing-stdlib-module`/`unknown-stdlib-module`, and everything
-    /// else falls back to `semantic`.
-    pub fn classify_transpiler_error(error: &str) -> String {
-        if let Some((kind, _)) = error.split_once(':') {
-            if kind.starts_with("unroll-") || kind.starts_with("runtime-for-") {
-                kind.to_string()
-            } else if error.contains("not imported") {
-                "missing-stdlib-module".to_string()
-            } else if error.contains("Unknown stdlib module") {
-                "unknown-stdlib-module".to_string()
-            } else {
-                "semantic".to_string()
-            }
-        } else if error.contains("not imported") {
-            "missing-stdlib-module".to_string()
-        } else if error.contains("Unknown stdlib module") {
-            "unknown-stdlib-module".to_string()
-        } else {
-            "semantic".to_string()
-        }
+    /// Returns true when a transpiler error carries a classification the
+    /// reporters render as a source diagnostic (the unroll/runtime-for and
+    /// stdlib-module kinds). Callers that fall back to a generic diagnostic
+    /// for plain semantic errors gate on this predicate.
+    pub fn transpile_error_is_recognized(error: &TranspileError) -> bool {
+        error.kind != TranspileErrorKind::Semantic
     }
 
     /// Recovers a best-effort 1-based source location for a transpiler error:
     /// structured `location:`/`source-key:`/`loop:` trailers for unroll and
     /// runtime-for errors, and a `module '<name>'` scan for stdlib errors.
-    pub fn recover_transpiler_error_location(error: &str, source: &str) -> Option<(usize, usize)> {
-        if error.starts_with("unroll-") || error.starts_with("runtime-for-") {
-            return unroll_error_location(error)
+    pub fn recover_transpile_error_location(
+        error: &TranspileError,
+        source: &str,
+    ) -> Option<(usize, usize)> {
+        if error.kind.is_unroll() || error.kind.is_runtime_for() {
+            let message = error.message.as_str();
+            return unroll_error_location(message)
                 .or_else(|| {
-                    unroll_error_source_key(error).and_then(|source_key| {
+                    unroll_error_source_key(message).and_then(|source_key| {
                         find_for_loop_location_for_source_key(source, source_key)
                     })
                 })
                 .or_else(|| {
-                    unroll_error_target(error)
+                    unroll_error_target(message)
                         .and_then(|target| find_for_loop_location_for_target(source, target))
                 })
                 .or_else(|| find_for_loop_location(source));
         }
 
         let module = error
+            .message
             .split_once("module '")
             .and_then(|(_, rest)| rest.split_once('\''))
             .map(|(module, _)| module)?;
@@ -200,14 +179,19 @@ impl SourceDiagnostic {
     }
 
     /// Builds the error diagnostic `cobble check` and the web demo report for
-    /// a transpiler error string, combining [`Self::classify_transpiler_error`]
-    /// and [`Self::recover_transpiler_error_location`] and stripping the
+    /// a transpiler error, mapping [`TranspileErrorKind`] onto its diagnostic
+    /// slug, recovering a location with
+    /// [`Self::recover_transpile_error_location`], and stripping the
     /// machine-oriented `source-key:`/`location:` trailer lines.
-    pub fn from_transpiler_error(error: &str, source: &str) -> Self {
-        let kind = Self::classify_transpiler_error(error);
+    pub fn from_transpile_error(error: &TranspileError, source: &str) -> Self {
         let (line, column) =
-            Self::recover_transpiler_error_location(error, source).unwrap_or((1, 1));
-        Self::error(kind, line, column, clean_transpiler_error_message(error))
+            Self::recover_transpile_error_location(error, source).unwrap_or((1, 1));
+        Self::error(
+            error.kind.slug(),
+            line,
+            column,
+            clean_transpiler_error_message(&error.message),
+        )
     }
 }
 
@@ -348,34 +332,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classify_transpiler_error_maps_recognized_error_shapes() {
+    fn transpile_error_kinds_map_onto_diagnostic_slugs() {
         assert_eq!(
-            SourceDiagnostic::classify_transpiler_error("unroll-limit-exceeded: too many"),
+            TranspileErrorKind::UnrollLimit.slug(),
             "unroll-limit-exceeded"
         );
         assert_eq!(
-            SourceDiagnostic::classify_transpiler_error("runtime-for-unsupported: 'x' is bad"),
+            TranspileErrorKind::UnrollNested.slug(),
+            "unroll-limit-exceeded"
+        );
+        assert_eq!(
+            TranspileErrorKind::UnrollCommandLimit.slug(),
+            "unroll-limit-exceeded"
+        );
+        assert_eq!(
+            TranspileErrorKind::RuntimeForUnsupported.slug(),
             "runtime-for-unsupported"
         );
         assert_eq!(
-            SourceDiagnostic::classify_transpiler_error("module 'text' not imported."),
+            TranspileErrorKind::MissingStdlibModule.slug(),
             "missing-stdlib-module"
         );
         assert_eq!(
-            SourceDiagnostic::classify_transpiler_error("Unknown stdlib module 'bogus'."),
+            TranspileErrorKind::UnknownStdlibModule.slug(),
             "unknown-stdlib-module"
         );
-        assert_eq!(
-            SourceDiagnostic::classify_transpiler_error("something else went wrong"),
-            "semantic"
-        );
+        assert_eq!(TranspileErrorKind::Semantic.slug(), "semantic");
     }
 
     #[test]
-    fn from_transpiler_error_recovers_location_and_strips_trailers() {
-        let error = "unroll-limit-exceeded: range expands past 1024 iterations.\n  loop: for i\n  location: 2:5";
-        let diagnostic = SourceDiagnostic::from_transpiler_error(
-            error,
+    fn from_transpile_error_recovers_location_and_strips_trailers() {
+        let error = TranspileError::new(
+            TranspileErrorKind::UnrollLimit,
+            "unroll-limit-exceeded: range expands past 1024 iterations.\n  loop: for i\n  location: 2:5",
+        );
+        let diagnostic = SourceDiagnostic::from_transpile_error(
+            &error,
             "def main():\n    for i in range(1025):\n        /say bad {i}\n",
         );
 
@@ -388,15 +380,21 @@ mod tests {
     }
 
     #[test]
-    fn transpiler_error_recognition_gates_on_raw_error_text() {
-        assert!(SourceDiagnostic::transpiler_error_is_recognized(
-            "unroll-non-literal: dynamic bound"
+    fn transpile_error_recognition_gates_on_error_kind() {
+        assert!(SourceDiagnostic::transpile_error_is_recognized(
+            &TranspileError::new(
+                TranspileErrorKind::UnrollNonLiteral,
+                "unroll-non-literal: dynamic bound"
+            )
         ));
-        assert!(SourceDiagnostic::transpiler_error_is_recognized(
-            "module 'text' not imported."
+        assert!(SourceDiagnostic::transpile_error_is_recognized(
+            &TranspileError::new(
+                TranspileErrorKind::MissingStdlibModule,
+                "module 'text' not imported."
+            )
         ));
-        assert!(!SourceDiagnostic::transpiler_error_is_recognized(
-            "Transpile exploded for other reasons"
+        assert!(!SourceDiagnostic::transpile_error_is_recognized(
+            &TranspileError::from("Transpile exploded for other reasons")
         ));
     }
 

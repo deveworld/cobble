@@ -17,7 +17,9 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
     let program = parse(source).map_err(|errors| errors.join("\n"))?;
 
     let mut transpiler = Transpiler::new("cobble".to_string(), output_dir.clone());
-    transpiler.transpile(&program)?;
+    transpiler
+        .transpile(&program)
+        .map_err(|error| error.to_string())?;
     transpiler.write_data_pack().map_err(|e| e.to_string())?;
 
     Ok((temp_dir, output_dir))

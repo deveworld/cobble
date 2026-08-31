@@ -1,11 +1,11 @@
 use crate::ast::*;
-use crate::transpiler::Transpiler;
+use crate::transpiler::{TranspileError, Transpiler};
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_const_assignment(
         &mut self,
         const_assign: &ConstAssignment,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         // Infer the type of the constant value
         let value_type = self.infer_type(&const_assign.value);
 
@@ -33,7 +33,7 @@ impl Transpiler {
     }
 
     /// Evaluate an expression at compile time (must be constant)
-    fn evaluate_const_expr(&self, expr: &Expression) -> Result<f64, String> {
+    fn evaluate_const_expr(&self, expr: &Expression) -> Result<f64, TranspileError> {
         match expr {
             Expression::Number(n) => Ok(*n),
             Expression::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
@@ -45,6 +45,7 @@ impl Transpiler {
                     .ok_or_else(|| {
                         format!("Const expression references non-const variable: {}", name)
                     })
+                    .map_err(TranspileError::from)
             }
             Expression::Binary(left, op, right) => {
                 let left_val = self.evaluate_const_expr(left)?;
@@ -56,14 +57,14 @@ impl Transpiler {
                     BinaryOp::Mul => Ok(left_val * right_val),
                     BinaryOp::Div => {
                         if right_val == 0.0 {
-                            Err("Division by zero in const expression".to_string())
+                            Err("Division by zero in const expression".into())
                         } else {
                             Ok(left_val / right_val)
                         }
                     }
                     BinaryOp::Mod => {
                         if right_val == 0.0 {
-                            Err("Modulo by zero in const expression".to_string())
+                            Err("Modulo by zero in const expression".into())
                         } else {
                             // Use integer modulo for consistency with runtime behavior
                             Ok(((left_val as i32) % (right_val as i32)) as f64)
@@ -74,7 +75,8 @@ impl Transpiler {
                         let exp = right_val as i32;
                         if exp < 0 {
                             return Err("Power exponent must be non-negative in const expression"
-                                .to_string());
+                                .to_string()
+                                .into());
                         }
                         match base.checked_pow(exp as u32) {
                             Some(result) => Ok(result as f64),
@@ -87,10 +89,9 @@ impl Transpiler {
                             }
                         }
                     }
-                    _ => Err(format!(
-                        "Operator {:?} not supported in const expressions",
-                        op
-                    )),
+                    _ => {
+                        Err(format!("Operator {:?} not supported in const expressions", op).into())
+                    }
                 }
             }
             Expression::Unary(op, operand) => {
@@ -102,9 +103,13 @@ impl Transpiler {
                 }
             }
             Expression::String(_) | Expression::Array(_) | Expression::Map(_) => {
-                Err("Only numeric constants are supported at this time.".to_string())
+                Err("Only numeric constants are supported at this time."
+                    .to_string()
+                    .into())
             }
-            _ => Err("Expression type cannot be evaluated at compile time".to_string()),
+            _ => Err("Expression type cannot be evaluated at compile time"
+                .to_string()
+                .into()),
         }
     }
 }

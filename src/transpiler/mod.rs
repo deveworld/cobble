@@ -2,6 +2,7 @@
 mod command_processor;
 mod condition_translator;
 mod data_pack;
+mod error;
 mod expression_evaluator;
 mod source_map;
 mod statement_processors;
@@ -13,15 +14,16 @@ pub use data_pack::{
     BuildManifestValidation, DataPack, GeneratedCommand, GeneratedCommandKind, SourceLocation,
     SourceMap, SourceMapEntry,
 };
+pub use error::{TranspileError, TranspileErrorKind};
 
 use crate::ast::*;
 use crate::stdlib::EventType;
 use command_processor::CommandProcessor;
-use condition_translator::ConditionTranslator;
+use condition_translator::{ConditionTranslator, TranslatedCondition};
 use expression_evaluator::ExpressionEvaluator;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use storage_paths::StoragePathOps;
+use storage_paths::{StoragePathOps, StorageValueOps};
 
 /// Maximum exponent for compile-time power expansion (`x^n` emits `n - 1` multiplications).
 pub(in crate::transpiler) const MAX_POWER_EXPONENT: i32 = 100;
@@ -212,7 +214,7 @@ impl FunctionCapture {
     }
 }
 
-fn validate_text_color(color: &str) -> Result<(), String> {
+fn validate_text_color(color: &str) -> Result<(), TranspileError> {
     const NAMED_COLORS: &[&str] = &[
         "black",
         "dark_blue",
@@ -241,7 +243,8 @@ fn validate_text_color(color: &str) -> Result<(), String> {
         Err(format!(
             "Invalid text color '{}': use a Minecraft named color or #RRGGBB",
             color
-        ))
+        )
+        .into())
     }
 }
 
@@ -313,9 +316,6 @@ pub struct Transpiler {
 }
 
 impl Transpiler {
-    pub(in crate::transpiler) const ALWAYS_FALSE_CONDITION: &'static str =
-        "__cobble_always_false_condition__";
-
     pub fn new(namespace: String, output_dir: PathBuf) -> Self {
         Self {
             data_pack: DataPack::new(namespace, output_dir),
@@ -561,7 +561,7 @@ impl Transpiler {
         &self,
         var_name: &str,
         new_type: &crate::ast::CobbleType,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         use crate::ast::CobbleType;
 
         if let Some(existing_type) = self.variable_types.get(var_name) {
@@ -582,7 +582,8 @@ impl Transpiler {
                     existing_type.name(),
                     new_type.name(),
                     var_name
-                ));
+                )
+                .into());
             }
         }
 
@@ -666,7 +667,7 @@ impl Transpiler {
         self.data_pack.active_stdlib_modules = modules;
     }
 
-    pub fn transpile(&mut self, program: &Program) -> Result<(), String> {
+    pub fn transpile(&mut self, program: &Program) -> Result<(), TranspileError> {
         // Emit the stdlib v1 deprecation warning once per build.
         self.maybe_emit_stdlib_v1_warning();
 
@@ -763,7 +764,7 @@ impl Transpiler {
 
     fn build_module_init_commands(
         &mut self,
-    ) -> Result<(Vec<String>, HashMap<usize, GeneratedCommand>), String> {
+    ) -> Result<(Vec<String>, HashMap<usize, GeneratedCommand>), TranspileError> {
         let mut init_commands = Vec::new();
         let mut init_metadata = HashMap::new();
 
@@ -833,7 +834,7 @@ impl Transpiler {
         &mut self,
         var_name: &str,
         value: &Expression,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         if let Some(const_value) = self.try_eval_const(value) {
             let truncated = const_value as i32;
 
@@ -877,6 +878,7 @@ impl Transpiler {
                     .map_err(|e| {
                         format!("Failed to initialize module variable '{}': {}", var_name, e)
                     })
+                    .map_err(TranspileError::from)
             }
             _ => {
                 self.data_pack.track_objective("temp");
@@ -887,11 +889,12 @@ impl Transpiler {
                     .map_err(|e| {
                         format!("Failed to initialize module variable '{}': {}", var_name, e)
                     })
+                    .map_err(TranspileError::from)
             }
         }
     }
 
-    fn process_import(&mut self, import: &Import) -> Result<(), String> {
+    fn process_import(&mut self, import: &Import) -> Result<(), TranspileError> {
         // Handle stdlib imports
         if import.module == "stdlib" {
             if import.items.is_empty() {
@@ -915,7 +918,8 @@ impl Transpiler {
                 "Invalid module name '{}': Cannot contain path separators or '..'\n\
                 Module names must be simple identifiers (e.g., 'utils', 'helpers')",
                 import.module
-            ));
+            )
+            .into());
         }
 
         // Security: Limit import depth to prevent stack overflow
@@ -924,7 +928,8 @@ impl Transpiler {
                 "Maximum import depth exceeded ({}).\n\
                 This usually indicates a circular or excessively deep import chain.",
                 MAX_IMPORT_DEPTH
-            ));
+            )
+            .into());
         }
 
         // Handle file imports
@@ -938,7 +943,8 @@ impl Transpiler {
                 "Circular import detected: {}\n\
                 Import cycles are not supported because they make initialization order ambiguous.",
                 self.format_import_chain(&canonical_path)
-            ));
+            )
+            .into());
         }
 
         // Check if file exists
@@ -948,7 +954,8 @@ impl Transpiler {
                 import.module,
                 self.current_importer_display(),
                 import_path.display()
-            ));
+            )
+            .into());
         }
 
         // A later `import module` may follow an earlier `from module import ...`.
@@ -1115,12 +1122,15 @@ impl Transpiler {
 
     /// Activate a single stdlib module by name. Returns an error if the
     /// module name is not recognized.
-    fn activate_stdlib_module(&mut self, name: &str) -> Result<(), String> {
+    fn activate_stdlib_module(&mut self, name: &str) -> Result<(), TranspileError> {
         if !ALL_STDLIB_MODULES.contains(&name) {
-            return Err(format!(
-                "Unknown stdlib module '{}'. Available modules: {}",
-                name,
-                ALL_STDLIB_MODULES.join(", ")
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnknownStdlibModule,
+                format!(
+                    "Unknown stdlib module '{}'. Available modules: {}",
+                    name,
+                    ALL_STDLIB_MODULES.join(", ")
+                ),
             ));
         }
         self.active_stdlib_modules.insert(name.to_string());
@@ -1131,14 +1141,17 @@ impl Transpiler {
     /// helpers. Returns an error in `version = 2` when the module was not
     /// imported. In `version = 1` every module is always active so this
     /// always succeeds.
-    fn require_stdlib_module(&self, module: &str) -> Result<(), String> {
+    fn require_stdlib_module(&self, module: &str) -> Result<(), TranspileError> {
         if self.active_stdlib_modules.contains(module) {
             Ok(())
         } else {
-            Err(format!(
-                "module '{module}' not imported.\n\
+            Err(TranspileError::new(
+                TranspileErrorKind::MissingStdlibModule,
+                format!(
+                    "module '{module}' not imported.\n\
                  Add `from stdlib import {module}` or use `import stdlib` to enable all modules.\n\
                  See docs/stdlib-v2-design.md for the import and versioning model."
+                ),
             ))
         }
     }
@@ -1163,7 +1176,7 @@ impl Transpiler {
         }
     }
 
-    fn process_statement(&mut self, statement: &Statement) -> Result<(), String> {
+    fn process_statement(&mut self, statement: &Statement) -> Result<(), TranspileError> {
         let previous_statement_source = self.current_statement_source.clone();
         let statement_source = self
             .take_statement_source(statement)
@@ -1184,7 +1197,7 @@ impl Transpiler {
         result
     }
 
-    fn process_statement_inner(&mut self, statement: &Statement) -> Result<(), String> {
+    fn process_statement_inner(&mut self, statement: &Statement) -> Result<(), TranspileError> {
         match statement {
             Statement::Import(import) => {
                 self.process_import(import)?;
@@ -1256,7 +1269,9 @@ impl Transpiler {
                         );
                     }
                 } else {
-                    return Err("Minecraft command outside of function context".to_string());
+                    return Err("Minecraft command outside of function context"
+                        .to_string()
+                        .into());
                 }
             }
             Statement::Execute(exec_block) => {
@@ -1335,14 +1350,14 @@ impl Transpiler {
     pub(in crate::transpiler) fn capture_statement(
         &mut self,
         statement: &Statement,
-    ) -> Result<FunctionCapture, String> {
+    ) -> Result<FunctionCapture, TranspileError> {
         self.capture_statements(std::slice::from_ref(statement))
     }
 
     pub(in crate::transpiler) fn capture_statements(
         &mut self,
         statements: &[Statement],
-    ) -> Result<FunctionCapture, String> {
+    ) -> Result<FunctionCapture, TranspileError> {
         self.capture_commands(|transpiler| {
             for statement in statements {
                 transpiler.process_statement(statement)?;
@@ -1354,7 +1369,7 @@ impl Transpiler {
     pub(in crate::transpiler) fn capture_statements_isolated(
         &mut self,
         statements: &[Statement],
-    ) -> Result<FunctionCapture, String> {
+    ) -> Result<FunctionCapture, TranspileError> {
         let saved_state = self.save_compiler_state();
         let result = self.capture_statements(statements);
         self.restore_compiler_state(saved_state);
@@ -1364,9 +1379,9 @@ impl Transpiler {
     pub(in crate::transpiler) fn capture_commands<F>(
         &mut self,
         body: F,
-    ) -> Result<FunctionCapture, String>
+    ) -> Result<FunctionCapture, TranspileError>
     where
-        F: FnOnce(&mut Self) -> Result<(), String>,
+        F: FnOnce(&mut Self) -> Result<(), TranspileError>,
     {
         let saved = self.begin_function_capture();
         if let Err(error) = body(self) {
@@ -1379,9 +1394,9 @@ impl Transpiler {
     pub(in crate::transpiler) fn capture_commands_with_result<T, F>(
         &mut self,
         body: F,
-    ) -> Result<(T, FunctionCapture), String>
+    ) -> Result<(T, FunctionCapture), TranspileError>
     where
-        F: FnOnce(&mut Self) -> Result<T, String>,
+        F: FnOnce(&mut Self) -> Result<T, TranspileError>,
     {
         let saved = self.begin_function_capture();
         let result = match body(self) {
@@ -1480,12 +1495,16 @@ impl Transpiler {
         &mut self,
         capture: FunctionCapture,
         mut transform: F,
-    ) -> Result<(), String>
+    ) -> Result<(), TranspileError>
     where
         F: FnMut(&str) -> String,
     {
         let Some(ref mut commands) = self.current_function else {
-            return Err("Cannot append generated commands outside of function context".to_string());
+            return Err(
+                "Cannot append generated commands outside of function context"
+                    .to_string()
+                    .into(),
+            );
         };
 
         for (source_index, command) in capture.commands.into_iter().enumerate() {
@@ -1512,7 +1531,7 @@ impl Transpiler {
         Ok(())
     }
 
-    fn process_create_entity(&mut self, name: &str) -> Result<(), String> {
+    fn process_create_entity(&mut self, name: &str) -> Result<(), TranspileError> {
         if let Some(template) = self.entity_templates.get(name) {
             // Extract type from selector (e.g., @e[type=zombie])
             // This is a crude extraction, but sufficient for now
@@ -1541,18 +1560,19 @@ impl Transpiler {
             return Err(format!(
                 "Unknown entity template '{}'. Define it first using 'define {} = ...'",
                 name, name
-            ));
+            )
+            .into());
         }
         Ok(())
     }
 
-    fn process_entity_def(&mut self, entity_def: &EntityDef) -> Result<(), String> {
+    fn process_entity_def(&mut self, entity_def: &EntityDef) -> Result<(), TranspileError> {
         self.entity_templates
             .insert(entity_def.name.clone(), entity_def.clone());
         Ok(())
     }
 
-    fn process_function_def(&mut self, func: &FunctionDef) -> Result<(), String> {
+    fn process_function_def(&mut self, func: &FunctionDef) -> Result<(), TranspileError> {
         // Save previous function context
         let previous_function = self.current_function.take();
         let previous_metadata = self.current_function_metadata.take();
@@ -1644,7 +1664,7 @@ impl Transpiler {
         &mut self,
         expr: &Expression,
         target: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         let mut evaluator = ExpressionEvaluator::new(
             &mut self.data_pack,
             &self.variable_objectives,
@@ -1663,7 +1683,7 @@ impl Transpiler {
         evaluator.evaluate_expression_to_target(expr, target)
     }
 
-    fn process_expression(&mut self, expr: &Expression) -> Result<(), String> {
+    fn process_expression(&mut self, expr: &Expression) -> Result<(), TranspileError> {
         match expr {
             Expression::Call(func, args) => {
                 // Handle both Identifier and Attribute (for stdlib.addEventListener)
@@ -1683,7 +1703,7 @@ impl Transpiler {
                                 self.require_stdlib_module("event")?;
                                 self.process_add_event_listener(args)?;
                             } else {
-                                return Err(format!("Unknown module method: {}", func_name));
+                                return Err(format!("Unknown module method: {}", func_name).into());
                             }
                         } else {
                             // Regular function call - generate Minecraft function call
@@ -1753,14 +1773,17 @@ impl Transpiler {
                                 return Err(format!(
                                     "Unknown module method: {}.{}",
                                     module_name, method
-                                ));
+                                )
+                                .into());
                             }
                         } else {
-                            return Err("Complex attribute access not supported".to_string());
+                            return Err("Complex attribute access not supported"
+                                .to_string()
+                                .into());
                         }
                     }
                     _ => {
-                        return Err("Unsupported function call expression".to_string());
+                        return Err("Unsupported function call expression".into());
                     }
                 }
             }
@@ -1771,9 +1794,11 @@ impl Transpiler {
         Ok(())
     }
 
-    fn process_return(&mut self, expr: Option<&Expression>) -> Result<(), String> {
+    fn process_return(&mut self, expr: Option<&Expression>) -> Result<(), TranspileError> {
         if self.current_function.is_none() {
-            return Err("return can only be used inside a function".to_string());
+            return Err("return can only be used inside a function"
+                .to_string()
+                .into());
         }
 
         let mut commands = Vec::new();
@@ -1783,7 +1808,7 @@ impl Transpiler {
                 CobbleType::String | CobbleType::List | CobbleType::Map => {
                     return Err(
                         "return values must be integer scoreboard expressions; use storage/output variables for strings, lists, and maps."
-                            .to_string(),
+                            .into(),
                     );
                 }
                 _ => {}
@@ -1833,7 +1858,7 @@ impl Transpiler {
     pub(in crate::transpiler) fn record_user_function_call(
         &mut self,
         callee: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let Some(caller) = self.current_function_name.clone() else {
             return Ok(());
         };
@@ -1841,7 +1866,7 @@ impl Transpiler {
             return Err(format!(
                 "Recursive call to '{}' is not supported. Rewrite the recursion as a loop (while/for) instead.",
                 callee
-            ));
+            ).into());
         }
         self.function_call_edges
             .entry(caller)
@@ -1855,7 +1880,7 @@ impl Transpiler {
     /// once all call edges have been recorded. Recursion cannot compile
     /// correctly because argument frames and return flags are global fake
     /// players, not per-invocation stacks.
-    fn check_recursive_call_cycles(&self) -> Result<(), String> {
+    fn check_recursive_call_cycles(&self) -> Result<(), TranspileError> {
         fn visit(
             node: &str,
             edges: &BTreeMap<String, BTreeSet<String>>,
@@ -1890,7 +1915,7 @@ impl Transpiler {
                 return Err(format!(
                     "Recursive function calls are not supported: cycle {}. Rewrite the recursion as a loop (while/for) instead.",
                     cycle.join(" -> ")
-                ));
+                ).into());
             }
         }
         Ok(())
@@ -1902,14 +1927,14 @@ impl Transpiler {
     pub(in crate::transpiler) fn reject_string_score_operand(
         &self,
         name: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if self.variable_storage_paths.contains_key(name)
             && matches!(self.variable_types.get(name), Some(CobbleType::String))
         {
             return Err(format!(
                 "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
                 name
-            ));
+            ).into());
         }
         Ok(())
     }
@@ -1922,7 +1947,7 @@ impl Transpiler {
         ))
     }
 
-    fn push_current_command(&mut self, command: String) -> Result<(), String> {
+    fn push_current_command(&mut self, command: String) -> Result<(), TranspileError> {
         if let Some(ref mut commands) = self.current_function {
             let command_index = commands.len();
             commands.push(command);
@@ -1938,18 +1963,20 @@ impl Transpiler {
             }
             Ok(())
         } else {
-            Err("Stdlib helper called outside of function context".to_string())
+            Err("Stdlib helper called outside of function context"
+                .to_string()
+                .into())
         }
     }
 
-    fn push_current_commands(&mut self, commands: Vec<String>) -> Result<(), String> {
+    fn push_current_commands(&mut self, commands: Vec<String>) -> Result<(), TranspileError> {
         for command in commands {
             self.push_current_command(command)?;
         }
         Ok(())
     }
 
-    fn expr_to_plain_arg(&self, expr: &Expression, label: &str) -> Result<String, String> {
+    fn expr_to_plain_arg(&self, expr: &Expression, label: &str) -> Result<String, TranspileError> {
         match expr {
             Expression::String(s) | Expression::Identifier(s) => Ok(s.clone()),
             Expression::Number(n) if n.fract() == 0.0 => Ok((*n as i32).to_string()),
@@ -1962,14 +1989,18 @@ impl Transpiler {
                 } else if let Some(value) = self.position_helper_string(func, args)? {
                     Ok(value)
                 } else {
-                    Err(format!("{} must be a string, identifier, or number", label))
+                    Err(format!("{} must be a string, identifier, or number", label).into())
                 }
             }
-            _ => Err(format!("{} must be a string, identifier, or number", label)),
+            _ => Err(format!("{} must be a string, identifier, or number", label).into()),
         }
     }
 
-    fn expr_to_selector_arg(&self, expr: &Expression, label: &str) -> Result<String, String> {
+    fn expr_to_selector_arg(
+        &self,
+        expr: &Expression,
+        label: &str,
+    ) -> Result<String, TranspileError> {
         let value = self.expr_to_plain_arg(expr, label)?;
         Ok(self.expand_selector_alias_arg(value))
     }
@@ -1981,22 +2012,23 @@ impl Transpiler {
         self.selector_aliases.get(alias).cloned().unwrap_or(value)
     }
 
-    fn expr_to_i32(&self, expr: &Expression, label: &str) -> Result<i32, String> {
+    fn expr_to_i32(&self, expr: &Expression, label: &str) -> Result<i32, TranspileError> {
         match expr {
             Expression::Number(n) => Ok(*n as i32),
             Expression::Identifier(name) => self
                 .compile_time_constants
                 .get(name)
                 .map(|value| *value as i32)
-                .ok_or_else(|| format!("{} must be a literal integer or const", label)),
-            _ => Err(format!("{} must be a literal integer or const", label)),
+                .ok_or_else(|| format!("{} must be a literal integer or const", label))
+                .map_err(TranspileError::from),
+            _ => Err(format!("{} must be a literal integer or const", label).into()),
         }
     }
 
-    fn expr_to_bool(&self, expr: &Expression, label: &str) -> Result<bool, String> {
+    fn expr_to_bool(&self, expr: &Expression, label: &str) -> Result<bool, TranspileError> {
         match expr {
             Expression::Boolean(value) => Ok(*value),
-            _ => Err(format!("{} must be a literal boolean", label)),
+            _ => Err(format!("{} must be a literal boolean", label).into()),
         }
     }
 
@@ -2011,7 +2043,7 @@ impl Transpiler {
         plan: &StoragePathPlan,
         kind: GeneratedCommandKind,
         build_helper_commands: F,
-    ) -> Result<Vec<String>, String>
+    ) -> Result<Vec<String>, TranspileError>
     where
         F: FnOnce(&str) -> Vec<String>,
     {
@@ -2031,201 +2063,6 @@ impl Transpiler {
         Ok(commands)
     }
 
-    fn storage_value_commands(
-        &mut self,
-        target_path: &str,
-        expr: &Expression,
-    ) -> Result<Vec<String>, String> {
-        if let Ok(snbt) = self.serialize_to_snbt(expr) {
-            return Ok(vec![format!(
-                "data modify storage {}:global {} set value {}",
-                self.data_pack.namespace, target_path, snbt
-            )]);
-        }
-
-        match expr {
-            Expression::Array(_) | Expression::Map(_) => {
-                let shell = self.storage_shell_snbt(expr)?;
-                let mut commands = vec![format!(
-                    "data modify storage {}:global {} set value {}",
-                    self.data_pack.namespace, target_path, shell
-                )];
-                commands.extend(self.storage_runtime_patch_commands(target_path, expr)?);
-                Ok(commands)
-            }
-            _ => self.storage_leaf_set_commands(target_path, expr),
-        }
-    }
-
-    fn materialize_storage_value(
-        &mut self,
-        expr: &Expression,
-    ) -> Result<(Vec<String>, String), String> {
-        let id = self.next_temp_id();
-        let path = format!("_cobble_value_{}", id);
-        let commands = self.storage_value_commands(&path, expr)?;
-        Ok((commands, path))
-    }
-
-    fn storage_shell_snbt(&self, expr: &Expression) -> Result<String, String> {
-        match expr {
-            Expression::Number(_)
-            | Expression::String(_)
-            | Expression::Boolean(_)
-            | Expression::None => self.serialize_to_snbt(expr),
-            Expression::Identifier(name) => {
-                if self.compile_time_constants.contains_key(name) {
-                    self.serialize_to_snbt(expr)
-                } else {
-                    Ok(self.default_snbt_for_runtime_identifier(name))
-                }
-            }
-            Expression::Array(items) => {
-                let mut result = String::from("[");
-                for (index, item) in items.iter().enumerate() {
-                    if index > 0 {
-                        result.push(',');
-                    }
-                    result.push_str(&self.storage_shell_snbt(item)?);
-                }
-                result.push(']');
-                Ok(result)
-            }
-            Expression::Map(entries) => {
-                let mut result = String::from("{");
-                for (index, (key, value)) in entries.iter().enumerate() {
-                    if index > 0 {
-                        result.push(',');
-                    }
-                    result.push_str(&Self::serialize_snbt_key(key));
-                    result.push(':');
-                    result.push_str(&self.storage_shell_snbt(value)?);
-                }
-                result.push('}');
-                Ok(result)
-            }
-            _ => Ok("0".to_string()),
-        }
-    }
-
-    fn default_snbt_for_runtime_identifier(&self, name: &str) -> String {
-        match self.variable_types.get(name) {
-            Some(CobbleType::String) => "\"\"".to_string(),
-            Some(CobbleType::List) => "[]".to_string(),
-            Some(CobbleType::Map) => "{}".to_string(),
-            Some(CobbleType::Boolean) => "0b".to_string(),
-            _ => "0".to_string(),
-        }
-    }
-
-    fn storage_runtime_patch_commands(
-        &mut self,
-        target_path: &str,
-        expr: &Expression,
-    ) -> Result<Vec<String>, String> {
-        match expr {
-            Expression::Array(items) => {
-                let mut commands = Vec::new();
-                for (index, item) in items.iter().enumerate() {
-                    commands.extend(self.storage_runtime_patch_commands(
-                        &format!("{}[{}]", target_path, index),
-                        item,
-                    )?);
-                }
-                Ok(commands)
-            }
-            Expression::Map(entries) => {
-                let mut commands = Vec::new();
-                for (key, value) in entries {
-                    commands.extend(self.storage_runtime_patch_commands(
-                        &Self::storage_child_path(target_path, key),
-                        value,
-                    )?);
-                }
-                Ok(commands)
-            }
-            Expression::Number(_)
-            | Expression::String(_)
-            | Expression::Boolean(_)
-            | Expression::None => Ok(Vec::new()),
-            Expression::Identifier(name) if self.compile_time_constants.contains_key(name) => {
-                Ok(Vec::new())
-            }
-            _ => self.storage_leaf_set_commands(target_path, expr),
-        }
-    }
-
-    fn storage_child_path(base: &str, key: &str) -> String {
-        if !key.is_empty()
-            && key
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '+')
-        {
-            format!("{}.{}", base, key)
-        } else {
-            let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
-            format!("{}.\"{}\"", base, escaped)
-        }
-    }
-
-    fn storage_leaf_set_commands(
-        &mut self,
-        target_path: &str,
-        expr: &Expression,
-    ) -> Result<Vec<String>, String> {
-        let namespace = self.data_pack.namespace.clone();
-        match expr {
-            Expression::Identifier(name) => {
-                if let Some(source_path) = self.variable_storage_paths.get(name) {
-                    return Ok(vec![format!(
-                        "data modify storage {}:global {} set from storage {}:global {}",
-                        namespace, target_path, namespace, source_path
-                    )]);
-                }
-                if self.is_current_macro_param(name) {
-                    return Ok(vec![format!(
-                        "data modify storage {}:global {} set from storage {}:global args.{}",
-                        namespace, target_path, namespace, name
-                    )]);
-                }
-                if self.scoreboard_variables.contains(name)
-                    || self.variable_objectives.contains_key(name)
-                    || self.variables.contains_key(name)
-                {
-                    let objective = self
-                        .variable_objectives
-                        .get(name)
-                        .map(String::as_str)
-                        .unwrap_or("temp");
-                    return Ok(vec![format!(
-                        "execute store result storage {}:global {} int 1 run scoreboard players get {} {}",
-                        namespace, target_path, name, objective
-                    )]);
-                }
-                Err(format!(
-                    "Identifier '{}' cannot be stored in SNBT here; use a literal, const, runtime score, storage-backed value, or function parameter",
-                    name
-                ))
-            }
-            Expression::Number(_)
-            | Expression::String(_)
-            | Expression::Boolean(_)
-            | Expression::Array(_)
-            | Expression::Map(_) => self.storage_value_commands(target_path, expr),
-            Expression::None => self.serialize_to_snbt(expr).map(|_| Vec::new()),
-            _ => {
-                let id = self.next_temp_id();
-                let temp_score = format!("#cobble_value_{}", id);
-                let mut commands = self.evaluate_expression_to_target(expr, &temp_score)?;
-                commands.push(format!(
-                    "execute store result storage {}:global {} int 1 run scoreboard players get {} temp",
-                    namespace, target_path, temp_score
-                ));
-                Ok(commands)
-            }
-        }
-    }
-
     fn qualify_namespaced_id(&self, value: &str) -> String {
         if value.contains(':') {
             value.to_string()
@@ -2234,7 +2071,7 @@ impl Transpiler {
         }
     }
 
-    fn expr_to_json_value(&self, expr: &Expression) -> Result<serde_json::Value, String> {
+    fn expr_to_json_value(&self, expr: &Expression) -> Result<serde_json::Value, TranspileError> {
         match expr {
             Expression::Number(n) if n.fract() == 0.0 => Ok(serde_json::json!(*n as i32)),
             Expression::Number(n) => Ok(serde_json::json!(n)),
@@ -2259,7 +2096,7 @@ impl Transpiler {
                 } else if let Some(value) = self.text_component_helper_json(func, args)? {
                     Ok(value)
                 } else {
-                    Err("Only text.* component helpers and item_component.* helpers can be serialized to JSON here".to_string())
+                    Err("Only text.* component helpers and item_component.* helpers can be serialized to JSON here".into())
                 }
             }
             Expression::Identifier(name) => {
@@ -2273,19 +2110,25 @@ impl Transpiler {
                     Err(format!(
                         "Identifier '{}' cannot be serialized to JSON here; use a literal or const",
                         name
-                    ))
+                    )
+                    .into())
                 }
             }
-            _ => Err(format!("Unsupported expression in JSON value: {:?}", expr)),
+            _ => Err(format!("Unsupported expression in JSON value: {:?}", expr).into()),
         }
     }
 
-    fn expr_to_text_component(&self, expr: &Expression) -> Result<String, String> {
+    fn expr_to_text_component(&self, expr: &Expression) -> Result<String, TranspileError> {
         let value = self.expr_to_text_component_value(expr)?;
-        serde_json::to_string(&value).map_err(|e| format!("Failed to encode text component: {}", e))
+        serde_json::to_string(&value)
+            .map_err(|e| format!("Failed to encode text component: {}", e))
+            .map_err(TranspileError::from)
     }
 
-    fn expr_to_text_component_value(&self, expr: &Expression) -> Result<serde_json::Value, String> {
+    fn expr_to_text_component_value(
+        &self,
+        expr: &Expression,
+    ) -> Result<serde_json::Value, TranspileError> {
         match expr {
             Expression::String(s) => Ok(serde_json::json!({ "text": s })),
             _ => self.expr_to_json_value(expr),
@@ -2296,7 +2139,7 @@ impl Transpiler {
         &self,
         func: &Expression,
         args: &[Expression],
-    ) -> Result<Option<serde_json::Value>, String> {
+    ) -> Result<Option<serde_json::Value>, TranspileError> {
         let Expression::Attribute(obj, method) = func else {
             return Ok(None);
         };
@@ -2311,14 +2154,14 @@ impl Transpiler {
         let value = match method.as_str() {
             "plain" => {
                 if args.len() != 1 {
-                    return Err("text.plain() takes 1 argument".to_string());
+                    return Err("text.plain() takes 1 argument".into());
                 }
                 let text = self.expr_to_plain_arg(&args[0], "text.plain text")?;
                 serde_json::json!({ "text": text })
             }
             "colored" => {
                 if args.len() != 2 {
-                    return Err("text.colored() takes 2 arguments".to_string());
+                    return Err("text.colored() takes 2 arguments".into());
                 }
                 let text = self.expr_to_plain_arg(&args[0], "text.colored text")?;
                 let color = self.expr_to_plain_arg(&args[1], "text color")?;
@@ -2327,7 +2170,7 @@ impl Transpiler {
             }
             "score" => {
                 if args.len() != 2 {
-                    return Err("text.score() takes 2 arguments".to_string());
+                    return Err("text.score() takes 2 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "score component name")?;
                 let objective = self.expr_to_plain_arg(&args[1], "score component objective")?;
@@ -2335,7 +2178,7 @@ impl Transpiler {
             }
             "selector" => {
                 if args.len() != 1 {
-                    return Err("text.selector() takes 1 argument".to_string());
+                    return Err("text.selector() takes 1 argument".into());
                 }
                 let selector = self.expr_to_selector_arg(&args[0], "selector component")?;
                 serde_json::json!({ "selector": selector })
@@ -2349,7 +2192,7 @@ impl Transpiler {
         &self,
         func: &Expression,
         args: &[Expression],
-    ) -> Result<Option<serde_json::Value>, String> {
+    ) -> Result<Option<serde_json::Value>, TranspileError> {
         let Expression::Attribute(obj, method) = func else {
             return Ok(None);
         };
@@ -2364,7 +2207,9 @@ impl Transpiler {
         let value = match method.as_str() {
             "components" => {
                 if args.is_empty() {
-                    return Err("item_component.components() takes at least 1 argument".to_string());
+                    return Err("item_component.components() takes at least 1 argument"
+                        .to_string()
+                        .into());
                 }
                 let mut merged = serde_json::Map::new();
                 for arg in args {
@@ -2374,7 +2219,8 @@ impl Transpiler {
                             return Err(format!(
                                 "item_component.components() duplicate component '{}'",
                                 key
-                            ));
+                            )
+                            .into());
                         }
                         merged.insert(key, value);
                     }
@@ -2383,7 +2229,9 @@ impl Transpiler {
             }
             "custom_name" => {
                 if args.len() != 1 {
-                    return Err("item_component.custom_name() takes 1 argument".to_string());
+                    return Err("item_component.custom_name() takes 1 argument"
+                        .to_string()
+                        .into());
                 }
                 serde_json::json!({
                     "minecraft:custom_name": self.expr_to_text_component_value(&args[0])?
@@ -2391,10 +2239,12 @@ impl Transpiler {
             }
             "lore" => {
                 if args.len() != 1 {
-                    return Err("item_component.lore() takes 1 argument".to_string());
+                    return Err("item_component.lore() takes 1 argument".into());
                 }
                 let Expression::Array(entries) = &args[0] else {
-                    return Err("item_component.lore() argument must be an array".to_string());
+                    return Err("item_component.lore() argument must be an array"
+                        .to_string()
+                        .into());
                 };
                 let lore = entries
                     .iter()
@@ -2404,7 +2254,9 @@ impl Transpiler {
             }
             "unbreakable" => {
                 if !args.is_empty() {
-                    return Err("item_component.unbreakable() takes 0 arguments".to_string());
+                    return Err("item_component.unbreakable() takes 0 arguments"
+                        .to_string()
+                        .into());
                 }
                 serde_json::json!({ "minecraft:unbreakable": {} })
             }
@@ -2416,18 +2268,22 @@ impl Transpiler {
     fn expr_to_item_component_map(
         &self,
         expr: &Expression,
-    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    ) -> Result<serde_json::Map<String, serde_json::Value>, TranspileError> {
         let value = self.expr_to_json_value(expr)?;
-        value.as_object().cloned().ok_or_else(|| {
-            "item_component.components() arguments must be component objects".to_string()
-        })
+        value
+            .as_object()
+            .cloned()
+            .ok_or_else(|| {
+                "item_component.components() arguments must be component objects".to_string()
+            })
+            .map_err(TranspileError::from)
     }
 
     fn process_item_component_intrinsic(
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let func = Expression::Attribute(
             Box::new(Expression::Identifier("item_component".to_string())),
             method.to_string(),
@@ -2436,19 +2292,16 @@ impl Transpiler {
             return Err(format!(
                 "item_component.{}() returns an item component JSON object; pass it to datapack.item_modifier() or another JSON value",
                 method
-            ));
+            ).into());
         }
-        Err(format!(
-            "Unknown item component function: item_component.{}",
-            method
-        ))
+        Err(format!("Unknown item component function: item_component.{}", method).into())
     }
 
     fn expr_to_storage_path_plan(
         &self,
         expr: &Expression,
         label: &str,
-    ) -> Result<StoragePathPlan, String> {
+    ) -> Result<StoragePathPlan, TranspileError> {
         match expr {
             Expression::String(s) | Expression::Identifier(s) => {
                 Ok(StoragePathPlan::static_path(s.clone()))
@@ -2461,10 +2314,10 @@ impl Transpiler {
                 if let Some(value) = self.storage_path_helper_plan(func, args)? {
                     Ok(value)
                 } else {
-                    Err(format!("{} must be a storage path", label))
+                    Err(format!("{} must be a storage path", label).into())
                 }
             }
-            _ => Err(format!("{} must be a storage path", label)),
+            _ => Err(format!("{} must be a storage path", label).into()),
         }
     }
 
@@ -2472,7 +2325,7 @@ impl Transpiler {
         &self,
         func: &Expression,
         args: &[Expression],
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, TranspileError> {
         let Some(plan) = self.storage_path_helper_plan(func, args)? else {
             return Ok(None);
         };
@@ -2480,7 +2333,7 @@ impl Transpiler {
             StoragePathPlan::Static(path) => Ok(Some(path)),
             StoragePathPlan::Dynamic { .. } => Err(
                 "Dynamic storage paths can only be used by storage helpers that emit Minecraft commands"
-                    .to_string(),
+                    .into(),
             ),
         }
     }
@@ -2489,7 +2342,7 @@ impl Transpiler {
         &self,
         func: &Expression,
         args: &[Expression],
-    ) -> Result<Option<StoragePathPlan>, String> {
+    ) -> Result<Option<StoragePathPlan>, TranspileError> {
         let Expression::Attribute(obj, method) = func else {
             return Ok(None);
         };
@@ -2504,7 +2357,9 @@ impl Transpiler {
         let path = match method.as_str() {
             "path" => {
                 if args.is_empty() {
-                    return Err("storage.path() takes at least 1 argument".to_string());
+                    return Err("storage.path() takes at least 1 argument"
+                        .to_string()
+                        .into());
                 }
                 StoragePathPlan::static_path(
                     args.iter()
@@ -2517,7 +2372,7 @@ impl Transpiler {
             }
             "child" => {
                 if args.len() != 2 {
-                    return Err("storage.child() takes 2 arguments".to_string());
+                    return Err("storage.child() takes 2 arguments".into());
                 }
                 let base = self.expr_to_storage_path_plan(&args[0], "storage base path")?;
                 let child = self.expr_to_storage_path_component(&args[1], "storage child path")?;
@@ -2525,7 +2380,7 @@ impl Transpiler {
             }
             "index" => {
                 if args.len() != 2 {
-                    return Err("storage.index() takes 2 arguments".to_string());
+                    return Err("storage.index() takes 2 arguments".into());
                 }
                 let base = self.expr_to_storage_path_plan(&args[0], "storage base path")?;
                 if let Ok(index) = self.expr_to_i32(&args[1], "storage list index") {
@@ -2543,19 +2398,16 @@ impl Transpiler {
         &self,
         expr: &Expression,
         label: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, TranspileError> {
         let component = self.expr_to_plain_arg(expr, label)?;
         if component.is_empty() {
-            return Err(format!("{} cannot be empty", label));
+            return Err(format!("{} cannot be empty", label).into());
         }
         if component
             .chars()
             .any(|ch| ch == '.' || ch == '[' || ch == ']')
         {
-            return Err(format!(
-                "{} must be a single unqualified path component",
-                label
-            ));
+            return Err(format!("{} must be a single unqualified path component", label).into());
         }
         Ok(component)
     }
@@ -2564,7 +2416,7 @@ impl Transpiler {
         &self,
         func: &Expression,
         args: &[Expression],
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, TranspileError> {
         let Expression::Attribute(obj, method) = func else {
             return Ok(None);
         };
@@ -2579,31 +2431,37 @@ impl Transpiler {
         let selector = match method.as_str() {
             "current" => {
                 if !args.is_empty() {
-                    return Err("selector.current() takes 0 arguments".to_string());
+                    return Err("selector.current() takes 0 arguments".into());
                 }
                 "@s".to_string()
             }
             "nearest_player" => {
                 if !args.is_empty() {
-                    return Err("selector.nearest_player() takes 0 arguments".to_string());
+                    return Err("selector.nearest_player() takes 0 arguments"
+                        .to_string()
+                        .into());
                 }
                 "@p".to_string()
             }
             "all_players" => {
                 if !args.is_empty() {
-                    return Err("selector.all_players() takes 0 arguments".to_string());
+                    return Err("selector.all_players() takes 0 arguments"
+                        .to_string()
+                        .into());
                 }
                 "@a".to_string()
             }
             "all_entities" => {
                 if !args.is_empty() {
-                    return Err("selector.all_entities() takes 0 arguments".to_string());
+                    return Err("selector.all_entities() takes 0 arguments"
+                        .to_string()
+                        .into());
                 }
                 "@e".to_string()
             }
             "tagged" | "players_tagged" => {
                 if args.len() != 1 {
-                    return Err(format!("selector.{}() takes 1 argument", method));
+                    return Err(format!("selector.{}() takes 1 argument", method).into());
                 }
                 let tag = self.expr_to_plain_arg(&args[0], "selector tag")?;
                 if method == "players_tagged" {
@@ -2614,7 +2472,7 @@ impl Transpiler {
             }
             "entity_type" => {
                 if args.len() != 1 {
-                    return Err("selector.entity_type() takes 1 argument".to_string());
+                    return Err("selector.entity_type() takes 1 argument".into());
                 }
                 let entity_type = self.expr_to_plain_arg(&args[0], "selector entity type")?;
                 format!("@e[type={}]", entity_type)
@@ -2628,7 +2486,7 @@ impl Transpiler {
         &self,
         func: &Expression,
         args: &[Expression],
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, TranspileError> {
         let Expression::Attribute(obj, method) = func else {
             return Ok(None);
         };
@@ -2643,7 +2501,7 @@ impl Transpiler {
         let position = match method.as_str() {
             "here" => {
                 if !args.is_empty() {
-                    return Err("position.here() takes 0 arguments".to_string());
+                    return Err("position.here() takes 0 arguments".into());
                 }
                 "~ ~ ~".to_string()
             }
@@ -2660,9 +2518,9 @@ impl Transpiler {
         method: &str,
         args: &[Expression],
         prefix: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, TranspileError> {
         if args.len() != 3 {
-            return Err(format!("position.{}() takes 3 arguments", method));
+            return Err(format!("position.{}() takes 3 arguments", method).into());
         }
         args.iter()
             .map(|arg| self.format_position_component(arg, prefix))
@@ -2670,7 +2528,11 @@ impl Transpiler {
             .map(|parts| parts.join(" "))
     }
 
-    fn format_position_component(&self, expr: &Expression, prefix: &str) -> Result<String, String> {
+    fn format_position_component(
+        &self,
+        expr: &Expression,
+        prefix: &str,
+    ) -> Result<String, TranspileError> {
         let value = self.expr_to_plain_arg(expr, "position component")?;
         if prefix.is_empty() {
             Ok(value)
@@ -2685,7 +2547,7 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let func = Expression::Attribute(
             Box::new(Expression::Identifier("selector".to_string())),
             method.to_string(),
@@ -2694,16 +2556,16 @@ impl Transpiler {
             return Err(format!(
                 "selector.{}() returns a selector string; pass it to a helper that accepts a selector",
                 method
-            ));
+            ).into());
         }
-        Err(format!("Unknown selector function: selector.{}", method))
+        Err(format!("Unknown selector function: selector.{}", method).into())
     }
 
     fn process_position_intrinsic(
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let func = Expression::Attribute(
             Box::new(Expression::Identifier("position".to_string())),
             method.to_string(),
@@ -2712,20 +2574,24 @@ impl Transpiler {
             return Err(format!(
                 "position.{}() returns a coordinate string; pass it to a helper that accepts a position",
                 method
-            ));
+            ).into());
         }
-        Err(format!("Unknown position function: position.{}", method))
+        Err(format!("Unknown position function: position.{}", method).into())
     }
 
-    fn process_text_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+    fn process_text_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), TranspileError> {
         if matches!(method, "plain" | "colored" | "score" | "selector") {
             return Err(format!(
                 "text.{}() returns a JSON text component; pass it to text.tellraw(), text.title(), or another JSON value",
                 method
-            ));
+            ).into());
         }
         if args.len() != 2 {
-            return Err(format!("text.{}() takes 2 arguments", method));
+            return Err(format!("text.{}() takes 2 arguments", method).into());
         }
 
         let target = self.expr_to_selector_arg(&args[0], "text target")?;
@@ -2735,17 +2601,21 @@ impl Transpiler {
             "title" | "subtitle" | "actionbar" => {
                 format!("title {} {} {}", target, method, component)
             }
-            _ => return Err(format!("Unknown text function: text.{}", method)),
+            _ => return Err(format!("Unknown text function: text.{}", method).into()),
         };
         self.push_current_command(command)
     }
 
-    fn process_score_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+    fn process_score_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), TranspileError> {
         self.data_pack.track_objective("temp");
         let command = match method {
             "set" => {
                 if args.len() != 2 {
-                    return Err("score.set() takes 2 arguments".to_string());
+                    return Err("score.set() takes 2 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "score name")?;
                 let value = self.expr_to_i32(&args[1], "score value")?;
@@ -2753,7 +2623,7 @@ impl Transpiler {
             }
             "add" | "remove" => {
                 if args.len() != 2 {
-                    return Err(format!("score.{}() takes 2 arguments", method));
+                    return Err(format!("score.{}() takes 2 arguments", method).into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "score name")?;
                 let value = self.expr_to_i32(&args[1], "score value")?;
@@ -2761,14 +2631,14 @@ impl Transpiler {
             }
             "reset" => {
                 if args.len() != 1 {
-                    return Err("score.reset() takes 1 argument".to_string());
+                    return Err("score.reset() takes 1 argument".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "score name")?;
                 format!("scoreboard players reset {} temp", name)
             }
             "copy" => {
                 if args.len() != 2 {
-                    return Err("score.copy() takes 2 arguments".to_string());
+                    return Err("score.copy() takes 2 arguments".into());
                 }
                 let dst = self.expr_to_plain_arg(&args[0], "destination score")?;
                 let src = self.expr_to_plain_arg(&args[1], "source score")?;
@@ -2776,21 +2646,21 @@ impl Transpiler {
             }
             "operation" => {
                 if args.len() != 3 {
-                    return Err("score.operation() takes 3 arguments".to_string());
+                    return Err("score.operation() takes 3 arguments".into());
                 }
                 let dst = self.expr_to_plain_arg(&args[0], "destination score")?;
                 let op = self.expr_to_plain_arg(&args[1], "score operation")?;
                 let src = self.expr_to_plain_arg(&args[2], "source score")?;
                 const ALLOWED_OPS: &[&str] = &["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"];
                 if !ALLOWED_OPS.contains(&op.as_str()) {
-                    return Err(format!("Unsupported scoreboard operation '{}'", op));
+                    return Err(format!("Unsupported scoreboard operation '{}'", op).into());
                 }
                 format!(
                     "scoreboard players operation {} temp {} {} temp",
                     dst, op, src
                 )
             }
-            _ => return Err(format!("Unknown score function: score.{}", method)),
+            _ => return Err(format!("Unknown score function: score.{}", method).into()),
         };
         self.push_current_command(command)
     }
@@ -2799,11 +2669,13 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let command = match method {
             "add" => {
                 if !(2..=3).contains(&args.len()) {
-                    return Err("score.objective.add() takes 2 or 3 arguments".to_string());
+                    return Err("score.objective.add() takes 2 or 3 arguments"
+                        .to_string()
+                        .into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "objective name")?;
                 let criteria = self.expr_to_plain_arg(&args[1], "objective criteria")?;
@@ -2819,14 +2691,18 @@ impl Transpiler {
             }
             "remove" => {
                 if args.len() != 1 {
-                    return Err("score.objective.remove() takes 1 argument".to_string());
+                    return Err("score.objective.remove() takes 1 argument"
+                        .to_string()
+                        .into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "objective name")?;
                 format!("scoreboard objectives remove {}", name)
             }
             "display" => {
                 if !(1..=2).contains(&args.len()) {
-                    return Err("score.objective.display() takes 1 or 2 arguments".to_string());
+                    return Err("score.objective.display() takes 1 or 2 arguments"
+                        .to_string()
+                        .into());
                 }
                 let slot = self.expr_to_plain_arg(&args[0], "scoreboard display slot")?;
                 if args.len() == 2 {
@@ -2840,7 +2716,8 @@ impl Transpiler {
                 return Err(format!(
                     "Unknown score objective function: score.objective.{}",
                     method
-                ))
+                )
+                .into())
             }
         };
         self.push_current_command(command)
@@ -2850,18 +2727,20 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         self.data_pack.track_objective("temp");
         let command = match method {
             "int" => {
                 if args.len() != 3 {
-                    return Err("random.int() takes 3 arguments".to_string());
+                    return Err("random.int() takes 3 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "random target score")?;
                 let min = self.expr_to_i32(&args[1], "random min")?;
                 let max = self.expr_to_i32(&args[2], "random max")?;
                 if min > max {
-                    return Err("random.int() min cannot be greater than max".to_string());
+                    return Err("random.int() min cannot be greater than max"
+                        .to_string()
+                        .into());
                 }
                 if min == max {
                     format!("scoreboard players set {} temp {}", name, min)
@@ -2874,7 +2753,7 @@ impl Transpiler {
             }
             "bool" => {
                 if args.len() != 1 {
-                    return Err("random.bool() takes 1 argument".to_string());
+                    return Err("random.bool() takes 1 argument".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "random target score")?;
                 format!(
@@ -2882,17 +2761,21 @@ impl Transpiler {
                     name
                 )
             }
-            _ => return Err(format!("Unknown random function: random.{}", method)),
+            _ => return Err(format!("Unknown random function: random.{}", method).into()),
         };
         self.push_current_command(command)
     }
 
-    fn process_timer_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+    fn process_timer_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), TranspileError> {
         self.data_pack.track_objective("temp");
         let command = match method {
             "set" => {
                 if args.len() != 2 {
-                    return Err("timer.set() takes 2 arguments".to_string());
+                    return Err("timer.set() takes 2 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "timer name")?;
                 let ticks = self.expr_to_i32(&args[1], "timer ticks")?;
@@ -2900,7 +2783,7 @@ impl Transpiler {
             }
             "tick" => {
                 if args.len() != 1 {
-                    return Err("timer.tick() takes 1 argument".to_string());
+                    return Err("timer.tick() takes 1 argument".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "timer name")?;
                 format!(
@@ -2910,7 +2793,7 @@ impl Transpiler {
             }
             "done" => {
                 if args.len() != 1 {
-                    return Err("timer.done() takes 1 argument".to_string());
+                    return Err("timer.done() takes 1 argument".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "timer name")?;
                 let flag = format!("{}_done", name);
@@ -2922,12 +2805,12 @@ impl Transpiler {
             }
             "reset" => {
                 if args.len() != 1 {
-                    return Err("timer.reset() takes 1 argument".to_string());
+                    return Err("timer.reset() takes 1 argument".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "timer name")?;
                 format!("scoreboard players reset {} temp", name)
             }
-            _ => return Err(format!("Unknown timer function: timer.{}", method)),
+            _ => return Err(format!("Unknown timer function: timer.{}", method).into()),
         };
         self.push_current_command(command)
     }
@@ -2936,14 +2819,14 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let namespace = self.data_pack.namespace.clone();
         let mut commands = Vec::new();
 
         match method {
             "set" => {
                 if args.len() != 2 {
-                    return Err("storage.set() takes 2 arguments".to_string());
+                    return Err("storage.set() takes 2 arguments".into());
                 }
                 let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
                 if let Some(static_path) = path.as_static().map(str::to_string) {
@@ -2982,7 +2865,7 @@ impl Transpiler {
             }
             "merge" => {
                 if args.len() != 2 {
-                    return Err("storage.merge() takes 2 arguments".to_string());
+                    return Err("storage.merge() takes 2 arguments".into());
                 }
                 let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
                 if let Ok(value) = self.serialize_to_snbt(&args[1]) {
@@ -3033,7 +2916,7 @@ impl Transpiler {
             }
             "remove" => {
                 if args.len() != 1 {
-                    return Err("storage.remove() takes 1 argument".to_string());
+                    return Err("storage.remove() takes 1 argument".into());
                 }
                 let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
                 if let Some(static_path) = path.as_static() {
@@ -3052,7 +2935,7 @@ impl Transpiler {
             }
             "copy" => {
                 if args.len() != 2 {
-                    return Err("storage.copy() takes 2 arguments".to_string());
+                    return Err("storage.copy() takes 2 arguments".into());
                 }
                 let dst = self.expr_to_storage_path_plan(&args[0], "destination storage path")?;
                 let src = self.expr_to_storage_path_plan(&args[1], "source storage path")?;
@@ -3106,7 +2989,7 @@ impl Transpiler {
             }
             "append" | "prepend" => {
                 if args.len() != 2 {
-                    return Err(format!("storage.{}() takes 2 arguments", method));
+                    return Err(format!("storage.{}() takes 2 arguments", method).into());
                 }
                 let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
                 if let Ok(value) = self.serialize_to_snbt(&args[1]) {
@@ -3157,7 +3040,7 @@ impl Transpiler {
             }
             "insert" => {
                 if args.len() != 3 {
-                    return Err("storage.insert() takes 3 arguments".to_string());
+                    return Err("storage.insert() takes 3 arguments".into());
                 }
                 let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
                 let index = self.expr_to_i32(&args[1], "storage insert index")?;
@@ -3209,7 +3092,7 @@ impl Transpiler {
             }
             "get" => {
                 if args.len() != 1 {
-                    return Err("storage.get() takes 1 argument".to_string());
+                    return Err("storage.get() takes 1 argument".into());
                 }
                 let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
                 if let Some(static_path) = path.as_static() {
@@ -3228,7 +3111,9 @@ impl Transpiler {
             }
             "read_score" => {
                 if !(2..=3).contains(&args.len()) {
-                    return Err("storage.read_score() takes 2 or 3 arguments".to_string());
+                    return Err("storage.read_score() takes 2 or 3 arguments"
+                        .to_string()
+                        .into());
                 }
                 self.data_pack.track_objective("temp");
                 let score = self.expr_to_plain_arg(&args[0], "target score")?;
@@ -3262,7 +3147,7 @@ impl Transpiler {
             }
             "copy_from" => {
                 if args.len() != 4 {
-                    return Err("storage.copy_from() takes 4 arguments".to_string());
+                    return Err("storage.copy_from() takes 4 arguments".into());
                 }
                 let dst = self.expr_to_storage_path_plan(&args[0], "destination storage path")?;
                 let source_type = self.expr_to_plain_arg(&args[1], "source type")?;
@@ -3275,7 +3160,8 @@ impl Transpiler {
                 if !matches!(source_type.as_str(), "entity" | "block" | "storage") {
                     return Err(
                         "storage.copy_from() source type must be entity, block, or storage"
-                            .to_string(),
+                            .to_string()
+                            .into(),
                     );
                 }
                 if let Some(static_dst) = dst.as_static() {
@@ -3306,11 +3192,11 @@ impl Transpiler {
                     return Err(format!(
                         "storage.{}() returns a storage path string; pass it to a helper that accepts a storage path",
                         method
-                    ));
+                    ).into());
                 }
-                return Err(format!("Unknown storage function: storage.{}", method));
+                return Err(format!("Unknown storage function: storage.{}", method).into());
             }
-            _ => return Err(format!("Unknown storage function: storage.{}", method)),
+            _ => return Err(format!("Unknown storage function: storage.{}", method).into()),
         }
 
         self.push_current_commands(commands)
@@ -3320,11 +3206,11 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let command = match method {
             "once" => {
                 if !(2..=3).contains(&args.len()) {
-                    return Err("schedule.once() takes 2 or 3 arguments".to_string());
+                    return Err("schedule.once() takes 2 or 3 arguments".into());
                 }
                 let function = self.expr_to_plain_arg(&args[0], "scheduled function")?;
                 let delay = self.expr_to_plain_arg(&args[1], "schedule delay")?;
@@ -3332,7 +3218,9 @@ impl Transpiler {
                 if args.len() == 3 {
                     let mode = self.expr_to_plain_arg(&args[2], "schedule mode")?;
                     if !matches!(mode.as_str(), "append" | "replace") {
-                        return Err("schedule.once() mode must be append or replace".to_string());
+                        return Err("schedule.once() mode must be append or replace"
+                            .to_string()
+                            .into());
                     }
                     format!("schedule function {} {} {}", function, delay, mode)
                 } else {
@@ -3341,12 +3229,12 @@ impl Transpiler {
             }
             "clear" => {
                 if args.len() != 1 {
-                    return Err("schedule.clear() takes 1 argument".to_string());
+                    return Err("schedule.clear() takes 1 argument".into());
                 }
                 let function = self.expr_to_plain_arg(&args[0], "scheduled function")?;
                 format!("schedule clear {}", self.qualify_namespaced_id(&function))
             }
-            _ => return Err(format!("Unknown schedule function: schedule.{}", method)),
+            _ => return Err(format!("Unknown schedule function: schedule.{}", method).into()),
         };
         self.push_current_command(command)
     }
@@ -3355,11 +3243,11 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let command = match method {
             "add" => {
                 if args.len() != 2 {
-                    return Err("bossbar.add() takes 2 arguments".to_string());
+                    return Err("bossbar.add() takes 2 arguments".into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
                 let name = self.expr_to_text_component(&args[1])?;
@@ -3367,14 +3255,14 @@ impl Transpiler {
             }
             "remove" => {
                 if args.len() != 1 {
-                    return Err("bossbar.remove() takes 1 argument".to_string());
+                    return Err("bossbar.remove() takes 1 argument".into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
                 format!("bossbar remove {}", self.qualify_namespaced_id(&id))
             }
             "set_value" | "set_max" => {
                 if args.len() != 2 {
-                    return Err(format!("bossbar.{}() takes 2 arguments", method));
+                    return Err(format!("bossbar.{}() takes 2 arguments", method).into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
                 let value = self.expr_to_i32(&args[1], "bossbar value")?;
@@ -3388,7 +3276,7 @@ impl Transpiler {
             }
             "set_name" => {
                 if args.len() != 2 {
-                    return Err("bossbar.set_name() takes 2 arguments".to_string());
+                    return Err("bossbar.set_name() takes 2 arguments".into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
                 let name = self.expr_to_text_component(&args[1])?;
@@ -3400,17 +3288,17 @@ impl Transpiler {
             }
             "set_color" | "set_style" => {
                 if args.len() != 2 {
-                    return Err(format!("bossbar.{}() takes 2 arguments", method));
+                    return Err(format!("bossbar.{}() takes 2 arguments", method).into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
                 let value = self.expr_to_plain_arg(&args[1], "bossbar property value")?;
                 let property = method.strip_prefix("set_").unwrap();
                 match method {
                     "set_color" if !Self::is_valid_bossbar_color(&value) => {
-                        return Err(format!("Invalid bossbar color: {}", value));
+                        return Err(format!("Invalid bossbar color: {}", value).into());
                     }
                     "set_style" if !Self::is_valid_bossbar_style(&value) => {
-                        return Err(format!("Invalid bossbar style: {}", value));
+                        return Err(format!("Invalid bossbar style: {}", value).into());
                     }
                     _ => {}
                 }
@@ -3423,7 +3311,7 @@ impl Transpiler {
             }
             "set_visible" => {
                 if args.len() != 2 {
-                    return Err("bossbar.set_visible() takes 2 arguments".to_string());
+                    return Err("bossbar.set_visible() takes 2 arguments".into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
                 let visible = self.expr_to_bool(&args[1], "bossbar visibility")?;
@@ -3435,7 +3323,7 @@ impl Transpiler {
             }
             "set_players" => {
                 if args.len() != 2 {
-                    return Err("bossbar.set_players() takes 2 arguments".to_string());
+                    return Err("bossbar.set_players() takes 2 arguments".into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
                 let players = self.expr_to_selector_arg(&args[1], "bossbar players")?;
@@ -3445,7 +3333,7 @@ impl Transpiler {
                     players
                 )
             }
-            _ => return Err(format!("Unknown bossbar function: bossbar.{}", method)),
+            _ => return Err(format!("Unknown bossbar function: bossbar.{}", method).into()),
         };
         self.push_current_command(command)
     }
@@ -3464,11 +3352,15 @@ impl Transpiler {
         )
     }
 
-    fn process_team_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+    fn process_team_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), TranspileError> {
         let command = match method {
             "add" => {
                 if !(1..=2).contains(&args.len()) {
-                    return Err("team.add() takes 1 or 2 arguments".to_string());
+                    return Err("team.add() takes 1 or 2 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "team name")?;
                 if args.len() == 2 {
@@ -3480,14 +3372,14 @@ impl Transpiler {
             }
             "remove" => {
                 if args.len() != 1 {
-                    return Err("team.remove() takes 1 argument".to_string());
+                    return Err("team.remove() takes 1 argument".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "team name")?;
                 format!("team remove {}", name)
             }
             "join" => {
                 if !(1..=2).contains(&args.len()) {
-                    return Err("team.join() takes 1 or 2 arguments".to_string());
+                    return Err("team.join() takes 1 or 2 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "team name")?;
                 if args.len() == 2 {
@@ -3499,14 +3391,14 @@ impl Transpiler {
             }
             "leave" => {
                 if args.len() != 1 {
-                    return Err("team.leave() takes 1 argument".to_string());
+                    return Err("team.leave() takes 1 argument".into());
                 }
                 let members = self.expr_to_selector_arg(&args[0], "team members")?;
                 format!("team leave {}", members)
             }
             "modify" => {
                 if args.len() != 3 {
-                    return Err("team.modify() takes 3 arguments".to_string());
+                    return Err("team.modify() takes 3 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "team name")?;
                 let option = self.expr_to_plain_arg(&args[1], "team option")?;
@@ -3516,7 +3408,7 @@ impl Transpiler {
                 };
                 format!("team modify {} {} {}", name, option, value)
             }
-            _ => return Err(format!("Unknown team function: team.{}", method)),
+            _ => return Err(format!("Unknown team function: team.{}", method).into()),
         };
         self.push_current_command(command)
     }
@@ -3525,11 +3417,11 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let command = match method {
             "tag_add" | "tag_remove" => {
                 if args.len() != 2 {
-                    return Err(format!("entity.{}() takes 2 arguments", method));
+                    return Err(format!("entity.{}() takes 2 arguments", method).into());
                 }
                 let target = self.expr_to_selector_arg(&args[0], "entity target")?;
                 let tag = self.expr_to_plain_arg(&args[1], "entity tag")?;
@@ -3538,7 +3430,9 @@ impl Transpiler {
             }
             "effect_give" => {
                 if !(2..=5).contains(&args.len()) {
-                    return Err("entity.effect_give() takes 2 to 5 arguments".to_string());
+                    return Err("entity.effect_give() takes 2 to 5 arguments"
+                        .to_string()
+                        .into());
                 }
                 let target = self.expr_to_selector_arg(&args[0], "effect target")?;
                 let effect = self.expr_to_plain_arg(&args[1], "effect id")?;
@@ -3563,7 +3457,9 @@ impl Transpiler {
             }
             "effect_clear" => {
                 if !(1..=2).contains(&args.len()) {
-                    return Err("entity.effect_clear() takes 1 or 2 arguments".to_string());
+                    return Err("entity.effect_clear() takes 1 or 2 arguments"
+                        .to_string()
+                        .into());
                 }
                 let target = self.expr_to_selector_arg(&args[0], "effect target")?;
                 if args.len() == 2 {
@@ -3575,7 +3471,9 @@ impl Transpiler {
             }
             "attribute_get" => {
                 if !(2..=3).contains(&args.len()) {
-                    return Err("entity.attribute_get() takes 2 or 3 arguments".to_string());
+                    return Err("entity.attribute_get() takes 2 or 3 arguments"
+                        .to_string()
+                        .into());
                 }
                 let target = self.expr_to_selector_arg(&args[0], "attribute target")?;
                 let attribute = self.expr_to_plain_arg(&args[1], "attribute id")?;
@@ -3588,7 +3486,9 @@ impl Transpiler {
             }
             "attribute_base_set" => {
                 if args.len() != 3 {
-                    return Err("entity.attribute_base_set() takes 3 arguments".to_string());
+                    return Err("entity.attribute_base_set() takes 3 arguments"
+                        .to_string()
+                        .into());
                 }
                 let target = self.expr_to_selector_arg(&args[0], "attribute target")?;
                 let attribute = self.expr_to_plain_arg(&args[1], "attribute id")?;
@@ -3597,13 +3497,13 @@ impl Transpiler {
             }
             "teleport" => {
                 if args.len() != 2 {
-                    return Err("entity.teleport() takes 2 arguments".to_string());
+                    return Err("entity.teleport() takes 2 arguments".into());
                 }
                 let target = self.expr_to_selector_arg(&args[0], "teleport target")?;
                 let destination = self.expr_to_plain_arg(&args[1], "teleport destination")?;
                 format!("tp {} {}", target, destination)
             }
-            _ => return Err(format!("Unknown entity function: entity.{}", method)),
+            _ => return Err(format!("Unknown entity function: entity.{}", method).into()),
         };
         self.push_current_command(command)
     }
@@ -3612,7 +3512,7 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         match method {
             "function_tag" => self.add_datapack_tag_resource("function", args),
             "block_tag" => self.add_datapack_tag_resource("block", args),
@@ -3624,7 +3524,7 @@ impl Transpiler {
             "recipe" => self.add_datapack_json_resource("recipe", args),
             "item_modifier" => self.add_datapack_json_resource("item_modifier", args),
             "dialog" => self.add_datapack_json_resource("dialog", args),
-            _ => Err(format!("Unknown datapack function: datapack.{}", method)),
+            _ => Err(format!("Unknown datapack function: datapack.{}", method).into()),
         }
     }
 
@@ -3632,11 +3532,11 @@ impl Transpiler {
         &mut self,
         method: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if !self.experimental_resource_pack {
             return Err(
                 "resource_pack.* requires --experimental-resource-pack or [experimental] resource_pack = true"
-                    .to_string(),
+                    .into(),
             );
         }
 
@@ -3644,10 +3544,7 @@ impl Transpiler {
             "item_model" => self.add_resource_pack_model("item", args),
             "block_model" => self.add_resource_pack_model("block", args),
             "lang" => self.add_resource_pack_lang(args),
-            _ => Err(format!(
-                "Unknown resource_pack function: resource_pack.{}",
-                method
-            )),
+            _ => Err(format!("Unknown resource_pack function: resource_pack.{}", method).into()),
         }
     }
 
@@ -3655,12 +3552,9 @@ impl Transpiler {
         &mut self,
         model_type: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if args.len() != 2 {
-            return Err(format!(
-                "resource_pack.{}_model() takes 2 arguments",
-                model_type
-            ));
+            return Err(format!("resource_pack.{}_model() takes 2 arguments", model_type).into());
         }
 
         let (namespace, name) = self.expr_to_resource_id(&args[0], "model name")?;
@@ -3669,7 +3563,8 @@ impl Transpiler {
             return Err(format!(
                 "resource_pack.{}_model() JSON value must be an object",
                 model_type
-            ));
+            )
+            .into());
         }
         Self::validate_resource_pack_model_json(model_type, &json)?;
         let content = serde_json::to_string_pretty(&json)
@@ -3682,12 +3577,13 @@ impl Transpiler {
                 content,
                 self.current_statement_source.clone(),
             )
+            .map_err(TranspileError::from)
     }
 
     fn validate_resource_pack_model_json(
         model_type: &str,
         json: &serde_json::Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         let object = json.as_object().ok_or_else(|| {
             format!(
                 "resource_pack.{}_model() JSON value must be an object",
@@ -3729,14 +3625,16 @@ impl Transpiler {
                 return Err(format!(
                     "resource_pack.{}_model() field 'textures' must be an object",
                     model_type
-                ));
+                )
+                .into());
             };
             for (texture_key, texture_value) in textures {
                 if !texture_value.is_string() {
                     return Err(format!(
                         "resource_pack.{}_model() texture '{}' must be a string",
                         model_type, texture_key
-                    ));
+                    )
+                    .into());
                 }
             }
         }
@@ -3747,9 +3645,9 @@ impl Transpiler {
         object: &serde_json::Map<String, serde_json::Value>,
         field: &str,
         context: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if object.get(field).is_some_and(|value| !value.is_string()) {
-            return Err(format!("{context} field '{field}' must be a string"));
+            return Err(format!("{context} field '{field}' must be a string").into());
         }
         Ok(())
     }
@@ -3758,9 +3656,9 @@ impl Transpiler {
         object: &serde_json::Map<String, serde_json::Value>,
         field: &str,
         context: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if object.get(field).is_some_and(|value| !value.is_object()) {
-            return Err(format!("{context} field '{field}' must be an object"));
+            return Err(format!("{context} field '{field}' must be an object").into());
         }
         Ok(())
     }
@@ -3769,16 +3667,16 @@ impl Transpiler {
         object: &serde_json::Map<String, serde_json::Value>,
         field: &str,
         context: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if object.get(field).is_some_and(|value| !value.is_array()) {
-            return Err(format!("{context} field '{field}' must be an array"));
+            return Err(format!("{context} field '{field}' must be an array").into());
         }
         Ok(())
     }
 
-    fn add_resource_pack_lang(&mut self, args: &[Expression]) -> Result<(), String> {
+    fn add_resource_pack_lang(&mut self, args: &[Expression]) -> Result<(), TranspileError> {
         if args.len() != 2 {
-            return Err("resource_pack.lang() takes 2 arguments".to_string());
+            return Err("resource_pack.lang() takes 2 arguments".into());
         }
 
         let (namespace, locale) = self.expr_to_resource_id(&args[0], "language locale")?;
@@ -3786,19 +3684,21 @@ impl Transpiler {
             return Err(format!(
                 "Invalid language locale '{}': use locale names such as 'en_us'",
                 locale
-            ));
+            )
+            .into());
         }
 
         let json = self.expr_to_json_value(&args[1])?;
         let Some(object) = json.as_object() else {
-            return Err("resource_pack.lang() JSON value must be an object".to_string());
+            return Err("resource_pack.lang() JSON value must be an object"
+                .to_string()
+                .into());
         };
         for (key, value) in object {
             if !value.is_string() {
-                return Err(format!(
-                    "resource_pack.lang() value for '{}' must be a string",
-                    key
-                ));
+                return Err(
+                    format!("resource_pack.lang() value for '{}' must be a string", key).into(),
+                );
             }
         }
 
@@ -3812,24 +3712,22 @@ impl Transpiler {
                 content,
                 self.current_statement_source.clone(),
             )
+            .map_err(TranspileError::from)
     }
 
     fn add_datapack_tag_resource(
         &mut self,
         tag_type: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if !(2..=3).contains(&args.len()) {
-            return Err(format!(
-                "datapack.{}_tag() takes 2 or 3 arguments",
-                tag_type
-            ));
+            return Err(format!("datapack.{}_tag() takes 2 or 3 arguments", tag_type).into());
         }
 
         let (namespace, name) = self.expr_to_resource_id(&args[0], "tag name")?;
         let values = self.expr_to_json_value(&args[1])?;
         if !values.is_array() {
-            return Err("Tag values must be an array".to_string());
+            return Err("Tag values must be an array".into());
         }
         if let Some(values) = values.as_array() {
             for value in values {
@@ -3848,15 +3746,17 @@ impl Transpiler {
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode tag JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
-        self.data_pack.add_json_resource_in_namespace_with_source(
-            namespace,
-            format!("tags/{}/{}", tag_type, name),
-            content,
-            self.current_statement_source.clone(),
-        )
+        self.data_pack
+            .add_json_resource_in_namespace_with_source(
+                namespace,
+                format!("tags/{}/{}", tag_type, name),
+                content,
+                self.current_statement_source.clone(),
+            )
+            .map_err(TranspileError::from)
     }
 
-    fn validate_datapack_tag_value(&self, value: &serde_json::Value) -> Result<(), String> {
+    fn validate_datapack_tag_value(&self, value: &serde_json::Value) -> Result<(), TranspileError> {
         if let Some(id) = value.as_str() {
             self.plain_resource_id_to_parts(id, "tag value")?;
             return Ok(());
@@ -3865,7 +3765,8 @@ impl Transpiler {
         let Some(object) = value.as_object() else {
             return Err(
                 "Tag values must be string resource IDs or objects with string \"id\" fields"
-                    .to_string(),
+                    .to_string()
+                    .into(),
             );
         };
 
@@ -3874,12 +3775,14 @@ impl Transpiler {
                 return Err(format!(
                     "Tag object values may only contain \"id\" and \"required\" fields; found \"{}\"",
                     key
-                ));
+                ).into());
             }
         }
 
         let Some(id) = object.get("id").and_then(|value| value.as_str()) else {
-            return Err("Tag object values must include a string \"id\" resource ID".to_string());
+            return Err("Tag object values must include a string \"id\" resource ID"
+                .to_string()
+                .into());
         };
         self.plain_resource_id_to_parts(id, "tag value")?;
 
@@ -3887,7 +3790,9 @@ impl Transpiler {
             .get("required")
             .is_some_and(|value| !value.is_boolean())
         {
-            return Err("Tag object value \"required\" must be a boolean".to_string());
+            return Err("Tag object value \"required\" must be a boolean"
+                .to_string()
+                .into());
         }
 
         Ok(())
@@ -3897,35 +3802,36 @@ impl Transpiler {
         &mut self,
         resource_type: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if args.len() != 2 {
-            return Err(format!("datapack.{}() takes 2 arguments", resource_type));
+            return Err(format!("datapack.{}() takes 2 arguments", resource_type).into());
         }
 
         let (namespace, name) = self.expr_to_resource_id(&args[0], "resource name")?;
         let json = self.expr_to_json_value(&args[1])?;
         if !json.is_object() {
-            return Err(format!(
-                "datapack.{}() JSON value must be an object",
-                resource_type
-            ));
+            return Err(
+                format!("datapack.{}() JSON value must be an object", resource_type).into(),
+            );
         }
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode resource JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
-        self.data_pack.add_json_resource_in_namespace_with_source(
-            namespace,
-            format!("{}/{}", resource_type, name),
-            content,
-            self.current_statement_source.clone(),
-        )
+        self.data_pack
+            .add_json_resource_in_namespace_with_source(
+                namespace,
+                format!("{}/{}", resource_type, name),
+                content,
+                self.current_statement_source.clone(),
+            )
+            .map_err(TranspileError::from)
     }
 
     fn expr_to_resource_id(
         &self,
         expr: &Expression,
         label: &str,
-    ) -> Result<(Option<String>, String), String> {
+    ) -> Result<(Option<String>, String), TranspileError> {
         let id = self.expr_to_plain_arg(expr, label)?;
         self.plain_resource_id_to_parts(&id, label)
     }
@@ -3934,13 +3840,14 @@ impl Transpiler {
         &self,
         id: &str,
         label: &str,
-    ) -> Result<(Option<String>, String), String> {
+    ) -> Result<(Option<String>, String), TranspileError> {
         let (namespace, path) = if let Some((namespace, path)) = id.split_once(':') {
             if path.contains(':') {
                 return Err(format!(
                     "Invalid {} '{}': resource IDs may contain at most one ':' separator",
                     label, id
-                ));
+                )
+                .into());
             }
             (Some(namespace.to_string()), path.to_string())
         } else {
@@ -3960,7 +3867,8 @@ impl Transpiler {
                 return Err(format!(
                     "Invalid {} '{}': use lowercase namespace:path resource IDs",
                     label, id
-                ));
+                )
+                .into());
             }
         }
 
@@ -3970,7 +3878,7 @@ impl Transpiler {
                     return Err(format!(
                         "Invalid {} '{}': '{}' looks like a namespace. Use '{}:{}' instead of a slash-separated namespace prefix.",
                         label, id, prefix, prefix, suffix
-                    ));
+                    ).into());
                 }
             }
         }
@@ -3982,14 +3890,15 @@ impl Transpiler {
                 id,
                 c,
                 index + 1
-            ));
+            ).into());
         }
 
         if path.contains('\\') {
             return Err(format!(
                 "Invalid {} '{}': use '/' path separators, not '\\'",
                 label, id
-            ));
+            )
+            .into());
         }
 
         let has_invalid_segment = path
@@ -4007,42 +3916,50 @@ impl Transpiler {
             return Err(format!(
                 "Invalid {} '{}': use lowercase resource paths or namespace:path IDs with letters, digits, '/', '_', '-', or '.', and no empty, '.', or '..' segments",
                 label, id
-            ));
+            ).into());
         }
         Ok((namespace, path))
     }
 
-    fn process_math_intrinsic(&mut self, method: &str, args: &[Expression]) -> Result<(), String> {
+    fn process_math_intrinsic(
+        &mut self,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), TranspileError> {
         match method {
             "sqrt" => {
                 if args.len() != 1 {
-                    return Err("math.sqrt() takes 1 argument".to_string());
+                    return Err("math.sqrt() takes 1 argument".into());
                 }
                 self.process_math_unary_op(args, "sqrt")
             }
             "abs" => {
                 if args.len() != 1 {
-                    return Err("math.abs() takes 1 argument".to_string());
+                    return Err("math.abs() takes 1 argument".into());
                 }
                 self.process_math_unary_op(args, "abs")
             }
             "min" => {
                 if args.len() != 2 {
-                    return Err("math.min() takes 2 arguments".to_string());
+                    return Err("math.min() takes 2 arguments".into());
                 }
                 self.process_math_binary_op(args, "min")
             }
             "max" => {
                 if args.len() != 2 {
-                    return Err("math.max() takes 2 arguments".to_string());
+                    return Err("math.max() takes 2 arguments".into());
                 }
                 self.process_math_binary_op(args, "max")
             }
-            _ => Err(format!("Unknown math function: math.{}", method)),
+            _ => Err(format!("Unknown math function: math.{}", method).into()),
         }
     }
 
-    fn process_math_unary_op(&mut self, args: &[Expression], op: &str) -> Result<(), String> {
+    fn process_math_unary_op(
+        &mut self,
+        args: &[Expression],
+        op: &str,
+    ) -> Result<(), TranspileError> {
         let input_var = "#math_input";
         // output_var is implied to be "#math_result" by convention in helpers
 
@@ -4067,7 +3984,11 @@ impl Transpiler {
         Ok(())
     }
 
-    fn process_math_binary_op(&mut self, args: &[Expression], op: &str) -> Result<(), String> {
+    fn process_math_binary_op(
+        &mut self,
+        args: &[Expression],
+        op: &str,
+    ) -> Result<(), TranspileError> {
         let input1 = "#math_input";
         let input2 = "#math_input2";
 
@@ -4119,7 +4040,7 @@ impl Transpiler {
         &mut self,
         func_name: &str,
         args: &[Expression],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         self.record_user_function_call(func_name)?;
         let mut commands = Vec::new();
 
@@ -4133,7 +4054,8 @@ impl Transpiler {
                     param_names.len(),
                     args.len(),
                     param_names.join(", ")
-                ));
+                )
+                .into());
             }
 
             // If function has parameters, use macro system
@@ -4242,7 +4164,7 @@ impl Transpiler {
                                     return Err(format!(
                                         "Unknown identifier '{}' passed as argument to function '{}'. Define the variable first, or quote it (\"{}\") to pass a string literal.",
                                         var, func_name, var
-                                    ));
+                                    ).into());
                                 }
                             }
                             Expression::Boolean(b) => {
@@ -4298,7 +4220,8 @@ impl Transpiler {
                                      Not supported:\n\
                                      - Arrays/maps as direct macro arguments",
                                     param_name, arg
-                                ));
+                                )
+                                .into());
                             }
                         }
                     }
@@ -4354,9 +4277,11 @@ impl Transpiler {
         Ok(())
     }
 
-    fn process_add_event_listener(&mut self, args: &[Expression]) -> Result<(), String> {
+    fn process_add_event_listener(&mut self, args: &[Expression]) -> Result<(), TranspileError> {
         if args.len() != 2 {
-            return Err("addEventListener requires 2 arguments: (event, handler)".to_string());
+            return Err("addEventListener requires 2 arguments: (event, handler)"
+                .to_string()
+                .into());
         }
 
         // Extract event type
@@ -4368,22 +4293,26 @@ impl Transpiler {
                         match attr.as_str() {
                             "LOAD" => EventType::Load,
                             "TICK" => EventType::Tick,
-                            _ => return Err(format!("Unknown event type: {}", attr)),
+                            _ => return Err(format!("Unknown event type: {}", attr).into()),
                         }
                     } else {
-                        return Err(format!("Unknown module: {}", module));
+                        return Err(format!("Unknown module: {}", module).into());
                     }
                 } else {
-                    return Err("Event must be from 'event' module".to_string());
+                    return Err("Event must be from 'event' module".into());
                 }
             }
-            _ => return Err("First argument must be an event (e.g., event.LOAD)".to_string()),
+            _ => {
+                return Err("First argument must be an event (e.g., event.LOAD)"
+                    .to_string()
+                    .into())
+            }
         };
 
         // Extract handler function name
         let handler_name = match &args[1] {
             Expression::Identifier(name) => name.clone(),
-            _ => return Err("Second argument must be a function name".to_string()),
+            _ => return Err("Second argument must be a function name".into()),
         };
 
         // Register the event listener
@@ -4394,7 +4323,10 @@ impl Transpiler {
         Ok(())
     }
 
-    fn preprocess_condition(&mut self, condition: &Expression) -> Result<Expression, String> {
+    fn preprocess_condition(
+        &mut self,
+        condition: &Expression,
+    ) -> Result<Expression, TranspileError> {
         // Check if condition contains Boolean literals and track __internal__ objective
         if Self::contains_boolean_literal(condition) {
             self.data_pack.track_objective("__internal__");
@@ -4506,7 +4438,10 @@ impl Transpiler {
         }
     }
 
-    fn lower_condition_value_to_temp(&mut self, expr: &Expression) -> Result<Expression, String> {
+    fn lower_condition_value_to_temp(
+        &mut self,
+        expr: &Expression,
+    ) -> Result<Expression, TranspileError> {
         let temp_var = format!("expr_cond_temp_{}", self.next_temp_id());
 
         self.data_pack.track_objective("temp");
@@ -4548,7 +4483,7 @@ impl Transpiler {
     pub(in crate::transpiler) fn capture_preprocessed_condition(
         &mut self,
         condition: &Expression,
-    ) -> Result<(String, FunctionCapture), String> {
+    ) -> Result<(TranslatedCondition, FunctionCapture), TranspileError> {
         self.capture_commands_with_result(|transpiler| {
             let processed_condition = transpiler.preprocess_condition(condition)?;
             transpiler.translate_condition(&processed_condition)
@@ -4558,7 +4493,7 @@ impl Transpiler {
     pub(in crate::transpiler) fn capture_raw_python_condition(
         &mut self,
         condition: &str,
-    ) -> Result<Option<(String, FunctionCapture)>, String> {
+    ) -> Result<Option<(TranslatedCondition, FunctionCapture)>, TranspileError> {
         if !self.looks_like_python_expression(condition) {
             return Ok(None);
         }
@@ -4572,10 +4507,12 @@ impl Transpiler {
             return Ok(None);
         };
 
-        let (translated, mut capture) = self.capture_preprocessed_condition(&expr)?;
+        let (translated, mut capture) = self
+            .capture_preprocessed_condition(&expr)
+            .map_err(|error| Self::restore_condition_operand_tokens(error, &operand_tokens))?;
         let mut translated = Self::fold_always_false_conditions(translated);
         for (placeholder, original) in &operand_tokens {
-            translated = translated.replace(placeholder, original);
+            translated.map_simple(&|text| text.replace(placeholder.as_str(), original));
             for command in &mut capture.commands {
                 *command = command.replace(placeholder, original);
             }
@@ -4584,6 +4521,19 @@ impl Transpiler {
             }
         }
         Ok(Some((translated, capture)))
+    }
+
+    /// Restore the original spelling of masked condition operands in an error
+    /// message, so translation failures report `@s`/`{count}` instead of
+    /// leaking synthetic `__cobble_cond_operand_N__` placeholder names.
+    fn restore_condition_operand_tokens(
+        mut error: TranspileError,
+        operand_tokens: &[(String, String)],
+    ) -> TranspileError {
+        for (placeholder, original) in operand_tokens {
+            error.message = error.message.replace(placeholder, original);
+        }
+        error
     }
 
     /// Replace selector tokens (`@s`, `@a[tag=x]`, ...) and macro-parameter
@@ -4694,44 +4644,21 @@ impl Transpiler {
 
     /// Map the AST translator's inline always-false output
     /// (`score X O matches 0 unless score X O matches 0`, produced for
-    /// comparisons like `x > i32::MAX`) onto `ALWAYS_FALSE_CONDITION`, the
-    /// marker the execute processor understands, including inside `OR(...)`
-    /// markers. This keeps the marker-based simplifications (dropping
-    /// impossible branches, `unless`-elision) that the retired string
-    /// translator provided for raw execute conditions.
-    fn fold_always_false_conditions(translated: String) -> String {
-        if Self::is_inline_always_false_condition(&translated) {
-            return Self::ALWAYS_FALSE_CONDITION.to_string();
-        }
-        let Some(inner) = translated
-            .strip_prefix("OR(")
-            .and_then(|rest| rest.strip_suffix(')'))
-        else {
-            return translated;
-        };
-        let mut parts = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0i32;
-        for ch in inner.chars() {
-            match ch {
-                '(' => {
-                    depth += 1;
-                    current.push(ch);
-                }
-                ')' => {
-                    depth -= 1;
-                    current.push(ch);
-                }
-                ';' if depth == 0 => parts.push(std::mem::take(&mut current)),
-                _ => current.push(ch),
+    /// comparisons like `x > i32::MAX`) onto `TranslatedCondition::AlwaysFalse`,
+    /// including inside OR alternatives. This lets the execute processor keep
+    /// its simplifications (dropping impossible branches, `unless`-elision)
+    /// for raw execute conditions.
+    fn fold_always_false_conditions(translated: TranslatedCondition) -> TranslatedCondition {
+        match translated {
+            TranslatedCondition::Simple(text) if Self::is_inline_always_false_condition(&text) => {
+                TranslatedCondition::AlwaysFalse
             }
+            TranslatedCondition::AnyOf(left, right) => TranslatedCondition::AnyOf(
+                Box::new(Self::fold_always_false_conditions(*left)),
+                Box::new(Self::fold_always_false_conditions(*right)),
+            ),
+            other => other,
         }
-        parts.push(current);
-        let folded: Vec<String> = parts
-            .into_iter()
-            .map(Self::fold_always_false_conditions)
-            .collect();
-        format!("OR({})", folded.join(";"))
     }
 
     fn is_inline_always_false_condition(condition: &str) -> bool {
@@ -4759,7 +4686,10 @@ impl Transpiler {
         Some(if_stmt.condition.clone())
     }
 
-    fn translate_condition(&self, condition: &Expression) -> Result<String, String> {
+    fn translate_condition(
+        &self,
+        condition: &Expression,
+    ) -> Result<TranslatedCondition, TranspileError> {
         let translator = ConditionTranslator::new(
             &self.variable_objectives,
             &self.compile_time_constants,
@@ -4769,9 +4699,53 @@ impl Transpiler {
         translator.translate(condition)
     }
 
-    fn handle_or_condition(&mut self, or_expr: &str) -> Result<String, String> {
-        // Flatten all OR conditions into a single list
-        let conditions = Self::flatten_or_conditions(or_expr)?;
+    /// Lower a translated condition to final execute-condition text at this
+    /// emission point, materializing OR trees into `or_temp_N` flag variables
+    /// in the current function.
+    pub(in crate::transpiler) fn lower_translated_condition(
+        &mut self,
+        condition: TranslatedCondition,
+    ) -> Result<String, TranspileError> {
+        match condition {
+            TranslatedCondition::Simple(text) => Ok(text),
+            TranslatedCondition::AnyOf(..) => self.materialize_or_condition(condition),
+            TranslatedCondition::AllOf(left, right) => {
+                // Lower each side (materializing OR sides first), then chain
+                // the results with "if ... if ...".
+                let left = self.lower_translated_condition(*left)?;
+                let right = self.lower_translated_condition(*right)?;
+                Ok(format!(
+                    "{} {}",
+                    Self::condition_execute_args(&left),
+                    Self::condition_execute_args(&right)
+                ))
+            }
+            TranslatedCondition::Negated(inner) => {
+                let condition_cmd = self.lower_translated_condition(*inner)?;
+                Ok(if condition_cmd.starts_with("score ") {
+                    format!("unless {}", condition_cmd)
+                } else {
+                    condition_cmd.replace("if ", "unless ")
+                })
+            }
+            TranslatedCondition::AlwaysFalse => {
+                self.data_pack.track_objective("temp");
+                Ok(format!(
+                    "score {holder} temp matches 0 unless score {holder} temp matches 0",
+                    holder = "#cobble_always_false"
+                ))
+            }
+        }
+    }
+
+    /// Lower an OR tree to a fresh flag variable: reset the flag, set it to 1
+    /// under each alternative, and return the condition that reads it back.
+    fn materialize_or_condition(
+        &mut self,
+        condition: TranslatedCondition,
+    ) -> Result<String, TranspileError> {
+        let mut leaves = Vec::new();
+        self.flatten_or_leaves(condition, &mut leaves)?;
 
         // Use unique variable name to prevent race conditions with multiple entities
         let or_var = format!("or_temp_{}", self.next_temp_id());
@@ -4785,15 +4759,14 @@ impl Transpiler {
             commands.push(format!("scoreboard players set {} temp 0", or_var));
 
             // For each condition, if true, set or variable to 1
-            for cond in &conditions {
-                let cond_prefix = if cond.starts_with("if ") || cond.starts_with("unless ") {
-                    cond.clone()
-                } else {
-                    format!("if {}", cond)
+            for leaf in &leaves {
+                let TranslatedCondition::Simple(cond) = leaf else {
+                    continue;
                 };
                 commands.push(format!(
                     "execute {} run scoreboard players set {} temp 1",
-                    cond_prefix, or_var
+                    Self::condition_execute_args(cond),
+                    or_var
                 ));
             }
         }
@@ -4802,131 +4775,28 @@ impl Transpiler {
         Ok(format!("score {} temp matches 1", or_var))
     }
 
-    fn flatten_or_conditions(or_expr: &str) -> Result<Vec<String>, String> {
-        let mut conditions = Vec::new();
-
-        if !or_expr.starts_with("OR(") {
-            // Not an OR expression, return as-is
-            return Ok(vec![or_expr.to_string()]);
-        }
-
-        // Extract inner content - be careful with the closing parenthesis
-        let end_pos = or_expr
-            .rfind(')')
-            .ok_or("Missing closing parenthesis in OR expression")?;
-        let inner = &or_expr[3..end_pos];
-
-        // Split by semicolon, but only at the top level (not inside nested parentheses)
-        let mut parts = Vec::new();
-        let mut current_part = String::new();
-        let mut depth = 0;
-
-        for ch in inner.chars() {
-            match ch {
-                '(' => {
-                    depth += 1;
-                    current_part.push(ch);
-                }
-                ')' => {
-                    depth -= 1;
-                    current_part.push(ch);
-                }
-                ';' if depth == 0 => {
-                    // Top-level semicolon - this is a separator
-                    if !current_part.is_empty() {
-                        parts.push(current_part.trim().to_string());
-                        current_part.clear();
-                    }
-                }
-                _ => current_part.push(ch),
+    /// Flatten an OR tree into its alternatives, in source order. Every
+    /// returned leaf is `Simple` or `AlwaysFalse`: structured leaves (an AND
+    /// or NOT around a nested OR) are lowered to a `Simple` condition first.
+    pub(in crate::transpiler) fn flatten_or_leaves(
+        &mut self,
+        condition: TranslatedCondition,
+        leaves: &mut Vec<TranslatedCondition>,
+    ) -> Result<(), TranspileError> {
+        match condition {
+            TranslatedCondition::AnyOf(left, right) => {
+                self.flatten_or_leaves(*left, leaves)?;
+                self.flatten_or_leaves(*right, leaves)?;
+            }
+            leaf @ (TranslatedCondition::Simple(_) | TranslatedCondition::AlwaysFalse) => {
+                leaves.push(leaf);
+            }
+            structured => {
+                let rendered = self.lower_translated_condition(structured)?;
+                leaves.push(TranslatedCondition::Simple(rendered));
             }
         }
-        // Don't forget the last part
-        if !current_part.is_empty() {
-            parts.push(current_part.trim().to_string());
-        }
-
-        for part in parts {
-            if !part.is_empty() {
-                // Check if this part is itself an OR expression
-                if part.starts_with("OR(") {
-                    conditions.extend(Self::flatten_or_conditions(&part)?);
-                } else {
-                    conditions.push(part);
-                }
-            }
-        }
-
-        Ok(conditions)
-    }
-
-    fn split_or_conditions<'a>(&self, inner: &'a str) -> Result<(&'a str, &'a str), String> {
-        // Find the semicolon that separates cond1 and cond2
-        // Need to handle nested parentheses
-        let mut depth = 0;
-        let mut semicolon_pos = None;
-        for (i, ch) in inner.chars().enumerate() {
-            match ch {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                ';' if depth == 0 => {
-                    semicolon_pos = Some(i);
-                    break;
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(pos) = semicolon_pos {
-            let cond1 = inner[..pos].trim();
-            let cond2 = inner[pos + 1..].trim();
-            Ok((cond1, cond2))
-        } else {
-            Err("OR expression must have two conditions".to_string())
-        }
-    }
-
-    fn handle_or_and_condition(&mut self, expr: &str) -> Result<String, String> {
-        // Handle both OR(...) and OR_AND(...) expressions
-        if expr.starts_with("OR_AND(") {
-            // Extract the two parts
-            let inner = &expr[7..expr.len() - 1];
-            let (left, right) = self.split_or_conditions(inner)?;
-
-            // Process left side first (which may contain OR)
-            let left_processed = if left.contains("OR(") {
-                self.handle_or_condition(left)?
-            } else {
-                left.to_string()
-            };
-
-            // Process right side
-            let right_processed = if right.contains("OR(") {
-                self.handle_or_condition(right)?
-            } else {
-                right.to_string()
-            };
-
-            // Now combine with AND
-            let left_final =
-                if left_processed.starts_with("if ") || left_processed.starts_with("unless ") {
-                    left_processed
-                } else {
-                    format!("if {}", left_processed)
-                };
-
-            let right_final =
-                if right_processed.starts_with("if ") || right_processed.starts_with("unless ") {
-                    right_processed
-                } else {
-                    format!("if {}", right_processed)
-                };
-
-            Ok(format!("{} {}", left_final, right_final))
-        } else {
-            // Regular OR(...)
-            self.handle_or_condition(expr)
-        }
+        Ok(())
     }
 
     pub fn write_data_pack(&self) -> std::io::Result<()> {

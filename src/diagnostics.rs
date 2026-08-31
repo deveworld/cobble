@@ -27,8 +27,9 @@ pub use text::byte_offset_for_line_column;
 use text::{
     argument_span, column_from_byte, find_string_end, find_triple_quote, find_word,
     function_name_before_open_paren, is_ident_char, leading_triple_quote, mask_non_code,
-    matching_close_delimiter, matching_close_paren, single_equals_index, split_top_level_arg_spans,
-    split_top_level_args, starts_with_keyword, triple_quote_pattern, ArgumentSpan,
+    matching_close_delimiter, matching_close_paren, raw_offset_from_masked, single_equals_index,
+    split_top_level_arg_spans, split_top_level_args, starts_with_keyword, triple_quote_pattern,
+    ArgumentSpan,
 };
 
 /// Base keyword sets shared by the line-scan skip lists below. Each scan site
@@ -3616,6 +3617,7 @@ fn check_datapack_helper_argument_shapes(
             if let Some(name_arg) = call.arguments.first() {
                 check_datapack_resource_id_argument(
                     line,
+                    trimmed,
                     raw_trimmed,
                     name_arg,
                     "resource name",
@@ -3661,6 +3663,7 @@ fn check_datapack_helper_argument_shapes(
             if let Some(name_arg) = call.arguments.first() {
                 check_datapack_resource_id_argument(
                     line,
+                    trimmed,
                     raw_trimmed,
                     name_arg,
                     "tag name",
@@ -3686,6 +3689,7 @@ fn check_datapack_helper_argument_shapes(
             } else {
                 check_datapack_tag_value_resource_ids(
                     line,
+                    trimmed,
                     raw_trimmed,
                     values_arg,
                     line_number,
@@ -3714,14 +3718,22 @@ fn check_datapack_helper_argument_shapes(
 
 fn check_datapack_tag_value_resource_ids(
     line: &str,
+    trimmed: &str,
     raw_trimmed: &str,
     argument: &FunctionCallArgumentSpan,
     line_number: usize,
     indent: usize,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
+    // `argument.offset` and `argument.text` describe the masked `trimmed`;
+    // map both span ends to raw byte offsets so a non-ASCII string earlier on
+    // the line (for example a Korean tag name) cannot drift the sub-slice or
+    // the reported columns.
+    let raw_offset = raw_offset_from_masked(raw_trimmed, trimmed, argument.offset);
+    let raw_end =
+        raw_offset_from_masked(raw_trimmed, trimmed, argument.offset + argument.text.len());
     let raw_argument = raw_trimmed
-        .get(argument.offset..argument.offset + argument.text.len())
+        .get(raw_offset..raw_end)
         .unwrap_or(&argument.text);
 
     for item in array_literal_item_spans(raw_argument) {
@@ -3733,7 +3745,7 @@ fn check_datapack_tag_value_resource_ids(
                         line_number,
                         column_from_byte(
                             line,
-                            indent + argument.offset + item.offset + diagnostic.offset,
+                            indent + raw_offset + item.offset + diagnostic.offset,
                         ),
                         diagnostic.message,
                     )
@@ -3748,7 +3760,7 @@ fn check_datapack_tag_value_resource_ids(
                 SourceDiagnostic::error(
                     "datapack-resource-argument",
                     line_number,
-                    column_from_byte(line, indent + argument.offset + item.offset),
+                    column_from_byte(line, indent + raw_offset + item.offset),
                     "Tag values must be string resource IDs or object entries",
                 )
                 .with_help(
@@ -3770,7 +3782,7 @@ fn check_datapack_tag_value_resource_ids(
                 line_number,
                 column_from_byte(
                     line,
-                    indent + argument.offset + item.offset + 1 + diagnostic.offset,
+                    indent + raw_offset + item.offset + 1 + diagnostic.offset,
                 ),
                 diagnostic.message,
             )
@@ -3779,8 +3791,10 @@ fn check_datapack_tag_value_resource_ids(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_datapack_resource_id_argument(
     line: &str,
+    trimmed: &str,
     raw_trimmed: &str,
     argument: &FunctionCallArgumentSpan,
     label: &str,
@@ -3788,7 +3802,11 @@ fn check_datapack_resource_id_argument(
     indent: usize,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
-    let Some(value) = quoted_string_literal_at(raw_trimmed, argument.offset) else {
+    // `argument.offset` is a byte offset into the masked `trimmed`; map it to
+    // the raw text before slicing or reporting so a non-ASCII string earlier
+    // on the line cannot drift the lookup or the column.
+    let raw_offset = raw_offset_from_masked(raw_trimmed, trimmed, argument.offset);
+    let Some(value) = quoted_string_literal_at(raw_trimmed, raw_offset) else {
         return;
     };
     let Some(diagnostic) = validate_datapack_resource_id(label, value) else {
@@ -3799,7 +3817,7 @@ fn check_datapack_resource_id_argument(
         SourceDiagnostic::error(
             "datapack-resource-id",
             line_number,
-            column_from_byte(line, indent + argument.offset + 1 + diagnostic.offset),
+            column_from_byte(line, indent + raw_offset + 1 + diagnostic.offset),
             diagnostic.message,
         )
         .with_help(diagnostic.help),

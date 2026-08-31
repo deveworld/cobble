@@ -1,8 +1,8 @@
 use crate::ast::*;
-use crate::transpiler::storage_paths::StoragePathOps;
+use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
     FunctionCapture, GeneratedCommand, GeneratedCommandKind, SourceLocation, StoragePathPlan,
-    Transpiler,
+    TranspileError, TranspileErrorKind, Transpiler,
 };
 use std::collections::HashMap;
 
@@ -39,6 +39,41 @@ enum RuntimeRangeStep {
     Dynamic(Expression),
 }
 
+type LoopDriverHook<'a, T> = Box<dyn FnOnce(&mut Transpiler) -> Result<T, TranspileError> + 'a>;
+
+/// Loop body produced by a [`RuntimeLoopDriver`] body hook.
+struct RuntimeLoopBody {
+    statements: Vec<Statement>,
+    /// Commands prepended to the captured body function before it is emitted
+    /// (e.g. binding the current list item to the loop target).
+    binding_commands: Vec<String>,
+}
+
+/// Configuration for [`Transpiler::emit_runtime_loop`], the shared driver
+/// behind runtime `for range(...)` loops, storage-list `for` loops, and
+/// `while` loops: emit init commands, capture the condition, capture the body
+/// into a helper function, then emit the recursive loop helper with return
+/// propagation.
+struct RuntimeLoopDriver<'a> {
+    /// Helper-name prefix: the loop helper is named `{prefix}_temp_{id}` and
+    /// the body helper `{prefix}_body_{id}`.
+    helper_prefix: &'static str,
+    /// `while` historically allocates the loop helper id before lowering its
+    /// condition; the runtime `for` drivers allocate it afterwards. Preserved
+    /// so generated helper names stay stable.
+    loop_helper_id_before_condition: bool,
+    /// Commands emitted into the current function before the loop starts.
+    init_commands: LoopDriverHook<'a, Vec<String>>,
+    /// Builds the per-iteration condition: `execute` args plus the captured
+    /// setup commands re-run before every check.
+    condition: LoopDriverHook<'a, (String, FunctionCapture)>,
+    /// Builds the loop body statements (with any step advancement appended)
+    /// and the binding prelude commands.
+    body: LoopDriverHook<'a, RuntimeLoopBody>,
+    /// Commands appended after the loop call in the current function.
+    cleanup_commands: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 struct VariableBindingSnapshot {
     value: Option<Expression>,
@@ -68,11 +103,14 @@ impl UnrollValue {
 }
 
 impl Transpiler {
-    pub(in crate::transpiler) fn process_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
+    pub(in crate::transpiler) fn process_for(
+        &mut self,
+        for_loop: &ForLoop,
+    ) -> Result<(), TranspileError> {
         let loop_source_key = Self::for_loop_source_key(for_loop);
         let values = match self.unroll_values(for_loop) {
             Ok(values) => values,
-            Err(error) if error.starts_with("unroll-non-literal") => {
+            Err(error) if error.kind == TranspileErrorKind::UnrollNonLiteral => {
                 if Self::is_range_iterable(&for_loop.iter) {
                     return self
                         .process_runtime_range_for(for_loop)
@@ -118,10 +156,10 @@ impl Transpiler {
             .checked_mul(values.len())
             .ok_or_else(|| {
                 annotate_unroll_error(
-                    format!(
+                    TranspileError::new(TranspileErrorKind::UnrollNested, format!(
                         "unroll-limit-exceeded: nested unrolling expands past {} aggregate iterations.",
                         UNROLL_NESTED_ITERATION_LIMIT
-                    ),
+                    )),
                     &for_loop.target,
                     &loop_source_key,
                     self.current_statement_source.as_ref(),
@@ -129,10 +167,10 @@ impl Transpiler {
             })?;
         if projected_iterations > UNROLL_NESTED_ITERATION_LIMIT {
             return Err(annotate_unroll_error(
-                format!(
+                TranspileError::new(TranspileErrorKind::UnrollNested, format!(
                     "unroll-limit-exceeded: nested unrolling expands to {} aggregate iterations (limit {}).",
                     projected_iterations, UNROLL_NESTED_ITERATION_LIMIT
-                ),
+                )),
                 &for_loop.target,
                 &loop_source_key,
                 self.current_statement_source.as_ref(),
@@ -200,15 +238,15 @@ impl Transpiler {
         matches!(iter, Expression::Call(func, _) if is_identifier(func, "range"))
     }
 
-    fn process_runtime_range_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
+    fn process_runtime_range_for(&mut self, for_loop: &ForLoop) -> Result<(), TranspileError> {
         let plan = self.runtime_range_plan(for_loop)?;
         validate_runtime_loop_body_target(&for_loop.body, &for_loop.target)?;
 
         if self.current_context.is_param(&for_loop.target) {
-            return Err(format!(
+            return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
                 "runtime-for-unsupported: dynamic range loop target '{}' cannot shadow a function parameter.",
                 for_loop.target
-            ));
+            )));
         }
 
         let stop_var = format!("#for_range_stop_{}", self.next_temp_id());
@@ -230,117 +268,59 @@ impl Transpiler {
             self.bind_runtime_integer_variable(step_var);
         }
 
-        let result = (|| {
-            let mut init_commands =
-                self.evaluate_expression_to_target(&plan.start, &for_loop.target)?;
-            init_commands.extend(self.evaluate_expression_to_target(&plan.stop, &stop_var)?);
-            if let (RuntimeRangeStep::Dynamic(step), Some(step_var)) = (&plan.step, &step_var) {
-                init_commands.extend(self.evaluate_expression_to_target(step, step_var)?);
-                if plan.reverse_single_arg_on_negative_step {
-                    init_commands.push(format!(
-                        "execute if score {} temp matches ..-1 run scoreboard players operation {} temp = {} temp",
-                        step_var, for_loop.target, stop_var
-                    ));
-                    init_commands.push(format!(
-                        "execute if score {} temp matches ..-1 run scoreboard players remove {} temp 1",
-                        step_var, for_loop.target
-                    ));
-                    init_commands.push(format!(
-                        "execute if score {} temp matches ..-1 run scoreboard players set {} temp -1",
-                        step_var, stop_var
-                    ));
+        let result = self.emit_runtime_loop(RuntimeLoopDriver {
+            helper_prefix: "for_range",
+            loop_helper_id_before_condition: false,
+            init_commands: Box::new(|transpiler| {
+                let mut init_commands =
+                    transpiler.evaluate_expression_to_target(&plan.start, &for_loop.target)?;
+                init_commands
+                    .extend(transpiler.evaluate_expression_to_target(&plan.stop, &stop_var)?);
+                if let (RuntimeRangeStep::Dynamic(step), Some(step_var)) = (&plan.step, &step_var) {
+                    init_commands.extend(transpiler.evaluate_expression_to_target(step, step_var)?);
+                    if plan.reverse_single_arg_on_negative_step {
+                        init_commands.push(format!(
+                            "execute if score {} temp matches ..-1 run scoreboard players operation {} temp = {} temp",
+                            step_var, for_loop.target, stop_var
+                        ));
+                        init_commands.push(format!(
+                            "execute if score {} temp matches ..-1 run scoreboard players remove {} temp 1",
+                            step_var, for_loop.target
+                        ));
+                        init_commands.push(format!(
+                            "execute if score {} temp matches ..-1 run scoreboard players set {} temp -1",
+                            step_var, stop_var
+                        ));
+                    }
                 }
-            }
-            if let Some(ref mut commands) = self.current_function {
-                commands.extend(init_commands);
-            }
-
-            let (condition_execute_args, condition_capture) =
-                self.runtime_range_condition(&for_loop.target, &stop_var, &plan.step, &step_var)?;
-
-            let loop_func_name = format!("for_range_temp_{}", self.next_temp_id());
-            let body_func_name = format!("for_range_body_{}", self.next_temp_id());
-
-            let mut body = for_loop.body.clone();
-            body.push(Statement::Assignment(Assignment {
-                target: for_loop.target.clone(),
-                target_expr: None,
-                value: self.runtime_range_increment_expression(
+                Ok(init_commands)
+            }),
+            condition: Box::new(|transpiler| {
+                transpiler.runtime_range_condition(
                     &for_loop.target,
+                    &stop_var,
                     &plan.step,
                     &step_var,
-                )?,
-            }));
-
-            let saved_context = self.current_context.clone();
-            let capture = self.capture_statements(&body)?;
-            let body_needs_storage = capture.requires_macro_context();
-            self.add_captured_function(body_func_name.clone(), capture);
-            self.current_context = saved_context;
-
-            let body_call = self.function_call_command(&body_func_name, body_needs_storage);
-            let mut loop_commands = Vec::new();
-            let mut loop_metadata = HashMap::new();
-            Self::append_capture_to_buffers(
-                &mut loop_commands,
-                &mut loop_metadata,
-                &condition_capture,
-            );
-            loop_commands.push(format!(
-                "execute {} run {}",
-                condition_execute_args, body_call
-            ));
-            let body_call_index = loop_commands.len() - 1;
-            loop_metadata.insert(
-                body_call_index,
-                GeneratedCommand::new(
-                    loop_commands[body_call_index].clone(),
-                    self.current_statement_source.clone(),
-                    GeneratedCommandKind::ControlFlow,
-                ),
-            );
-            if let Some(return_cmd) = self.return_propagation_command() {
-                loop_commands.push(return_cmd);
-            }
-
-            Self::append_capture_to_buffers(
-                &mut loop_commands,
-                &mut loop_metadata,
-                &condition_capture,
-            );
-            loop_commands.push(format!(
-                "execute {} run function {}:{}",
-                condition_execute_args, self.data_pack.namespace, loop_func_name
-            ));
-            let recurse_index = loop_commands.len() - 1;
-            loop_metadata.insert(
-                recurse_index,
-                GeneratedCommand::new(
-                    loop_commands[recurse_index].clone(),
-                    self.current_statement_source.clone(),
-                    GeneratedCommandKind::ControlFlow,
-                ),
-            );
-
-            self.data_pack.add_function_with_metadata(
-                loop_func_name.clone(),
-                loop_commands,
-                loop_metadata,
-            );
-
-            let return_cmd = self.return_propagation_command();
-            if let Some(ref mut commands) = self.current_function {
-                commands.push(format!(
-                    "function {}:{}",
-                    self.data_pack.namespace, loop_func_name
-                ));
-                if let Some(return_cmd) = return_cmd {
-                    commands.push(return_cmd);
-                }
-            }
-
-            Ok(())
-        })();
+                )
+            }),
+            body: Box::new(|transpiler| {
+                let mut statements = for_loop.body.clone();
+                statements.push(Statement::Assignment(Assignment {
+                    target: for_loop.target.clone(),
+                    target_expr: None,
+                    value: transpiler.runtime_range_increment_expression(
+                        &for_loop.target,
+                        &plan.step,
+                        &step_var,
+                    )?,
+                }));
+                Ok(RuntimeLoopBody {
+                    statements,
+                    binding_commands: Vec::new(),
+                })
+            }),
+            cleanup_commands: Vec::new(),
+        });
 
         self.restore_variable_binding(&for_loop.target, target_snapshot);
         self.restore_variable_binding(&stop_var, stop_snapshot);
@@ -350,7 +330,10 @@ impl Transpiler {
         result
     }
 
-    fn process_runtime_storage_list_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
+    fn process_runtime_storage_list_for(
+        &mut self,
+        for_loop: &ForLoop,
+    ) -> Result<(), TranspileError> {
         let RuntimeStorageListPlan {
             path: list_plan,
             setup_commands,
@@ -359,10 +342,10 @@ impl Transpiler {
         validate_runtime_loop_body_target(&for_loop.body, &for_loop.target)?;
 
         if self.current_context.is_param(&for_loop.target) {
-            return Err(format!(
+            return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
                 "runtime-for-unsupported: dynamic list loop target '{}' cannot shadow a function parameter.",
                 for_loop.target
-            ));
+            )));
         }
 
         let step = match for_loop.step.as_ref() {
@@ -370,7 +353,10 @@ impl Transpiler {
             None => RuntimeRangeStep::Static(1),
         };
         if matches!(step, RuntimeRangeStep::Static(0)) {
-            return Err("runtime-for-bad-step: list step cannot be zero.".to_string());
+            return Err(TranspileError::new(
+                TranspileErrorKind::RuntimeForBadStep,
+                "runtime-for-bad-step: list step cannot be zero.",
+            ));
         }
 
         let index_var = format!("#for_list_index_{}", self.next_temp_id());
@@ -397,130 +383,71 @@ impl Transpiler {
             self.bind_runtime_integer_variable(step_var);
         }
 
-        let result = (|| {
-            let mut init_commands = setup_commands.clone();
-            init_commands.push(format!("scoreboard players set {} temp 0", index_var));
-            init_commands.extend(self.runtime_storage_list_len_commands(&list_plan, &len_var)?);
-            match (&step, &step_var) {
-                (RuntimeRangeStep::Static(step), _) if *step < 0 => {
-                    init_commands.push(format!(
-                        "scoreboard players operation {} temp = {} temp",
-                        index_var, len_var
-                    ));
-                    init_commands.push(format!("scoreboard players remove {} temp 1", index_var));
-                    init_commands.push(format!("scoreboard players set {} temp -1", len_var));
+        let result = self.emit_runtime_loop(RuntimeLoopDriver {
+            helper_prefix: "for_list",
+            loop_helper_id_before_condition: false,
+            init_commands: Box::new(|transpiler| {
+                let mut init_commands = setup_commands.clone();
+                init_commands.push(format!("scoreboard players set {} temp 0", index_var));
+                init_commands
+                    .extend(transpiler.runtime_storage_list_len_commands(&list_plan, &len_var)?);
+                match (&step, &step_var) {
+                    (RuntimeRangeStep::Static(step), _) if *step < 0 => {
+                        init_commands.push(format!(
+                            "scoreboard players operation {} temp = {} temp",
+                            index_var, len_var
+                        ));
+                        init_commands
+                            .push(format!("scoreboard players remove {} temp 1", index_var));
+                        init_commands.push(format!("scoreboard players set {} temp -1", len_var));
+                    }
+                    (RuntimeRangeStep::Dynamic(step_expr), Some(step_var)) => {
+                        init_commands
+                            .extend(transpiler.evaluate_expression_to_target(step_expr, step_var)?);
+                        init_commands.push(format!(
+                            "execute if score {} temp matches ..-1 run scoreboard players operation {} temp = {} temp",
+                            step_var, index_var, len_var
+                        ));
+                        init_commands.push(format!(
+                            "execute if score {} temp matches ..-1 run scoreboard players remove {} temp 1",
+                            step_var, index_var
+                        ));
+                        init_commands.push(format!(
+                            "execute if score {} temp matches ..-1 run scoreboard players set {} temp -1",
+                            step_var, len_var
+                        ));
+                    }
+                    _ => {}
                 }
-                (RuntimeRangeStep::Dynamic(step_expr), Some(step_var)) => {
-                    init_commands.extend(self.evaluate_expression_to_target(step_expr, step_var)?);
-                    init_commands.push(format!(
-                        "execute if score {} temp matches ..-1 run scoreboard players operation {} temp = {} temp",
-                        step_var, index_var, len_var
-                    ));
-                    init_commands.push(format!(
-                        "execute if score {} temp matches ..-1 run scoreboard players remove {} temp 1",
-                        step_var, index_var
-                    ));
-                    init_commands.push(format!(
-                        "execute if score {} temp matches ..-1 run scoreboard players set {} temp -1",
-                        step_var, len_var
-                    ));
-                }
-                _ => {}
-            }
-            if let Some(ref mut commands) = self.current_function {
-                commands.extend(init_commands);
-            }
+                Ok(init_commands)
+            }),
+            condition: Box::new(|transpiler| {
+                transpiler.runtime_range_condition(&index_var, &len_var, &step, &step_var)
+            }),
+            body: Box::new(|transpiler| {
+                let item_plan = list_plan
+                    .clone()
+                    .append_dynamic_index(Expression::Identifier(index_var.clone()));
+                let binding_commands =
+                    transpiler.runtime_storage_list_item_commands(&item_plan, &for_loop.target)?;
 
-            let (condition_execute_args, condition_capture) =
-                self.runtime_range_condition(&index_var, &len_var, &step, &step_var)?;
-
-            let loop_func_name = format!("for_list_temp_{}", self.next_temp_id());
-            let body_func_name = format!("for_list_body_{}", self.next_temp_id());
-
-            let item_plan = list_plan
-                .clone()
-                .append_dynamic_index(Expression::Identifier(index_var.clone()));
-            let item_commands =
-                self.runtime_storage_list_item_commands(&item_plan, &for_loop.target)?;
-
-            let mut body = for_loop.body.clone();
-            body.push(Statement::Assignment(Assignment {
-                target: index_var.clone(),
-                target_expr: None,
-                value: self.runtime_range_increment_expression(&index_var, &step, &step_var)?,
-            }));
-
-            let saved_context = self.current_context.clone();
-            let mut body_capture = self.capture_statements(&body)?;
-            let body_needs_storage = body_capture.requires_macro_context();
-            body_capture = self.prepend_runtime_list_item_commands(body_capture, item_commands);
-            self.add_captured_function(body_func_name.clone(), body_capture);
-            self.current_context = saved_context;
-
-            let body_call = self.function_call_command(&body_func_name, body_needs_storage);
-            let mut loop_commands = Vec::new();
-            let mut loop_metadata = HashMap::new();
-            Self::append_capture_to_buffers(
-                &mut loop_commands,
-                &mut loop_metadata,
-                &condition_capture,
-            );
-            loop_commands.push(format!(
-                "execute {} run {}",
-                condition_execute_args, body_call
-            ));
-            let body_call_index = loop_commands.len() - 1;
-            loop_metadata.insert(
-                body_call_index,
-                GeneratedCommand::new(
-                    loop_commands[body_call_index].clone(),
-                    self.current_statement_source.clone(),
-                    GeneratedCommandKind::ControlFlow,
-                ),
-            );
-            if let Some(return_cmd) = self.return_propagation_command() {
-                loop_commands.push(return_cmd);
-            }
-
-            Self::append_capture_to_buffers(
-                &mut loop_commands,
-                &mut loop_metadata,
-                &condition_capture,
-            );
-            loop_commands.push(format!(
-                "execute {} run function {}:{}",
-                condition_execute_args, self.data_pack.namespace, loop_func_name
-            ));
-            let recurse_index = loop_commands.len() - 1;
-            loop_metadata.insert(
-                recurse_index,
-                GeneratedCommand::new(
-                    loop_commands[recurse_index].clone(),
-                    self.current_statement_source.clone(),
-                    GeneratedCommandKind::ControlFlow,
-                ),
-            );
-
-            self.data_pack.add_function_with_metadata(
-                loop_func_name.clone(),
-                loop_commands,
-                loop_metadata,
-            );
-
-            let return_cmd = self.return_propagation_command();
-            if let Some(ref mut commands) = self.current_function {
-                commands.push(format!(
-                    "function {}:{}",
-                    self.data_pack.namespace, loop_func_name
-                ));
-                commands.extend(cleanup_commands.clone());
-                if let Some(return_cmd) = return_cmd {
-                    commands.push(return_cmd);
-                }
-            }
-
-            Ok(())
-        })();
+                let mut statements = for_loop.body.clone();
+                statements.push(Statement::Assignment(Assignment {
+                    target: index_var.clone(),
+                    target_expr: None,
+                    value: transpiler.runtime_range_increment_expression(
+                        &index_var,
+                        &step,
+                        &step_var,
+                    )?,
+                }));
+                Ok(RuntimeLoopBody {
+                    statements,
+                    binding_commands,
+                })
+            }),
+            cleanup_commands,
+        });
 
         self.restore_variable_binding(&for_loop.target, target_snapshot);
         self.restore_variable_binding(&index_var, index_snapshot);
@@ -548,15 +475,15 @@ impl Transpiler {
     fn runtime_storage_list_plan(
         &mut self,
         iter: &Expression,
-    ) -> Result<RuntimeStorageListPlan, String> {
+    ) -> Result<RuntimeStorageListPlan, TranspileError> {
         match iter {
             Expression::Identifier(name) => {
                 let value_type = self.variable_types.get(name);
                 if matches!(value_type, Some(CobbleType::Map | CobbleType::String)) {
-                    return Err(format!(
+                    return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
                         "runtime-for-unsupported: '{}' is not a storage-backed list.",
                         name
-                    ));
+                    )));
                 }
                 self.variable_storage_paths
                     .get(name)
@@ -567,24 +494,22 @@ impl Transpiler {
                         cleanup_commands: Vec::new(),
                     })
                     .ok_or_else(|| {
-                        format!(
+                        TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
                             "runtime-for-unsupported: list '{}' is not backed by storage.",
                             name
-                        )
+                        ))
                     })
             }
             Expression::Attribute(_, _) | Expression::Subscript(_, _) => {
                 let Some(path) = self.resolve_storage_path_plan(iter) else {
                     return Err(
-                        "runtime-for-unsupported: iterable does not resolve to storage."
-                            .to_string(),
+                        TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, "runtime-for-unsupported: iterable does not resolve to storage."),
                     );
                 };
                 if matches!(self.storage_expr_type(iter), Some(CobbleType::Map | CobbleType::String))
                 {
                     return Err(
-                        "runtime-for-unsupported: storage-backed iterable must be a list."
-                            .to_string(),
+                        TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, "runtime-for-unsupported: storage-backed iterable must be a list."),
                     );
                 }
                 Ok(RuntimeStorageListPlan {
@@ -596,8 +521,7 @@ impl Transpiler {
             Expression::Array(items) => {
                 if items.is_empty() {
                     return Err(
-                        "runtime-for-bad-range: runtime literal arrays cannot be empty."
-                            .to_string(),
+                        TranspileError::new(TranspileErrorKind::RuntimeForBadRange, "runtime-for-bad-range: runtime literal arrays cannot be empty."),
                     );
                 }
                 let id = self.next_temp_id();
@@ -613,8 +537,7 @@ impl Transpiler {
                 })
             }
             _ => Err(
-                "runtime-for-unsupported: dynamic for loops only support range(...), storage-backed lists, or runtime literal arrays."
-                    .to_string(),
+                TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, "runtime-for-unsupported: dynamic for loops only support range(...), storage-backed lists, or runtime literal arrays."),
             ),
         }
     }
@@ -623,7 +546,7 @@ impl Transpiler {
         &mut self,
         list_plan: &StoragePathPlan,
         len_var: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.data_pack.namespace.clone();
         if let Some(list_path) = list_plan.as_static() {
             return Ok(vec![format!(
@@ -647,7 +570,7 @@ impl Transpiler {
         &mut self,
         item_plan: &StoragePathPlan,
         target: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.data_pack.namespace.clone();
         let target_path = format!("vars.{}", target);
         self.dynamic_storage_command(item_plan, GeneratedCommandKind::ControlFlow, |path| {
@@ -699,7 +622,7 @@ impl Transpiler {
         stop_var: &str,
         step: &RuntimeRangeStep,
         step_var: &Option<String>,
-    ) -> Result<(String, FunctionCapture), String> {
+    ) -> Result<(String, FunctionCapture), TranspileError> {
         match step {
             RuntimeRangeStep::Static(step) => {
                 let condition_op = if *step > 0 {
@@ -717,7 +640,7 @@ impl Transpiler {
                     self.capture_commands_with_result(|transpiler| {
                         let processed_condition = transpiler.preprocess_condition(&condition)?;
                         let translated = transpiler.translate_condition(&processed_condition)?;
-                        transpiler.normalize_if_condition(translated)
+                        transpiler.lower_translated_condition(translated)
                     })?;
                 Ok((
                     Self::condition_execute_args(&condition_cmd),
@@ -726,9 +649,10 @@ impl Transpiler {
             }
             RuntimeRangeStep::Dynamic(_) => {
                 let Some(step_var) = step_var else {
-                    return Err(
-                        "runtime-for-internal: missing dynamic range step variable".to_string()
-                    );
+                    return Err(TranspileError::new(
+                        TranspileErrorKind::RuntimeForInternal,
+                        "runtime-for-internal: missing dynamic range step variable",
+                    ));
                 };
                 let run_var = format!("#for_range_run_{}", self.next_temp_id());
                 self.data_pack.track_objective("temp");
@@ -770,14 +694,17 @@ impl Transpiler {
         target: &str,
         step: &RuntimeRangeStep,
         step_var: &Option<String>,
-    ) -> Result<Expression, String> {
+    ) -> Result<Expression, TranspileError> {
         let step_expr = match step {
             RuntimeRangeStep::Static(step) => Expression::Number(f64::from(*step)),
             RuntimeRangeStep::Dynamic(_) => Expression::Identifier(
                 step_var
                     .as_ref()
                     .ok_or_else(|| {
-                        "runtime-for-internal: missing dynamic range step variable".to_string()
+                        TranspileError::new(
+                            TranspileErrorKind::RuntimeForInternal,
+                            "runtime-for-internal: missing dynamic range step variable",
+                        )
                     })?
                     .clone(),
             ),
@@ -789,29 +716,34 @@ impl Transpiler {
         ))
     }
 
-    fn runtime_range_plan(&self, for_loop: &ForLoop) -> Result<RuntimeRangePlan, String> {
+    fn runtime_range_plan(&self, for_loop: &ForLoop) -> Result<RuntimeRangePlan, TranspileError> {
         let Expression::Call(func, args) = &for_loop.iter else {
-            return Err(
-                "runtime-for-unsupported: dynamic for loops only support range(...).".to_string(),
-            );
+            return Err(TranspileError::new(
+                TranspileErrorKind::RuntimeForUnsupported,
+                "runtime-for-unsupported: dynamic for loops only support range(...).",
+            ));
         };
         if !is_identifier(func, "range") {
-            return Err(
-                "runtime-for-unsupported: dynamic for loops only support range(...).".to_string(),
-            );
+            return Err(TranspileError::new(
+                TranspileErrorKind::RuntimeForUnsupported,
+                "runtime-for-unsupported: dynamic for loops only support range(...).",
+            ));
         }
         if args.is_empty() || args.len() > 3 {
-            return Err(format!(
-                "runtime-for-unsupported: range(...) expects 1 to 3 arguments, got {}.",
-                args.len()
+            return Err(TranspileError::new(
+                TranspileErrorKind::RuntimeForUnsupported,
+                format!(
+                    "runtime-for-unsupported: range(...) expects 1 to 3 arguments, got {}.",
+                    args.len()
+                ),
             ));
         }
 
         if args.len() == 3 && for_loop.step.is_some() {
-            return Err(
-                "runtime-for-bad-step: use either range(start, stop, step) or 'by step', not both."
-                    .to_string(),
-            );
+            return Err(TranspileError::new(
+                TranspileErrorKind::RuntimeForBadStep,
+                "runtime-for-bad-step: use either range(start, stop, step) or 'by step', not both.",
+            ));
         }
 
         let step = match (args.len(), for_loop.step.as_ref()) {
@@ -820,7 +752,10 @@ impl Transpiler {
             _ => RuntimeRangeStep::Static(1),
         };
         if matches!(step, RuntimeRangeStep::Static(0)) {
-            return Err("runtime-for-bad-step: range step cannot be zero.".to_string());
+            return Err(TranspileError::new(
+                TranspileErrorKind::RuntimeForBadStep,
+                "runtime-for-bad-step: range step cannot be zero.",
+            ));
         }
 
         match args.len() {
@@ -864,14 +799,20 @@ impl Transpiler {
         }
     }
 
-    fn runtime_range_step(&self, expr: &Expression) -> Result<RuntimeRangeStep, String> {
+    fn runtime_range_step(&self, expr: &Expression) -> Result<RuntimeRangeStep, TranspileError> {
         if let Some(value) = self.try_eval_const(expr) {
             if !value.is_finite() || value.fract() != 0.0 {
-                return Err("runtime-for-bad-step: range step must be an integer.".to_string());
+                return Err(TranspileError::new(
+                    TranspileErrorKind::RuntimeForBadStep,
+                    "runtime-for-bad-step: range step must be an integer.",
+                ));
             }
             if value < i32::MIN as f64 || value > i32::MAX as f64 {
-                return Err(format!(
-                    "runtime-for-bad-range: range step value {value} is outside the i32 range."
+                return Err(TranspileError::new(
+                    TranspileErrorKind::RuntimeForBadRange,
+                    format!(
+                        "runtime-for-bad-range: range step value {value} is outside the i32 range."
+                    ),
                 ));
             }
             return Ok(RuntimeRangeStep::Static(value as i32));
@@ -881,10 +822,15 @@ impl Transpiler {
         Ok(RuntimeRangeStep::Dynamic(expr.clone()))
     }
 
-    fn ensure_runtime_range_bound(&self, expr: &Expression, label: &str) -> Result<(), String> {
+    fn ensure_runtime_range_bound(
+        &self,
+        expr: &Expression,
+        label: &str,
+    ) -> Result<(), TranspileError> {
         match self.infer_type(expr) {
-            CobbleType::String | CobbleType::List | CobbleType::Map => Err(format!(
-                "runtime-for-unsupported: range {label} must be an integer expression."
+            CobbleType::String | CobbleType::List | CobbleType::Map => Err(TranspileError::new(
+                TranspileErrorKind::RuntimeForUnsupported,
+                format!("runtime-for-unsupported: range {label} must be an integer expression."),
             )),
             _ => Ok(()),
         }
@@ -977,7 +923,7 @@ impl Transpiler {
         }
     }
 
-    fn unroll_values(&self, for_loop: &ForLoop) -> Result<Vec<UnrollValue>, String> {
+    fn unroll_values(&self, for_loop: &ForLoop) -> Result<Vec<UnrollValue>, TranspileError> {
         match &for_loop.iter {
             Expression::Array(items) => self.unroll_array_values(items),
             Expression::Call(func, args) if is_identifier(func, "range") => {
@@ -988,28 +934,35 @@ impl Transpiler {
                     Expression::Identifier(name) => name.as_str(),
                     _ => "unknown",
                 };
-                Err(format!(
+                Err(TranspileError::new(TranspileErrorKind::UnrollNonLiteral, format!(
                     "unroll-non-literal: for loops only support literal range(...) or literal arrays, not {name}(...)."
-                ))
+                )))
             }
-            _ => Err(
-                "unroll-non-literal: for loops only support literal range(...) or literal arrays."
-                    .to_string(),
-            ),
+            _ => Err(TranspileError::new(
+                TranspileErrorKind::UnrollNonLiteral,
+                "unroll-non-literal: for loops only support literal range(...) or literal arrays.",
+            )),
         }
     }
 
-    fn unroll_array_values(&self, items: &[Expression]) -> Result<Vec<UnrollValue>, String> {
+    fn unroll_array_values(
+        &self,
+        items: &[Expression],
+    ) -> Result<Vec<UnrollValue>, TranspileError> {
         if items.is_empty() {
-            return Err(
-                "unroll-bad-range: literal arrays used for unrolling cannot be empty.".to_string(),
-            );
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollBadRange,
+                "unroll-bad-range: literal arrays used for unrolling cannot be empty.",
+            ));
         }
         if items.len() > UNROLL_LIMIT {
-            return Err(format!(
-                "unroll-limit-exceeded: literal array expands to {} iterations (limit {}).",
-                items.len(),
-                UNROLL_LIMIT
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollLimit,
+                format!(
+                    "unroll-limit-exceeded: literal array expands to {} iterations (limit {}).",
+                    items.len(),
+                    UNROLL_LIMIT
+                ),
             ));
         }
 
@@ -1020,8 +973,7 @@ impl Transpiler {
                 Expression::String(value) => Ok(UnrollValue::String(value.clone())),
                 Expression::Boolean(value) => Ok(UnrollValue::Boolean(*value)),
                 _ => Err(
-                    "unroll-non-literal: literal arrays may only contain numbers, strings, or booleans."
-                        .to_string(),
+                    TranspileError::new(TranspileErrorKind::UnrollNonLiteral, "unroll-non-literal: literal arrays may only contain numbers, strings, or booleans."),
                 ),
             })
             .collect()
@@ -1031,11 +983,14 @@ impl Transpiler {
         &self,
         for_loop: &ForLoop,
         args: &[Expression],
-    ) -> Result<Vec<UnrollValue>, String> {
+    ) -> Result<Vec<UnrollValue>, TranspileError> {
         if args.is_empty() || args.len() > 3 {
-            return Err(format!(
-                "unroll-non-literal: range(...) expects 1 to 3 arguments, got {}.",
-                args.len()
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollNonLiteral,
+                format!(
+                    "unroll-non-literal: range(...) expects 1 to 3 arguments, got {}.",
+                    args.len()
+                ),
             ));
         }
 
@@ -1045,23 +1000,27 @@ impl Transpiler {
             .map(|step| self.integer_unroll_expr(step, "range step"))
             .transpose()?;
         if args.len() == 3 && by_step.is_some() {
-            return Err(
-                "unroll-bad-step: use either range(start, stop, step) or 'by step', not both."
-                    .to_string(),
-            );
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollBadStep,
+                "unroll-bad-step: use either range(start, stop, step) or 'by step', not both.",
+            ));
         }
 
         let (start, stop, step) = match args.len() {
             1 => {
                 let count = self.integer_unroll_expr(&args[0], "range count")?;
                 if count < 0 {
-                    return Err(format!(
-                        "unroll-bad-range: range({count}) cannot expand a negative count."
+                    return Err(TranspileError::new(
+                        TranspileErrorKind::UnrollBadRange,
+                        format!("unroll-bad-range: range({count}) cannot expand a negative count."),
                     ));
                 }
                 let step = by_step.unwrap_or(1);
                 if step == 0 {
-                    return Err("unroll-bad-step: range step cannot be zero.".to_string());
+                    return Err(TranspileError::new(
+                        TranspileErrorKind::UnrollBadStep,
+                        "unroll-bad-step: range step cannot be zero.",
+                    ));
                 }
                 if step > 0 {
                     (0, count, step)
@@ -1074,7 +1033,10 @@ impl Transpiler {
                 let stop = self.integer_unroll_expr(&args[1], "range stop")?;
                 let step = by_step.unwrap_or(1);
                 if step == 0 {
-                    return Err("unroll-bad-step: range step cannot be zero.".to_string());
+                    return Err(TranspileError::new(
+                        TranspileErrorKind::UnrollBadStep,
+                        "unroll-bad-step: range step cannot be zero.",
+                    ));
                 }
                 (start, stop, step)
             }
@@ -1083,7 +1045,10 @@ impl Transpiler {
                 let stop = self.integer_unroll_expr(&args[1], "range stop")?;
                 let step = self.integer_unroll_expr(&args[2], "range step")?;
                 if step == 0 {
-                    return Err("unroll-bad-step: range step cannot be zero.".to_string());
+                    return Err(TranspileError::new(
+                        TranspileErrorKind::UnrollBadStep,
+                        "unroll-bad-step: range step cannot be zero.",
+                    ));
                 }
                 (start, stop, step)
             }
@@ -1092,30 +1057,39 @@ impl Transpiler {
 
         if args.len() != 1 {
             if step > 0 && start > stop {
-                return Err(format!(
+                return Err(TranspileError::new(TranspileErrorKind::UnrollBadRange, format!(
                     "unroll-bad-range: range start {start} is greater than stop {stop} with a positive step."
-                ));
+                )));
             }
             if step < 0 && start < stop {
-                return Err(format!(
+                return Err(TranspileError::new(TranspileErrorKind::UnrollBadRange, format!(
                     "unroll-bad-range: range start {start} is less than stop {stop} with a negative step."
-                ));
+                )));
             }
         }
 
         range_unroll_values(start, stop, step)
     }
 
-    fn integer_unroll_expr(&self, expr: &Expression, label: &str) -> Result<i32, String> {
+    fn integer_unroll_expr(&self, expr: &Expression, label: &str) -> Result<i32, TranspileError> {
         let value = self.try_eval_const(expr).ok_or_else(|| {
-            format!("unroll-non-literal: {label} must be an integer literal or const identifier.")
+            TranspileError::new(
+                TranspileErrorKind::UnrollNonLiteral,
+                format!(
+                    "unroll-non-literal: {label} must be an integer literal or const identifier."
+                ),
+            )
         })?;
         if !value.is_finite() || value.fract() != 0.0 {
-            return Err(format!("unroll-bad-step: {label} must be an integer."));
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollBadStep,
+                format!("unroll-bad-step: {label} must be an integer."),
+            ));
         }
         if value < i32::MIN as f64 || value > i32::MAX as f64 {
-            return Err(format!(
-                "unroll-bad-range: {label} value {value} is outside the i32 range."
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollBadRange,
+                format!("unroll-bad-range: {label} value {value} is outside the i32 range."),
             ));
         }
         Ok(value as i32)
@@ -1169,15 +1143,18 @@ impl Transpiler {
             + self.current_function.as_ref().map_or(0, Vec::len)
     }
 
-    fn ensure_unroll_command_budget(&self) -> Result<(), String> {
+    fn ensure_unroll_command_budget(&self) -> Result<(), TranspileError> {
         let Some(baseline) = self.unroll_command_baseline else {
             return Ok(());
         };
         let generated = self.generated_command_count().saturating_sub(baseline);
         if generated > UNROLL_GENERATED_COMMAND_LIMIT {
-            return Err(format!(
-                "unroll-limit-exceeded: unrolling generated {} commands (limit {}).",
-                generated, UNROLL_GENERATED_COMMAND_LIMIT
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollCommandLimit,
+                format!(
+                    "unroll-limit-exceeded: unrolling generated {} commands (limit {}).",
+                    generated, UNROLL_GENERATED_COMMAND_LIMIT
+                ),
             ));
         }
         Ok(())
@@ -1186,9 +1163,7 @@ impl Transpiler {
     pub(in crate::transpiler) fn process_while(
         &mut self,
         while_loop: &WhileLoop,
-    ) -> Result<(), String> {
-        let mut while_commands = Vec::new();
-
+    ) -> Result<(), TranspileError> {
         // WARNING: While loops execute all iterations in a single tick
         // This can cause server lag with large iteration counts (>100)
         // Future improvement: Add schedule command support for tick-based iteration
@@ -1202,31 +1177,79 @@ impl Transpiler {
             );
         }
 
-        // Generate a recursive function for the while loop
-        let loop_func_name = format!("while_temp_{}", self.next_temp_id());
+        self.emit_runtime_loop(RuntimeLoopDriver {
+            helper_prefix: "while",
+            loop_helper_id_before_condition: true,
+            init_commands: Box::new(|_| Ok(Vec::new())),
+            // Capture condition setup so complex expressions and OR lowering
+            // are rerun on every recursive iteration instead of once before
+            // the loop.
+            condition: Box::new(|transpiler| {
+                let (condition_cmd, condition_capture) =
+                    transpiler.capture_commands_with_result(|transpiler| {
+                        let processed_condition =
+                            transpiler.preprocess_condition(&while_loop.condition)?;
+                        let translated = transpiler.translate_condition(&processed_condition)?;
+                        transpiler.lower_translated_condition(translated)
+                    })?;
+                Ok((
+                    Transpiler::condition_execute_args(&condition_cmd),
+                    condition_capture,
+                ))
+            }),
+            body: Box::new(|_| {
+                Ok(RuntimeLoopBody {
+                    statements: while_loop.body.clone(),
+                    binding_commands: Vec::new(),
+                })
+            }),
+            cleanup_commands: Vec::new(),
+        })
+    }
 
-        // Capture condition setup so complex expressions and OR lowering are
-        // rerun on every recursive iteration instead of once before the loop.
-        let (condition_cmd, condition_capture) =
-            self.capture_commands_with_result(|transpiler| {
-                let processed_condition = transpiler.preprocess_condition(&while_loop.condition)?;
-                let translated = transpiler.translate_condition(&processed_condition)?;
-                transpiler.normalize_if_condition(translated)
-            })?;
-        let condition_execute_args = Self::condition_execute_args(&condition_cmd);
+    /// Shared skeleton behind the recursive runtime loops (`for range(...)`,
+    /// storage-list `for`, `while`): emit the init commands, capture the
+    /// condition, wrap the body in a helper function so the condition is
+    /// evaluated once per iteration (not per statement), then emit the
+    /// recursive loop helper that re-checks the condition after the body and
+    /// propagates early returns.
+    fn emit_runtime_loop(&mut self, driver: RuntimeLoopDriver<'_>) -> Result<(), TranspileError> {
+        let RuntimeLoopDriver {
+            helper_prefix,
+            loop_helper_id_before_condition,
+            init_commands,
+            condition,
+            body,
+            cleanup_commands,
+        } = driver;
 
-        // IMPORTANT: We need to wrap the body in a conditional function call
-        // to prevent bugs where body statements modify condition variables.
-        // The condition should be evaluated ONCE per iteration, not per statement.
+        let init_commands = init_commands(self)?;
+        if let Some(ref mut commands) = self.current_function {
+            commands.extend(init_commands);
+        }
 
-        // Create inner body function that executes unconditionally
-        let body_func_name = format!("while_body_{}", self.next_temp_id());
+        let mut loop_func_name = if loop_helper_id_before_condition {
+            Some(format!("{}_temp_{}", helper_prefix, self.next_temp_id()))
+        } else {
+            None
+        };
+        let (condition_execute_args, condition_capture) = condition(self)?;
+        let loop_func_name = loop_func_name
+            .take()
+            .unwrap_or_else(|| format!("{}_temp_{}", helper_prefix, self.next_temp_id()));
+        let body_func_name = format!("{}_body_{}", helper_prefix, self.next_temp_id());
 
-        // Process loop body into the body function
+        let RuntimeLoopBody {
+            statements,
+            binding_commands,
+        } = body(self)?;
+
         let saved_context = self.current_context.clone();
-
-        let capture = self.capture_statements(&while_loop.body)?;
+        let mut capture = self.capture_statements(&statements)?;
         let body_needs_storage = capture.requires_macro_context();
+        if !binding_commands.is_empty() {
+            capture = self.prepend_runtime_list_item_commands(capture, binding_commands);
+        }
         self.add_captured_function(body_func_name.clone(), capture);
         self.current_context = saved_context;
 
@@ -1268,22 +1291,20 @@ impl Transpiler {
             ),
         );
 
-        // Add the loop function to the data pack
         self.data_pack.add_function_with_metadata(
             loop_func_name.clone(),
             loop_commands,
             loop_metadata,
         );
 
-        // Start the loop
-        while_commands.push(format!(
-            "function {}:{}",
-            self.data_pack.namespace, loop_func_name
-        ));
-
+        // Start the loop.
         let return_cmd = self.return_propagation_command();
         if let Some(ref mut commands) = self.current_function {
-            commands.extend(while_commands);
+            commands.push(format!(
+                "function {}:{}",
+                self.data_pack.namespace, loop_func_name
+            ));
+            commands.extend(cleanup_commands);
             if let Some(return_cmd) = return_cmd {
                 commands.push(return_cmd);
             }
@@ -1305,58 +1326,58 @@ impl Transpiler {
     }
 }
 
+/// Appends the `loop:`/`source-key:`/`location:` trailer lines to an
+/// unroll-family error, leaving other kinds untouched. Trailers already
+/// present (from an inner loop) are kept as-is.
 fn annotate_unroll_error(
-    error: String,
+    error: TranspileError,
     target: &str,
     source_key: &str,
     location: Option<&SourceLocation>,
-) -> String {
-    if error.starts_with("unroll-") {
-        let mut annotated = if error.contains("\n  loop: for ") {
-            error
-        } else {
-            format!("{error}\n  loop: for {target}")
-        };
-        if !annotated.contains("\n  source-key: ") {
-            annotated.push_str(&format!("\n  source-key: {source_key}"));
-        }
-        if let Some(location) = location.filter(|_| !annotated.contains("\n  location: ")) {
-            annotated.push_str(&format!(
-                "\n  location: {}:{}",
-                location.line, location.column
-            ));
-        }
-        annotated
+) -> TranspileError {
+    if error.kind.is_unroll() {
+        annotate_loop_error(error, target, source_key, location)
     } else {
         error
     }
 }
 
+/// Appends the `loop:`/`source-key:`/`location:` trailer lines to a
+/// runtime-for-family error, leaving other kinds untouched.
 fn annotate_runtime_for_error(
-    error: String,
+    error: TranspileError,
     target: &str,
     source_key: &str,
     location: Option<&SourceLocation>,
-) -> String {
-    if error.starts_with("runtime-for-") {
-        let mut annotated = if error.contains("\n  loop: for ") {
-            error
-        } else {
-            format!("{error}\n  loop: for {target}")
-        };
-        if !annotated.contains("\n  source-key: ") {
-            annotated.push_str(&format!("\n  source-key: {source_key}"));
-        }
-        if let Some(location) = location.filter(|_| !annotated.contains("\n  location: ")) {
-            annotated.push_str(&format!(
-                "\n  location: {}:{}",
-                location.line, location.column
-            ));
-        }
-        annotated
+) -> TranspileError {
+    if error.kind.is_runtime_for() {
+        annotate_loop_error(error, target, source_key, location)
     } else {
         error
     }
+}
+
+fn annotate_loop_error(
+    mut error: TranspileError,
+    target: &str,
+    source_key: &str,
+    location: Option<&SourceLocation>,
+) -> TranspileError {
+    if !error.message.contains("\n  loop: for ") {
+        error.message.push_str(&format!("\n  loop: for {target}"));
+    }
+    if !error.message.contains("\n  source-key: ") {
+        error
+            .message
+            .push_str(&format!("\n  source-key: {source_key}"));
+    }
+    if let Some(location) = location.filter(|_| !error.message.contains("\n  location: ")) {
+        error.message.push_str(&format!(
+            "\n  location: {}:{}",
+            location.line, location.column
+        ));
+    }
+    error
 }
 
 fn restore_optional<T>(map: &mut HashMap<String, T>, name: &str, value: Option<T>) {
@@ -1367,7 +1388,10 @@ fn restore_optional<T>(map: &mut HashMap<String, T>, name: &str, value: Option<T
     }
 }
 
-fn validate_runtime_loop_body_target(statements: &[Statement], target: &str) -> Result<(), String> {
+fn validate_runtime_loop_body_target(
+    statements: &[Statement],
+    target: &str,
+) -> Result<(), TranspileError> {
     for statement in statements {
         validate_runtime_loop_statement_target(statement, target)?;
     }
@@ -1377,22 +1401,28 @@ fn validate_runtime_loop_body_target(statements: &[Statement], target: &str) -> 
 fn validate_runtime_loop_statement_target(
     statement: &Statement,
     target: &str,
-) -> Result<(), String> {
+) -> Result<(), TranspileError> {
     match statement {
-        Statement::Assignment(assign) if assign.target == target => Err(format!(
-            "runtime-for-unsupported: cannot assign to dynamic loop target '{}'.",
-            target
+        Statement::Assignment(assign) if assign.target == target => Err(TranspileError::new(
+            TranspileErrorKind::RuntimeForUnsupported,
+            format!(
+                "runtime-for-unsupported: cannot assign to dynamic loop target '{}'.",
+                target
+            ),
         )),
-        Statement::ConstAssignment(assign) if assign.target == target => Err(format!(
-            "runtime-for-unsupported: cannot assign to dynamic loop target '{}'.",
-            target
+        Statement::ConstAssignment(assign) if assign.target == target => Err(TranspileError::new(
+            TranspileErrorKind::RuntimeForUnsupported,
+            format!(
+                "runtime-for-unsupported: cannot assign to dynamic loop target '{}'.",
+                target
+            ),
         )),
         Statement::FunctionDef(function) => {
             if function.params.iter().any(|param| param.name == target) {
-                return Err(format!(
+                return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
                     "runtime-for-unsupported: nested function parameter '{}' shadows the dynamic loop target.",
                     target
-                ));
+                )));
             }
             validate_runtime_loop_body_target(&function.body, target)
         }
@@ -1408,10 +1438,10 @@ fn validate_runtime_loop_statement_target(
         }
         Statement::For(for_loop) => {
             if for_loop.target == target {
-                return Err(format!(
+                return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
                     "runtime-for-unsupported: nested loop target '{}' shadows the dynamic loop target.",
                     target
-                ));
+                )));
             }
             validate_runtime_loop_body_target(&for_loop.body, target)
         }
@@ -1433,7 +1463,11 @@ fn is_identifier(expr: &Expression, expected: &str) -> bool {
     matches!(expr, Expression::Identifier(name) if name == expected)
 }
 
-fn range_unroll_values(start: i32, stop: i32, step: i32) -> Result<Vec<UnrollValue>, String> {
+fn range_unroll_values(
+    start: i32,
+    stop: i32,
+    step: i32,
+) -> Result<Vec<UnrollValue>, TranspileError> {
     let mut values = Vec::new();
     let mut current = i64::from(start);
     let stop = i64::from(stop);
@@ -1441,14 +1475,18 @@ fn range_unroll_values(start: i32, stop: i32, step: i32) -> Result<Vec<UnrollVal
 
     while (step > 0 && current < stop) || (step < 0 && current > stop) {
         if values.len() == UNROLL_LIMIT {
-            return Err(format!(
-                "unroll-limit-exceeded: range expands past {} iterations.",
-                UNROLL_LIMIT
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollLimit,
+                format!(
+                    "unroll-limit-exceeded: range expands past {} iterations.",
+                    UNROLL_LIMIT
+                ),
             ));
         }
         if current < i64::from(i32::MIN) || current > i64::from(i32::MAX) {
-            return Err(format!(
-                "unroll-bad-range: range value {current} is outside the i32 range."
+            return Err(TranspileError::new(
+                TranspileErrorKind::UnrollBadRange,
+                format!("unroll-bad-range: range value {current} is outside the i32 range."),
             ));
         }
         values.push(UnrollValue::Number(current as f64));
@@ -1472,7 +1510,7 @@ fn substitute_statements(
     statements: &[Statement],
     target: &str,
     value: &UnrollValue,
-) -> Result<Vec<Statement>, String> {
+) -> Result<Vec<Statement>, TranspileError> {
     statements
         .iter()
         .map(|statement| substitute_statement(statement, target, value))
@@ -1483,15 +1521,15 @@ fn substitute_statement(
     statement: &Statement,
     target: &str,
     value: &UnrollValue,
-) -> Result<Statement, String> {
+) -> Result<Statement, TranspileError> {
     let substituted = match statement {
         Statement::Import(import) => Statement::Import(import.clone()),
         Statement::FunctionDef(function) => {
             if function.params.iter().any(|param| param.name == target) {
-                return Err(format!(
+                return Err(TranspileError::new(TranspileErrorKind::UnrollNonLiteral, format!(
                     "unroll-non-literal: nested function parameter '{}' shadows the unrolled loop target.",
                     target
-                ));
+                )));
             }
             Statement::FunctionDef(FunctionDef {
                 name: function.name.clone(),
@@ -1502,9 +1540,12 @@ fn substitute_statement(
         }
         Statement::Assignment(assign) => {
             if assign.target == target {
-                return Err(format!(
-                    "unroll-non-literal: cannot assign to unrolled loop target '{}'.",
-                    target
+                return Err(TranspileError::new(
+                    TranspileErrorKind::UnrollNonLiteral,
+                    format!(
+                        "unroll-non-literal: cannot assign to unrolled loop target '{}'.",
+                        target
+                    ),
                 ));
             }
             Statement::Assignment(Assignment {
@@ -1519,9 +1560,12 @@ fn substitute_statement(
         }
         Statement::ConstAssignment(assign) => {
             if assign.target == target {
-                return Err(format!(
-                    "unroll-non-literal: cannot assign to unrolled loop target '{}'.",
-                    target
+                return Err(TranspileError::new(
+                    TranspileErrorKind::UnrollNonLiteral,
+                    format!(
+                        "unroll-non-literal: cannot assign to unrolled loop target '{}'.",
+                        target
+                    ),
                 ));
             }
             Statement::ConstAssignment(ConstAssignment {
@@ -1544,7 +1588,7 @@ fn substitute_statement(
                         substitute_statements(body, target, value)?,
                     ))
                 })
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, TranspileError>>()?,
             else_branch: if_stmt
                 .else_branch
                 .as_ref()
@@ -1553,9 +1597,12 @@ fn substitute_statement(
         }),
         Statement::For(for_loop) => {
             if for_loop.target == target {
-                return Err(format!(
+                return Err(TranspileError::new(
+                    TranspileErrorKind::UnrollNonLiteral,
+                    format!(
                     "unroll-non-literal: nested loop target '{}' shadows the unrolled loop target.",
                     target
+                ),
                 ));
             }
             Statement::For(ForLoop {
@@ -1584,7 +1631,7 @@ fn substitute_statement(
                         body: substitute_statements(&case.body, target, value)?,
                     })
                 })
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, TranspileError>>()?,
         }),
         Statement::Return(expr) => Statement::Return(
             expr.as_ref()
@@ -1601,7 +1648,7 @@ fn substitute_statement(
                 .modifiers
                 .iter()
                 .map(|modifier| substitute_execute_modifier(modifier, target, value))
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, TranspileError>>()?,
             body: substitute_statements(&exec_block.body, target, value)?,
         }),
         Statement::SelectorDef(selector_def) => Statement::SelectorDef(SelectorDef {
@@ -1630,7 +1677,7 @@ fn substitute_execute_modifier(
     modifier: &ExecuteModifier,
     target: &str,
     value: &UnrollValue,
-) -> Result<ExecuteModifier, String> {
+) -> Result<ExecuteModifier, TranspileError> {
     let command_value = value.as_command_text();
     let substituted = match modifier {
         ExecuteModifier::As(raw) => {
@@ -1671,7 +1718,7 @@ fn substitute_expression(
     expression: &Expression,
     target: &str,
     value: &UnrollValue,
-) -> Result<Expression, String> {
+) -> Result<Expression, TranspileError> {
     let substituted = match expression {
         Expression::Identifier(name) if name == target => value.as_expression(),
         Expression::Identifier(_) => expression.clone(),
@@ -1684,7 +1731,7 @@ fn substitute_expression(
             items
                 .iter()
                 .map(|item| substitute_expression(item, target, value))
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, TranspileError>>()?,
         ),
         Expression::Map(entries) => Expression::Map(
             entries
@@ -1695,7 +1742,7 @@ fn substitute_expression(
                         substitute_expression(entry_value, target, value)?,
                     ))
                 })
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, TranspileError>>()?,
         ),
         Expression::Attribute(base, attr) => Expression::Attribute(
             Box::new(substitute_expression(base, target, value)?),
@@ -1714,7 +1761,7 @@ fn substitute_expression(
             Box::new(substitute_expression(func, target, value)?),
             args.iter()
                 .map(|arg| substitute_expression(arg, target, value))
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, TranspileError>>()?,
         ),
         Expression::Subscript(base, index) => Expression::Subscript(
             Box::new(substitute_expression(base, target, value)?),

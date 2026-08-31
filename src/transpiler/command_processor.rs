@@ -1,4 +1,5 @@
 use crate::ast::Expression;
+use crate::transpiler::TranspileError;
 use std::collections::{HashMap, HashSet};
 
 /// Process Minecraft command strings with variable substitution
@@ -41,7 +42,7 @@ impl<'a> CommandProcessor<'a> {
         self.current_params.contains(&name.to_string())
     }
 
-    pub fn process_command_string(&self, cmd: &str) -> Result<String, String> {
+    pub fn process_command_string(&self, cmd: &str) -> Result<String, TranspileError> {
         // Handle both variable substitution and parameter substitution for Minecraft 1.21.8+ macros
         // Properly handles nested braces by tracking nesting levels
         // Special handling for tellraw/title commands with scoreboard variables
@@ -167,7 +168,7 @@ impl<'a> CommandProcessor<'a> {
                                             3. For NBT data operations, use data commands:\n\
                                                /data modify block ~ ~ ~ CustomName set value '{{\"text\":\"...\"}}'",
                                             var_name
-                                        ));
+                                        ).into());
                                     }
 
                                     // Check if we're already inside quotes by
@@ -302,7 +303,7 @@ impl<'a> CommandProcessor<'a> {
         Ok(result)
     }
 
-    fn normalize_macro_text_component_command(&self, cmd: &str) -> Result<String, String> {
+    fn normalize_macro_text_component_command(&self, cmd: &str) -> Result<String, TranspileError> {
         let trimmed = cmd.trim();
         if trimmed.starts_with("title ") {
             let parts: Vec<&str> = trimmed.splitn(4, ' ').collect();
@@ -436,7 +437,7 @@ impl<'a> CommandProcessor<'a> {
         &self,
         cmd: &str,
         vars: &[(usize, usize, String)],
-    ) -> Result<String, String> {
+    ) -> Result<String, TranspileError> {
         let trimmed = cmd.trim();
 
         // Check if it's a tellraw, title, or say command - we can auto-convert these
@@ -477,14 +478,15 @@ impl<'a> CommandProcessor<'a> {
             if var_names.len() > 1 { "s" } else { "" },
             var_names.join(", "),
             trimmed.split_whitespace().next().unwrap_or("unknown")
-        ))
+        )
+        .into())
     }
 
     fn convert_to_tellraw_json(
         &self,
         cmd: &str,
         vars: &[(usize, usize, String)],
-    ) -> Result<String, String> {
+    ) -> Result<String, TranspileError> {
         // Parse the command to extract target selector and message
         // For title commands: "title <selector> <action> <message>"
         // For tellraw commands: "tellraw <selector> <message>"
@@ -492,7 +494,7 @@ impl<'a> CommandProcessor<'a> {
         // First, split to get command type
         let first_parts: Vec<&str> = cmd.trim().splitn(2, ' ').collect();
         if first_parts.is_empty() {
-            return Err("Empty command".to_string());
+            return Err("Empty command".into());
         }
 
         let command = first_parts[0];
@@ -503,7 +505,7 @@ impl<'a> CommandProcessor<'a> {
             let parts: Vec<&str> = cmd.trim().splitn(4, ' ').collect();
             if parts.len() < 4 {
                 return Err(
-                    "Title command requires action (title/subtitle/actionbar). Format: /title <selector> <action> <text>".to_string()
+                    "Title command requires action (title/subtitle/actionbar). Format: /title <selector> <action> <text>".into()
                 );
             }
             (parts[1], Some(parts[2]), parts[3])
@@ -511,7 +513,7 @@ impl<'a> CommandProcessor<'a> {
             // Tellraw: "tellraw <selector> <message>"
             let parts: Vec<&str> = cmd.trim().splitn(3, ' ').collect();
             if parts.len() < 3 {
-                return Err("Invalid tellraw command format".to_string());
+                return Err("Invalid tellraw command format".into());
             }
             (parts[1], None, parts[2])
         };
@@ -538,7 +540,7 @@ impl<'a> CommandProcessor<'a> {
                     )
                 })?;
             let serde_json::Value::Array(items) = parsed_array else {
-                return Err("Expected a JSON array text component.".to_string());
+                return Err("Expected a JSON array text component.".into());
             };
 
             let var_names: Vec<String> = vars.iter().map(|(_, _, name)| name.clone()).collect();
@@ -584,7 +586,7 @@ impl<'a> CommandProcessor<'a> {
             {
                 return Err(
                     "Variables in JSON array text components are supported only in string components and object text fields."
-                        .to_string(),
+                        .into(),
                 );
             }
 

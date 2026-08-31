@@ -92,50 +92,7 @@ enum Commands {
     },
 
     /// Watch for changes and rebuild automatically
-    Watch {
-        /// Input file or directory to watch
-        input: Option<PathBuf>,
-
-        /// Output directory
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// Data pack namespace
-        #[arg(long)]
-        namespace: Option<String>,
-
-        /// Pack format version (currently requires 101.1)
-        #[arg(long)]
-        pack_format: Option<String>,
-
-        /// Data pack description
-        #[arg(long)]
-        description: Option<String>,
-
-        /// Verbose output
-        #[arg(short, long)]
-        verbose: bool,
-
-        /// Create a zip file
-        #[arg(long)]
-        zip: bool,
-
-        /// Enable experimental resource-pack asset output
-        #[arg(long)]
-        experimental_resource_pack: bool,
-
-        /// Build to the configured linked data pack target
-        #[arg(long, conflicts_with = "output")]
-        link: bool,
-
-        /// Validate generated .mcfunction files after each successful build
-        #[arg(long)]
-        validate: bool,
-
-        /// Path to commands.json (default data/commands.json is auto-generated if missing)
-        #[arg(long, default_value = "data/commands.json")]
-        commands_json: PathBuf,
-    },
+    Watch(WatchOptions),
 
     /// Check syntax without building
     Check {
@@ -330,31 +287,7 @@ fn main() {
             dry_run,
             commands_json,
         }),
-        Commands::Watch {
-            input,
-            output,
-            namespace,
-            pack_format,
-            description,
-            verbose,
-            zip,
-            experimental_resource_pack,
-            link,
-            validate,
-            commands_json,
-        } => commands::watch(WatchOptions {
-            input,
-            output,
-            namespace,
-            pack_format,
-            description,
-            verbose,
-            zip,
-            experimental_resource_pack,
-            link,
-            validate,
-            commands_json,
-        }),
+        Commands::Watch(options) => commands::watch(options),
         Commands::Check {
             input,
             json,

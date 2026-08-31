@@ -177,3 +177,80 @@ fn canary_assignment_rhs_command_helper_still_flagged_but_not_in_return() {
     let diagnostics = analyze_source("def main():\n    return score.set(\"obj\", 1)\n");
     assert_no_kind(&diagnostics, "unsupported-function-call-expression");
 }
+
+fn expect_kind_with_message<'a>(
+    diagnostics: &'a [SourceDiagnostic],
+    kind: &str,
+    message_fragment: &str,
+) -> &'a SourceDiagnostic {
+    diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.kind == kind && diagnostic.message.contains(message_fragment))
+        .unwrap_or_else(|| {
+            panic!("expected a `{kind}` diagnostic containing `{message_fragment}`, got: {diagnostics:?}");
+        })
+}
+
+#[test]
+fn datapack_tag_value_column_counts_chars_after_non_ascii_tag_name() {
+    // The Korean tag name is 6 bytes but 2 chars; the flagged tag value after
+    // it must be reported at its char column, not a byte-drifted one.
+    let source = "def main():\n    datapack.block_tag(\"한국\", [\"BAD\"])\n";
+    let diagnostics = analyze_source(source);
+    let value_diagnostic = expect_kind_with_message(
+        &diagnostics,
+        "datapack-resource-id",
+        "Invalid tag value 'BAD'",
+    );
+    assert_eq!((value_diagnostic.line, value_diagnostic.column), (2, 32));
+    let name_diagnostic = expect_kind_with_message(
+        &diagnostics,
+        "datapack-resource-id",
+        "Invalid tag name '한국'",
+    );
+    assert_eq!((name_diagnostic.line, name_diagnostic.column), (2, 25));
+}
+
+#[test]
+fn datapack_function_tag_value_column_counts_chars_after_non_ascii_tag_name() {
+    let source = "def main():\n    datapack.function_tag(\"한국\", [\"pack:Load\"])\n";
+    let diagnostics = analyze_source(source);
+    let value_diagnostic = expect_kind_with_message(
+        &diagnostics,
+        "datapack-resource-id",
+        "Invalid tag value 'pack:Load'",
+    );
+    assert_eq!((value_diagnostic.line, value_diagnostic.column), (2, 40));
+    let name_diagnostic = expect_kind_with_message(
+        &diagnostics,
+        "datapack-resource-id",
+        "Invalid tag name '한국'",
+    );
+    assert_eq!((name_diagnostic.line, name_diagnostic.column), (2, 28));
+}
+
+#[test]
+fn datapack_tag_name_column_counts_chars_after_non_ascii_string() {
+    // A non-ASCII string earlier in the expression drifted the masked byte
+    // offset used to read the name argument, silently dropping the finding.
+    let source = "def main():\n    note = \"한국\" + datapack.block_tag(\"BadName\", [\"minecraft:stone\"])\n";
+    let diagnostics = analyze_source(source);
+    let diagnostic = expect_kind_with_message(
+        &diagnostics,
+        "datapack-resource-id",
+        "Invalid tag name 'BadName'",
+    );
+    assert_eq!((diagnostic.line, diagnostic.column), (2, 39));
+}
+
+#[test]
+fn datapack_tag_value_column_is_unchanged_for_ascii_lines() {
+    let source = "def main():\n    datapack.block_tag(\"blocks/custom\", [\"BAD\"])\n";
+    let diagnostics = analyze_source(source);
+    let diagnostic = expect_kind_with_message(
+        &diagnostics,
+        "datapack-resource-id",
+        "Invalid tag value 'BAD'",
+    );
+    assert_eq!((diagnostic.line, diagnostic.column), (2, 43));
+}

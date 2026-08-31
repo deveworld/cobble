@@ -17,17 +17,49 @@ const WATCH_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 /// debounce window before a rebuild is forced.
 const WATCH_DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(2);
 
+#[derive(clap::Args, Debug)]
 pub struct WatchOptions {
+    /// Input file or directory to watch
     pub input: Option<PathBuf>,
+
+    /// Output directory
+    #[arg(short, long)]
     pub output: Option<PathBuf>,
+
+    /// Data pack namespace
+    #[arg(long)]
     pub namespace: Option<String>,
+
+    /// Pack format version (currently requires 101.1)
+    #[arg(long)]
     pub pack_format: Option<String>,
+
+    /// Data pack description
+    #[arg(long)]
     pub description: Option<String>,
+
+    /// Verbose output
+    #[arg(short, long)]
     pub verbose: bool,
+
+    /// Create a zip file
+    #[arg(long)]
     pub zip: bool,
+
+    /// Enable experimental resource-pack asset output
+    #[arg(long)]
     pub experimental_resource_pack: bool,
+
+    /// Build to the configured linked data pack target
+    #[arg(long, conflicts_with = "output")]
     pub link: bool,
+
+    /// Validate generated .mcfunction files after each successful build
+    #[arg(long)]
     pub validate: bool,
+
+    /// Path to commands.json (default data/commands.json is auto-generated if missing)
+    #[arg(long, default_value = "data/commands.json")]
     pub commands_json: PathBuf,
 }
 

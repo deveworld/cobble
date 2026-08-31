@@ -209,6 +209,20 @@ pub(super) fn column_from_byte(line: &str, byte_index: usize) -> usize {
     line[..byte_index.min(line.len())].chars().count() + 1
 }
 
+/// Maps a byte offset found in `mask_non_code` output to the byte offset of
+/// the same character in the raw text the mask was built from. Masking
+/// preserves char positions but not byte positions (each masked char becomes
+/// one ASCII byte), so masked byte offsets drift from raw byte offsets once a
+/// non-ASCII string literal or comment precedes them on the line.
+pub(super) fn raw_offset_from_masked(raw: &str, masked: &str, masked_offset: usize) -> usize {
+    let char_index = masked[..masked_offset.min(masked.len())].chars().count();
+    raw.char_indices()
+        .map(|(offset, _)| offset)
+        .chain(std::iter::once(raw.len()))
+        .nth(char_index)
+        .unwrap_or(raw.len())
+}
+
 pub(super) fn matching_close_delimiter(open: char) -> char {
     match open {
         '(' => ')',

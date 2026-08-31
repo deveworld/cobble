@@ -299,3 +299,27 @@ def check():
         "{content}"
     );
 }
+
+#[test]
+fn test_failed_condition_error_restores_masked_operand_text() {
+    // Selector operands are masked with synthetic identifiers before the raw
+    // condition is parsed as a Python expression. When translation then
+    // fails, the error must name the original operand (`@s`) instead of
+    // leaking the `__cobble_cond_operand_N__` placeholder.
+    let source = r#"
+def check():
+    x = 1
+    as @a if x and [@s]:
+        /say hi
+"#;
+
+    let error = compile_source(source).unwrap_err();
+    assert!(
+        !error.contains("__cobble_cond_operand_"),
+        "error must not leak masked operand placeholders: {error}"
+    );
+    assert!(
+        error.contains(r#"Identifier("@s")"#),
+        "error should show the original operand spelling: {error}"
+    );
+}

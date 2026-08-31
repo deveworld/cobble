@@ -1,16 +1,16 @@
 use crate::ast::*;
-use crate::transpiler::Transpiler;
+use crate::transpiler::{TranspileError, Transpiler};
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_if(
         &mut self,
         if_stmt: &IfStatement,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         // Preprocess condition to handle complex expressions
         let processed_condition = self.preprocess_condition(&if_stmt.condition)?;
 
         let condition_cmd =
-            self.normalize_if_condition(self.translate_condition(&processed_condition)?)?;
+            self.lower_translated_condition(self.translate_condition(&processed_condition)?)?;
 
         let branch_var = if !if_stmt.elif_branches.is_empty() || if_stmt.else_branch.is_some() {
             let var = format!("if_branch_{}", self.next_temp_id());
@@ -83,8 +83,8 @@ impl Transpiler {
         // Handle elif branches
         for (elif_condition, elif_branch) in &if_stmt.elif_branches {
             let processed_elif_condition = self.preprocess_condition(elif_condition)?;
-            let elif_condition_cmd =
-                self.normalize_if_condition(self.translate_condition(&processed_elif_condition)?)?;
+            let elif_condition_cmd = self
+                .lower_translated_condition(self.translate_condition(&processed_elif_condition)?)?;
             let elif_execute_args = Self::condition_execute_args(&elif_condition_cmd);
             let compound_condition = if let Some(ref var) = branch_var {
                 format!("unless score {} temp matches 1 {}", var, elif_execute_args)
@@ -183,34 +183,6 @@ impl Transpiler {
         }
 
         Ok(())
-    }
-
-    pub(in crate::transpiler) fn normalize_if_condition(
-        &mut self,
-        mut condition_cmd: String,
-    ) -> Result<String, String> {
-        // Handle OR conditions specially
-        let is_negated = condition_cmd.starts_with("NOT_");
-        let clean_cmd = if is_negated {
-            &condition_cmd[4..] // Remove "NOT_" prefix
-        } else {
-            &condition_cmd
-        };
-
-        if clean_cmd.starts_with("OR(") || clean_cmd.starts_with("OR_AND(") {
-            condition_cmd = self.handle_or_and_condition(clean_cmd)?;
-
-            // Apply NOT if needed
-            if is_negated {
-                condition_cmd = if condition_cmd.starts_with("score ") {
-                    format!("unless {}", condition_cmd)
-                } else {
-                    condition_cmd.replace("if ", "unless ")
-                };
-            }
-        }
-
-        Ok(condition_cmd)
     }
 
     pub(in crate::transpiler) fn condition_execute_args(condition_cmd: &str) -> String {

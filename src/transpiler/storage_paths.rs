@@ -13,7 +13,7 @@ use crate::transpiler::data_pack::DataPack;
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
 use crate::transpiler::{
     DynamicStoragePathArg, DynamicStoragePathArgKind, GeneratedCommand, GeneratedCommandKind,
-    SourceLocation, StoragePathPlan, Transpiler,
+    SourceLocation, StoragePathPlan, TranspileError, Transpiler,
 };
 use std::collections::HashMap;
 
@@ -35,7 +35,7 @@ pub(in crate::transpiler) trait StoragePathOps {
         &mut self,
         expr: &Expression,
         target: &str,
-    ) -> Result<Vec<String>, String>;
+    ) -> Result<Vec<String>, TranspileError>;
 
     /// Whether `name` is a parameter of the function currently being lowered.
     fn is_storage_current_param(&self, name: &str) -> bool {
@@ -173,7 +173,7 @@ pub(in crate::transpiler) trait StoragePathOps {
         &mut self,
         id: u32,
         plan: &StoragePathPlan,
-    ) -> Result<(Vec<String>, String), String> {
+    ) -> Result<(Vec<String>, String), TranspileError> {
         let args_path = format!("_cobble_dyn_{}", id);
         let namespace = self.storage_data_pack().namespace.clone();
         let mut commands = vec![format!(
@@ -204,7 +204,7 @@ pub(in crate::transpiler) trait StoragePathOps {
         &self,
         args_path: &str,
         arg: &DynamicStoragePathArg,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         let tables = self.storage_tables();
         let namespace = &self.storage_data_pack().namespace;
         let target_path = format!("{}.{}", args_path, arg.placeholder);
@@ -221,7 +221,7 @@ pub(in crate::transpiler) trait StoragePathOps {
                     return Err(format!(
                         "Dynamic map key `{}` must be a string value, not a numeric const",
                         name
-                    ));
+                    ).into());
                 }
                 if let Some(source_path) = tables.variable_storage_paths.get(name) {
                     if tables
@@ -229,7 +229,7 @@ pub(in crate::transpiler) trait StoragePathOps {
                         .get(name)
                         .is_some_and(|ty| !matches!(ty, CobbleType::String | CobbleType::Unknown))
                     {
-                        return Err(format!("Dynamic map key `{}` must be a string value", name));
+                        return Err(format!("Dynamic map key `{}` must be a string value", name).into());
                     }
                     return Ok(vec![format!(
                         "data modify storage {}:global {} set from storage {}:global {}",
@@ -245,13 +245,258 @@ pub(in crate::transpiler) trait StoragePathOps {
                 Err(format!(
                     "Dynamic map key `{}` must be a string variable or function parameter",
                     name
-                ))
+                ).into())
             }
             _ => Err(
                 "Dynamic map keys must be string literals, string variables, or function parameters"
-                    .to_string(),
+                    .into(),
             ),
         }
+    }
+}
+
+/// Lowering of Cobble values into `data modify storage` command sequences:
+/// static SNBT fast path, shell-plus-runtime-patch for containers holding
+/// runtime values, and leaf sets for scalars. Provided methods over a small
+/// accessor surface, like [`StoragePathOps`], so the logic lives once here.
+pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
+    /// Next unique id for generated temp scores / storage paths.
+    fn storage_next_temp_id(&mut self) -> u32;
+    /// Whether `name` is a macro parameter of the function currently being lowered.
+    fn is_storage_macro_param(&self, name: &str) -> bool;
+    /// Objective for a scoreboard-backed identifier, if `name` is one.
+    fn storage_scoreboard_objective(&self, name: &str) -> Option<&str>;
+    /// Static SNBT serialization for literal/const expressions.
+    fn storage_static_snbt(&self, expr: &Expression) -> Result<String, TranspileError>;
+
+    fn storage_value_commands(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+    ) -> Result<Vec<String>, TranspileError> {
+        if let Ok(snbt) = self.storage_static_snbt(expr) {
+            return Ok(vec![format!(
+                "data modify storage {}:global {} set value {}",
+                self.storage_data_pack().namespace,
+                target_path,
+                snbt
+            )]);
+        }
+
+        match expr {
+            Expression::Array(_) | Expression::Map(_) => {
+                let shell = self.storage_shell_snbt(expr)?;
+                let mut commands = vec![format!(
+                    "data modify storage {}:global {} set value {}",
+                    self.storage_data_pack().namespace,
+                    target_path,
+                    shell
+                )];
+                commands.extend(self.storage_runtime_patch_commands(target_path, expr)?);
+                Ok(commands)
+            }
+            _ => self.storage_leaf_set_commands(target_path, expr),
+        }
+    }
+
+    fn materialize_storage_value(
+        &mut self,
+        expr: &Expression,
+    ) -> Result<(Vec<String>, String), TranspileError> {
+        let id = self.storage_next_temp_id();
+        let path = format!("_cobble_value_{}", id);
+        let commands = self.storage_value_commands(&path, expr)?;
+        Ok((commands, path))
+    }
+
+    fn storage_shell_snbt(&self, expr: &Expression) -> Result<String, TranspileError> {
+        match expr {
+            Expression::Number(_)
+            | Expression::String(_)
+            | Expression::Boolean(_)
+            | Expression::None => self.storage_static_snbt(expr),
+            Expression::Identifier(name) => {
+                if self
+                    .storage_tables()
+                    .compile_time_constants
+                    .contains_key(name)
+                {
+                    self.storage_static_snbt(expr)
+                } else {
+                    Ok(self.default_snbt_for_runtime_identifier(name))
+                }
+            }
+            Expression::Array(items) => {
+                let mut result = String::from("[");
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        result.push(',');
+                    }
+                    result.push_str(&self.storage_shell_snbt(item)?);
+                }
+                result.push(']');
+                Ok(result)
+            }
+            Expression::Map(entries) => {
+                let mut result = String::from("{");
+                for (index, (key, value)) in entries.iter().enumerate() {
+                    if index > 0 {
+                        result.push(',');
+                    }
+                    result.push_str(&Transpiler::serialize_snbt_key(key));
+                    result.push(':');
+                    result.push_str(&self.storage_shell_snbt(value)?);
+                }
+                result.push('}');
+                Ok(result)
+            }
+            _ => Ok("0".to_string()),
+        }
+    }
+
+    fn default_snbt_for_runtime_identifier(&self, name: &str) -> String {
+        match self.storage_tables().variable_types.get(name) {
+            Some(CobbleType::String) => "\"\"".to_string(),
+            Some(CobbleType::List) => "[]".to_string(),
+            Some(CobbleType::Map) => "{}".to_string(),
+            Some(CobbleType::Boolean) => "0b".to_string(),
+            _ => "0".to_string(),
+        }
+    }
+
+    fn storage_runtime_patch_commands(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+    ) -> Result<Vec<String>, TranspileError> {
+        match expr {
+            Expression::Array(items) => {
+                let mut commands = Vec::new();
+                for (index, item) in items.iter().enumerate() {
+                    commands.extend(self.storage_runtime_patch_commands(
+                        &format!("{}[{}]", target_path, index),
+                        item,
+                    )?);
+                }
+                Ok(commands)
+            }
+            Expression::Map(entries) => {
+                let mut commands = Vec::new();
+                for (key, value) in entries {
+                    commands.extend(self.storage_runtime_patch_commands(
+                        &storage_child_path(target_path, key),
+                        value,
+                    )?);
+                }
+                Ok(commands)
+            }
+            Expression::Number(_)
+            | Expression::String(_)
+            | Expression::Boolean(_)
+            | Expression::None => Ok(Vec::new()),
+            Expression::Identifier(name)
+                if self
+                    .storage_tables()
+                    .compile_time_constants
+                    .contains_key(name) =>
+            {
+                Ok(Vec::new())
+            }
+            _ => self.storage_leaf_set_commands(target_path, expr),
+        }
+    }
+
+    fn storage_leaf_set_commands(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+    ) -> Result<Vec<String>, TranspileError> {
+        let namespace = self.storage_data_pack().namespace.clone();
+        match expr {
+            Expression::Identifier(name) => {
+                if let Some(source_path) = self.storage_tables().variable_storage_paths.get(name) {
+                    return Ok(vec![format!(
+                        "data modify storage {}:global {} set from storage {}:global {}",
+                        namespace, target_path, namespace, source_path
+                    )]);
+                }
+                if self.is_storage_macro_param(name) {
+                    return Ok(vec![format!(
+                        "data modify storage {}:global {} set from storage {}:global args.{}",
+                        namespace, target_path, namespace, name
+                    )]);
+                }
+                if let Some(objective) = self.storage_scoreboard_objective(name) {
+                    return Ok(vec![format!(
+                        "execute store result storage {}:global {} int 1 run scoreboard players get {} {}",
+                        namespace, target_path, name, objective
+                    )]);
+                }
+                Err(format!(
+                    "Identifier '{}' cannot be stored in SNBT here; use a literal, const, runtime score, storage-backed value, or function parameter",
+                    name
+                ).into())
+            }
+            Expression::Number(_)
+            | Expression::String(_)
+            | Expression::Boolean(_)
+            | Expression::Array(_)
+            | Expression::Map(_) => self.storage_value_commands(target_path, expr),
+            Expression::None => self.storage_static_snbt(expr).map(|_| Vec::new()),
+            _ => {
+                let id = self.storage_next_temp_id();
+                let temp_score = format!("#cobble_value_{}", id);
+                let mut commands = self.storage_eval_to_target(expr, &temp_score)?;
+                commands.push(format!(
+                    "execute store result storage {}:global {} int 1 run scoreboard players get {} temp",
+                    namespace, target_path, temp_score
+                ));
+                Ok(commands)
+            }
+        }
+    }
+}
+
+fn storage_child_path(base: &str, key: &str) -> String {
+    if !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '+')
+    {
+        format!("{}.{}", base, key)
+    } else {
+        let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("{}.\"{}\"", base, escaped)
+    }
+}
+
+impl StorageValueOps for Transpiler {
+    fn storage_next_temp_id(&mut self) -> u32 {
+        self.next_temp_id()
+    }
+
+    fn is_storage_macro_param(&self, name: &str) -> bool {
+        self.is_current_macro_param(name)
+    }
+
+    fn storage_scoreboard_objective(&self, name: &str) -> Option<&str> {
+        if self.scoreboard_variables.contains(name)
+            || self.variable_objectives.contains_key(name)
+            || self.variables.contains_key(name)
+        {
+            Some(
+                self.variable_objectives
+                    .get(name)
+                    .map(String::as_str)
+                    .unwrap_or("temp"),
+            )
+        } else {
+            None
+        }
+    }
+
+    fn storage_static_snbt(&self, expr: &Expression) -> Result<String, TranspileError> {
+        self.serialize_to_snbt(expr)
     }
 }
 
@@ -281,7 +526,7 @@ impl StoragePathOps for Transpiler {
         &mut self,
         expr: &Expression,
         target: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         self.evaluate_expression_to_target(expr, target)
     }
 }
@@ -312,7 +557,7 @@ impl<'a> StoragePathOps for ExpressionEvaluator<'a> {
         &mut self,
         expr: &Expression,
         target: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         self.evaluate_expression_to_target(expr, target)
     }
 }

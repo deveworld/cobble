@@ -267,3 +267,150 @@ def lookup(key):
         "{all_functions}"
     );
 }
+
+#[test]
+fn test_runtime_loop_driver_names_and_shape_are_stable() {
+    // Pins the shared runtime-loop driver behind `for range(...)`, storage-list
+    // `for`, and `while`: helper naming, temp-id allocation order, condition
+    // re-evaluation before the body call AND before the recursive call, and
+    // list-item binding at the top of the list body.
+    let source = r#"
+config = {"count": 1}
+values = [1, 2, 3]
+total = 0
+
+def main():
+    global total
+    n = config.count + 5
+    for i in range(1, n):
+        total = total + i
+    for v in values:
+        total = total + v
+    k = 0
+    while k * 2 < n:
+        k = k + 1
+"#;
+    let (_dir, output) = compile_source(source).expect("compile");
+
+    // Temp ids pin the allocation order: the range loop allocates its stop
+    // var (0) before the loop/body helpers (1, 2); the list loop allocates
+    // index/len (3, 4), helpers (5, 6), then the dynamic item path (7);
+    // `while` allocates its loop helper (8) BEFORE lowering the condition
+    // (9), then the body helper (10).
+    let main = read_function(&output, "main");
+    assert!(main.contains("function cobble:for_range_temp_1"));
+    assert!(main.contains("function cobble:for_list_temp_5"));
+    assert!(main.contains("function cobble:while_temp_8"));
+
+    let range_loop = read_function(&output, "for_range_temp_1");
+    assert_eq!(
+        range_loop,
+        "execute if score i temp < #for_range_stop_0 temp run function cobble:for_range_body_2\n\
+         execute if score i temp < #for_range_stop_0 temp run function cobble:for_range_temp_1\n"
+    );
+
+    let list_loop = read_function(&output, "for_list_temp_5");
+    assert_eq!(
+        list_loop,
+        "execute if score #for_list_index_3 temp < #for_list_len_4 temp run function cobble:for_list_body_6\n\
+         execute if score #for_list_index_3 temp < #for_list_len_4 temp run function cobble:for_list_temp_5\n"
+    );
+
+    let while_loop = read_function(&output, "while_temp_8");
+    assert_eq!(
+        while_loop,
+        "scoreboard players operation expr_cond_temp_9 temp = k temp\n\
+         scoreboard players set #multiplier temp 2\n\
+         scoreboard players operation expr_cond_temp_9 temp *= #multiplier temp\n\
+         execute if score expr_cond_temp_9 temp < n temp run function cobble:while_body_10\n\
+         scoreboard players operation expr_cond_temp_9 temp = k temp\n\
+         scoreboard players set #multiplier temp 2\n\
+         scoreboard players operation expr_cond_temp_9 temp *= #multiplier temp\n\
+         execute if score expr_cond_temp_9 temp < n temp run function cobble:while_temp_8\n"
+    );
+
+    let list_body = read_function(&output, "for_list_body_6");
+    assert!(list_body.starts_with("data remove storage cobble:global _cobble_dyn_7\n"));
+    assert!(list_body.contains(
+        "function cobble:_cobble_storage_dyn_7 with storage cobble:global _cobble_dyn_7"
+    ));
+    assert!(list_body.ends_with("scoreboard players add #for_list_index_3 temp 1\n"));
+}
+
+#[test]
+fn test_assignment_lowering_order_is_stable() {
+    // Pins the load-bearing assignment classification order: const folding
+    // beats condition-flag lowering (`folded` becomes a folded 1, not an
+    // execute-based flag), runtime comparisons lower to 0/1 flags (`flag`),
+    // self-referential simple binaries skip the redundant copy (`x = x + 1`),
+    // number-op-variable keeps its set-then-operation shape (`y = 7 - x`),
+    // and identifier copies pick storage vs scoreboard by the source's
+    // backing (`copy = items` vs `b = x`).
+    let source = r#"
+def check():
+    folded = 2 > 1
+    x = 10
+    flag = x > 5
+    x = x + 1
+    y = 7 - x
+    items = [1, 2]
+    copy = items
+    b = x
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "check");
+    assert_eq!(
+        content,
+        "scoreboard players set folded temp 1\n\
+         scoreboard players set x temp 10\n\
+         scoreboard players set flag temp 0\n\
+         execute if score x temp matches 6.. run scoreboard players set flag temp 1\n\
+         scoreboard players add x temp 1\n\
+         scoreboard players set y temp 7\n\
+         scoreboard players operation y temp -= x temp\n\
+         data modify storage cobble:global vars.items set value [1,2]\n\
+         data modify storage cobble:global vars.copy set from storage cobble:global vars.items\n\
+         scoreboard players operation b temp = x temp\n"
+    );
+}
+
+#[test]
+fn test_assignment_param_and_complex_values_use_expression_evaluator() {
+    // Macro-parameter reads and nested arithmetic both route through the
+    // expression evaluator rather than the simple scoreboard ladder.
+    let source = r#"
+def take(p):
+    q = p
+    z = (p + 1) * 2
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "take");
+    assert_eq!(
+        content,
+        "execute store result score q temp run data get storage cobble:global args.p\n\
+         execute store result score z temp run data get storage cobble:global args.p\n\
+         scoreboard players add z temp 1\n\
+         scoreboard players set #multiplier temp 2\n\
+         scoreboard players operation z temp *= #multiplier temp\n"
+    );
+}
+
+#[test]
+fn test_assignment_division_by_zero_error_is_stable() {
+    // `y / 0` cannot const fold (try_eval_const declines division by zero),
+    // so it reaches the simple scoreboard ladder, which reports the exact
+    // historical error string.
+    let source = r#"
+def check():
+    y = 4
+    x = y / 0
+"#;
+
+    let error = compile_source(source).unwrap_err();
+    assert!(
+        error.contains("Division by zero in assignment: x = y / 0"),
+        "{error}"
+    );
+}

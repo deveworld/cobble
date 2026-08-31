@@ -255,7 +255,7 @@ fn unknown_identifier_call_argument_errors_in_library_path() {
     let temp_dir = TempDir::new().unwrap();
     let mut transpiler =
         cobble::transpiler::Transpiler::new("cobble".to_string(), temp_dir.path().join("output"));
-    let error = transpiler.transpile(&program).unwrap_err();
+    let error = transpiler.transpile(&program).unwrap_err().to_string();
 
     assert!(
         error.contains("Unknown identifier 'stranger' passed as argument to function 'greet'"),

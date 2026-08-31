@@ -2,7 +2,8 @@ use crate::ast::{BinaryOp, CobbleType, Expression, UnaryOp};
 use crate::transpiler::data_pack::DataPack;
 use crate::transpiler::storage_paths::StoragePathOps;
 use crate::transpiler::{
-    FunctionReturnKind, GeneratedCommandKind, SourceLocation, StoragePathPlan, MAX_POWER_EXPONENT,
+    FunctionReturnKind, GeneratedCommandKind, SourceLocation, StoragePathPlan, TranspileError,
+    MAX_POWER_EXPONENT,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -220,7 +221,7 @@ impl<'a> ExpressionEvaluator<'a> {
         plan: &StoragePathPlan,
         target: &str,
         target_obj: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         let id = self.next_temp_id();
         let (mut commands, args_path) = self.prepare_dynamic_storage_path(id, plan)?;
         let helper_name = format!("_cobble_storage_read_{}", id);
@@ -257,13 +258,13 @@ impl<'a> ExpressionEvaluator<'a> {
         args: &[Expression],
         target: &str,
         target_obj: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         if let Some(caller) = self.current_function_name {
             if caller == func_name {
                 return Err(format!(
                     "Recursive call to '{}' is not supported. Rewrite the recursion as a loop (while/for) instead.",
                     func_name
-                ));
+                ).into());
             }
             self.call_edges
                 .entry(caller.to_string())
@@ -274,7 +275,8 @@ impl<'a> ExpressionEvaluator<'a> {
             return Err(format!(
                 "Undefined function `{}` in expression. Define it before using its return value.",
                 func_name
-            ));
+            )
+            .into());
         };
 
         if args.len() != param_names.len() {
@@ -283,7 +285,8 @@ impl<'a> ExpressionEvaluator<'a> {
                 func_name,
                 param_names.len(),
                 args.len()
-            ));
+            )
+            .into());
         }
 
         let namespace = self.data_pack.namespace.clone();
@@ -366,7 +369,7 @@ impl<'a> ExpressionEvaluator<'a> {
         &mut self,
         target_path: &str,
         arg: &Expression,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.data_pack.namespace.clone();
         match arg {
             Expression::String(value) => {
@@ -445,7 +448,7 @@ impl<'a> ExpressionEvaluator<'a> {
         &mut self,
         expr: &Expression,
         target: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, TranspileError> {
         let mut commands = Vec::new();
         let target_obj = self.target_objective(target).to_string();
         self.data_pack.track_objective("temp");
@@ -495,7 +498,7 @@ impl<'a> ExpressionEvaluator<'a> {
                         return Err(format!(
                             "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
                             var
-                        ));
+                        ).into());
                     }
                     // Load from storage to scoreboard
                     let namespace = &self.data_pack.namespace;
@@ -535,7 +538,7 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Call(func, args) => {
                 if matches!(&**func, Expression::Identifier(name) if name == "len") {
                     if args.len() != 1 {
-                        return Err(format!("len() takes 1 argument, got {}", args.len()));
+                        return Err(format!("len() takes 1 argument, got {}", args.len()).into());
                     }
                     match &args[0] {
                         Expression::String(value) => {
@@ -571,7 +574,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     let Some(path_plan) = self.resolve_storage_path_plan(&args[0]) else {
                         return Err(
                             "len() argument must be a string, list, map, or storage-backed value"
-                                .to_string(),
+                                .to_string()
+                                .into(),
                         );
                     };
 
@@ -600,7 +604,9 @@ impl<'a> ExpressionEvaluator<'a> {
                                 match op {
                                     "sqrt" | "abs" => {
                                         if args.len() != 1 {
-                                            return Err(format!("math.{} takes 1 argument", op));
+                                            return Err(
+                                                format!("math.{} takes 1 argument", op).into()
+                                            );
                                         }
                                         let input_var = "#math_input";
                                         self.data_pack.track_objective("math");
@@ -624,7 +630,9 @@ impl<'a> ExpressionEvaluator<'a> {
                                     }
                                     "min" | "max" => {
                                         if args.len() != 2 {
-                                            return Err(format!("math.{} takes 2 arguments", op));
+                                            return Err(
+                                                format!("math.{} takes 2 arguments", op).into()
+                                            );
                                         }
                                         let input1 = "#math_input";
                                         let input2 = "#math_input2";
@@ -671,7 +679,9 @@ impl<'a> ExpressionEvaluator<'a> {
                                         ));
                                         return Ok(commands);
                                     }
-                                    _ => return Err(format!("Unknown math function: {}", op)),
+                                    _ => {
+                                        return Err(format!("Unknown math function: {}", op).into())
+                                    }
                                 }
                             }
                         }
@@ -690,13 +700,13 @@ impl<'a> ExpressionEvaluator<'a> {
                             return Err(format!(
                                 "Function '{}' cannot be used as an expression value because it returns non-integer data.",
                                 func_name
-                            ));
+                            ).into());
                         }
                         _ => {
                             return Err(format!(
                                 "Function '{}' cannot be used as an expression value because it has no integer return value.",
                                 func_name
-                            ));
+                            ).into());
                         }
                     }
                     commands.extend(self.user_function_call_to_target(
@@ -709,7 +719,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 }
                 return Err(
                     "Only value intrinsics and user functions with `return` values can be used in expressions."
-                        .to_string(),
+                        .into(),
                 );
             }
             Expression::Subscript(base, index) => {
@@ -758,9 +768,9 @@ impl<'a> ExpressionEvaluator<'a> {
                         )?);
                     }
                 } else {
-                    return Err(
-                        "Subscript base must resolve to a storage path (list/map).".to_string()
-                    );
+                    return Err("Subscript base must resolve to a storage path (list/map)."
+                        .to_string()
+                        .into());
                 }
             }
             Expression::Attribute(obj, attr) => {
@@ -781,7 +791,9 @@ impl<'a> ExpressionEvaluator<'a> {
                         )?);
                     }
                 } else {
-                    return Err("Attribute base must resolve to a storage path".to_string());
+                    return Err("Attribute base must resolve to a storage path"
+                        .to_string()
+                        .into());
                 }
             }
             Expression::Binary(left, op, right) => {
@@ -866,7 +878,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                     return Err(format!(
                                         "Division by zero in expression: dividing by {}",
                                         value
-                                    ));
+                                    )
+                                    .into());
                                 }
                                 commands.push(format!(
                                     "scoreboard players set #divisor temp {}",
@@ -883,7 +896,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                     return Err(format!(
                                         "Modulo by zero in expression: modulo by {}",
                                         value
-                                    ));
+                                    )
+                                    .into());
                                 }
                                 commands.push(format!(
                                     "scoreboard players set #modulus temp {}",
@@ -897,7 +911,9 @@ impl<'a> ExpressionEvaluator<'a> {
                             BinaryOp::Pow => {
                                 // Compile-time expansion: x^n becomes x*x*...*x (n times)
                                 if value < 0 {
-                                    return Err("Power exponent must be non-negative".to_string());
+                                    return Err("Power exponent must be non-negative"
+                                        .to_string()
+                                        .into());
                                 }
                                 if value > MAX_POWER_EXPONENT {
                                     return Err(format!(
@@ -906,7 +922,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                         Large exponents generate {} multiplication commands, which is excessive.\n\
                                         Solution: Use a smaller exponent or implement iterative multiplication in a loop.",
                                         value, MAX_POWER_EXPONENT, value - 1
-                                    ));
+                                    ).into());
                                 }
                                 if value == 0 {
                                     // x^0 = 1
@@ -931,7 +947,9 @@ impl<'a> ExpressionEvaluator<'a> {
                                     }
                                 }
                             }
-                            _ => return Err(format!("Unsupported binary operation: {:?}", op)),
+                            _ => {
+                                return Err(format!("Unsupported binary operation: {:?}", op).into())
+                            }
                         }
                     }
                     Expression::Identifier(var) => {
@@ -976,7 +994,9 @@ impl<'a> ExpressionEvaluator<'a> {
                                 }
                                 BinaryOp::Div => {
                                     if value == 0 {
-                                        return Err("Division by zero in expression".to_string());
+                                        return Err("Division by zero in expression"
+                                            .to_string()
+                                            .into());
                                     }
                                     commands.push(format!(
                                         "scoreboard players set #divisor temp {}",
@@ -989,7 +1009,9 @@ impl<'a> ExpressionEvaluator<'a> {
                                 }
                                 BinaryOp::Mod => {
                                     if value == 0 {
-                                        return Err("Modulo by zero in expression".to_string());
+                                        return Err("Modulo by zero in expression"
+                                            .to_string()
+                                            .into());
                                     }
                                     commands.push(format!(
                                         "scoreboard players set #modulus temp {}",
@@ -1002,9 +1024,9 @@ impl<'a> ExpressionEvaluator<'a> {
                                 }
                                 BinaryOp::Pow => {
                                     if value < 0 {
-                                        return Err(
-                                            "Power exponent must be non-negative".to_string()
-                                        );
+                                        return Err("Power exponent must be non-negative"
+                                            .to_string()
+                                            .into());
                                     }
                                     if value > MAX_POWER_EXPONENT {
                                         return Err(format!(
@@ -1013,7 +1035,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                             Large exponents generate {} multiplication commands, which is excessive.\n\
                                             Solution: Use a smaller exponent or implement iterative multiplication in a loop.",
                                             value, MAX_POWER_EXPONENT, value - 1
-                                        ));
+                                        ).into());
                                     }
                                     if value == 0 {
                                         commands.push(format!(
@@ -1035,7 +1057,11 @@ impl<'a> ExpressionEvaluator<'a> {
                                         }
                                     }
                                 }
-                                _ => return Err(format!("Unsupported binary operation: {:?}", op)),
+                                _ => {
+                                    return Err(
+                                        format!("Unsupported binary operation: {:?}", op).into()
+                                    )
+                                }
                             }
                         } else if self.is_current_param(var) {
                             let namespace = &self.data_pack.namespace;
@@ -1084,7 +1110,11 @@ impl<'a> ExpressionEvaluator<'a> {
                                         "temp",
                                     );
                                 }
-                                _ => return Err(format!("Unsupported binary operation: {:?}", op)),
+                                _ => {
+                                    return Err(
+                                        format!("Unsupported binary operation: {:?}", op).into()
+                                    )
+                                }
                             }
                         } else {
                             if self.variable_storage_paths.contains_key(var)
@@ -1093,7 +1123,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                 return Err(format!(
                                     "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
                                     var
-                                ));
+                                ).into());
                             }
                             let var_obj = self
                                 .variable_objectives
@@ -1154,7 +1184,11 @@ impl<'a> ExpressionEvaluator<'a> {
                                         &var_obj,
                                     );
                                 }
-                                _ => return Err(format!("Unsupported binary operation: {:?}", op)),
+                                _ => {
+                                    return Err(
+                                        format!("Unsupported binary operation: {:?}", op).into()
+                                    )
+                                }
                             }
                         }
                     }
@@ -1224,11 +1258,15 @@ impl<'a> ExpressionEvaluator<'a> {
                                     "temp",
                                 );
                             }
-                            _ => return Err(format!("Unsupported binary operation: {:?}", op)),
+                            _ => {
+                                return Err(format!("Unsupported binary operation: {:?}", op).into())
+                            }
                         }
                     }
                     _ => {
-                        return Err("Unsupported expression type in binary operation".to_string());
+                        return Err("Unsupported expression type in binary operation"
+                            .to_string()
+                            .into());
                     }
                 }
             }
@@ -1255,13 +1293,14 @@ impl<'a> ExpressionEvaluator<'a> {
                     UnaryOp::Not => {
                         return Err(
                             "Logical NOT operator cannot be used in arithmetic expressions"
-                                .to_string(),
+                                .to_string()
+                                .into(),
                         );
                     }
                 }
             }
             _ => {
-                return Err("Unsupported expression type".to_string());
+                return Err("Unsupported expression type".into());
             }
         }
 

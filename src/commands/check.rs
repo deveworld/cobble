@@ -527,7 +527,7 @@ fn semantic_check_diagnostics(
             continue;
         };
         let canonical_path = canonical_or_original(path);
-        if let Some(reporters) = seen_errors.get(&error) {
+        if let Some(reporters) = seen_errors.get(&error.message) {
             if reporters
                 .iter()
                 .any(|reporter| import_graph_reaches(&import_graph, &canonical_path, reporter))
@@ -536,13 +536,13 @@ fn semantic_check_diagnostics(
             }
         }
         seen_errors
-            .entry(error.clone())
+            .entry(error.message.clone())
             .or_default()
             .push(canonical_path);
         diagnostics.push(FileSourceDiagnostics::new(
             path.clone(),
             parsed.source.clone(),
-            vec![SourceDiagnostic::from_transpiler_error(
+            vec![SourceDiagnostic::from_transpile_error(
                 &error,
                 &parsed.source,
             )],

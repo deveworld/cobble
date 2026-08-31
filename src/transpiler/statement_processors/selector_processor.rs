@@ -1,11 +1,11 @@
 use crate::ast::*;
-use crate::transpiler::Transpiler;
+use crate::transpiler::{TranspileError, Transpiler};
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_selector_def(
         &mut self,
         selector_def: &SelectorDef,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         // Validate selector name doesn't conflict with built-in selectors
         const BUILTIN_SELECTORS: &[&str] = &["a", "p", "r", "e", "s"];
         if BUILTIN_SELECTORS.contains(&selector_def.name.as_str()) {
@@ -14,7 +14,8 @@ impl Transpiler {
                 Built-in selectors: @a (all players), @p (nearest player), @r (random player), \
                 @e (all entities), @s (executing entity)",
                 selector_def.name
-            ));
+            )
+            .into());
         }
 
         // Validate selector syntax (must start with @)
@@ -23,7 +24,8 @@ impl Transpiler {
                 "Invalid selector syntax: '{}'. Selectors must start with '@'.\n\
                 Example: @Player = @a[type=player]",
                 selector_def.selector
-            ));
+            )
+            .into());
         }
 
         // Re-processing an imported file as a directory entry can encounter the

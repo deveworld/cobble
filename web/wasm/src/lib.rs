@@ -716,12 +716,15 @@ fn generic_diagnostic(kind: &str, message: String) -> CompileDiagnostic {
         .expect("generic diagnostic is present")
 }
 
-fn transpile_error_diagnostics(error: &str, source: &str) -> Vec<CompileDiagnostic> {
-    if diagnostics::SourceDiagnostic::transpiler_error_is_recognized(error) {
+fn transpile_error_diagnostics(
+    error: &transpiler::TranspileError,
+    source: &str,
+) -> Vec<CompileDiagnostic> {
+    if diagnostics::SourceDiagnostic::transpile_error_is_recognized(error) {
         return source_diagnostics(
             "demo.cbl",
             source,
-            vec![diagnostics::SourceDiagnostic::from_transpiler_error(
+            vec![diagnostics::SourceDiagnostic::from_transpile_error(
                 error, source,
             )],
         );

@@ -1,11 +1,36 @@
 use crate::ast::*;
-use crate::transpiler::{FunctionCapture, Transpiler};
+use crate::transpiler::condition_translator::TranslatedCondition;
+use crate::transpiler::{FunctionCapture, TranspileError, Transpiler};
+
+/// Execute conditions that cannot be spliced into the execute prefix
+/// directly and are lowered to a flag variable after all modifiers are
+/// processed.
+enum DeferredExecuteCondition {
+    /// `if a or b ...`: set the flag under each alternative, then `if flag`.
+    Or(Vec<String>),
+    /// `unless (A and B ...)`: set the flag under the full chain, then
+    /// `unless flag`.
+    UnlessAnd(String),
+}
+
+impl DeferredExecuteCondition {
+    fn substitute_macro_param(&mut self, from: &str, to: &str) {
+        match self {
+            Self::Or(alternatives) => {
+                for alternative in alternatives {
+                    *alternative = alternative.replace(from, to);
+                }
+            }
+            Self::UnlessAnd(condition) => *condition = condition.replace(from, to),
+        }
+    }
+}
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_execute_block(
         &mut self,
         exec_block: &ExecuteBlock,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         // Track a per-site holder slot so condition-scope objectives can be
         // pooled by (nesting depth, slot) instead of growing per call site.
         self.execute_condition_slots.push(0);
@@ -14,9 +39,13 @@ impl Transpiler {
         result
     }
 
-    fn process_execute_block_impl(&mut self, exec_block: &ExecuteBlock) -> Result<(), String> {
+    fn process_execute_block_impl(
+        &mut self,
+        exec_block: &ExecuteBlock,
+    ) -> Result<(), TranspileError> {
         // Build execute command from modifiers
         let mut execute_parts = vec!["execute".to_string()];
+        let mut special_conditions: Vec<DeferredExecuteCondition> = Vec::new();
 
         let mut has_macro_params = false;
         for modifier in &exec_block.modifiers {
@@ -97,18 +126,36 @@ impl Transpiler {
                             &mut has_macro_params,
                         )?;
 
-                        if translated.starts_with("OR(") {
-                            execute_parts.push(format!("OR_CONDITION:{}", translated));
-                            continue;
-                        }
-                        if translated == Self::ALWAYS_FALSE_CONDITION {
-                            execute_parts.push(self.always_false_execute_condition());
-                            continue;
-                        }
-                        if translated.starts_with("if ") || translated.starts_with("unless ") {
-                            execute_parts.push(translated);
-                        } else {
-                            execute_parts.push(format!("if {}", translated));
+                        match translated {
+                            TranslatedCondition::AnyOf(..) => {
+                                let alternatives = self.flatten_execute_or_alternatives(
+                                    translated,
+                                    &execute_parts,
+                                    &mut has_macro_params,
+                                )?;
+                                special_conditions.push(DeferredExecuteCondition::Or(alternatives));
+                            }
+                            TranslatedCondition::AlwaysFalse => {
+                                let always_false = self.always_false_execute_condition();
+                                execute_parts.push(always_false);
+                            }
+                            TranslatedCondition::Simple(translated) => {
+                                execute_parts.push(Self::condition_execute_args(&translated));
+                            }
+                            structured => {
+                                // AND/NOT around an OR: lower it to a flag
+                                // condition right here.
+                                let (rendered, or_capture) =
+                                    self.capture_commands_with_result(|transpiler| {
+                                        transpiler.lower_translated_condition(structured)
+                                    })?;
+                                self.append_scoped_execute_capture(
+                                    or_capture,
+                                    &execute_parts,
+                                    &mut has_macro_params,
+                                )?;
+                                execute_parts.push(Self::condition_execute_args(&rendered));
+                            }
                         }
                         continue;
                     }
@@ -121,15 +168,14 @@ impl Transpiler {
                              This may be an unsupported construct like OR conditions.\n\
                              Consider rewriting the condition or using raw Minecraft syntax.",
                             condition
-                        ));
+                        )
+                        .into());
                     } else {
                         // Raw Minecraft syntax - check for AND/OR conditions
                         if condition.contains(" or ") {
                             // OR conditions need special handling with temp variables
-                            // Mark as OR condition for later processing
-                            execute_parts.push(format!(
-                                "OR_CONDITION:OR({})",
-                                condition.replace(" or ", ";")
+                            special_conditions.push(DeferredExecuteCondition::Or(
+                                Self::split_raw_or_conditions(condition),
                             ));
                         } else if condition.contains(" and ") {
                             // Split on " and " and create multiple if conditions
@@ -176,25 +222,48 @@ impl Transpiler {
                             &mut has_macro_params,
                         )?;
 
-                        if translated.starts_with("OR(") {
-                            // unless (A or B) = unless A and unless B (De Morgan's law)
-                            let or_conditions = Transpiler::flatten_or_conditions(&translated)?;
-                            for cond in or_conditions {
-                                if cond == Self::ALWAYS_FALSE_CONDITION {
-                                    continue;
+                        match translated {
+                            TranslatedCondition::AnyOf(..) => {
+                                // unless (A or B) = unless A and unless B (De Morgan's law)
+                                let alternatives = self.flatten_execute_or_alternatives(
+                                    translated,
+                                    &execute_parts,
+                                    &mut has_macro_params,
+                                )?;
+                                for cond in alternatives {
+                                    execute_parts.push(Self::negate_execute_condition(&cond));
                                 }
-                                execute_parts.push(Self::negate_execute_condition(&cond));
                             }
-                            continue;
+                            // `unless` an impossible condition always passes.
+                            TranslatedCondition::AlwaysFalse => {}
+                            TranslatedCondition::Simple(translated) => {
+                                if Self::is_prefixed_condition_chain(&translated) {
+                                    special_conditions
+                                        .push(DeferredExecuteCondition::UnlessAnd(translated));
+                                } else {
+                                    execute_parts.push(Self::negate_execute_condition(&translated));
+                                }
+                            }
+                            structured => {
+                                // AND/NOT around an OR: lower it to a flag
+                                // condition, then negate the result.
+                                let (rendered, or_capture) =
+                                    self.capture_commands_with_result(|transpiler| {
+                                        transpiler.lower_translated_condition(structured)
+                                    })?;
+                                self.append_scoped_execute_capture(
+                                    or_capture,
+                                    &execute_parts,
+                                    &mut has_macro_params,
+                                )?;
+                                if Self::is_prefixed_condition_chain(&rendered) {
+                                    special_conditions
+                                        .push(DeferredExecuteCondition::UnlessAnd(rendered));
+                                } else {
+                                    execute_parts.push(Self::negate_execute_condition(&rendered));
+                                }
+                            }
                         }
-                        if translated == Self::ALWAYS_FALSE_CONDITION {
-                            continue;
-                        }
-                        if Self::is_prefixed_condition_chain(&translated) {
-                            execute_parts.push(format!("UNLESS_AND:{}", translated));
-                            continue;
-                        }
-                        execute_parts.push(Self::negate_execute_condition(&translated));
                         continue;
                     }
 
@@ -206,13 +275,15 @@ impl Transpiler {
                              This may be an unsupported construct.\n\
                              Consider rewriting the condition or using raw Minecraft syntax.",
                             condition
-                        ));
+                        )
+                        .into());
                     } else {
                         // Raw Minecraft syntax - check for AND conditions
                         if condition.contains(" and ") {
                             // Split on " and " and create multiple unless conditions
                             // unless (A and B) requires special handling with temp variable
-                            execute_parts.push(format!("UNLESS_AND:{}", condition));
+                            special_conditions
+                                .push(DeferredExecuteCondition::UnlessAnd(condition.clone()));
                         } else {
                             // Fix spacing for range operators
                             let fixed_condition = if condition.contains("matches..") {
@@ -298,27 +369,22 @@ impl Transpiler {
                     result
                 })
                 .collect();
-        }
-
-        let mut final_execute_parts = Vec::new();
-        let mut special_conditions = Vec::new();
-        for part in &execute_parts {
-            if let Some(stripped) = part.strip_prefix("OR_CONDITION:") {
-                special_conditions.push(("or", stripped.to_string()));
-            } else if let Some(stripped) = part.strip_prefix("UNLESS_AND:") {
-                special_conditions.push(("unless_and", stripped.to_string()));
-            } else {
-                final_execute_parts.push(part.clone());
+            for param in &self.current_context.params {
+                let from = format!("{{{}}}", param);
+                let to = format!("$({})", param);
+                for special in &mut special_conditions {
+                    special.substitute_macro_param(&from, &to);
+                }
             }
         }
 
         if !special_conditions.is_empty() {
-            let modifier_args = Self::modifier_args(&final_execute_parts);
-            let has_as_modifier = Self::has_as_modifier(&final_execute_parts);
+            let modifier_args = Self::modifier_args(&execute_parts);
+            let has_as_modifier = Self::has_as_modifier(&execute_parts);
             let use_dedicated_objectives = special_conditions.len() > 1;
             let mut setup_commands = Vec::new();
 
-            for (kind, condition) in special_conditions {
+            for special in special_conditions {
                 let unique_id = self.next_temp_id();
                 let objective = if use_dedicated_objectives {
                     format!("cblx{}", unique_id)
@@ -327,11 +393,12 @@ impl Transpiler {
                 };
                 self.data_pack.track_objective(&objective);
 
+                let is_or = matches!(special, DeferredExecuteCondition::Or(_));
                 let score_holder = if has_as_modifier {
                     "@s".to_string()
                 } else if use_dedicated_objectives {
                     "#cobble_exec".to_string()
-                } else if kind == "or" {
+                } else if is_or {
                     format!("or_temp_{}", unique_id)
                 } else {
                     format!("unless_temp_{}", unique_id)
@@ -350,41 +417,37 @@ impl Transpiler {
                 };
                 setup_commands.push(reset_cmd);
 
-                if kind == "or" {
-                    for cond in Transpiler::flatten_or_conditions(&condition)? {
-                        if cond == Self::ALWAYS_FALSE_CONDITION {
-                            continue;
+                match special {
+                    DeferredExecuteCondition::Or(alternatives) => {
+                        for cond in alternatives {
+                            setup_commands.push(Self::execute_with_modifiers(
+                                &modifier_args,
+                                &format!(
+                                    "{} run scoreboard players set {} {} 1",
+                                    Self::condition_execute_args(&cond),
+                                    score_holder,
+                                    objective
+                                ),
+                            ));
                         }
-                        let cond_prefix = if cond.starts_with("if ") || cond.starts_with("unless ")
-                        {
-                            cond
-                        } else {
-                            format!("if {}", cond)
-                        };
+                        execute_parts
+                            .push(format!("if score {} {} matches 1", score_holder, objective));
+                    }
+                    DeferredExecuteCondition::UnlessAnd(condition) => {
+                        let and_conditions = Self::unless_and_conditions(&condition);
+                        let and_check = and_conditions.join(" ");
                         setup_commands.push(Self::execute_with_modifiers(
                             &modifier_args,
                             &format!(
                                 "{} run scoreboard players set {} {} 1",
-                                cond_prefix, score_holder, objective
+                                and_check, score_holder, objective
                             ),
                         ));
+                        execute_parts.push(format!(
+                            "unless score {} {} matches 1",
+                            score_holder, objective
+                        ));
                     }
-                    final_execute_parts
-                        .push(format!("if score {} {} matches 1", score_holder, objective));
-                } else {
-                    let and_conditions = Self::unless_and_conditions(&condition);
-                    let and_check = and_conditions.join(" ");
-                    setup_commands.push(Self::execute_with_modifiers(
-                        &modifier_args,
-                        &format!(
-                            "{} run scoreboard players set {} {} 1",
-                            and_check, score_holder, objective
-                        ),
-                    ));
-                    final_execute_parts.push(format!(
-                        "unless score {} {} matches 1",
-                        score_holder, objective
-                    ));
                 }
             }
 
@@ -399,7 +462,7 @@ impl Transpiler {
             }
         }
 
-        let execute_prefix = final_execute_parts.join(" ");
+        let execute_prefix = execute_parts.join(" ");
 
         // Process body statements
         for stmt in &exec_block.body {
@@ -431,22 +494,30 @@ impl Transpiler {
 
     fn scope_condition_capture_for_execute(
         &mut self,
-        condition: String,
+        condition: TranslatedCondition,
         mut capture: FunctionCapture,
         execute_parts: &[String],
-    ) -> (String, FunctionCapture) {
+    ) -> (TranslatedCondition, FunctionCapture) {
         if !Self::has_as_modifier(execute_parts) {
             return (condition, capture);
         }
 
         let mut scoped_condition = condition;
-        for holder in Self::condition_temp_holders(&scoped_condition) {
+        let mut holders: Vec<String> = Vec::new();
+        scoped_condition.for_each_simple(&mut |text| {
+            for holder in Self::condition_temp_holders(text) {
+                if !holders.contains(&holder) {
+                    holders.push(holder);
+                }
+            }
+        });
+        for holder in holders {
             let objective = self.next_condition_scope_objective();
             self.data_pack.track_objective(&objective);
             let from = format!("{} temp", holder);
             let to = format!("@s {}", objective);
 
-            scoped_condition = scoped_condition.replace(&from, &to);
+            scoped_condition.map_simple(&|text| text.replace(&from, &to));
             for command in &mut capture.commands {
                 *command = command.replace(&from, &to);
             }
@@ -456,6 +527,65 @@ impl Transpiler {
         }
 
         (scoped_condition, capture)
+    }
+
+    /// Flatten a translated OR into its renderable alternatives for an
+    /// execute condition, dropping impossible (always-false) alternatives.
+    /// Structured leaves are lowered to flag conditions whose setup commands
+    /// run under the execute modifiers collected so far.
+    fn flatten_execute_or_alternatives(
+        &mut self,
+        condition: TranslatedCondition,
+        execute_parts: &[String],
+        has_macro_params: &mut bool,
+    ) -> Result<Vec<String>, TranspileError> {
+        let (leaves, capture) = self.capture_commands_with_result(|transpiler| {
+            let mut leaves = Vec::new();
+            transpiler.flatten_or_leaves(condition, &mut leaves)?;
+            Ok(leaves)
+        })?;
+        self.append_scoped_execute_capture(capture, execute_parts, has_macro_params)?;
+        Ok(leaves
+            .into_iter()
+            .filter_map(|leaf| match leaf {
+                TranslatedCondition::Simple(cond) => Some(cond),
+                // An impossible alternative can never set the flag.
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// Split a raw (non-Python) execute condition on ` or `, honoring
+    /// parenthesized groups, into its alternative conditions.
+    fn split_raw_or_conditions(condition: &str) -> Vec<String> {
+        let joined = condition.replace(" or ", ";");
+        let mut parts: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0i32;
+        for ch in joined.chars() {
+            match ch {
+                '(' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                ')' => {
+                    depth -= 1;
+                    current.push(ch);
+                }
+                ';' if depth == 0 => {
+                    if !current.is_empty() {
+                        parts.push(current.trim().to_string());
+                        current.clear();
+                    }
+                }
+                _ => current.push(ch),
+            }
+        }
+        if !current.is_empty() {
+            parts.push(current.trim().to_string());
+        }
+        parts.retain(|part| !part.is_empty());
+        parts
     }
 
     /// Objective used to scope one condition holder to `@s` inside an
@@ -501,7 +631,7 @@ impl Transpiler {
         capture: FunctionCapture,
         execute_parts: &[String],
         has_macro_params: &mut bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if capture.commands.is_empty() {
             return Ok(());
         }

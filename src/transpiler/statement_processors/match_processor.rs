@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::transpiler::{FunctionCapture, Transpiler};
+use crate::transpiler::{FunctionCapture, TranspileError, Transpiler};
 
 struct PreparedMatchCase {
     body_len: usize,
@@ -11,7 +11,7 @@ impl Transpiler {
     pub(in crate::transpiler) fn process_match(
         &mut self,
         match_stmt: &MatchStatement,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         // Create a temporary variable to hold the match value
         let temp_var = format!("match_temp_{}", self.next_temp_id());
 
@@ -42,7 +42,7 @@ impl Transpiler {
                                 "Cannot match on '{}': it holds a {} value stored in storage, and match only supports integer scoreboard values.",
                                 name,
                                 var_type.name()
-                            ));
+                            ).into());
                         }
                     }
                     let obj = self
@@ -85,7 +85,7 @@ impl Transpiler {
         result_var: &str,
         result_obj: &str,
         match_stmt: &MatchStatement,
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         // Convert cases to (min, max, body_idx) tuples
         let mut cases: Vec<(i32, i32, usize)> = Vec::new();
         let mut wildcard_case: Option<usize> = None;
@@ -117,7 +117,8 @@ impl Transpiler {
                         "Invalid match case range: {} to {}.\n\n\
                         The start value must be less than or equal to the end value.",
                         min, max
-                    ));
+                    )
+                    .into());
                 }
 
                 if *min <= prev_max {
@@ -135,7 +136,8 @@ impl Transpiler {
                         Match statements execute the FIRST matching case only.\n\n\
                         To fix: Ensure all case ranges are mutually exclusive.",
                         case_range, prev_max, min
-                    ));
+                    )
+                    .into());
                 }
 
                 prev_max = *max;
@@ -209,7 +211,7 @@ impl Transpiler {
         obj: &str,
         cases: &[(i32, i32, usize)],
         prepared_cases: &mut [Option<PreparedMatchCase>],
-    ) -> Result<(), String> {
+    ) -> Result<(), TranspileError> {
         if cases.is_empty() {
             return Ok(());
         }
@@ -321,7 +323,7 @@ impl Transpiler {
         match_stmt: &MatchStatement,
         cases: &[(i32, i32, usize)],
         wildcard_case: Option<usize>,
-    ) -> Result<Vec<Option<PreparedMatchCase>>, String> {
+    ) -> Result<Vec<Option<PreparedMatchCase>>, TranspileError> {
         let mut prepared_cases = Vec::with_capacity(match_stmt.cases.len());
         let mut should_prepare = vec![false; match_stmt.cases.len()];
         for (_, _, case_idx) in cases {
@@ -351,7 +353,7 @@ impl Transpiler {
     fn take_prepared_match_case(
         prepared_cases: &mut [Option<PreparedMatchCase>],
         case_idx: usize,
-    ) -> Result<PreparedMatchCase, String> {
+    ) -> Result<PreparedMatchCase, TranspileError> {
         prepared_cases
             .get_mut(case_idx)
             .and_then(Option::take)
@@ -361,5 +363,6 @@ impl Transpiler {
                     case_idx
                 )
             })
+            .map_err(TranspileError::from)
     }
 }

@@ -11,7 +11,9 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
     let program = parse(source).map_err(|errors| errors.join("\n"))?;
 
     let mut transpiler = Transpiler::new("unroll".to_string(), output_dir.clone());
-    transpiler.transpile(&program)?;
+    transpiler
+        .transpile(&program)
+        .map_err(|error| error.to_string())?;
     transpiler
         .write_data_pack()
         .map_err(|error| error.to_string())?;
@@ -22,7 +24,7 @@ fn compile_source(source: &str) -> Result<(tempfile::TempDir, PathBuf), String> 
 fn compile_error(source: &str) -> String {
     let program = parse(source).unwrap();
     let mut transpiler = Transpiler::new("unroll".to_string(), PathBuf::from("unused-output"));
-    transpiler.transpile(&program).unwrap_err()
+    transpiler.transpile(&program).unwrap_err().to_string()
 }
 
 fn read_function(output_dir: &Path, name: &str) -> String {
