@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createStoredZip, isDataPackZipFile, type ZipFileLike } from "./datapackZip.ts";
+import {
+  createStoredZip,
+  isDataPackZipFile,
+  readStoredZipEntries,
+  type ZipFileLike
+} from "./datapackZip.ts";
 
 test("data pack ZIP includes only pack, data, and asset files", async () => {
   const files: ZipFileLike[] = [
@@ -38,7 +43,9 @@ test("data pack ZIP includes only pack, data, and asset files", async () => {
     ]
   );
 
-  const entries = await readStoredZipEntries(createStoredZip(zipFiles));
+  const entries = readStoredZipEntries(
+    new Uint8Array(await createStoredZip(zipFiles).arrayBuffer())
+  );
   assert.deepEqual(
     entries.map((entry) => entry.name),
     [
@@ -76,30 +83,3 @@ test("data pack ZIP rejects unsafe entry paths", () => {
     );
   }
 });
-
-async function readStoredZipEntries(zip: Blob) {
-  const bytes = new Uint8Array(await zip.arrayBuffer());
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const decoder = new TextDecoder();
-  const entries: Array<{ name: string; content: string }> = [];
-  let offset = 0;
-
-  while (offset < bytes.length && view.getUint32(offset, true) === 0x04034b50) {
-    const compressedSize = view.getUint32(offset + 18, true);
-    const nameLength = view.getUint16(offset + 26, true);
-    const extraLength = view.getUint16(offset + 28, true);
-    const nameStart = offset + 30;
-    const dataStart = nameStart + nameLength + extraLength;
-    const dataEnd = dataStart + compressedSize;
-
-    entries.push({
-      name: decoder.decode(bytes.slice(nameStart, nameStart + nameLength)),
-      content: decoder.decode(bytes.slice(dataStart, dataEnd))
-    });
-
-    offset = dataEnd;
-  }
-
-  assert.equal(view.getUint32(offset, true), 0x02014b50);
-  return entries;
-}

@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
+import { readStoredZipEntries } from "../lib/datapackZip.ts";
+
 test("try page loads WASM compiler output and downloads a data pack ZIP", async ({
   page
 }) => {
@@ -208,30 +210,3 @@ test("try page reports browser-only import diagnostics", async ({ page }) => {
     "The browser compiler accepts one in-memory Cobble file"
   );
 });
-
-function readStoredZipEntries(buffer: Buffer) {
-  const bytes = new Uint8Array(buffer);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const decoder = new TextDecoder();
-  const entries: Array<{ name: string; content: string }> = [];
-  let offset = 0;
-
-  while (offset < bytes.length && view.getUint32(offset, true) === 0x04034b50) {
-    const compressedSize = view.getUint32(offset + 18, true);
-    const nameLength = view.getUint16(offset + 26, true);
-    const extraLength = view.getUint16(offset + 28, true);
-    const nameStart = offset + 30;
-    const dataStart = nameStart + nameLength + extraLength;
-    const dataEnd = dataStart + compressedSize;
-
-    entries.push({
-      name: decoder.decode(bytes.slice(nameStart, nameStart + nameLength)),
-      content: decoder.decode(bytes.slice(dataStart, dataEnd))
-    });
-
-    offset = dataEnd;
-  }
-
-  expect(view.getUint32(offset, true)).toBe(0x02014b50);
-  return entries;
-}
