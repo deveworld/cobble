@@ -135,12 +135,17 @@ if [[ "$command_limit_status" -eq 0 ]]; then
 fi
 grep -q "unrolling generated" "$work_dir/command-limit.err"
 
+# Module-level literal arrays now lower to runtime list loops (covered by
+# compiles_literal_arrays_with_runtime_values_as_runtime_list_loop in
+# tests/unrolling_test.rs), so the still-unsupported iterable checked here
+# is a user function call.
 nonliteral_source="$work_dir/nonliteral.cbl"
 cat >"$nonliteral_source" <<'CBL'
-values = [1, 2]
+def gen():
+    /say gen
 
 def main():
-    for i in values:
+    for i in gen():
         /say nonliteral {i}
 CBL
 set +e

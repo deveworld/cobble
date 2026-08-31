@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+VERSION="$(grep -m1 '^version' Cargo.toml | cut -d '"' -f 2)"
+
 run() {
   echo "+ $*"
   "$@"
@@ -59,8 +61,8 @@ run cargo test --locked
 run cargo clippy --locked --all-targets -- -D warnings
 run cargo run --locked -- --version
 version_output="$(cargo run --locked --quiet -- --version)"
-if [[ "$version_output" != *"0.9.0"* ]]; then
-  echo "Expected cobble --version to report 0.9.0, got: $version_output" >&2
+if [[ "$version_output" != *"$VERSION"* ]]; then
+  echo "Expected cobble --version to report $VERSION, got: $version_output" >&2
   exit 1
 fi
 run node scripts/check_web_metadata.mjs
@@ -150,12 +152,12 @@ def main():
     /tellraw @a {"text":"plugin manifest"}
     /op @s
 CBL
-cat >"$plugin_project/plugins/example_lints.toml" <<'TOML'
+cat >"$plugin_project/plugins/example_lints.toml" <<TOML
 plugin_version = 1
 name = "example_lints"
 kind = "diagnostics"
 description = "QA 0.9 declarative lint fixture"
-minimum_cobble_version = "0.9.0"
+minimum_cobble_version = "$VERSION"
 diagnostic_rules = [
   "example_lints.no_tellraw",
   "example_lints.no_raw_op",
@@ -174,7 +176,7 @@ cargo run --locked --quiet -- check "$plugin_project" --json --experimental-plug
 assert_json_field \
   "plugin manifest draft schema and declarative rules" \
   "$plugin_manifest_json" \
-  'data["schema_version"] == 1 and data["ok"] is True and data["experimental_plugins"]["manifests_checked"] == 1 and data["experimental_plugins"]["manifests"][0]["name"] == "example_lints" and data["experimental_plugins"]["manifests"][0]["minimum_cobble_version"] == "0.9.0" and "example_lints.no_tellraw" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "example_lints.no_raw_op" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "emit_diagnostics" in data["experimental_plugins"]["manifests"][0]["capabilities"] and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_tellraw" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"]) and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_raw_op" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"])'
+  'data["schema_version"] == 1 and data["ok"] is True and data["experimental_plugins"]["manifests_checked"] == 1 and data["experimental_plugins"]["manifests"][0]["name"] == "example_lints" and data["experimental_plugins"]["manifests"][0]["minimum_cobble_version"] == "'"$VERSION"'" and "example_lints.no_tellraw" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "example_lints.no_raw_op" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "emit_diagnostics" in data["experimental_plugins"]["manifests"][0]["capabilities"] and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_tellraw" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"]) and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_raw_op" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"])'
 
 migrate_json="$work_dir/migrate.json"
 echo "+ cargo run --locked --quiet -- migrate examples/resource_pack --json"
@@ -256,10 +258,10 @@ echo "== Package dry-runs =="
 run cargo package "${package_args[@]}"
 run cargo publish --dry-run "${package_args[@]}"
 package_version="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data["packages"][0]["version"])')"
-if [[ "$package_version" != "0.9.0" ]]; then
-  echo "Expected package metadata version 0.9.0, got: $package_version" >&2
+if [[ "$package_version" != "$VERSION" ]]; then
+  echo "Expected package metadata version $VERSION, got: $package_version" >&2
   exit 1
 fi
 
 echo
-echo "0.9.0 release QA gate passed"
+echo "$VERSION release QA gate passed"
