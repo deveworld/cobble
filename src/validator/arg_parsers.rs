@@ -1232,6 +1232,14 @@ fn parse_nbt_path(reader: &mut StringReader) -> bool {
             break;
         }
 
+        if ch == '$' {
+            if !reader.try_read_macro() {
+                break;
+            }
+            has_content = true;
+            continue;
+        }
+
         if ch == '"' || ch == '\'' {
             if !reader.read_quoted_string() {
                 break;

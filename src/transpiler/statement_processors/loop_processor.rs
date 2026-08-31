@@ -1,5 +1,9 @@
 use crate::ast::*;
-use crate::transpiler::{GeneratedCommand, GeneratedCommandKind, SourceLocation, Transpiler};
+use crate::transpiler::storage_paths::StoragePathOps;
+use crate::transpiler::{
+    FunctionCapture, GeneratedCommand, GeneratedCommandKind, SourceLocation, StoragePathPlan,
+    Transpiler,
+};
 use std::collections::HashMap;
 
 const UNROLL_LIMIT: usize = 1024;
@@ -12,6 +16,37 @@ enum UnrollValue {
     Number(f64),
     String(String),
     Boolean(bool),
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeRangePlan {
+    start: Expression,
+    stop: Expression,
+    step: RuntimeRangeStep,
+    reverse_single_arg_on_negative_step: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeStorageListPlan {
+    path: StoragePathPlan,
+    setup_commands: Vec<String>,
+    cleanup_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeRangeStep {
+    Static(i32),
+    Dynamic(Expression),
+}
+
+#[derive(Debug, Clone)]
+struct VariableBindingSnapshot {
+    value: Option<Expression>,
+    objective: Option<String>,
+    is_scoreboard: bool,
+    storage_path: Option<String>,
+    compile_time_constant: Option<f64>,
+    value_type: Option<CobbleType>,
 }
 
 impl UnrollValue {
@@ -35,14 +70,49 @@ impl UnrollValue {
 impl Transpiler {
     pub(in crate::transpiler) fn process_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
         let loop_source_key = Self::for_loop_source_key(for_loop);
-        let values = self.unroll_values(for_loop).map_err(|error| {
-            annotate_unroll_error(
-                error,
-                &for_loop.target,
-                &loop_source_key,
-                self.current_statement_source.as_ref(),
-            )
-        })?;
+        let values = match self.unroll_values(for_loop) {
+            Ok(values) => values,
+            Err(error) if error.starts_with("unroll-non-literal") => {
+                if Self::is_range_iterable(&for_loop.iter) {
+                    return self
+                        .process_runtime_range_for(for_loop)
+                        .map_err(|runtime_error| {
+                            annotate_runtime_for_error(
+                                runtime_error,
+                                &for_loop.target,
+                                &loop_source_key,
+                                self.current_statement_source.as_ref(),
+                            )
+                        });
+                }
+                if self.runtime_storage_list_candidate(&for_loop.iter) {
+                    return self.process_runtime_storage_list_for(for_loop).map_err(
+                        |runtime_error| {
+                            annotate_runtime_for_error(
+                                runtime_error,
+                                &for_loop.target,
+                                &loop_source_key,
+                                self.current_statement_source.as_ref(),
+                            )
+                        },
+                    );
+                }
+                return Err(annotate_unroll_error(
+                    error,
+                    &for_loop.target,
+                    &loop_source_key,
+                    self.current_statement_source.as_ref(),
+                ));
+            }
+            Err(error) => {
+                return Err(annotate_unroll_error(
+                    error,
+                    &for_loop.target,
+                    &loop_source_key,
+                    self.current_statement_source.as_ref(),
+                ));
+            }
+        };
         let previous_iteration_factor = self.unroll_iteration_factor;
         let projected_iterations = previous_iteration_factor
             .checked_mul(values.len())
@@ -124,6 +194,787 @@ impl Transpiler {
                 self.current_statement_source.as_ref(),
             )
         })
+    }
+
+    fn is_range_iterable(iter: &Expression) -> bool {
+        matches!(iter, Expression::Call(func, _) if is_identifier(func, "range"))
+    }
+
+    fn process_runtime_range_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
+        let plan = self.runtime_range_plan(for_loop)?;
+        validate_runtime_loop_body_target(&for_loop.body, &for_loop.target)?;
+
+        if self.current_context.is_param(&for_loop.target) {
+            return Err(format!(
+                "runtime-for-unsupported: dynamic range loop target '{}' cannot shadow a function parameter.",
+                for_loop.target
+            ));
+        }
+
+        let stop_var = format!("#for_range_stop_{}", self.next_temp_id());
+        let step_var = if matches!(plan.step, RuntimeRangeStep::Dynamic(_)) {
+            let name = format!("#for_range_step_{}", self.next_temp_id());
+            Some(name)
+        } else {
+            None
+        };
+
+        let target_snapshot = self.save_variable_binding(&for_loop.target);
+        let stop_snapshot = self.save_variable_binding(&stop_var);
+        let step_snapshot = step_var
+            .as_ref()
+            .map(|step_var| (step_var.clone(), self.save_variable_binding(step_var)));
+        self.bind_runtime_integer_variable(&for_loop.target);
+        self.bind_runtime_integer_variable(&stop_var);
+        if let Some(step_var) = &step_var {
+            self.bind_runtime_integer_variable(step_var);
+        }
+
+        let result = (|| {
+            let mut init_commands =
+                self.evaluate_expression_to_target(&plan.start, &for_loop.target)?;
+            init_commands.extend(self.evaluate_expression_to_target(&plan.stop, &stop_var)?);
+            if let (RuntimeRangeStep::Dynamic(step), Some(step_var)) = (&plan.step, &step_var) {
+                init_commands.extend(self.evaluate_expression_to_target(step, step_var)?);
+                if plan.reverse_single_arg_on_negative_step {
+                    init_commands.push(format!(
+                        "execute if score {} temp matches ..-1 run scoreboard players operation {} temp = {} temp",
+                        step_var, for_loop.target, stop_var
+                    ));
+                    init_commands.push(format!(
+                        "execute if score {} temp matches ..-1 run scoreboard players remove {} temp 1",
+                        step_var, for_loop.target
+                    ));
+                    init_commands.push(format!(
+                        "execute if score {} temp matches ..-1 run scoreboard players set {} temp -1",
+                        step_var, stop_var
+                    ));
+                }
+            }
+            if let Some(ref mut commands) = self.current_function {
+                commands.extend(init_commands);
+            }
+
+            let (condition_execute_args, condition_capture) =
+                self.runtime_range_condition(&for_loop.target, &stop_var, &plan.step, &step_var)?;
+
+            let loop_func_name = format!("for_range_temp_{}", self.next_temp_id());
+            let body_func_name = format!("for_range_body_{}", self.next_temp_id());
+
+            let mut body = for_loop.body.clone();
+            body.push(Statement::Assignment(Assignment {
+                target: for_loop.target.clone(),
+                target_expr: None,
+                value: self.runtime_range_increment_expression(
+                    &for_loop.target,
+                    &plan.step,
+                    &step_var,
+                )?,
+            }));
+
+            let saved_context = self.current_context.clone();
+            let capture = self.capture_statements(&body)?;
+            let body_needs_storage = capture.requires_macro_context();
+            self.add_captured_function(body_func_name.clone(), capture);
+            self.current_context = saved_context;
+
+            let body_call = self.function_call_command(&body_func_name, body_needs_storage);
+            let mut loop_commands = Vec::new();
+            let mut loop_metadata = HashMap::new();
+            Self::append_capture_to_buffers(
+                &mut loop_commands,
+                &mut loop_metadata,
+                &condition_capture,
+            );
+            loop_commands.push(format!(
+                "execute {} run {}",
+                condition_execute_args, body_call
+            ));
+            let body_call_index = loop_commands.len() - 1;
+            loop_metadata.insert(
+                body_call_index,
+                GeneratedCommand::new(
+                    loop_commands[body_call_index].clone(),
+                    self.current_statement_source.clone(),
+                    GeneratedCommandKind::ControlFlow,
+                ),
+            );
+            if let Some(return_cmd) = self.return_propagation_command() {
+                loop_commands.push(return_cmd);
+            }
+
+            Self::append_capture_to_buffers(
+                &mut loop_commands,
+                &mut loop_metadata,
+                &condition_capture,
+            );
+            loop_commands.push(format!(
+                "execute {} run function {}:{}",
+                condition_execute_args, self.data_pack.namespace, loop_func_name
+            ));
+            let recurse_index = loop_commands.len() - 1;
+            loop_metadata.insert(
+                recurse_index,
+                GeneratedCommand::new(
+                    loop_commands[recurse_index].clone(),
+                    self.current_statement_source.clone(),
+                    GeneratedCommandKind::ControlFlow,
+                ),
+            );
+
+            self.data_pack.add_function_with_metadata(
+                loop_func_name.clone(),
+                loop_commands,
+                loop_metadata,
+            );
+
+            let return_cmd = self.return_propagation_command();
+            if let Some(ref mut commands) = self.current_function {
+                commands.push(format!(
+                    "function {}:{}",
+                    self.data_pack.namespace, loop_func_name
+                ));
+                if let Some(return_cmd) = return_cmd {
+                    commands.push(return_cmd);
+                }
+            }
+
+            Ok(())
+        })();
+
+        self.restore_variable_binding(&for_loop.target, target_snapshot);
+        self.restore_variable_binding(&stop_var, stop_snapshot);
+        if let Some((step_var, snapshot)) = step_snapshot {
+            self.restore_variable_binding(&step_var, snapshot);
+        }
+        result
+    }
+
+    fn process_runtime_storage_list_for(&mut self, for_loop: &ForLoop) -> Result<(), String> {
+        let RuntimeStorageListPlan {
+            path: list_plan,
+            setup_commands,
+            cleanup_commands,
+        } = self.runtime_storage_list_plan(&for_loop.iter)?;
+        validate_runtime_loop_body_target(&for_loop.body, &for_loop.target)?;
+
+        if self.current_context.is_param(&for_loop.target) {
+            return Err(format!(
+                "runtime-for-unsupported: dynamic list loop target '{}' cannot shadow a function parameter.",
+                for_loop.target
+            ));
+        }
+
+        let step = match for_loop.step.as_ref() {
+            Some(step) => self.runtime_range_step(step)?,
+            None => RuntimeRangeStep::Static(1),
+        };
+        if matches!(step, RuntimeRangeStep::Static(0)) {
+            return Err("runtime-for-bad-step: list step cannot be zero.".to_string());
+        }
+
+        let index_var = format!("#for_list_index_{}", self.next_temp_id());
+        let len_var = format!("#for_list_len_{}", self.next_temp_id());
+        let step_var = if matches!(step, RuntimeRangeStep::Dynamic(_)) {
+            let name = format!("#for_list_step_{}", self.next_temp_id());
+            Some(name)
+        } else {
+            None
+        };
+
+        let target_snapshot = self.save_variable_binding(&for_loop.target);
+        let index_snapshot = self.save_variable_binding(&index_var);
+        let len_snapshot = self.save_variable_binding(&len_var);
+        let step_snapshot = step_var
+            .as_ref()
+            .map(|step_var| (step_var.clone(), self.save_variable_binding(step_var)));
+
+        let element_type = self.runtime_list_element_type(&for_loop.iter);
+        self.bind_runtime_storage_loop_value(&for_loop.target, element_type);
+        self.bind_runtime_integer_variable(&index_var);
+        self.bind_runtime_integer_variable(&len_var);
+        if let Some(step_var) = &step_var {
+            self.bind_runtime_integer_variable(step_var);
+        }
+
+        let result = (|| {
+            let mut init_commands = setup_commands.clone();
+            init_commands.push(format!("scoreboard players set {} temp 0", index_var));
+            init_commands.extend(self.runtime_storage_list_len_commands(&list_plan, &len_var)?);
+            match (&step, &step_var) {
+                (RuntimeRangeStep::Static(step), _) if *step < 0 => {
+                    init_commands.push(format!(
+                        "scoreboard players operation {} temp = {} temp",
+                        index_var, len_var
+                    ));
+                    init_commands.push(format!("scoreboard players remove {} temp 1", index_var));
+                    init_commands.push(format!("scoreboard players set {} temp -1", len_var));
+                }
+                (RuntimeRangeStep::Dynamic(step_expr), Some(step_var)) => {
+                    init_commands.extend(self.evaluate_expression_to_target(step_expr, step_var)?);
+                    init_commands.push(format!(
+                        "execute if score {} temp matches ..-1 run scoreboard players operation {} temp = {} temp",
+                        step_var, index_var, len_var
+                    ));
+                    init_commands.push(format!(
+                        "execute if score {} temp matches ..-1 run scoreboard players remove {} temp 1",
+                        step_var, index_var
+                    ));
+                    init_commands.push(format!(
+                        "execute if score {} temp matches ..-1 run scoreboard players set {} temp -1",
+                        step_var, len_var
+                    ));
+                }
+                _ => {}
+            }
+            if let Some(ref mut commands) = self.current_function {
+                commands.extend(init_commands);
+            }
+
+            let (condition_execute_args, condition_capture) =
+                self.runtime_range_condition(&index_var, &len_var, &step, &step_var)?;
+
+            let loop_func_name = format!("for_list_temp_{}", self.next_temp_id());
+            let body_func_name = format!("for_list_body_{}", self.next_temp_id());
+
+            let item_plan = list_plan
+                .clone()
+                .append_dynamic_index(Expression::Identifier(index_var.clone()));
+            let item_commands =
+                self.runtime_storage_list_item_commands(&item_plan, &for_loop.target)?;
+
+            let mut body = for_loop.body.clone();
+            body.push(Statement::Assignment(Assignment {
+                target: index_var.clone(),
+                target_expr: None,
+                value: self.runtime_range_increment_expression(&index_var, &step, &step_var)?,
+            }));
+
+            let saved_context = self.current_context.clone();
+            let mut body_capture = self.capture_statements(&body)?;
+            let body_needs_storage = body_capture.requires_macro_context();
+            body_capture = self.prepend_runtime_list_item_commands(body_capture, item_commands);
+            self.add_captured_function(body_func_name.clone(), body_capture);
+            self.current_context = saved_context;
+
+            let body_call = self.function_call_command(&body_func_name, body_needs_storage);
+            let mut loop_commands = Vec::new();
+            let mut loop_metadata = HashMap::new();
+            Self::append_capture_to_buffers(
+                &mut loop_commands,
+                &mut loop_metadata,
+                &condition_capture,
+            );
+            loop_commands.push(format!(
+                "execute {} run {}",
+                condition_execute_args, body_call
+            ));
+            let body_call_index = loop_commands.len() - 1;
+            loop_metadata.insert(
+                body_call_index,
+                GeneratedCommand::new(
+                    loop_commands[body_call_index].clone(),
+                    self.current_statement_source.clone(),
+                    GeneratedCommandKind::ControlFlow,
+                ),
+            );
+            if let Some(return_cmd) = self.return_propagation_command() {
+                loop_commands.push(return_cmd);
+            }
+
+            Self::append_capture_to_buffers(
+                &mut loop_commands,
+                &mut loop_metadata,
+                &condition_capture,
+            );
+            loop_commands.push(format!(
+                "execute {} run function {}:{}",
+                condition_execute_args, self.data_pack.namespace, loop_func_name
+            ));
+            let recurse_index = loop_commands.len() - 1;
+            loop_metadata.insert(
+                recurse_index,
+                GeneratedCommand::new(
+                    loop_commands[recurse_index].clone(),
+                    self.current_statement_source.clone(),
+                    GeneratedCommandKind::ControlFlow,
+                ),
+            );
+
+            self.data_pack.add_function_with_metadata(
+                loop_func_name.clone(),
+                loop_commands,
+                loop_metadata,
+            );
+
+            let return_cmd = self.return_propagation_command();
+            if let Some(ref mut commands) = self.current_function {
+                commands.push(format!(
+                    "function {}:{}",
+                    self.data_pack.namespace, loop_func_name
+                ));
+                commands.extend(cleanup_commands.clone());
+                if let Some(return_cmd) = return_cmd {
+                    commands.push(return_cmd);
+                }
+            }
+
+            Ok(())
+        })();
+
+        self.restore_variable_binding(&for_loop.target, target_snapshot);
+        self.restore_variable_binding(&index_var, index_snapshot);
+        self.restore_variable_binding(&len_var, len_snapshot);
+        if let Some((step_var, snapshot)) = step_snapshot {
+            self.restore_variable_binding(&step_var, snapshot);
+        }
+        result
+    }
+
+    fn runtime_storage_list_candidate(&self, iter: &Expression) -> bool {
+        match iter {
+            Expression::Identifier(name) => {
+                self.variable_storage_paths.contains_key(name)
+                    || matches!(self.variable_types.get(name), Some(CobbleType::List))
+            }
+            Expression::Attribute(_, _) | Expression::Subscript(_, _) => {
+                self.resolve_storage_path_plan(iter).is_some()
+            }
+            Expression::Array(_) => true,
+            _ => false,
+        }
+    }
+
+    fn runtime_storage_list_plan(
+        &mut self,
+        iter: &Expression,
+    ) -> Result<RuntimeStorageListPlan, String> {
+        match iter {
+            Expression::Identifier(name) => {
+                let value_type = self.variable_types.get(name);
+                if matches!(value_type, Some(CobbleType::Map | CobbleType::String)) {
+                    return Err(format!(
+                        "runtime-for-unsupported: '{}' is not a storage-backed list.",
+                        name
+                    ));
+                }
+                self.variable_storage_paths
+                    .get(name)
+                    .cloned()
+                    .map(|path| RuntimeStorageListPlan {
+                        path: StoragePathPlan::static_path(path),
+                        setup_commands: Vec::new(),
+                        cleanup_commands: Vec::new(),
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "runtime-for-unsupported: list '{}' is not backed by storage.",
+                            name
+                        )
+                    })
+            }
+            Expression::Attribute(_, _) | Expression::Subscript(_, _) => {
+                let Some(path) = self.resolve_storage_path_plan(iter) else {
+                    return Err(
+                        "runtime-for-unsupported: iterable does not resolve to storage."
+                            .to_string(),
+                    );
+                };
+                if matches!(self.storage_expr_type(iter), Some(CobbleType::Map | CobbleType::String))
+                {
+                    return Err(
+                        "runtime-for-unsupported: storage-backed iterable must be a list."
+                            .to_string(),
+                    );
+                }
+                Ok(RuntimeStorageListPlan {
+                    path,
+                    setup_commands: Vec::new(),
+                    cleanup_commands: Vec::new(),
+                })
+            }
+            Expression::Array(items) => {
+                if items.is_empty() {
+                    return Err(
+                        "runtime-for-bad-range: runtime literal arrays cannot be empty."
+                            .to_string(),
+                    );
+                }
+                let id = self.next_temp_id();
+                let path = format!("_cobble_for_iter_{}", id);
+                let setup_commands = self.storage_value_commands(&path, iter)?;
+                Ok(RuntimeStorageListPlan {
+                    path: StoragePathPlan::static_path(path.clone()),
+                    setup_commands,
+                    cleanup_commands: vec![format!(
+                        "data remove storage {}:global {}",
+                        self.data_pack.namespace, path
+                    )],
+                })
+            }
+            _ => Err(
+                "runtime-for-unsupported: dynamic for loops only support range(...), storage-backed lists, or runtime literal arrays."
+                    .to_string(),
+            ),
+        }
+    }
+
+    fn runtime_storage_list_len_commands(
+        &mut self,
+        list_plan: &StoragePathPlan,
+        len_var: &str,
+    ) -> Result<Vec<String>, String> {
+        let namespace = self.data_pack.namespace.clone();
+        if let Some(list_path) = list_plan.as_static() {
+            return Ok(vec![format!(
+                "execute store result score {} temp run data get storage {}:global {}",
+                len_var, namespace, list_path
+            )]);
+        }
+
+        self.dynamic_storage_command(list_plan, GeneratedCommandKind::ControlFlow, |path| {
+            vec![
+                format!("scoreboard players set {} temp 0", len_var),
+                format!(
+                    "$execute store result score {} temp run data get storage {}:global {}",
+                    len_var, namespace, path
+                ),
+            ]
+        })
+    }
+
+    fn runtime_storage_list_item_commands(
+        &mut self,
+        item_plan: &StoragePathPlan,
+        target: &str,
+    ) -> Result<Vec<String>, String> {
+        let namespace = self.data_pack.namespace.clone();
+        let target_path = format!("vars.{}", target);
+        self.dynamic_storage_command(item_plan, GeneratedCommandKind::ControlFlow, |path| {
+            vec![
+                format!("data remove storage {}:global {}", namespace, target_path),
+                format!(
+                    "$data modify storage {}:global {} set from storage {}:global {}",
+                    namespace, target_path, namespace, path
+                ),
+                format!("scoreboard players set {} temp 0", target),
+                format!(
+                    "$execute store result score {} temp run data get storage {}:global {}",
+                    target, namespace, path
+                ),
+            ]
+        })
+    }
+
+    fn prepend_runtime_list_item_commands(
+        &self,
+        capture: FunctionCapture,
+        item_commands: Vec<String>,
+    ) -> FunctionCapture {
+        let prefix_len = item_commands.len();
+        let mut commands = item_commands;
+        commands.extend(capture.commands);
+
+        let mut metadata = HashMap::new();
+        for (index, command) in commands.iter().take(prefix_len).enumerate() {
+            metadata.insert(
+                index,
+                GeneratedCommand::new(
+                    command.clone(),
+                    self.current_statement_source.clone(),
+                    GeneratedCommandKind::ControlFlow,
+                ),
+            );
+        }
+        for (index, generated) in capture.metadata {
+            metadata.insert(index + prefix_len, generated);
+        }
+
+        FunctionCapture { commands, metadata }
+    }
+
+    fn runtime_range_condition(
+        &mut self,
+        target: &str,
+        stop_var: &str,
+        step: &RuntimeRangeStep,
+        step_var: &Option<String>,
+    ) -> Result<(String, FunctionCapture), String> {
+        match step {
+            RuntimeRangeStep::Static(step) => {
+                let condition_op = if *step > 0 {
+                    BinaryOp::Lt
+                } else {
+                    BinaryOp::Gt
+                };
+                let condition = Expression::Binary(
+                    Box::new(Expression::Identifier(target.to_string())),
+                    condition_op,
+                    Box::new(Expression::Identifier(stop_var.to_string())),
+                );
+
+                let (condition_cmd, condition_capture) =
+                    self.capture_commands_with_result(|transpiler| {
+                        let processed_condition = transpiler.preprocess_condition(&condition)?;
+                        let translated = transpiler.translate_condition(&processed_condition)?;
+                        transpiler.normalize_if_condition(translated)
+                    })?;
+                Ok((
+                    Self::condition_execute_args(&condition_cmd),
+                    condition_capture,
+                ))
+            }
+            RuntimeRangeStep::Dynamic(_) => {
+                let Some(step_var) = step_var else {
+                    return Err(
+                        "runtime-for-internal: missing dynamic range step variable".to_string()
+                    );
+                };
+                let run_var = format!("#for_range_run_{}", self.next_temp_id());
+                self.data_pack.track_objective("temp");
+                let commands = vec![
+                    format!("scoreboard players set {} temp 0", run_var),
+                    format!(
+                        "execute if score {} temp matches 1.. if score {} temp < {} temp run scoreboard players set {} temp 1",
+                        step_var, target, stop_var, run_var
+                    ),
+                    format!(
+                        "execute if score {} temp matches ..-1 if score {} temp > {} temp run scoreboard players set {} temp 1",
+                        step_var, target, stop_var, run_var
+                    ),
+                ];
+                let metadata = commands
+                    .iter()
+                    .enumerate()
+                    .map(|(index, command)| {
+                        (
+                            index,
+                            GeneratedCommand::new(
+                                command.clone(),
+                                self.current_statement_source.clone(),
+                                GeneratedCommandKind::ControlFlow,
+                            ),
+                        )
+                    })
+                    .collect();
+                Ok((
+                    format!("if score {} temp matches 1", run_var),
+                    FunctionCapture { commands, metadata },
+                ))
+            }
+        }
+    }
+
+    fn runtime_range_increment_expression(
+        &self,
+        target: &str,
+        step: &RuntimeRangeStep,
+        step_var: &Option<String>,
+    ) -> Result<Expression, String> {
+        let step_expr = match step {
+            RuntimeRangeStep::Static(step) => Expression::Number(f64::from(*step)),
+            RuntimeRangeStep::Dynamic(_) => Expression::Identifier(
+                step_var
+                    .as_ref()
+                    .ok_or_else(|| {
+                        "runtime-for-internal: missing dynamic range step variable".to_string()
+                    })?
+                    .clone(),
+            ),
+        };
+        Ok(Expression::Binary(
+            Box::new(Expression::Identifier(target.to_string())),
+            BinaryOp::Add,
+            Box::new(step_expr),
+        ))
+    }
+
+    fn runtime_range_plan(&self, for_loop: &ForLoop) -> Result<RuntimeRangePlan, String> {
+        let Expression::Call(func, args) = &for_loop.iter else {
+            return Err(
+                "runtime-for-unsupported: dynamic for loops only support range(...).".to_string(),
+            );
+        };
+        if !is_identifier(func, "range") {
+            return Err(
+                "runtime-for-unsupported: dynamic for loops only support range(...).".to_string(),
+            );
+        }
+        if args.is_empty() || args.len() > 3 {
+            return Err(format!(
+                "runtime-for-unsupported: range(...) expects 1 to 3 arguments, got {}.",
+                args.len()
+            ));
+        }
+
+        if args.len() == 3 && for_loop.step.is_some() {
+            return Err(
+                "runtime-for-bad-step: use either range(start, stop, step) or 'by step', not both."
+                    .to_string(),
+            );
+        }
+
+        let step = match (args.len(), for_loop.step.as_ref()) {
+            (3, _) => self.runtime_range_step(&args[2])?,
+            (_, Some(step)) => self.runtime_range_step(step)?,
+            _ => RuntimeRangeStep::Static(1),
+        };
+        if matches!(step, RuntimeRangeStep::Static(0)) {
+            return Err("runtime-for-bad-step: range step cannot be zero.".to_string());
+        }
+
+        match args.len() {
+            1 => {
+                self.ensure_runtime_range_bound(&args[0], "count")?;
+                let (start, stop, reverse_single_arg_on_negative_step) = match &step {
+                    RuntimeRangeStep::Static(step) if *step > 0 => {
+                        (Expression::Number(0.0), args[0].clone(), false)
+                    }
+                    RuntimeRangeStep::Static(_) => (
+                        Expression::Binary(
+                            Box::new(args[0].clone()),
+                            BinaryOp::Sub,
+                            Box::new(Expression::Number(1.0)),
+                        ),
+                        Expression::Number(-1.0),
+                        false,
+                    ),
+                    RuntimeRangeStep::Dynamic(_) => {
+                        (Expression::Number(0.0), args[0].clone(), true)
+                    }
+                };
+                Ok(RuntimeRangePlan {
+                    start,
+                    stop,
+                    step,
+                    reverse_single_arg_on_negative_step,
+                })
+            }
+            2 | 3 => {
+                self.ensure_runtime_range_bound(&args[0], "start")?;
+                self.ensure_runtime_range_bound(&args[1], "stop")?;
+                Ok(RuntimeRangePlan {
+                    start: args[0].clone(),
+                    stop: args[1].clone(),
+                    step,
+                    reverse_single_arg_on_negative_step: false,
+                })
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn runtime_range_step(&self, expr: &Expression) -> Result<RuntimeRangeStep, String> {
+        if let Some(value) = self.try_eval_const(expr) {
+            if !value.is_finite() || value.fract() != 0.0 {
+                return Err("runtime-for-bad-step: range step must be an integer.".to_string());
+            }
+            if value < i32::MIN as f64 || value > i32::MAX as f64 {
+                return Err(format!(
+                    "runtime-for-bad-range: range step value {value} is outside the i32 range."
+                ));
+            }
+            return Ok(RuntimeRangeStep::Static(value as i32));
+        }
+
+        self.ensure_runtime_range_bound(expr, "step")?;
+        Ok(RuntimeRangeStep::Dynamic(expr.clone()))
+    }
+
+    fn ensure_runtime_range_bound(&self, expr: &Expression, label: &str) -> Result<(), String> {
+        match self.infer_type(expr) {
+            CobbleType::String | CobbleType::List | CobbleType::Map => Err(format!(
+                "runtime-for-unsupported: range {label} must be an integer expression."
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn save_variable_binding(&self, name: &str) -> VariableBindingSnapshot {
+        VariableBindingSnapshot {
+            value: self.variables.get(name).cloned(),
+            objective: self.variable_objectives.get(name).cloned(),
+            is_scoreboard: self.scoreboard_variables.contains(name),
+            storage_path: self.variable_storage_paths.get(name).cloned(),
+            compile_time_constant: self.compile_time_constants.get(name).copied(),
+            value_type: self.variable_types.get(name).cloned(),
+        }
+    }
+
+    fn restore_variable_binding(&mut self, name: &str, snapshot: VariableBindingSnapshot) {
+        restore_optional(&mut self.variables, name, snapshot.value);
+        restore_optional(&mut self.variable_objectives, name, snapshot.objective);
+        if snapshot.is_scoreboard {
+            self.scoreboard_variables.insert(name.to_string());
+        } else {
+            self.scoreboard_variables.remove(name);
+        }
+        restore_optional(
+            &mut self.variable_storage_paths,
+            name,
+            snapshot.storage_path,
+        );
+        restore_optional(
+            &mut self.compile_time_constants,
+            name,
+            snapshot.compile_time_constant,
+        );
+        restore_optional(&mut self.variable_types, name, snapshot.value_type);
+    }
+
+    fn bind_runtime_integer_variable(&mut self, name: &str) {
+        self.data_pack.track_objective("temp");
+        self.variables.remove(name);
+        self.variable_objectives
+            .insert(name.to_string(), "temp".to_string());
+        self.scoreboard_variables.insert(name.to_string());
+        self.variable_storage_paths.remove(name);
+        self.compile_time_constants.remove(name);
+        self.variable_types
+            .insert(name.to_string(), CobbleType::Integer);
+    }
+
+    fn bind_runtime_storage_loop_value(&mut self, name: &str, element_type: CobbleType) {
+        self.data_pack.track_objective("temp");
+        self.variables.remove(name);
+        self.variable_objectives
+            .insert(name.to_string(), "temp".to_string());
+        self.scoreboard_variables.insert(name.to_string());
+        self.variable_storage_paths
+            .insert(name.to_string(), format!("vars.{}", name));
+        self.compile_time_constants.remove(name);
+        self.variable_types.insert(name.to_string(), element_type);
+    }
+
+    /// Best-effort element type for a runtime list loop target. A literal
+    /// array (inline, or a variable whose last known value is a literal array)
+    /// with a uniform element type yields that type, so misusing string
+    /// elements in arithmetic or conditions errors at compile time. Everything
+    /// else stays `Unknown` (permissive).
+    fn runtime_list_element_type(&self, iter: &Expression) -> CobbleType {
+        let items = match iter {
+            Expression::Array(items) => items,
+            Expression::Identifier(name) => match self.variables.get(name) {
+                Some(Expression::Array(items)) => items,
+                _ => return CobbleType::Unknown,
+            },
+            _ => return CobbleType::Unknown,
+        };
+        if items.is_empty() {
+            CobbleType::Unknown
+        } else if items
+            .iter()
+            .all(|item| matches!(item, Expression::Number(_)))
+        {
+            CobbleType::Integer
+        } else if items
+            .iter()
+            .all(|item| matches!(item, Expression::String(_)))
+        {
+            CobbleType::String
+        } else {
+            CobbleType::Unknown
+        }
     }
 
     fn unroll_values(&self, for_loop: &ForLoop) -> Result<Vec<UnrollValue>, String> {
@@ -352,8 +1203,7 @@ impl Transpiler {
         }
 
         // Generate a recursive function for the while loop
-        let loop_func_name = format!("while_temp_{}", self.temp_counter);
-        self.temp_counter += 1;
+        let loop_func_name = format!("while_temp_{}", self.next_temp_id());
 
         // Capture condition setup so complex expressions and OR lowering are
         // rerun on every recursive iteration instead of once before the loop.
@@ -370,8 +1220,7 @@ impl Transpiler {
         // The condition should be evaluated ONCE per iteration, not per statement.
 
         // Create inner body function that executes unconditionally
-        let body_func_name = format!("while_body_{}", self.temp_counter);
-        self.temp_counter += 1;
+        let body_func_name = format!("while_body_{}", self.next_temp_id());
 
         // Process loop body into the body function
         let saved_context = self.current_context.clone();
@@ -398,6 +1247,9 @@ impl Transpiler {
                 GeneratedCommandKind::ControlFlow,
             ),
         );
+        if let Some(return_cmd) = self.return_propagation_command() {
+            loop_commands.push(return_cmd);
+        }
 
         // Re-evaluate the condition after the body before deciding whether to
         // recurse. This keeps loops with mutated or computed conditions correct.
@@ -429,8 +1281,12 @@ impl Transpiler {
             self.data_pack.namespace, loop_func_name
         ));
 
+        let return_cmd = self.return_propagation_command();
         if let Some(ref mut commands) = self.current_function {
             commands.extend(while_commands);
+            if let Some(return_cmd) = return_cmd {
+                commands.push(return_cmd);
+            }
         }
 
         Ok(())
@@ -473,6 +1329,103 @@ fn annotate_unroll_error(
         annotated
     } else {
         error
+    }
+}
+
+fn annotate_runtime_for_error(
+    error: String,
+    target: &str,
+    source_key: &str,
+    location: Option<&SourceLocation>,
+) -> String {
+    if error.starts_with("runtime-for-") {
+        let mut annotated = if error.contains("\n  loop: for ") {
+            error
+        } else {
+            format!("{error}\n  loop: for {target}")
+        };
+        if !annotated.contains("\n  source-key: ") {
+            annotated.push_str(&format!("\n  source-key: {source_key}"));
+        }
+        if let Some(location) = location.filter(|_| !annotated.contains("\n  location: ")) {
+            annotated.push_str(&format!(
+                "\n  location: {}:{}",
+                location.line, location.column
+            ));
+        }
+        annotated
+    } else {
+        error
+    }
+}
+
+fn restore_optional<T>(map: &mut HashMap<String, T>, name: &str, value: Option<T>) {
+    if let Some(value) = value {
+        map.insert(name.to_string(), value);
+    } else {
+        map.remove(name);
+    }
+}
+
+fn validate_runtime_loop_body_target(statements: &[Statement], target: &str) -> Result<(), String> {
+    for statement in statements {
+        validate_runtime_loop_statement_target(statement, target)?;
+    }
+    Ok(())
+}
+
+fn validate_runtime_loop_statement_target(
+    statement: &Statement,
+    target: &str,
+) -> Result<(), String> {
+    match statement {
+        Statement::Assignment(assign) if assign.target == target => Err(format!(
+            "runtime-for-unsupported: cannot assign to dynamic loop target '{}'.",
+            target
+        )),
+        Statement::ConstAssignment(assign) if assign.target == target => Err(format!(
+            "runtime-for-unsupported: cannot assign to dynamic loop target '{}'.",
+            target
+        )),
+        Statement::FunctionDef(function) => {
+            if function.params.iter().any(|param| param.name == target) {
+                return Err(format!(
+                    "runtime-for-unsupported: nested function parameter '{}' shadows the dynamic loop target.",
+                    target
+                ));
+            }
+            validate_runtime_loop_body_target(&function.body, target)
+        }
+        Statement::If(if_stmt) => {
+            validate_runtime_loop_body_target(&if_stmt.then_branch, target)?;
+            for (_, branch) in &if_stmt.elif_branches {
+                validate_runtime_loop_body_target(branch, target)?;
+            }
+            if let Some(branch) = &if_stmt.else_branch {
+                validate_runtime_loop_body_target(branch, target)?;
+            }
+            Ok(())
+        }
+        Statement::For(for_loop) => {
+            if for_loop.target == target {
+                return Err(format!(
+                    "runtime-for-unsupported: nested loop target '{}' shadows the dynamic loop target.",
+                    target
+                ));
+            }
+            validate_runtime_loop_body_target(&for_loop.body, target)
+        }
+        Statement::While(while_loop) => validate_runtime_loop_body_target(&while_loop.body, target),
+        Statement::Match(match_stmt) => {
+            for case in &match_stmt.cases {
+                validate_runtime_loop_body_target(&case.body, target)?;
+            }
+            Ok(())
+        }
+        Statement::Execute(exec_block) => {
+            validate_runtime_loop_body_target(&exec_block.body, target)
+        }
+        _ => Ok(()),
     }
 }
 
@@ -556,6 +1509,11 @@ fn substitute_statement(
             }
             Statement::Assignment(Assignment {
                 target: assign.target.clone(),
+                target_expr: assign
+                    .target_expr
+                    .as_ref()
+                    .map(|target_expr| substitute_expression(target_expr, target, value))
+                    .transpose()?,
                 value: substitute_expression(&assign.value, target, value)?,
             })
         }
@@ -681,14 +1639,8 @@ fn substitute_execute_modifier(
         ExecuteModifier::At(raw) => {
             ExecuteModifier::At(replace_unroll_placeholder(raw, target, &command_value))
         }
-        ExecuteModifier::If(expr) => {
-            ExecuteModifier::If(substitute_expression(expr, target, value)?)
-        }
         ExecuteModifier::IfRaw(raw) => {
             ExecuteModifier::IfRaw(replace_unroll_placeholder(raw, target, &command_value))
-        }
-        ExecuteModifier::Unless(expr) => {
-            ExecuteModifier::Unless(substitute_expression(expr, target, value)?)
         }
         ExecuteModifier::UnlessRaw(raw) => {
             ExecuteModifier::UnlessRaw(replace_unroll_placeholder(raw, target, &command_value))

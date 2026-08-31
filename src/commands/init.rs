@@ -37,21 +37,9 @@ pub fn init(options: InitOptions) -> Result<(), String> {
         })
         .unwrap_or_else(|| "my-datapack".to_string());
 
-    println!("Initializing Cobble project: {}", project_name);
-
-    // Create project directory if a name was provided
-    let project_dir = if has_name {
-        let dir = PathBuf::from(requested_name.as_ref().unwrap());
-        ensure_no_symlink_components(&dir, "initialize project")?;
-        fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create project directory: {}", e))?;
-        dir
-    } else {
-        std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?
-    };
-
-    // Create cobble.toml
-    let mut config = CobbleConfig::default_with_name(project_name);
+    // Build and validate the config before touching the filesystem so that an
+    // invalid option cannot leave an empty project directory behind.
+    let mut config = CobbleConfig::default_with_name(project_name.clone());
     if template.experimental_plugins {
         config.experimental.plugins = true;
     }
@@ -81,6 +69,27 @@ pub fn init(options: InitOptions) -> Result<(), String> {
 
         config.project.pack_format = format_str;
     }
+
+    println!("Initializing Cobble project: {}", project_name);
+
+    // Create project directory if a name was provided
+    let project_dir = if has_name {
+        let dir = PathBuf::from(requested_name.as_ref().unwrap());
+        ensure_no_symlink_components(&dir, "initialize project")?;
+        if dir.join("cobble.toml").exists() {
+            return Err("cobble.toml already exists".to_string());
+        }
+        fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create project directory: {}", e))?;
+        dir
+    } else {
+        let dir = std::env::current_dir()
+            .map_err(|e| format!("Failed to get current directory: {}", e))?;
+        if dir.join("cobble.toml").exists() {
+            return Err("cobble.toml already exists".to_string());
+        }
+        dir
+    };
 
     let config_path = project_dir.join("cobble.toml");
     let src_dir = project_dir.join("src");

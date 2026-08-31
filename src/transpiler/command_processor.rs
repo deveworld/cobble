@@ -128,12 +128,12 @@ impl<'a> CommandProcessor<'a> {
                             let replacement = self.format_constant(*const_value);
                             replacements.push((i, j, replacement));
                             i = j;
-                        } else if self.scoreboard_variables.contains(var_name) {
-                            // Scoreboard variable found - collect for special handling
-                            scoreboard_vars_found.push((i, j, var_name.to_string()));
-                            i = j; // Skip past this variable
                         } else if self.variable_storage_paths.contains_key(var_name) {
                             // Storage variable found - collect for special handling
+                            scoreboard_vars_found.push((i, j, var_name.to_string()));
+                            i = j; // Skip past this variable
+                        } else if self.scoreboard_variables.contains(var_name) {
+                            // Scoreboard variable found - collect for special handling
                             scoreboard_vars_found.push((i, j, var_name.to_string()));
                             i = j; // Skip past this variable
                         } else if let Some(value) = self.variables.get(var_name) {
@@ -170,19 +170,14 @@ impl<'a> CommandProcessor<'a> {
                                         ));
                                     }
 
-                                    // Check if we're already inside quotes by counting unescaped quotes before this position
-                                    let before_var = &result[..i];
-                                    let mut quote_count = 0;
-                                    let mut prev_was_backslash = false;
-
-                                    for ch in before_var.chars() {
-                                        if ch == '"' && !prev_was_backslash {
-                                            quote_count += 1;
-                                        }
-                                        prev_was_backslash = ch == '\\' && !prev_was_backslash;
-                                    }
-
-                                    let inside_quotes = quote_count % 2 == 1;
+                                    // Check if we're already inside quotes by
+                                    // counting unescaped quotes before this
+                                    // position. `i` is a char index into
+                                    // `chars`, so scan the collected chars
+                                    // instead of byte-slicing `result`, which
+                                    // would panic mid-character on non-ASCII
+                                    // text.
+                                    let inside_quotes = is_inside_quotes(&chars[..i]);
 
                                     // Escape quotes, backslashes, and special characters
                                     let escaped = s
@@ -355,6 +350,88 @@ impl<'a> CommandProcessor<'a> {
         serde_json::json!({ "text": message }).to_string()
     }
 
+    fn variable_text_component(&self, var_name: &str) -> serde_json::Value {
+        if let Some(storage_path) = self.variable_storage_paths.get(var_name) {
+            serde_json::json!({
+                "nbt": storage_path,
+                "storage": format!("{}:global", self.namespace)
+            })
+        } else {
+            let objective = self
+                .variable_objectives
+                .get(var_name)
+                .map(|s| s.as_str())
+                .unwrap_or("temp");
+            serde_json::json!({
+                "score": {
+                    "name": var_name,
+                    "objective": objective
+                }
+            })
+        }
+    }
+
+    fn text_component_with_text(base: Option<&serde_json::Value>, text: &str) -> serde_json::Value {
+        if let Some(base) = base {
+            if let serde_json::Value::Object(_) = base {
+                let mut text_component = base.clone();
+                text_component["text"] = serde_json::Value::String(text.to_string());
+                return text_component;
+            }
+        }
+
+        serde_json::json!({ "text": text })
+    }
+
+    fn text_contains_any_var(text: &str, var_names: &[String]) -> bool {
+        var_names
+            .iter()
+            .any(|name| text.contains(&format!("{{{}}}", name)))
+    }
+
+    fn split_text_component_with_vars(
+        &self,
+        text: &str,
+        var_names: &[String],
+        base: Option<&serde_json::Value>,
+    ) -> Vec<serde_json::Value> {
+        let mut components = Vec::new();
+        let mut remaining = text;
+
+        while !remaining.is_empty() {
+            let mut next_var_pos = None;
+            let mut next_var_name = String::new();
+
+            for var_name in var_names {
+                let pattern = format!("{{{}}}", var_name);
+                if let Some(pos) = remaining.find(&pattern) {
+                    if next_var_pos.is_none() || pos < next_var_pos.unwrap() {
+                        next_var_pos = Some(pos);
+                        next_var_name = var_name.clone();
+                    }
+                }
+            }
+
+            if let Some(pos) = next_var_pos {
+                if pos > 0 {
+                    components.push(Self::text_component_with_text(base, &remaining[..pos]));
+                }
+
+                components.push(self.variable_text_component(&next_var_name));
+
+                let pattern = format!("{{{}}}", next_var_name);
+                remaining = &remaining[pos + pattern.len()..];
+            } else {
+                if !remaining.is_empty() {
+                    components.push(Self::text_component_with_text(base, remaining));
+                }
+                break;
+            }
+        }
+
+        components
+    }
+
     fn handle_scoreboard_vars_in_command(
         &self,
         cmd: &str,
@@ -443,29 +520,7 @@ impl<'a> CommandProcessor<'a> {
         let message_trimmed = message.trim();
         if message_trimmed.starts_with('[') {
             // Message is a JSON array
-            if !vars.is_empty() {
-                // Variables in JSON arrays are not supported
-                return Err(format!(
-                    "Cannot use variables inside JSON array text components.\n\
-                     \n\
-                     You wrote: {}\n\
-                     \n\
-                     Variables like {{{}}} cannot be automatically inserted into existing JSON arrays.\n\
-                     \n\
-                     Solution: Use Minecraft's score component syntax directly:\n\
-                     /tellraw @a [{{\"text\":\"Score: \"}},{{\"score\":{{\"name\":\"{}\",\"objective\":\"temp\"}}}}]\n\
-                     \n\
-                     Or use a simple JSON object (not array) and let Cobble handle it:\n\
-                     /tellraw @a {{\"text\":\"Score: {{{}}}\"}}\n\
-                     \n\
-                     This will automatically generate proper JSON with score components.",
-                    cmd,
-                    vars[0].2,
-                    vars[0].2,
-                    vars[0].2
-                ));
-            } else {
-                // No variables - return JSON array as-is
+            if vars.is_empty() {
                 if let Some(action_token) = action {
                     return Ok(format!(
                         "{} {} {} {}",
@@ -474,6 +529,72 @@ impl<'a> CommandProcessor<'a> {
                 } else {
                     return Ok(format!("{} {} {}", command, selector, message));
                 }
+            }
+
+            let parsed_array =
+                serde_json::from_str::<serde_json::Value>(message_trimmed).map_err(|error| {
+                    format!(
+                        "Cannot use variables inside malformed JSON array text component: {error}"
+                    )
+                })?;
+            let serde_json::Value::Array(items) = parsed_array else {
+                return Err("Expected a JSON array text component.".to_string());
+            };
+
+            let var_names: Vec<String> = vars.iter().map(|(_, _, name)| name.clone()).collect();
+            let mut converted_components = Vec::new();
+
+            for item in items {
+                match &item {
+                    serde_json::Value::Object(object) => {
+                        if let Some(text) = object.get("text").and_then(|value| value.as_str()) {
+                            if Self::text_contains_any_var(text, &var_names) {
+                                converted_components.extend(self.split_text_component_with_vars(
+                                    text,
+                                    &var_names,
+                                    Some(&item),
+                                ));
+                            } else {
+                                converted_components.push(item);
+                            }
+                        } else {
+                            converted_components.push(item);
+                        }
+                    }
+                    serde_json::Value::String(text) => {
+                        if Self::text_contains_any_var(text, &var_names) {
+                            converted_components.extend(
+                                self.split_text_component_with_vars(text, &var_names, None),
+                            );
+                        } else {
+                            converted_components.push(item);
+                        }
+                    }
+                    _ => converted_components.push(item),
+                }
+            }
+
+            let json_array = serde_json::Value::Array(converted_components);
+            let json_string =
+                serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
+
+            if var_names
+                .iter()
+                .any(|name| json_string.contains(&format!("{{{}}}", name)))
+            {
+                return Err(
+                    "Variables in JSON array text components are supported only in string components and object text fields."
+                        .to_string(),
+                );
+            }
+
+            if let Some(action_token) = action {
+                return Ok(format!(
+                    "{} {} {} {}",
+                    command, selector, action_token, json_string
+                ));
+            } else {
+                return Ok(format!("{} {} {}", command, selector, json_string));
             }
         }
 
@@ -584,21 +705,9 @@ impl<'a> CommandProcessor<'a> {
 
             // If JSON parsing failed or no text field, extract text the old way as fallback
             if let Some(text_start) = message.find("\"text\":") {
-                let after_text = &message[text_start + 7..].trim_start();
-                if after_text.starts_with('"') {
-                    let mut end_pos = 1;
-                    let chars: Vec<char> = after_text.chars().collect();
-                    let mut prev_backslash = false;
-                    while end_pos < chars.len() {
-                        if chars[end_pos] == '"' && !prev_backslash {
-                            break;
-                        }
-                        prev_backslash = chars[end_pos] == '\\' && !prev_backslash;
-                        end_pos += 1;
-                    }
-                    if end_pos < chars.len() {
-                        message = &after_text[1..end_pos];
-                    }
+                let after_text = message[text_start + 7..].trim_start();
+                if let Some(contents) = quoted_text_contents(after_text) {
+                    message = contents;
                 }
             }
         }
@@ -709,5 +818,126 @@ impl<'a> CommandProcessor<'a> {
         } else {
             value.to_string()
         }
+    }
+}
+
+/// Whether the position right after `chars` falls inside an unterminated
+/// double-quoted string (backslash-escaped quotes do not count).
+///
+/// Operates on a char slice so callers holding a char index never have to
+/// byte-slice the underlying `String` (which panics mid-character on
+/// non-ASCII text).
+fn is_inside_quotes(chars: &[char]) -> bool {
+    let mut quote_count = 0;
+    let mut prev_was_backslash = false;
+
+    for &ch in chars {
+        if ch == '"' && !prev_was_backslash {
+            quote_count += 1;
+        }
+        prev_was_backslash = ch == '\\' && !prev_was_backslash;
+    }
+
+    quote_count % 2 == 1
+}
+
+/// Extract the contents of the double-quoted string that `after_text` starts
+/// with (`"abc" rest` -> `abc`), honoring backslash escapes. Returns `None`
+/// when `after_text` does not start with a quote or the quote is
+/// unterminated. Uses byte offsets from `char_indices`, so multi-byte
+/// characters inside the string are sliced safely.
+fn quoted_text_contents(after_text: &str) -> Option<&str> {
+    if !after_text.starts_with('"') {
+        return None;
+    }
+
+    let mut prev_backslash = false;
+    for (byte_pos, ch) in after_text.char_indices().skip(1) {
+        if ch == '"' && !prev_backslash {
+            return Some(&after_text[1..byte_pos]);
+        }
+        prev_backslash = ch == '\\' && !prev_backslash;
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type ProcessorFixture = (
+        Vec<String>,
+        HashSet<String>,
+        HashMap<String, Expression>,
+        HashMap<String, String>,
+        HashMap<String, String>,
+        HashMap<String, String>,
+        HashMap<String, f64>,
+    );
+
+    fn empty_processor_fixture() -> ProcessorFixture {
+        (
+            Vec::new(),
+            HashSet::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+
+    #[test]
+    fn inline_string_variable_after_non_ascii_text_is_char_safe() {
+        // Regression: `&result[..i]` used a char index on a byte String and
+        // panicked mid-character when non-ASCII text preceded the variable.
+        let (params, scoreboard, mut variables, objectives, storage, aliases, constants) =
+            empty_processor_fixture();
+        variables.insert("msg".to_string(), Expression::String("hello".to_string()));
+        let processor = CommandProcessor::new(
+            "test".to_string(),
+            &params,
+            &scoreboard,
+            &variables,
+            &objectives,
+            &storage,
+            &aliases,
+            &constants,
+        );
+
+        let result = processor
+            .process_command_string("tellraw @a {\"text\":\"안녕하세요 {msg}\"}")
+            .unwrap();
+        assert!(
+            result.contains("안녕하세요 hello"),
+            "inlined string should stay inside the quoted text: {result}"
+        );
+    }
+
+    #[test]
+    fn is_inside_quotes_counts_unescaped_quotes() {
+        let inside: Vec<char> = "tellraw @a {\"text\":\"안녕 ".chars().collect();
+        assert!(is_inside_quotes(&inside));
+
+        let outside: Vec<char> = "tellraw @a {\"text\":\"안녕\" ".chars().collect();
+        assert!(!is_inside_quotes(&outside));
+
+        let escaped: Vec<char> = "say \\\" still outside".chars().collect();
+        assert!(!is_inside_quotes(&escaped));
+    }
+
+    #[test]
+    fn quoted_text_contents_is_char_safe() {
+        // Regression: the closing-quote position was found as a char index
+        // but applied as a byte index, mis-slicing (or panicking on)
+        // non-ASCII text.
+        assert_eq!(
+            quoted_text_contents("\"안녕 world\" trailing"),
+            Some("안녕 world")
+        );
+        assert_eq!(quoted_text_contents("\"a\\\"b\" rest"), Some("a\\\"b"));
+        assert_eq!(quoted_text_contents("\"unterminated"), None);
+        assert_eq!(quoted_text_contents("no quote"), None);
     }
 }

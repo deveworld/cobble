@@ -4,6 +4,77 @@ use chumsky::prelude::*;
 
 const MAX_UNARY_OPERATORS: usize = 1024;
 
+fn assignment_target_name(expr: &Expression) -> String {
+    match expr {
+        Expression::Identifier(name) => name.clone(),
+        Expression::Attribute(base, attr) => format!("{}.{}", assignment_target_name(base), attr),
+        Expression::Subscript(base, index) => {
+            format!(
+                "{}[{}]",
+                assignment_target_name(base),
+                assignment_target_name(index)
+            )
+        }
+        Expression::Number(value) if value.fract() == 0.0 => (*value as i32).to_string(),
+        Expression::Number(value) => value.to_string(),
+        Expression::String(value) => format!("{value:?}"),
+        Expression::Boolean(value) => value.to_string(),
+        _ => "<expr>".to_string(),
+    }
+}
+
+/// Lowercase Cobble literals that the tokenizer glued into an identifier
+/// token (e.g. the selector `@s[nbt={x:True}]`, or `x:True` via the
+/// namespace-separator rule) so re-stringified execute conditions emit
+/// valid SNBT (`true`/`false`/`null`).
+///
+/// Only a `True`/`False`/`None` word directly following a `:` (the SNBT
+/// key/value separator) outside of quoted strings is rewritten; selector
+/// arguments like `tag=True` and quoted text are left untouched.
+fn normalize_snbt_booleans(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.char_indices();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    while let Some((index, ch)) = chars.next() {
+        out.push(ch);
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            ':' => {
+                let rest = &text[index + ch.len_utf8()..];
+                let word: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                let replacement = match word.as_str() {
+                    "True" => Some("true"),
+                    "False" => Some("false"),
+                    "None" => Some("null"),
+                    _ => None,
+                };
+                if let Some(replacement) = replacement {
+                    out.push_str(replacement);
+                    for _ in 0..word.chars().count() {
+                        chars.next();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseDiagnostic {
     pub span: SourceSpan,
@@ -302,11 +373,77 @@ pub fn token_parser<'a>(
             )
             .map(Statement::Global);
 
+        let assignment_target =
+            select_ref! { Token::Ident(s) => Expression::Identifier(s.clone()) }.foldl(
+                choice((
+                    just(&Token::Dot)
+                        .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+                        .map(|attr| (true, Expression::Identifier(attr))),
+                    just(&Token::LBracket)
+                        .ignore_then(expr.clone())
+                        .then_ignore(just(&Token::RBracket))
+                        .map(|index| (false, index)),
+                ))
+                .repeated(),
+                |base, (is_dot, accessor)| {
+                    if is_dot {
+                        if let Expression::Identifier(attr) = accessor {
+                            Expression::Attribute(Box::new(base), attr)
+                        } else {
+                            unreachable!()
+                        }
+                    } else {
+                        Expression::Subscript(Box::new(base), Box::new(accessor))
+                    }
+                },
+            );
+
         // Assignment
-        let assignment = select_ref! { Token::Ident(s) => s.clone() }
+        let assignment = assignment_target
+            .clone()
             .then_ignore(just(&Token::Equals))
             .then(expr.clone())
-            .map(|(target, value)| Statement::Assignment(Assignment { target, value }));
+            .map(|(target_expr, value)| {
+                Statement::Assignment(Assignment {
+                    target: assignment_target_name(&target_expr),
+                    target_expr: Some(target_expr),
+                    value,
+                })
+            });
+
+        let compound_assignment_op = choice((
+            just(&Token::Plus)
+                .then_ignore(just(&Token::Equals))
+                .to(BinaryOp::Add),
+            just(&Token::Minus)
+                .then_ignore(just(&Token::Equals))
+                .to(BinaryOp::Sub),
+            just(&Token::Star)
+                .then_ignore(just(&Token::Equals))
+                .to(BinaryOp::Mul),
+            just(&Token::Slash)
+                .then_ignore(just(&Token::Equals))
+                .to(BinaryOp::Div),
+            just(&Token::Percent)
+                .then_ignore(just(&Token::Equals))
+                .to(BinaryOp::Mod),
+            just(&Token::Caret)
+                .then_ignore(just(&Token::Equals))
+                .to(BinaryOp::Pow),
+        ));
+
+        let compound_assignment = assignment_target
+            .clone()
+            .then(compound_assignment_op)
+            .then(expr.clone())
+            .map(|((target_expr, op), value)| {
+                let target = assignment_target_name(&target_expr);
+                Statement::Assignment(Assignment {
+                    target,
+                    target_expr: Some(target_expr.clone()),
+                    value: Expression::Binary(Box::new(target_expr), op, Box::new(value)),
+                })
+            });
 
         // Const assignment
         let const_assignment = just(&Token::Const)
@@ -464,16 +601,22 @@ pub fn token_parser<'a>(
             .map(|(condition, body)| Statement::While(WhileLoop { condition, body }));
 
         // Match pattern
+        // Case patterns must be integers; reject other numeric literals with a
+        // proper parse error instead of panicking on `parse::<i32>().unwrap()`.
+        let match_pattern_int = select_ref! { Token::Number(n) => n.clone() }.try_map(|n, span| {
+            n.parse::<i32>().map_err(|_| {
+                Rich::custom(
+                    span,
+                    format!("match case patterns must be integers, got {}", n),
+                )
+            })
+        });
         let match_pattern = choice((
             // Wildcard: _
             just(&Token::Underscore).to(MatchPattern::Wildcard),
             // Range: expr to expr
-            select_ref! { Token::Number(n) => n.parse::<i32>().unwrap() }
-                .then(
-                    just(&Token::To)
-                        .ignore_then(select_ref! { Token::Number(n) => n.parse::<i32>().unwrap() })
-                        .or_not(),
-                )
+            match_pattern_int
+                .then(just(&Token::To).ignore_then(match_pattern_int).or_not())
                 .map(|(start, end)| {
                     if let Some(end) = end {
                         MatchPattern::Range(start, end)
@@ -533,24 +676,43 @@ pub fn token_parser<'a>(
                 let mut prev_token: Option<&Token> = None;
 
                 for (i, token) in tokens.iter().enumerate() {
-                    let token_str = format!("{}", token);
+                    // Raw conditions are re-stringified for Minecraft, so keyword
+                    // literals must render as SNBT literals here. This is scoped
+                    // to execute conditions on purpose: the global `Display` impl
+                    // keeps the Cobble spellings (`True`/`False`/`None`).
+                    // Identifiers may carry glued SNBT (e.g. `@s[nbt={x:True}]`,
+                    // `x:True`), which gets the same lowering.
+                    let token_str = match token {
+                        Token::True_ => "true".to_string(),
+                        Token::False_ => "false".to_string(),
+                        Token::None_ => "null".to_string(),
+                        Token::Ident(s) => normalize_snbt_booleans(s),
+                        _ => format!("{}", token),
+                    };
 
-                    // Determine if we need a space before this token
+                    // Determine if we need a space before this token. Every arm
+                    // is deliberate — raw conditions must survive
+                    // re-stringification unchanged:
                     let need_space = if i == 0 {
                         false
                     } else if let Some(prev) = prev_token {
                         match (prev, token) {
-                            // No space between dots (for "..")
+                            // Range operator "..": both dots stay glued ("1..")
                             (Token::Dot, Token::Dot) => false,
-                            // No space after dot if followed by number (for "..10")
+                            // Range end hugs the dots ("..10", "1..5")
                             (Token::Dot, Token::Number(_)) => false,
-                            // Space after dot for other cases like "1.. if"
+                            // A dot before an identifier is a path separator in
+                            // NBT/storage/resource paths ("path.sub",
+                            // "ns:foo.bar"), never a token break — no space.
+                            (Token::Dot, Token::Ident(_)) => false,
+                            // A dot before any other token (an operator, brace,
+                            // ...) is not part of a path or range; keep a space.
                             (Token::Dot, _) => true,
-                            // No space before dots
+                            // Never a space before a dot ("path.", "1..")
                             (_, Token::Dot) => false,
-                            // No space between minus and number when it's a negative number
+                            // Negative numbers: minus glues to its number ("-5")
                             (Token::Minus, Token::Number(_)) => false,
-                            // Default: add space
+                            // Default: separate tokens with a single space
                             _ => true,
                         }
                     } else {
@@ -675,6 +837,7 @@ pub fn token_parser<'a>(
             entity_def,
             create_entity,
             const_assignment,
+            compound_assignment,
             assignment,
             expr_stmt,
         ))

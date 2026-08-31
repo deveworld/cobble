@@ -1,6 +1,6 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 172
+assertion_line: 192
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -28,7 +28,7 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Cobble 26.1.2 smoke fixture",
   "generated": {
     "advancements": 0,
-    "commands": 46,
+    "commands": 52,
     "custom_function_tags": 0,
     "function_tags": 2,
     "functions": 7,
@@ -38,7 +38,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 0,
     "recipes": 0,
-    "source_map_entries": 49,
+    "source_map_entries": 55,
     "stdlib_function_tags": 2,
     "total_json_resources": 1
   },
@@ -200,7 +200,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 6,
-      "command": "data modify storage cobble_26_smoke:global args.message set value \"Cobble 26.1.2 smoke test loaded\"",
+      "command": "data remove storage cobble_26_smoke:global _call_args_0",
       "source": {
         "file": "src/main.cbl",
         "line": 16,
@@ -211,7 +211,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 7,
-      "command": "function cobble_26_smoke:announce with storage cobble_26_smoke:global args",
+      "command": "data modify storage cobble_26_smoke:global _call_args_0.message set value \"Cobble 26.1.2 smoke test loaded\"",
       "source": {
         "file": "src/main.cbl",
         "line": 16,
@@ -222,10 +222,10 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 8,
-      "command": "data modify storage cobble_26_smoke:global args.player set value \"@a\"",
+      "command": "data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_0",
       "source": {
         "file": "src/main.cbl",
-        "line": 17,
+        "line": 16,
         "column": 5
       },
       "kind": "ControlFlow"
@@ -233,7 +233,29 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 9,
-      "command": "data modify storage cobble_26_smoke:global args.amount set value 1",
+      "command": "function cobble_26_smoke:announce with storage cobble_26_smoke:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 16,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 10,
+      "command": "data remove storage cobble_26_smoke:global _call_args_0",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 16,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 11,
+      "command": "data remove storage cobble_26_smoke:global _call_args_1",
       "source": {
         "file": "src/main.cbl",
         "line": 17,
@@ -243,7 +265,40 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 10,
+      "generated_line": 12,
+      "command": "data modify storage cobble_26_smoke:global _call_args_1.player set value \"@a\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 13,
+      "command": "data modify storage cobble_26_smoke:global _call_args_1.amount set value 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 14,
+      "command": "data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 15,
       "command": "function cobble_26_smoke:reward with storage cobble_26_smoke:global args",
       "source": {
         "file": "src/main.cbl",
@@ -254,7 +309,18 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 11,
+      "generated_line": 16,
+      "command": "data remove storage cobble_26_smoke:global _call_args_1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 17,
       "command": "scoreboard objectives add smoke dummy \"Smoke Test\"",
       "source": {
         "file": "src/main.cbl",
@@ -265,7 +331,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 12,
+      "generated_line": 18,
       "command": "tellraw @a {\"text\":\"Smoke datapack initialized\",\"color\":\"green\"}",
       "source": {
         "file": "src/main.cbl",
@@ -276,7 +342,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 13,
+      "generated_line": 19,
       "command": "dialog clear @a",
       "source": {
         "file": "src/main.cbl",
@@ -287,7 +353,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 14,
+      "generated_line": 20,
       "command": "dialog show @a cobble_26_smoke:notice",
       "source": {
         "file": "src/main.cbl",
@@ -298,7 +364,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 15,
+      "generated_line": 21,
       "command": "fetchprofile name Notch",
       "source": {
         "file": "src/main.cbl",
@@ -309,7 +375,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 16,
+      "generated_line": 22,
       "command": "fetchprofile id 123e4567-e89b-12d3-a456-426614174000",
       "source": {
         "file": "src/main.cbl",
@@ -320,7 +386,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 17,
+      "generated_line": 23,
       "command": "waypoint list",
       "source": {
         "file": "src/main.cbl",
@@ -331,7 +397,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 18,
+      "generated_line": 24,
       "command": "stopwatch create cobble:smoke",
       "source": {
         "file": "src/main.cbl",
@@ -342,7 +408,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 19,
+      "generated_line": 25,
       "command": "stopwatch query cobble:smoke 20.0",
       "source": {
         "file": "src/main.cbl",
@@ -353,7 +419,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 20,
+      "generated_line": 26,
       "command": "version",
       "source": {
         "file": "src/main.cbl",
@@ -420,7 +486,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 2,
-      "command": "scoreboard players set if_branch_0 temp 0",
+      "command": "scoreboard players set if_branch_2 temp 0",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -431,7 +497,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 3,
-      "command": "execute if score score temp matches 15.. run scoreboard players set if_branch_0 temp 1",
+      "command": "execute if score score temp matches 15.. run scoreboard players set if_branch_2 temp 1",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -453,7 +519,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 5,
-      "command": "scoreboard players set elif_taken_1 temp 0",
+      "command": "scoreboard players set elif_taken_3 temp 0",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -464,7 +530,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 6,
-      "command": "execute unless score if_branch_0 temp matches 1 if score score temp matches 12.. run scoreboard players set elif_taken_1 temp 1",
+      "command": "execute unless score if_branch_2 temp matches 1 if score score temp matches 12.. run scoreboard players set elif_taken_3 temp 1",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -475,7 +541,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 7,
-      "command": "execute if score elif_taken_1 temp matches 1 run scoreboard players set if_branch_0 temp 1",
+      "command": "execute if score elif_taken_3 temp matches 1 run scoreboard players set if_branch_2 temp 1",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -486,7 +552,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 8,
-      "command": "execute if score elif_taken_1 temp matches 1 run tellraw @a [{\"text\":\"score medium \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
+      "command": "execute if score elif_taken_3 temp matches 1 run tellraw @a [{\"text\":\"score medium \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
       "source": {
         "file": "src/main.cbl",
         "line": 37,
@@ -497,7 +563,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 9,
-      "command": "execute unless score if_branch_0 temp matches 1 run tellraw @a [{\"text\":\"score low \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
+      "command": "execute unless score if_branch_2 temp matches 1 run tellraw @a [{\"text\":\"score low \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
       "source": {
         "file": "src/main.cbl",
         "line": 39,
@@ -508,7 +574,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 10,
-      "command": "scoreboard players operation match_temp_2 temp = score temp",
+      "command": "scoreboard players operation match_temp_4 temp = score temp",
       "source": {
         "file": "src/main.cbl",
         "line": 41,
@@ -519,7 +585,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 11,
-      "command": "execute if score match_temp_2 temp matches 0..14 run say warming",
+      "command": "execute if score match_temp_4 temp matches 0..14 run say warming",
       "source": {
         "file": "src/main.cbl",
         "line": 43,
@@ -530,7 +596,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 12,
-      "command": "execute if score match_temp_2 temp matches 15..30 run say active",
+      "command": "execute if score match_temp_4 temp matches 15..30 run say active",
       "source": {
         "file": "src/main.cbl",
         "line": 45,
@@ -541,7 +607,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 13,
-      "command": "execute unless score match_temp_2 temp matches 0..14 unless score match_temp_2 temp matches 15..30 run say overflow",
+      "command": "execute unless score match_temp_4 temp matches 0..14 unless score match_temp_4 temp matches 15..30 run say overflow",
       "source": {
         "file": "src/main.cbl",
         "line": 47,
@@ -644,11 +710,17 @@ scoreboard objectives add temp dummy
 scoreboard players set score temp 10
 scoreboard players set health temp 20
 scoreboard players set active temp 1
-data modify storage cobble_26_smoke:global args.message set value "Cobble 26.1.2 smoke test loaded"
+data remove storage cobble_26_smoke:global _call_args_0
+data modify storage cobble_26_smoke:global _call_args_0.message set value "Cobble 26.1.2 smoke test loaded"
+data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_0
 function cobble_26_smoke:announce with storage cobble_26_smoke:global args
-data modify storage cobble_26_smoke:global args.player set value "@a"
-data modify storage cobble_26_smoke:global args.amount set value 1
+data remove storage cobble_26_smoke:global _call_args_0
+data remove storage cobble_26_smoke:global _call_args_1
+data modify storage cobble_26_smoke:global _call_args_1.player set value "@a"
+data modify storage cobble_26_smoke:global _call_args_1.amount set value 1
+data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_1
 function cobble_26_smoke:reward with storage cobble_26_smoke:global args
+data remove storage cobble_26_smoke:global _call_args_1
 scoreboard objectives add smoke dummy "Smoke Test"
 tellraw @a {"text":"Smoke datapack initialized","color":"green"}
 dialog clear @a
@@ -672,18 +744,18 @@ execute as @a[gamemode=survival] run say survivor online
 
 ===== data/cobble_26_smoke/function/tick.mcfunction =====
 scoreboard players add score temp 1
-scoreboard players set if_branch_0 temp 0
-execute if score score temp matches 15.. run scoreboard players set if_branch_0 temp 1
+scoreboard players set if_branch_2 temp 0
+execute if score score temp matches 15.. run scoreboard players set if_branch_2 temp 1
 execute if score score temp matches 15.. run tellraw @a [{"text":"score high "},{"score":{"name":"score","objective":"temp"}}]
-scoreboard players set elif_taken_1 temp 0
-execute unless score if_branch_0 temp matches 1 if score score temp matches 12.. run scoreboard players set elif_taken_1 temp 1
-execute if score elif_taken_1 temp matches 1 run scoreboard players set if_branch_0 temp 1
-execute if score elif_taken_1 temp matches 1 run tellraw @a [{"text":"score medium "},{"score":{"name":"score","objective":"temp"}}]
-execute unless score if_branch_0 temp matches 1 run tellraw @a [{"text":"score low "},{"score":{"name":"score","objective":"temp"}}]
-scoreboard players operation match_temp_2 temp = score temp
-execute if score match_temp_2 temp matches 0..14 run say warming
-execute if score match_temp_2 temp matches 15..30 run say active
-execute unless score match_temp_2 temp matches 0..14 unless score match_temp_2 temp matches 15..30 run say overflow
+scoreboard players set elif_taken_3 temp 0
+execute unless score if_branch_2 temp matches 1 if score score temp matches 12.. run scoreboard players set elif_taken_3 temp 1
+execute if score elif_taken_3 temp matches 1 run scoreboard players set if_branch_2 temp 1
+execute if score elif_taken_3 temp matches 1 run tellraw @a [{"text":"score medium "},{"score":{"name":"score","objective":"temp"}}]
+execute unless score if_branch_2 temp matches 1 run tellraw @a [{"text":"score low "},{"score":{"name":"score","objective":"temp"}}]
+scoreboard players operation match_temp_4 temp = score temp
+execute if score match_temp_4 temp matches 0..14 run say warming
+execute if score match_temp_4 temp matches 15..30 run say active
+execute unless score match_temp_4 temp matches 0..14 unless score match_temp_4 temp matches 15..30 run say overflow
 say loop 0
 say loop 1
 say loop 2

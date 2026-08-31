@@ -158,23 +158,24 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
     }
 
     // Try to find cobble.toml
-    let (config, config_dir) = if let Some(config_path) = find_config(&options.input) {
-        let config = match CobbleConfig::load(&config_path) {
-            Ok(config) => config,
-            Err(error) if options.json => {
-                print_config_error_json(&config_path, &error, options.symbols)?;
-                return Err(format!("Config validation failed: {error}"));
-            }
-            Err(error) => return Err(error),
+    let (config, config_dir) =
+        if let Some(config_path) = super::find_config(options.input.as_deref()) {
+            let config = match CobbleConfig::load(&config_path) {
+                Ok(config) => config,
+                Err(error) if options.json => {
+                    print_config_error_json(&config_path, &error, options.symbols)?;
+                    return Err(format!("Config validation failed: {error}"));
+                }
+                Err(error) => return Err(error),
+            };
+            let config_dir = config_path.parent().unwrap().to_path_buf();
+            (Some(config), config_dir)
+        } else {
+            (
+                None,
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            )
         };
-        let config_dir = config_path.parent().unwrap().to_path_buf();
-        (Some(config), config_dir)
-    } else {
-        (
-            None,
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        )
-    };
     let experimental_plugins = options.experimental_plugins
         || config
             .as_ref()
@@ -510,141 +511,139 @@ fn semantic_check_diagnostics(
     transpiler.set_experimental_resource_pack(experimental_resource_pack);
     transpiler.set_source_display_root(config_dir.to_path_buf());
 
+    // Keep checking the remaining files after a failure so one run reveals
+    // every file's first semantic error. A file whose imports failed replays
+    // the same underlying error text, so an identical error is suppressed
+    // only when the current file (transitively) imports a file that already
+    // reported it; unrelated files with byte-identical errors are all
+    // reported, and file order stays deterministic.
+    let import_graph = check_import_graph(files_to_check, parsed_files);
     let mut diagnostics = Vec::new();
+    let mut seen_errors: std::collections::HashMap<String, Vec<PathBuf>> =
+        std::collections::HashMap::new();
     for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
         transpiler.set_current_file_with_source_spans(path, &parsed.source, &parsed.spans);
-        if let Err(error) = transpiler.transpile(&parsed.program) {
-            diagnostics.push(FileSourceDiagnostics::new(
-                path.clone(),
-                parsed.source.clone(),
-                vec![semantic_source_diagnostic(&error, &parsed.source)],
-            ));
-            break;
+        let Err(error) = transpiler.transpile(&parsed.program) else {
+            continue;
+        };
+        let canonical_path = canonical_or_original(path);
+        if let Some(reporters) = seen_errors.get(&error) {
+            if reporters
+                .iter()
+                .any(|reporter| import_graph_reaches(&import_graph, &canonical_path, reporter))
+            {
+                continue;
+            }
         }
+        seen_errors
+            .entry(error.clone())
+            .or_default()
+            .push(canonical_path);
+        diagnostics.push(FileSourceDiagnostics::new(
+            path.clone(),
+            parsed.source.clone(),
+            vec![SourceDiagnostic::from_transpiler_error(
+                &error,
+                &parsed.source,
+            )],
+        ));
     }
 
     diagnostics
 }
 
-fn semantic_source_diagnostic(error: &str, source: &str) -> SourceDiagnostic {
-    let kind = if let Some((kind, _)) = error.split_once(':') {
-        if kind.starts_with("unroll-") {
-            kind.to_string()
-        } else if error.contains("not imported") {
-            "missing-stdlib-module".to_string()
-        } else if error.contains("Unknown stdlib module") {
-            "unknown-stdlib-module".to_string()
-        } else {
-            "semantic".to_string()
-        }
-    } else if error.contains("not imported") {
-        "missing-stdlib-module".to_string()
-    } else if error.contains("Unknown stdlib module") {
-        "unknown-stdlib-module".to_string()
-    } else {
-        "semantic".to_string()
-    };
-    let (line, column) = semantic_error_location(error, source).unwrap_or((1, 1));
-    SourceDiagnostic::error(kind, line, column, clean_semantic_error_message(error))
-}
+/// Direct non-stdlib import edges (canonical importer path -> canonical
+/// imported `.cbl` paths) for every checked file, extended through imported
+/// files that are not themselves in the checked set so reachability stays
+/// transitive.
+fn check_import_graph(
+    files_to_check: &[PathBuf],
+    parsed_files: &[ParsedSourceFile],
+) -> std::collections::HashMap<PathBuf, Vec<PathBuf>> {
+    let mut graph = std::collections::HashMap::new();
+    let mut pending = Vec::new();
 
-fn clean_semantic_error_message(error: &str) -> String {
-    error
-        .lines()
-        .filter(|line| {
-            let line = line.trim_start();
-            !line.starts_with("source-key:") && !line.starts_with("location:")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn semantic_error_location(error: &str, source: &str) -> Option<(usize, usize)> {
-    if error.starts_with("unroll-") {
-        return unroll_error_location(error)
-            .or_else(|| {
-                unroll_error_source_key(error).and_then(|source_key| {
-                    find_for_loop_location_for_source_key(source, source_key)
-                })
-            })
-            .or_else(|| {
-                unroll_error_target(error)
-                    .and_then(|target| find_for_loop_location_for_target(source, target))
-            })
-            .or_else(|| find_for_loop_location(source));
+    for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
+        let edges = parsed
+            .program
+            .imports
+            .iter()
+            .filter_map(|import| resolve_import_edge(path, &import.module))
+            .collect::<Vec<_>>();
+        pending.extend(edges.iter().cloned());
+        graph.insert(canonical_or_original(path), edges);
     }
 
-    let module = error
-        .split_once("module '")
-        .and_then(|(_, rest)| rest.split_once('\''))
-        .map(|(module, _)| module)?;
-    let needle = format!("{module}.");
-    find_source_location(source, &needle).or_else(|| find_source_location(source, module))
-}
-
-fn unroll_error_target(error: &str) -> Option<&str> {
-    error
-        .split_once("\n  loop: for ")
-        .and_then(|(_, rest)| rest.split_whitespace().next())
-}
-
-fn unroll_error_location(error: &str) -> Option<(usize, usize)> {
-    let location = error
-        .split_once("\n  location: ")
-        .and_then(|(_, rest)| rest.lines().next())?
-        .trim();
-    let (line, column) = location.split_once(':')?;
-    Some((line.parse().ok()?, column.parse().ok()?))
-}
-
-fn unroll_error_source_key(error: &str) -> Option<&str> {
-    error
-        .split_once("\n  source-key: ")
-        .and_then(|(_, rest)| rest.lines().next())
-        .map(str::trim)
-        .filter(|source_key| !source_key.is_empty())
-}
-
-fn find_source_location(source: &str, needle: &str) -> Option<(usize, usize)> {
-    source.lines().enumerate().find_map(|(line_index, line)| {
-        line.find(needle)
-            .map(|column_index| (line_index + 1, column_index + 1))
-    })
-}
-
-fn find_for_loop_location_for_target(source: &str, target: &str) -> Option<(usize, usize)> {
-    let needle = format!("for {target} ");
-    source.lines().enumerate().find_map(|(line_index, line)| {
-        let column_index = line.find(&needle)?;
-        line[column_index..]
-            .trim_start()
-            .starts_with(&needle)
-            .then_some((line_index + 1, column_index + 1))
-    })
-}
-
-fn find_for_loop_location_for_source_key(source: &str, source_key: &str) -> Option<(usize, usize)> {
-    source.lines().enumerate().find_map(|(line_index, line)| {
-        let statement = line.trim_start();
-        if !statement.starts_with("for ") {
-            return None;
+    // Imported files outside the checked set still forward errors from their
+    // own imports, so follow their top-level import lines too.
+    while let Some(node) = pending.pop() {
+        if graph.contains_key(&node) {
+            continue;
         }
-        if Transpiler::source_line_key(statement) != source_key {
-            return None;
-        }
-        let column = line.len() - statement.len() + 1;
-        Some((line_index + 1, column))
-    })
+        let edges = scan_top_level_import_edges(&node);
+        pending.extend(edges.iter().cloned());
+        graph.insert(node, edges);
+    }
+
+    graph
 }
 
-fn find_for_loop_location(source: &str) -> Option<(usize, usize)> {
-    source.lines().enumerate().find_map(|(line_index, line)| {
-        let column_index = line.find("for ")?;
-        line[column_index..]
-            .trim_start()
-            .starts_with("for ")
-            .then_some((line_index + 1, column_index + 1))
-    })
+fn resolve_import_edge(importer: &Path, module: &str) -> Option<PathBuf> {
+    if module == "stdlib" || !is_identifier(module) {
+        return None;
+    }
+    let dir = importer.parent().unwrap_or_else(|| Path::new("."));
+    Some(canonical_or_original(&dir.join(format!("{module}.cbl"))))
+}
+
+fn scan_top_level_import_edges(path: &Path) -> Vec<PathBuf> {
+    let Ok(source) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    let mut edges = Vec::new();
+    for line in source.lines() {
+        if line.starts_with([' ', '\t']) {
+            continue;
+        }
+        let line = line.trim_end();
+        if let Some(rest) = line.strip_prefix("import ") {
+            for module in rest.split(',') {
+                let module = module.split_whitespace().next().unwrap_or("");
+                edges.extend(resolve_import_edge(path, module));
+            }
+        } else if let Some(rest) = line.strip_prefix("from ") {
+            if let Some((module, _items)) = rest.split_once(" import ") {
+                edges.extend(resolve_import_edge(path, module.trim()));
+            }
+        }
+    }
+    edges
+}
+
+fn import_graph_reaches(
+    graph: &std::collections::HashMap<PathBuf, Vec<PathBuf>>,
+    from: &Path,
+    to: &Path,
+) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    let mut stack = graph.get(from).cloned().unwrap_or_default();
+    while let Some(node) = stack.pop() {
+        if node == to {
+            return true;
+        }
+        if !visited.insert(node.clone()) {
+            continue;
+        }
+        if let Some(edges) = graph.get(&node) {
+            stack.extend(edges.iter().cloned());
+        }
+    }
+    false
+}
+
+fn canonical_or_original(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn python_compat_report_success(
@@ -1660,20 +1659,4 @@ fn print_check_json(report: &CheckReport) -> Result<(), String> {
 
 fn path_display(path: &Path) -> String {
     path.to_string_lossy().into_owned()
-}
-
-fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(path) = input {
-        if path.is_file() {
-            // If input is a file, look for config in parent directories
-            if let Some(parent) = path.parent() {
-                return CobbleConfig::find_in_path(parent);
-            }
-        } else {
-            // If input is a directory, look for config in it
-            return CobbleConfig::find_in_path(path);
-        }
-    }
-    // Look in current directory
-    CobbleConfig::find_in_path(".")
 }

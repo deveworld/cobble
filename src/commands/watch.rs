@@ -1,4 +1,5 @@
 use crate::commands::build::{build, BuildOptions};
+use crate::commands::find_config;
 use crate::commands::link::linked_output_path;
 use crate::commands::output_safety::{
     build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
@@ -8,25 +9,42 @@ use crate::config::CobbleConfig;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const WATCH_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
+/// Upper bound on how long back-to-back change events may keep extending the
+/// debounce window before a rebuild is forced.
+const WATCH_DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(2);
 
-#[allow(clippy::too_many_arguments)]
-pub fn watch(
-    input: Option<PathBuf>,
-    output: Option<PathBuf>,
-    namespace: Option<String>,
-    pack_format: Option<String>,
-    description: Option<String>,
-    verbose: bool,
-    zip: bool,
-    experimental_resource_pack: bool,
-    link: bool,
-    validate: bool,
-    commands_json: PathBuf,
-) -> Result<(), String> {
+pub struct WatchOptions {
+    pub input: Option<PathBuf>,
+    pub output: Option<PathBuf>,
+    pub namespace: Option<String>,
+    pub pack_format: Option<String>,
+    pub description: Option<String>,
+    pub verbose: bool,
+    pub zip: bool,
+    pub experimental_resource_pack: bool,
+    pub link: bool,
+    pub validate: bool,
+    pub commands_json: PathBuf,
+}
+
+pub fn watch(options: WatchOptions) -> Result<(), String> {
+    let WatchOptions {
+        input,
+        output,
+        namespace,
+        pack_format,
+        description,
+        verbose,
+        zip,
+        experimental_resource_pack,
+        link,
+        validate,
+        commands_json,
+    } = options;
     if link && output.is_some() {
         return Err("--link cannot be combined with --output".to_string());
     }
@@ -38,21 +56,22 @@ pub fn watch(
     }
 
     // Try to find cobble.toml
-    let (mut config, config_dir, config_path) = if let Some(config_path) = find_config(&input) {
-        let config = if pack_format.is_some() {
-            CobbleConfig::load_unvalidated(&config_path)?
+    let (mut config, config_dir, config_path) =
+        if let Some(config_path) = find_config(input.as_deref()) {
+            let config = if pack_format.is_some() {
+                CobbleConfig::load_unvalidated(&config_path)?
+            } else {
+                CobbleConfig::load(&config_path)?
+            };
+            let config_dir = config_path.parent().unwrap().to_path_buf();
+            (Some(config), config_dir, Some(config_path))
         } else {
-            CobbleConfig::load(&config_path)?
+            (
+                None,
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                None,
+            )
         };
-        let config_dir = config_path.parent().unwrap().to_path_buf();
-        (Some(config), config_dir, Some(config_path))
-    } else {
-        (
-            None,
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            None,
-        )
-    };
 
     // Determine source path to watch
     let watch_path = if let Some(ref input_path) = input {
@@ -67,12 +86,12 @@ pub fn watch(
         return Err(format!("Watch path does not exist: {:?}", watch_path));
     }
 
-    let effective_output = if link {
+    let mut effective_output = if link {
         Some(linked_output_path(&config_dir)?)
     } else {
         output.clone()
     };
-    let expected_link_project_id = link.then(|| project_marker_identity(&config_dir).1);
+    let mut expected_link_project_id = link.then(|| project_marker_identity(&config_dir).1);
     if let Some(linked_output) = link.then_some(effective_output.as_ref()).flatten() {
         ensure_linked_output_target_safe(
             linked_output,
@@ -154,6 +173,30 @@ pub fn watch(
                         ) {
                             Ok(Some(updated_config)) => {
                                 config = Some(updated_config);
+                                if link {
+                                    // Re-resolve the link target and project
+                                    // identity the same way initial setup did.
+                                    match linked_output_path(&config_dir) {
+                                        Ok(updated_target) => {
+                                            if effective_output.as_deref()
+                                                != Some(updated_target.as_path())
+                                            {
+                                                println!("Linked output: {:?}", updated_target);
+                                            }
+                                            effective_output = Some(updated_target);
+                                            expected_link_project_id =
+                                                Some(project_marker_identity(&config_dir).1);
+                                        }
+                                        Err(error) => {
+                                            println!(
+                                                "! Link target could not be re-resolved: {error}"
+                                            );
+                                            println!(
+                                                "  Keeping the previous linked output target.\n"
+                                            );
+                                        }
+                                    }
+                                }
                                 ignored_roots = watch_ignored_roots(
                                     effective_output.as_ref(),
                                     config.as_ref(),
@@ -163,8 +206,7 @@ pub fn watch(
                             Ok(None) => {}
                             Err(error) => {
                                 println!("✗ Config reload failed: {error}");
-                                println!("  Keeping previous watch paths; waiting for the next change.\n");
-                                continue;
+                                println!("  Rebuilding with the last-good configuration.\n");
                             }
                         }
                     }
@@ -233,9 +275,14 @@ struct RebuildDecision {
 }
 
 fn collect_debounced_events(rx: &Receiver<Event>, first_event: Event) -> Vec<Event> {
+    let started = Instant::now();
     let mut events = vec![first_event];
-    while let Ok(event) = rx.recv_timeout(WATCH_DEBOUNCE_INTERVAL) {
-        events.push(event);
+    // The window is capped so that a busy editor cannot starve rebuilds.
+    while let Some(remaining) = WATCH_DEBOUNCE_MAX_WINDOW.checked_sub(started.elapsed()) {
+        match rx.recv_timeout(WATCH_DEBOUNCE_INTERVAL.min(remaining)) {
+            Ok(event) => events.push(event),
+            Err(_) => break,
+        }
     }
     events
 }
@@ -536,22 +583,6 @@ fn unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(path) = input {
-        if path.is_file() {
-            // If input is a file, look for config in parent directories
-            if let Some(parent) = path.parent() {
-                return CobbleConfig::find_in_path(parent);
-            }
-        } else {
-            // If input is a directory, look for config in it
-            return CobbleConfig::find_in_path(path);
-        }
-    }
-    // Look in current directory
-    CobbleConfig::find_in_path(".")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,6 +628,31 @@ mod tests {
 
     fn create_event(path: impl Into<PathBuf>) -> Event {
         Event::new(EventKind::Create(CreateKind::File)).add_path(path.into())
+    }
+
+    #[test]
+    fn collect_debounced_events_caps_the_debounce_window() {
+        let (tx, rx) = mpsc::channel();
+        let sender = std::thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(4) {
+                if tx.send(modify_event("src/main.cbl")).is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let started = Instant::now();
+        let events = collect_debounced_events(&rx, modify_event("src/main.cbl"));
+
+        assert!(!events.is_empty());
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "a busy event stream must not extend the debounce window forever"
+        );
+        drop(rx);
+        sender.join().unwrap();
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use cobble::commands;
 use cobble::commands::{
     CheckOptions, CleanOptions, DoctorOptions, FmtOptions, InspectOptions, LinkOptions,
-    MigrateOptions,
+    MigrateOptions, WatchOptions,
 };
 
 use clap::{Parser, Subcommand};
@@ -125,7 +125,7 @@ enum Commands {
         experimental_resource_pack: bool,
 
         /// Build to the configured linked data pack target
-        #[arg(long)]
+        #[arg(long, conflicts_with = "output")]
         link: bool,
 
         /// Validate generated .mcfunction files after each successful build
@@ -165,7 +165,7 @@ enum Commands {
         input: Option<PathBuf>,
 
         /// Check formatting without writing changes
-        #[arg(long)]
+        #[arg(long, conflicts_with = "diff")]
         check: bool,
 
         /// Print formatting differences without writing changes
@@ -214,7 +214,7 @@ enum Commands {
         /// Project path to read cobble.toml from
         path: Option<PathBuf>,
 
-        /// Output directory to clean
+        /// Output directory to clean (must carry this project's Cobble ownership marker)
         #[arg(short, long)]
         output: Option<PathBuf>,
 
@@ -223,7 +223,7 @@ enum Commands {
         dry_run: bool,
 
         /// Clean the configured linked data pack output
-        #[arg(long)]
+        #[arg(long, conflicts_with = "output")]
         linked: bool,
 
         /// Confirm destructive linked cleanup
@@ -237,11 +237,11 @@ enum Commands {
         path: Option<PathBuf>,
 
         /// Direct path to a Minecraft datapacks directory
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["world", "minecraft"])]
         datapacks: Option<PathBuf>,
 
         /// Path to a Minecraft world directory containing datapacks/
-        #[arg(long)]
+        #[arg(long, conflicts_with = "minecraft")]
         world: Option<PathBuf>,
 
         /// Path to a .minecraft directory; uses saves/<pack-name>/datapacks
@@ -342,7 +342,7 @@ fn main() {
             link,
             validate,
             commands_json,
-        } => commands::watch(
+        } => commands::watch(WatchOptions {
             input,
             output,
             namespace,
@@ -354,7 +354,7 @@ fn main() {
             link,
             validate,
             commands_json,
-        ),
+        }),
         Commands::Check {
             input,
             json,

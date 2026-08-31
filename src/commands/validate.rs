@@ -638,12 +638,7 @@ fn source_map_key(datapack_dir: &Path, generated_file: &Path, line: usize) -> (S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn cwd_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    use crate::test_support::cwd_lock;
 
     struct CurrentDirGuard {
         previous: PathBuf,

@@ -1,8 +1,9 @@
+use super::find_config;
 use super::output_safety::ensure_no_symlink_components;
 use crate::config::CobbleConfig;
 use crate::diagnostics::{parse_source, python_compat_suggestion_for_kind};
 use crate::fs_safety::write_file_atomic_with_permissions;
-use crate::pack_format::SUPPORTED_PACK_FORMAT;
+use crate::pack_format::{PackFormat, SUPPORTED_PACK_FORMAT};
 use serde::Serialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -255,7 +256,7 @@ fn inspect_project(
     diagnostics: &mut Vec<MigrationDiagnostic>,
     actions: &mut Vec<MigrationAction>,
 ) -> ProjectInspection {
-    let config_path = find_config(project_path);
+    let config_path = find_config(Some(project_path));
     let config_dir = config_path
         .as_ref()
         .and_then(|path| path.parent())
@@ -1017,6 +1018,20 @@ fn analyze_source(source: &str, file: &str) -> SourceSignals {
         }
         if line == "from stdlib import" || line.starts_with("from stdlib import ") {
             stdlib_module_import = true;
+            let column = raw_line
+                .find("from stdlib import")
+                .map(|index| index + 1)
+                .unwrap_or(1);
+            locations.push(MigrationSourceLocation {
+                file: file.to_string(),
+                line: line_number,
+                column,
+                kind: "stdlib-module-import".to_string(),
+                message:
+                    "`from stdlib import ...` already matches the 0.9 per-module stdlib imports."
+                        .to_string(),
+                suggested_cobble_alternative: None,
+            });
         }
         for column in match_columns(raw_line, "resource_pack.") {
             resource_pack_references += 1;
@@ -1129,7 +1144,13 @@ fn pack_format_action_message(config: &MigrationConfigReport, settings: &ConfigS
 }
 
 fn pack_format_needs_update(settings: &ConfigSettings) -> bool {
-    settings.pack_format != SUPPORTED_PACK_FORMAT.to_string()
+    // Compare parsed values so formatting variants of the same version are not
+    // reported as migration candidates; fall back to the raw comparison only
+    // when the configured value cannot be parsed.
+    match PackFormat::parse_format(&settings.pack_format) {
+        Ok(pack_format) => pack_format != SUPPORTED_PACK_FORMAT,
+        Err(_) => settings.pack_format != SUPPORTED_PACK_FORMAT.to_string(),
+    }
 }
 
 fn source_path_for(project_path: &Path, project_root: &Path, configured_source: &str) -> PathBuf {
@@ -1194,14 +1215,6 @@ fn project_root_for_path(path: &Path) -> PathBuf {
     } else {
         path.to_path_buf()
     }
-}
-
-fn find_config(path: &Path) -> Option<PathBuf> {
-    if path.is_file() {
-        return path.parent().and_then(CobbleConfig::find_in_path);
-    }
-
-    CobbleConfig::find_in_path(path)
 }
 
 fn print_json_report(report: &MigrationReport) -> Result<(), String> {

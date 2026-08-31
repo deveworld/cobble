@@ -1,3 +1,4 @@
+use crate::commands::find_config;
 use crate::commands::link::linked_output_path;
 use crate::commands::output_safety::{
     build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
@@ -18,7 +19,7 @@ pub struct CleanOptions {
 }
 
 pub fn clean(options: CleanOptions) -> Result<(), String> {
-    let (config, config_dir) = if let Some(config_path) = find_config(&options.path) {
+    let (config, config_dir) = if let Some(config_path) = find_config(options.path.as_deref()) {
         let config = CobbleConfig::load(&config_path)?;
         let config_dir = config_path
             .parent()
@@ -46,9 +47,11 @@ pub fn clean(options: CleanOptions) -> Result<(), String> {
     } else {
         None
     };
+    // Ownership is enforced for --output exactly like the default path: when a
+    // cobble.toml is in scope, only outputs marked with this project's id may
+    // be removed.
     let expected_project_id = config_dir
         .as_deref()
-        .filter(|_| options.linked || options.output.is_none())
         .map(|config_dir| project_marker_identity(config_dir).1);
 
     let output_dir = if options.linked {
@@ -230,19 +233,6 @@ fn require_path(path: PathBuf, label: &str, output_dir: &Path) -> Result<(), Str
             label
         ))
     }
-}
-
-fn find_config(path: &Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(path) = path {
-        if path.is_file() {
-            if let Some(parent) = path.parent() {
-                return CobbleConfig::find_in_path(parent);
-            }
-        } else {
-            return CobbleConfig::find_in_path(path);
-        }
-    }
-    CobbleConfig::find_in_path(".")
 }
 
 #[cfg(test)]

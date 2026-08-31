@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 // Keep diagnostics import traversal aligned with the transpiler guard so
 // preflight validation cannot recurse deeply enough to exhaust the stack.
-pub(super) const MAX_IMPORT_DEPTH: usize = 50;
+pub(super) const MAX_IMPORT_DEPTH: usize = crate::transpiler::MAX_IMPORT_DEPTH;
 
 pub fn analyze_in_memory_imports(source: &str, imports: &[Import]) -> Vec<SourceDiagnostic> {
     let mut diagnostics = Vec::new();
@@ -536,8 +536,7 @@ fn collect_exported_symbol_kinds(source: &str) -> HashMap<String, ExportedSymbol
         }
 
         let indent = masked.len() - trimmed.len();
-        if let Some(signature) = super::parse_function_signature(line, trimmed, line_number, indent)
-        {
+        if let Some(signature) = super::parse_function_signature(trimmed, line_number, indent) {
             symbol_kinds.insert(signature.name, ExportedSymbolKind::Function);
             continue;
         }
@@ -635,6 +634,13 @@ fn collect_cross_file_call_diagnostics(
 ) {
     let mut active_docstring_quote = None;
     let mut multiline_expression_depth = 0usize;
+    let imported_modules = file
+        .program
+        .imports
+        .iter()
+        .filter(|import| import.module != "stdlib" && import.items.is_empty())
+        .map(|import| import.module.as_str())
+        .collect::<HashSet<_>>();
     for (line_index, line) in file.source.lines().enumerate() {
         let line_number = line_index + 1;
         let raw_trimmed = line.trim_start();
@@ -653,7 +659,16 @@ fn collect_cross_file_call_diagnostics(
         let indent = masked.len() - trimmed.len();
         if !inside_multiline_expression {
             for call in super::function_calls_in_expression(trimmed) {
-                let Some(signature) = signatures.get(&call.name) else {
+                if call.name == "range" {
+                    continue;
+                }
+
+                let qualified_signature = qualified_imported_function_signature(
+                    &call.name,
+                    &imported_modules,
+                    signatures,
+                );
+                let Some(signature) = signatures.get(&call.name).or(qualified_signature) else {
                     if !super::is_user_function_call_statement(trimmed, &call) {
                         continue;
                     }
@@ -666,7 +681,7 @@ fn collect_cross_file_call_diagnostics(
                                 SourceDiagnostic::error(
                                     "unsupported-function-call-expression",
                                     line_number,
-                                    column_from_byte(line, indent + call.offset),
+                                    column_from_byte(&masked, indent + call.offset),
                                     message,
                                 )
                                 .with_help(
@@ -684,7 +699,7 @@ fn collect_cross_file_call_diagnostics(
                             SourceDiagnostic::error(
                                 "undefined-function",
                                 line_number,
-                                column_from_byte(line, indent + call.offset),
+                                column_from_byte(&masked, indent + call.offset),
                                 format!("Unknown helper function `{}`", call.name),
                             )
                             .with_help(
@@ -699,7 +714,7 @@ fn collect_cross_file_call_diagnostics(
                             SourceDiagnostic::error(
                                 "undefined-function",
                                 line_number,
-                                column_from_byte(line, indent + call.offset),
+                                column_from_byte(&masked, indent + call.offset),
                                 format!("Undefined function `{}`", call.name),
                             )
                             .with_help(
@@ -715,7 +730,7 @@ fn collect_cross_file_call_diagnostics(
                         SourceDiagnostic::error(
                             "function-argument-count",
                             line_number,
-                            column_from_byte(line, indent + call.offset),
+                            column_from_byte(&masked, indent + call.offset),
                             format!(
                                 "Function `{}` expects {} argument(s), but {} provided",
                                 signature.name,
@@ -731,35 +746,22 @@ fn collect_cross_file_call_diagnostics(
                     );
                     continue;
                 }
-
-                for argument in &call.arguments {
-                    let Some(nested_call) = super::function_calls_in_expression(&argument.text)
-                        .into_iter()
-                        .next()
-                    else {
-                        continue;
-                    };
-
-                    output.entry(file_index).or_default().push(
-                        SourceDiagnostic::error(
-                            "unsupported-function-call-argument",
-                            line_number,
-                            column_from_byte(line, indent + argument.offset + nested_call.offset),
-                            format!(
-                                "Function `{}` arguments cannot contain function call expressions",
-                                signature.name
-                            ),
-                        )
-                        .with_help(format!(
-                            "Call Cobble functions as standalone statements, or pass a literal, variable, selector, or storage-backed value. Definition is at {}.",
-                            format_file_signature_location(signature)
-                        )),
-                    );
-                }
             }
         }
         super::update_delimiter_depth_for_indentation(trimmed, &mut multiline_expression_depth);
     }
+}
+
+fn qualified_imported_function_signature<'a>(
+    call_name: &str,
+    imported_modules: &HashSet<&str>,
+    signatures: &'a HashMap<String, FileFunctionSignature>,
+) -> Option<&'a FileFunctionSignature> {
+    let (module, method) = super::split_module_call_name(call_name)?;
+    imported_modules
+        .contains(module)
+        .then(|| signatures.get(method))
+        .flatten()
 }
 
 fn collect_file_function_signatures(path: &Path, source: &str) -> Vec<FileFunctionSignature> {
@@ -780,8 +782,7 @@ fn collect_file_function_signatures(path: &Path, source: &str) -> Vec<FileFuncti
         }
 
         let indent = masked.len() - trimmed.len();
-        if let Some(signature) = super::parse_function_signature(line, trimmed, line_number, indent)
-        {
+        if let Some(signature) = super::parse_function_signature(trimmed, line_number, indent) {
             signatures.push(FileFunctionSignature {
                 path: path.to_path_buf(),
                 name: signature.name,
@@ -831,7 +832,7 @@ fn collect_file_named_symbols(path: &Path, source: &str) -> Vec<FileNamedSymbol>
                 name: name.to_string(),
                 kind: FileSymbolKind::EntityTemplate,
                 line: line_number,
-                column: column_from_byte(line, indent + name_offset.saturating_sub(1)),
+                column: indent + column_from_byte(trimmed, name_offset.saturating_sub(1)),
             });
         }
     }
@@ -945,7 +946,7 @@ fn find_import_location(source: &str, import: &Import) -> Option<(usize, usize)>
             if module == import.module {
                 return Some((
                     line_index + 1,
-                    column_from_byte(line, indent + "import ".len()),
+                    column_from_byte(&masked, indent + "import ".len()),
                 ));
             }
         } else {
@@ -958,7 +959,7 @@ fn find_import_location(source: &str, import: &Import) -> Option<(usize, usize)>
             if module.trim() == import.module {
                 return Some((
                     line_index + 1,
-                    column_from_byte(line, indent + "from ".len()),
+                    column_from_byte(&masked, indent + "from ".len()),
                 ));
             }
         }
@@ -995,7 +996,7 @@ fn find_import_item_location(source: &str, import: &Import, item: &str) -> Optio
             if candidate == item {
                 return Some((
                     line_index + 1,
-                    column_from_byte(line, items_offset + search_from + leading),
+                    column_from_byte(&masked, items_offset + search_from + leading),
                 ));
             }
             search_from += item_text.len() + 1;

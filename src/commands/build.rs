@@ -1,4 +1,4 @@
-use super::{find_cobble_files, resolve_entry_points};
+use super::{find_cobble_files, find_config, resolve_entry_points};
 use crate::commands::output_safety::{
     build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
     project_marker_identity, read_build_manifest, require_manifest_ownership,
@@ -49,7 +49,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     }
 
     // Try to find cobble.toml
-    let (config, config_dir) = if let Some(config_path) = find_config(&options.input) {
+    let (config, config_dir) = if let Some(config_path) = find_config(options.input.as_deref()) {
         let config = if options.pack_format.is_some() {
             CobbleConfig::load_unvalidated(&config_path)?
         } else {
@@ -165,6 +165,9 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         .map(|_| config_dir.clone())
         .unwrap_or_else(|| source_display_root.clone());
     let (project_root_marker, project_id) = project_marker_identity(&project_root_for_marker);
+    if !options.dry_run && !options.validate {
+        ensure_plain_build_output_dir_owned(&output_dir, &namespace, &project_id)?;
+    }
     let asset_passthrough_files = if experimental_resource_pack {
         collect_resource_pack_asset_passthrough_files(&project_root_for_marker)?
     } else {
@@ -574,6 +577,46 @@ fn ensure_build_output_path_safe(output_dir: &Path) -> Result<(), String> {
     ensure_no_symlink_descendants(output_dir, "build")
 }
 
+/// Plain (non-staged) builds write and clean stale entries directly inside the
+/// final output directory, so require that directory to be new, truly empty,
+/// or already owned by this project before anything inside it is replaced.
+fn ensure_plain_build_output_dir_owned(
+    output_dir: &Path,
+    namespace: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    let mut entries = match fs::read_dir(output_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect build output {:?}: {}",
+                output_dir, error
+            ));
+        }
+    };
+    if entries.next().is_none() {
+        return Ok(());
+    }
+
+    let manifest_path = build_manifest_path(output_dir);
+    let manifest = read_build_manifest(&manifest_path).map_err(|error| {
+        format!(
+            "Refusing to build into existing non-empty output directory {} that is not Cobble-owned: {}.\n\
+            Pick a new or empty output directory, or use `cobble build --validate` for staged publishing into a Cobble-owned directory.",
+            output_dir.display(),
+            error
+        )
+    })?;
+    require_manifest_ownership(&manifest, Some(namespace), Some(project_id)).map_err(|error| {
+        format!(
+            "Refusing to build into output directory owned by another Cobble project at {}: {}",
+            output_dir.display(),
+            error
+        )
+    })
+}
+
 fn staging_output_dir(output_dir: &Path) -> Result<PathBuf, String> {
     let parent = output_dir.parent().unwrap_or_else(|| Path::new("."));
     let name = output_dir
@@ -633,14 +676,20 @@ fn publish_validated_output(
             ));
         }
 
-        fs::remove_dir_all(&backup_dir).map_err(|e| {
-            format!(
-                "Failed to clean previous output backup {:?}: {}",
-                backup_dir, e
-            )
-        })?;
-        fs::remove_dir_all(staging_dir)
-            .map_err(|e| format!("Failed to clean staging output {:?}: {}", staging_dir, e))?;
+        // The validated output has already been swapped into place, so cleanup
+        // failures must not turn the successful publish into a build error.
+        if let Err(error) = fs::remove_dir_all(&backup_dir) {
+            eprintln!(
+                "Warning: build succeeded, but the previous output backup {:?} could not be removed: {}. Remove it manually.",
+                backup_dir, error
+            );
+        }
+        if let Err(error) = fs::remove_dir_all(staging_dir) {
+            eprintln!(
+                "Warning: build succeeded, but the staging output {:?} could not be removed: {}. Remove it manually.",
+                staging_dir, error
+            );
+        }
         return Ok(());
     }
 
@@ -1540,29 +1589,11 @@ fn validate_asset_passthrough_relative_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(path) = input {
-        if path.is_file() {
-            // If input is a file, look for config in parent directories
-            if let Some(parent) = path.parent() {
-                return CobbleConfig::find_in_path(parent);
-            }
-        } else {
-            // If input is a directory, look for config in it
-            return CobbleConfig::find_in_path(path);
-        }
-    }
-    // Look in current directory
-    CobbleConfig::find_in_path(".")
-}
-
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
+    use crate::test_support::cwd_lock;
 
     struct CurrentDirGuard {
         previous: PathBuf,
@@ -1588,10 +1619,30 @@ mod tests {
             r#"{
                 "type": "root",
                 "children": {
+                    "gamerule": {
+                        "type": "literal",
+                        "children": {
+                            "rest": {
+                                "type": "argument",
+                                "parser": "minecraft:message",
+                                "executable": true
+                            }
+                        }
+                    },
                     "say": {
                         "type": "literal",
                         "children": {
                             "message": {
+                                "type": "argument",
+                                "parser": "minecraft:message",
+                                "executable": true
+                            }
+                        }
+                    },
+                    "scoreboard": {
+                        "type": "literal",
+                        "children": {
+                            "rest": {
                                 "type": "argument",
                                 "parser": "minecraft:message",
                                 "executable": true
@@ -1602,6 +1653,14 @@ mod tests {
             }"#,
         )
         .unwrap();
+    }
+
+    fn without_return_prologue(content: &str) -> String {
+        content
+            .lines()
+            .filter(|line| !line.starts_with("scoreboard players set #return_flag_"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -1732,7 +1791,7 @@ mod tests {
         assert!(error.contains("validation error(s) found"));
         let content =
             fs::read_to_string(output_dir.join("data/cobble/function/test.mcfunction")).unwrap();
-        assert_eq!(content.trim(), "say valid");
+        assert_eq!(without_return_prologue(&content).trim(), "say valid");
     }
 
     #[test]
@@ -1815,7 +1874,7 @@ mod tests {
 
     #[test]
     fn validated_publish_refuses_current_directory_without_publish_artifact() {
-        let _lock = CWD_LOCK.lock().unwrap();
+        let _lock = cwd_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let output_dir = temp_dir.path().join("output");
         let project_dir = temp_dir.path().join("project");
@@ -2083,7 +2142,7 @@ mod tests {
 
     #[test]
     fn build_rejects_traversal_namespace_from_config_without_deleting_functions() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = cwd_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let project_dir = temp_dir.path().join("project");
         let source_dir = project_dir.join("src");
@@ -2141,7 +2200,7 @@ output = "."
 
     #[test]
     fn build_validate_refuses_to_replace_unowned_existing_output() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = cwd_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let project_dir = temp_dir.path().join("project");
         let source_dir = project_dir.join("src");
@@ -2200,7 +2259,7 @@ output = "../victim/keep"
 
     #[test]
     fn build_validate_empty_source_does_not_touch_existing_output() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = cwd_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let project_dir = temp_dir.path().join("project");
         let source_dir = project_dir.join("src");
@@ -2260,7 +2319,7 @@ output = "../victim/keep"
 
     #[test]
     fn build_validate_preserves_unrelated_files_after_prior_nonvalidated_build() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = cwd_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let project_dir = temp_dir.path().join("project");
         let source_dir = project_dir.join("src");
@@ -2268,9 +2327,7 @@ output = "../victim/keep"
         let commands_json = project_dir.join("commands.json");
 
         fs::create_dir_all(&source_dir).unwrap();
-        fs::create_dir_all(victim_dir.join("sub")).unwrap();
         fs::write(source_dir.join("main.cbl"), "def main():\n    /say safe\n").unwrap();
-        fs::write(victim_dir.join("sub").join("important.txt"), "keep\n").unwrap();
         write_say_commands_json(&commands_json);
         fs::write(
             project_dir.join("cobble.toml"),
@@ -2305,6 +2362,10 @@ output = "../victim/keep"
             commands_json: commands_json.clone(),
         })
         .unwrap();
+        // Unrelated files that appear after the plain build must survive the
+        // staged --validate replacement.
+        fs::create_dir_all(victim_dir.join("sub")).unwrap();
+        fs::write(victim_dir.join("sub").join("important.txt"), "keep\n").unwrap();
         build(BuildOptions {
             input: None,
             output: None,
@@ -2363,7 +2424,7 @@ output = "../victim/keep"
 
         let content =
             fs::read_to_string(output_dir.join("data/owned/function/main.mcfunction")).unwrap();
-        assert_eq!(content.trim(), "say second");
+        assert_eq!(without_return_prologue(&content).trim(), "say second");
         assert_eq!(
             fs::read_to_string(output_dir.join("notes.txt")).unwrap(),
             "keep\n"
@@ -2599,7 +2660,7 @@ output = "../victim/keep"
         let temp_dir = tempfile::TempDir::new().unwrap();
         let input_file = temp_dir.path().join("main.cbl");
         let output_dir = temp_dir.path().join("output");
-        fs::write(&input_file, "def main():\n    score += 1\n").unwrap();
+        fs::write(&input_file, "def main():\n    a, b = 2\n").unwrap();
 
         let error = build(BuildOptions {
             input: Some(input_file),
@@ -2618,8 +2679,8 @@ output = "../victim/keep"
         .unwrap_err();
 
         assert!(error.contains("Language diagnostics failed"));
-        assert!(error.contains("unsupported-assignment"));
-        assert!(error.contains("Compound assignment `+=` is not supported"));
+        assert!(error.contains("unsupported-assignment-target"));
+        assert!(error.contains("Unsupported assignment target"));
         assert!(!output_dir.exists());
     }
 
@@ -2710,9 +2771,20 @@ output = "output"
     #[test]
     fn zip_contains_only_datapack_files_when_output_is_current_dir() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let _lock = CWD_LOCK.lock().unwrap();
+        let _lock = cwd_lock().lock().unwrap();
         let _guard = CurrentDirGuard::push(temp_dir.path());
         fs::write("main.cbl", "def main():\n    /say hi\n").unwrap();
+        // The current directory is non-empty (it holds the source), so a
+        // plain build into it requires this project's ownership marker.
+        let (_, project_id) = project_marker_identity(temp_dir.path());
+        fs::create_dir_all(".cobble").unwrap();
+        fs::write(
+            ".cobble/build_manifest.json",
+            format!(
+                r#"{{"version":1,"cobble_version":"test","namespace":"zipped","project_id":"{project_id}"}}"#
+            ),
+        )
+        .unwrap();
 
         build(BuildOptions {
             input: Some(PathBuf::from("main.cbl")),
@@ -2836,6 +2908,17 @@ output = "output"
         fs::write(&input_file, "def main():\n    /say hardlink\n").unwrap();
         fs::write(&victim_file, "keep\n").unwrap();
         hard_link(&victim_file, output_dir.join("pack.mcmeta")).unwrap();
+        // Plain builds only re-enter non-empty directories owned by this
+        // project, so mark the pre-existing output accordingly.
+        let (_, project_id) = project_marker_identity(temp_dir.path());
+        fs::create_dir_all(output_dir.join(".cobble")).unwrap();
+        fs::write(
+            output_dir.join(".cobble/build_manifest.json"),
+            format!(
+                r#"{{"version":1,"cobble_version":"test","namespace":"hardpack","project_id":"{project_id}"}}"#
+            ),
+        )
+        .unwrap();
 
         build(BuildOptions {
             input: Some(input_file),
@@ -2864,7 +2947,7 @@ output = "output"
     fn resource_pack_asset_passthrough_replaces_hardlink_without_overwriting_target_inode() {
         use std::fs::hard_link;
 
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = cwd_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let project_dir = temp_dir.path().join("project");
         let source_dir = project_dir.join("src");
@@ -2897,6 +2980,17 @@ output = "output"
 [experimental]
 resource_pack = true
 "#,
+        )
+        .unwrap();
+        // Plain builds only re-enter non-empty directories owned by this
+        // project, so mark the pre-seeded output accordingly.
+        let (_, project_id) = project_marker_identity(&project_dir);
+        fs::create_dir_all(project_dir.join("output/.cobble")).unwrap();
+        fs::write(
+            project_dir.join("output/.cobble/build_manifest.json"),
+            format!(
+                r#"{{"version":1,"cobble_version":"test","namespace":"resources","project_id":"{project_id}"}}"#
+            ),
         )
         .unwrap();
 

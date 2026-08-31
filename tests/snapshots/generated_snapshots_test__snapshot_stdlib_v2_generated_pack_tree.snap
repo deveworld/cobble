@@ -1,6 +1,6 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 199
+assertion_line: 219
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====

@@ -13,8 +13,7 @@ impl Transpiler {
             self.normalize_if_condition(self.translate_condition(&processed_condition)?)?;
 
         let branch_var = if !if_stmt.elif_branches.is_empty() || if_stmt.else_branch.is_some() {
-            let var = format!("if_branch_{}", self.temp_counter);
-            self.temp_counter += 1;
+            let var = format!("if_branch_{}", self.next_temp_id());
             self.data_pack.track_objective("temp");
             if let Some(ref mut commands) = self.current_function {
                 commands.push(format!("scoreboard players set {} temp 0", var));
@@ -39,52 +38,46 @@ impl Transpiler {
             mark_branch_taken(commands, &condition_execute_args, &branch_var);
         }
 
-        // Check if we need to create a separate function for complex if statements
-        // If the then_branch has multiple statements or nested control flow, use a function
-        // IMPORTANT: We use > 1 (not > 3) to prevent bugs where earlier statements modify
-        // the condition variables, causing later statements to not execute
-        let needs_function = if_stmt.then_branch.len() > 1
-            || if_stmt.then_branch.iter().any(|stmt| {
-                matches!(
-                    stmt,
-                    Statement::If(_) | Statement::For(_) | Statement::While(_)
-                )
-            });
+        // Capture the branch body first; the number of commands it produced
+        // decides between inlining and routing through a helper function.
+        // Inlining is only safe for a single command: prefixing several
+        // commands with the condition re-evaluates it per command, so an
+        // earlier command that changes the condition variables would cut off
+        // the rest of the branch.
+        let saved_context = self.current_context.clone();
+        let capture = self.capture_statements(&if_stmt.then_branch)?;
+        self.current_context = saved_context;
 
-        if needs_function {
+        if capture.commands.len() > 1 {
             // Create a separate function for the if branch
-            let if_func_name = format!("if_temp_{}", self.temp_counter);
-            self.temp_counter += 1;
+            let if_func_name = format!("if_temp_{}", self.next_temp_id());
 
-            // Process then branch in a new function
-            let saved_context = self.current_context.clone();
-            let capture = self.capture_statements(&if_stmt.then_branch)?;
             let needs_storage = capture.requires_macro_context();
             self.add_captured_function(if_func_name.clone(), capture);
-            self.current_context = saved_context;
 
             // Add execute command to call the function
             let call_cmd = self.function_call_command(&if_func_name, needs_storage);
+            let return_cmd = self.return_propagation_command();
             if let Some(ref mut commands) = self.current_function {
                 commands.push(format!(
                     "execute {} run {}",
                     condition_execute_args, call_cmd
                 ));
+                if let Some(return_cmd) = return_cmd {
+                    commands.push(return_cmd);
+                }
             }
         } else {
-            // For simple if statements, inline the commands
-            for stmt in &if_stmt.then_branch {
-                let capture = self.capture_statement(stmt)?;
-                self.append_transformed_capture(capture, |cmd| {
-                    let clean_cmd = Self::strip_command_prefix(cmd);
-                    let execute_prefix = format!("execute {}", condition_execute_args);
-                    if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
-                        format!("{} {}", execute_prefix, inner_parts)
-                    } else {
-                        format!("{} run {}", execute_prefix, clean_cmd)
-                    }
-                })?;
-            }
+            // At most one command: inline it under the condition
+            self.append_transformed_capture(capture, |cmd| {
+                let clean_cmd = Self::strip_command_prefix(cmd);
+                let execute_prefix = format!("execute {}", condition_execute_args);
+                if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
+                    format!("{} {}", execute_prefix, inner_parts)
+                } else {
+                    format!("{} run {}", execute_prefix, clean_cmd)
+                }
+            })?;
         }
 
         // Handle elif branches
@@ -99,8 +92,7 @@ impl Transpiler {
                 elif_execute_args
             };
             let body_condition = if let Some(ref var) = branch_var {
-                let elif_taken_var = format!("elif_taken_{}", self.temp_counter);
-                self.temp_counter += 1;
+                let elif_taken_var = format!("elif_taken_{}", self.next_temp_id());
                 self.data_pack.track_objective("temp");
                 if let Some(ref mut commands) = self.current_function {
                     commands.push(format!("scoreboard players set {} temp 0", elif_taken_var));
@@ -118,41 +110,35 @@ impl Transpiler {
                 compound_condition.clone()
             };
 
-            // Check if elif needs a function
-            let elif_needs_function = elif_branch.len() > 1
-                || elif_branch.iter().any(|stmt| {
-                    matches!(
-                        stmt,
-                        Statement::If(_) | Statement::For(_) | Statement::While(_)
-                    )
-                });
+            // Same capture-first rule as the then branch: inline only a
+            // single-command body, otherwise route through a helper function.
+            let saved_context = self.current_context.clone();
+            let capture = self.capture_statements(elif_branch)?;
+            self.current_context = saved_context;
 
-            if elif_needs_function {
-                let elif_func_name = format!("elif_temp_{}", self.temp_counter);
-                self.temp_counter += 1;
+            if capture.commands.len() > 1 {
+                let elif_func_name = format!("elif_temp_{}", self.next_temp_id());
 
-                let saved_context = self.current_context.clone();
-                let capture = self.capture_statements(elif_branch)?;
                 let needs_storage = capture.requires_macro_context();
                 self.add_captured_function(elif_func_name.clone(), capture);
-                self.current_context = saved_context;
 
                 let call_cmd = self.function_call_command(&elif_func_name, needs_storage);
+                let return_cmd = self.return_propagation_command();
                 if let Some(ref mut commands) = self.current_function {
                     commands.push(format!("execute {} run {}", body_condition, call_cmd));
+                    if let Some(return_cmd) = return_cmd {
+                        commands.push(return_cmd);
+                    }
                 }
             } else {
-                for stmt in elif_branch {
-                    let capture = self.capture_statement(stmt)?;
-                    self.append_transformed_capture(capture, |cmd| {
-                        let clean_cmd = Self::strip_command_prefix(cmd);
-                        if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
-                            format!("execute {} {}", body_condition, inner_parts)
-                        } else {
-                            format!("execute {} run {}", body_condition, clean_cmd)
-                        }
-                    })?;
-                }
+                self.append_transformed_capture(capture, |cmd| {
+                    let clean_cmd = Self::strip_command_prefix(cmd);
+                    if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
+                        format!("execute {} {}", body_condition, inner_parts)
+                    } else {
+                        format!("execute {} run {}", body_condition, clean_cmd)
+                    }
+                })?;
             }
         }
 
@@ -164,40 +150,35 @@ impl Transpiler {
                 format!("unless {}", condition_cmd)
             };
 
-            let else_needs_function = else_branch.len() > 1
-                || else_branch.iter().any(|stmt| {
-                    matches!(
-                        stmt,
-                        Statement::If(_) | Statement::For(_) | Statement::While(_)
-                    )
-                });
+            // Same capture-first rule as the then branch: inline only a
+            // single-command body, otherwise route through a helper function.
+            let saved_context = self.current_context.clone();
+            let capture = self.capture_statements(else_branch)?;
+            self.current_context = saved_context;
 
-            if else_needs_function {
-                let else_func_name = format!("else_temp_{}", self.temp_counter);
-                self.temp_counter += 1;
+            if capture.commands.len() > 1 {
+                let else_func_name = format!("else_temp_{}", self.next_temp_id());
 
-                let saved_context = self.current_context.clone();
-                let capture = self.capture_statements(else_branch)?;
                 let needs_storage = capture.requires_macro_context();
                 self.add_captured_function(else_func_name.clone(), capture);
-                self.current_context = saved_context;
 
                 let call_cmd = self.function_call_command(&else_func_name, needs_storage);
+                let return_cmd = self.return_propagation_command();
                 if let Some(ref mut commands) = self.current_function {
                     commands.push(format!("execute {} run {}", else_condition, call_cmd));
+                    if let Some(return_cmd) = return_cmd {
+                        commands.push(return_cmd);
+                    }
                 }
             } else {
-                for stmt in else_branch {
-                    let capture = self.capture_statement(stmt)?;
-                    self.append_transformed_capture(capture, |cmd| {
-                        let clean_cmd = Self::strip_command_prefix(cmd);
-                        if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
-                            format!("execute {} {}", else_condition, inner_parts)
-                        } else {
-                            format!("execute {} run {}", else_condition, clean_cmd)
-                        }
-                    })?;
-                }
+                self.append_transformed_capture(capture, |cmd| {
+                    let clean_cmd = Self::strip_command_prefix(cmd);
+                    if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
+                        format!("execute {} {}", else_condition, inner_parts)
+                    } else {
+                        format!("execute {} run {}", else_condition, clean_cmd)
+                    }
+                })?;
             }
         }
 

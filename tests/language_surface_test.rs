@@ -21,6 +21,7 @@ config = {"foo": 1, enabled: True}
 def tick(player, amount):
     global total
     total = total + amount
+    total += 1
     if total > 10:
         /say high
     elif total == 10:
@@ -100,13 +101,6 @@ def reward(*players):
 "#,
         ),
         (
-            "compound assignment",
-            r#"
-def tick():
-    score += 1
-"#,
-        ),
-        (
             "list comprehension",
             r#"
 def tick():
@@ -149,8 +143,7 @@ fn unsupported_python_like_syntax_reports_actionable_diagnostics() {
 @event.tick
 def reward(player, amount=1, *extra):
     values = [i for i in range(3)]
-    score += 1
-    obj.field = 2
+    a, b = 2
     break
     continue
     assert score
@@ -180,10 +173,7 @@ from helpers import setup as renamed
         .any(|message| message.contains("comprehensions")));
     assert!(messages
         .iter()
-        .any(|message| message.contains("Compound assignment")));
-    assert!(messages
-        .iter()
-        .any(|message| message.contains("simple identifier assignment")));
+        .any(|message| message.contains("Unsupported assignment target")));
     assert!(messages
         .iter()
         .any(|message| message.contains("Dotted imports")));
@@ -239,13 +229,10 @@ def main():
 fn parse_source_reports_semantic_preflight_diagnostics() {
     let source = r#"
 def helper():
-    pass
-
-def helper():
-    return
+    return 1
 
 def main():
-    result = helper()
+    result = missing()
 "#;
 
     let direct_diagnostics = analyze_source(source);
@@ -260,15 +247,10 @@ def main():
         .map(|diagnostic| diagnostic.kind.as_str())
         .collect::<Vec<_>>();
 
-    assert!(kinds.contains(&"duplicate-function"));
-    assert!(kinds.contains(&"unsupported-return"));
-    assert!(kinds.contains(&"unsupported-function-call-expression"));
-    assert!(diagnostics.iter().any(|diagnostic| diagnostic
-        .message
-        .contains("Return statements are not supported")));
-    assert!(diagnostics.iter().any(|diagnostic| diagnostic
-        .message
-        .contains("Function calls in expressions are not supported")));
+    assert!(kinds.contains(&"undefined-function"));
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("Undefined function `missing`")));
 }
 
 #[test]

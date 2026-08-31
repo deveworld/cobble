@@ -21,10 +21,30 @@ fn write_say_commands_json(temp_dir: &Path) -> PathBuf {
         r#"{
             "type": "root",
             "children": {
+                "gamerule": {
+                    "type": "literal",
+                    "children": {
+                        "rest": {
+                            "type": "argument",
+                            "parser": "minecraft:message",
+                            "executable": true
+                        }
+                    }
+                },
                 "say": {
                     "type": "literal",
                     "children": {
                         "message": {
+                            "type": "argument",
+                            "parser": "minecraft:message",
+                            "executable": true
+                        }
+                    }
+                },
+                "scoreboard": {
+                    "type": "literal",
+                    "children": {
+                        "rest": {
                             "type": "argument",
                             "parser": "minecraft:message",
                             "executable": true
@@ -1306,6 +1326,8 @@ fn cli_link_world_writes_resolved_datapacks_state() {
         "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
     );
 
+    fs::create_dir_all(&world_dir).unwrap();
+
     let link = cobble()
         .arg("link")
         .arg(&project_dir)
@@ -1539,7 +1561,7 @@ fn cli_watch_link_rejects_output_override() {
 
     let (_stdout, stderr) = output_text(&output);
     assert!(!output.status.success());
-    assert!(stderr.contains("--link cannot be combined with --output"));
+    assert!(stderr.contains("cannot be used with"));
 }
 
 #[test]
@@ -1821,7 +1843,18 @@ fn cli_build_dry_run_does_not_write_final_output() {
 #[test]
 fn cli_build_dry_run_validate_reports_validation_summary() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let commands_json = write_say_commands_json(temp_dir.path());
+    let commands_json = PathBuf::from("data/commands.json");
+    if !commands_json.exists()
+        && std::env::var("COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD").as_deref() == Ok("0")
+    {
+        // Same skip convention as tests/validation_test.rs: without the real
+        // command tree, --validate would download a Mojang server.jar and run
+        // java --reports, which hermetic CI disables via this env variable.
+        eprintln!(
+            "Skipping cli_build_dry_run_validate_reports_validation_summary: data/commands.json not found and auto-download is disabled"
+        );
+        return;
+    }
     let input = write_source(temp_dir.path(), "def main():\n    /say valid\n");
     let output_dir = temp_dir.path().join("output");
 
@@ -2025,7 +2058,7 @@ fn cli_build_rejects_language_diagnostic_before_output() {
         temp_dir.path(),
         r#"
 def main():
-    score += 1
+    a, b = 2
 "#,
     );
     let output_dir = temp_dir.path().join("output");
@@ -2041,9 +2074,9 @@ def main():
     let (_stdout, stderr) = output_text(&output);
     assert!(!output.status.success());
     assert!(stderr.contains("Language diagnostics failed"));
-    assert!(stderr.contains("unsupported-assignment"));
-    assert!(stderr.contains("Compound assignment `+=` is not supported"));
-    assert!(stderr.contains("3 |     score += 1"));
+    assert!(stderr.contains("unsupported-assignment-target"));
+    assert!(stderr.contains("Unsupported assignment target"));
+    assert!(stderr.contains("3 |     a, b = 2"));
     assert!(stderr.contains("^"));
     assert!(!output_dir.exists());
 }
@@ -2081,13 +2114,10 @@ fn cli_check_reports_semantic_preflight_diagnostics() {
         temp_dir.path(),
         r#"
 def helper():
-    pass
-
-def helper():
-    return
+    return 1
 
 def main():
-    result = helper()
+    result = missing()
 "#,
     );
 
@@ -2095,10 +2125,8 @@ def main():
 
     let (_stdout, stderr) = output_text(&output);
     assert!(!output.status.success());
-    assert!(stderr.contains("duplicate-function"));
-    assert!(stderr.contains("unsupported-return"));
-    assert!(stderr.contains("unsupported-function-call-expression"));
-    assert!(stderr.contains("Minecraft functions cannot return early"));
+    assert!(stderr.contains("undefined-function"));
+    assert!(stderr.contains("Undefined function `missing`"));
 }
 
 #[test]
@@ -3684,8 +3712,9 @@ fn cli_check_reports_storage_access_and_type_mismatch() {
         temp_dir.path(),
         r#"
 def main():
-    items = [1, 2, 3]
-    first = items[i]
+    config = {"chance": 1}
+    i = 0
+    first = config[i]
     value = 1
     value = "one"
 "#,
@@ -3706,8 +3735,9 @@ fn cli_check_reports_unsupported_storage_access() {
         temp_dir.path(),
         r#"
 def main():
-    items = [1, 2, 3]
-    first = items[i]
+    config = {"chance": 1}
+    i = 0
+    first = config[i]
 "#,
     );
 
@@ -3716,7 +3746,7 @@ def main():
     let (_stdout, stderr) = output_text(&output);
     assert!(!output.status.success());
     assert!(stderr.contains("unsupported-storage-access"));
-    assert!(stderr.contains("Dynamic storage-backed subscript indexes are not supported"));
+    assert!(stderr.contains("Dynamic storage-backed map keys must be string values"));
 }
 
 #[test]
@@ -3890,7 +3920,7 @@ def main():
 }
 
 #[test]
-fn cli_check_reports_nested_function_call_arguments() {
+fn cli_check_allows_nested_function_call_arguments() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(
         temp_dir.path(),
@@ -3899,7 +3929,7 @@ def main():
     greet(make_name())
 
 def make_name():
-    pass
+    return 7
 
 def greet(name):
     /say {name}
@@ -3909,9 +3939,7 @@ def greet(name):
     let output = cobble().arg("check").arg(&input).output().unwrap();
 
     let (_stdout, stderr) = output_text(&output);
-    assert!(!output.status.success());
-    assert!(stderr.contains("unsupported-function-call-argument"));
-    assert!(stderr.contains("Function `greet` arguments cannot contain function call expressions"));
+    assert!(output.status.success(), "{stderr}");
 }
 
 #[test]

@@ -1,11 +1,192 @@
 use crate::ast::*;
+use crate::transpiler::storage_paths::StoragePathOps;
 use crate::transpiler::Transpiler;
+use crate::transpiler::{GeneratedCommandKind, ModuleLevelAssignment};
 
 impl Transpiler {
+    pub(in crate::transpiler) fn storage_target_assignment_commands(
+        &mut self,
+        target_expr: &Expression,
+        value: &Expression,
+    ) -> Result<Vec<String>, String> {
+        let Some(path_plan) = self.resolve_storage_path_plan(target_expr) else {
+            return Err(format!(
+                "Assignment target `{target_expr:?}` must resolve to a storage-backed value. \
+                 Assign to a storage-backed list/map/string field such as `config.count` or `items[i]`."
+            ));
+        };
+
+        if let Some((op, right)) = Self::storage_compound_assignment_parts(target_expr, value) {
+            return self.storage_compound_assignment_commands(&path_plan, op, right);
+        }
+
+        Ok(
+            if let Some(static_path) = path_plan.as_static().map(str::to_string) {
+                self.storage_value_commands(&static_path, value)?
+            } else {
+                let (mut commands, value_path) = self.materialize_storage_value(value)?;
+                let namespace = self.data_pack.namespace.clone();
+                commands.extend(self.dynamic_storage_command(
+                    &path_plan,
+                    GeneratedCommandKind::ControlFlow,
+                    |path| {
+                        vec![format!(
+                            "$data modify storage {}:global {} set from storage {}:global {}",
+                            namespace, path, namespace, value_path
+                        )]
+                    },
+                )?);
+                commands.push(format!(
+                    "data remove storage {}:global {}",
+                    self.data_pack.namespace, value_path
+                ));
+                commands
+            },
+        )
+    }
+
+    fn storage_compound_assignment_parts<'a>(
+        target_expr: &Expression,
+        value: &'a Expression,
+    ) -> Option<(&'a BinaryOp, &'a Expression)> {
+        let Expression::Binary(left, op, right) = value else {
+            return None;
+        };
+        if left.as_ref() != target_expr || matches!(op, BinaryOp::Pow) {
+            return None;
+        }
+        Some((op, right))
+    }
+
+    fn storage_compound_assignment_commands(
+        &mut self,
+        path_plan: &crate::transpiler::StoragePathPlan,
+        op: &BinaryOp,
+        right: &Expression,
+    ) -> Result<Vec<String>, String> {
+        let id = self.next_temp_id();
+        let namespace = self.data_pack.namespace.clone();
+        let target_score = format!("#storage_target_{}", id);
+        let rhs_score = format!("#storage_rhs_{}", id);
+        self.data_pack.track_objective("temp");
+
+        let mut commands = Vec::new();
+        let dynamic_args_path = if let Some(static_path) = path_plan.as_static() {
+            commands.push(format!(
+                "execute store result score {} temp run data get storage {}:global {}",
+                target_score, namespace, static_path
+            ));
+            None
+        } else {
+            let (prepare_commands, args_path) = self.prepare_dynamic_storage_path(id, path_plan)?;
+            commands.extend(prepare_commands);
+            let helper_name = format!("_cobble_storage_dyn_read_{}", id);
+            self.add_generated_helper_function(
+                helper_name.clone(),
+                vec![format!(
+                    "$execute store result score {} temp run data get storage {}:global {}",
+                    target_score,
+                    namespace,
+                    path_plan.template()
+                )],
+                GeneratedCommandKind::ControlFlow,
+            );
+            commands.push(format!(
+                "function {}:{} with storage {}:global {}",
+                namespace, helper_name, namespace, args_path
+            ));
+            Some(args_path)
+        };
+
+        commands.extend(self.evaluate_expression_to_target(right, &rhs_score)?);
+        let operation = match op {
+            BinaryOp::Add => "+=",
+            BinaryOp::Sub => "-=",
+            BinaryOp::Mul => "*=",
+            BinaryOp::Div => "/=",
+            BinaryOp::Mod => "%=",
+            _ => {
+                return Err(format!(
+                    "Unsupported compound storage assignment operator: {:?}",
+                    op
+                ))
+            }
+        };
+        commands.push(format!(
+            "scoreboard players operation {} temp {} {} temp",
+            target_score, operation, rhs_score
+        ));
+
+        if let Some(static_path) = path_plan.as_static() {
+            commands.push(format!(
+                "execute store result storage {}:global {} int 1 run scoreboard players get {} temp",
+                namespace, static_path, target_score
+            ));
+        } else if let Some(args_path) = dynamic_args_path {
+            let helper_name = format!("_cobble_storage_dyn_write_{}", id);
+            self.add_generated_helper_function(
+                helper_name.clone(),
+                vec![format!(
+                    "$execute store result storage {}:global {} int 1 run scoreboard players get {} temp",
+                    namespace,
+                    path_plan.template(),
+                    target_score
+                )],
+                GeneratedCommandKind::ControlFlow,
+            );
+            commands.push(format!(
+                "function {}:{} with storage {}:global {}",
+                namespace, helper_name, namespace, args_path
+            ));
+            commands.push(format!(
+                "data remove storage {}:global {}",
+                namespace, args_path
+            ));
+        }
+
+        Ok(commands)
+    }
+
+    fn process_storage_target_assignment(
+        &mut self,
+        target_expr: &Expression,
+        value: &Expression,
+    ) -> Result<(), String> {
+        if self.current_function.is_none() {
+            if self.resolve_storage_path_plan(target_expr).is_none() {
+                return Err(format!(
+                    "Assignment target `{target_expr:?}` must resolve to an already-defined storage-backed value. \
+                     Define the base list, map, or string before assigning to one of its fields."
+                ));
+            }
+            self.module_level_vars
+                .push(ModuleLevelAssignment::StorageTarget {
+                    target_expr: target_expr.clone(),
+                    value: value.clone(),
+                    source: self.current_statement_source.clone(),
+                });
+            return Ok(());
+        }
+
+        let commands = self.storage_target_assignment_commands(target_expr, value)?;
+
+        if let Some(ref mut function_commands) = self.current_function {
+            function_commands.extend(commands);
+        }
+
+        Ok(())
+    }
+
     pub(in crate::transpiler) fn process_assignment(
         &mut self,
         assign: &Assignment,
     ) -> Result<(), String> {
+        if let Some(target_expr) = assign.target_expr.as_ref() {
+            if !matches!(target_expr, Expression::Identifier(name) if name == &assign.target) {
+                return self.process_storage_target_assignment(target_expr, &assign.value);
+            }
+        }
+
         // Infer the type of the value being assigned
         let value_type = self.infer_type(&assign.value);
 
@@ -37,11 +218,12 @@ impl Transpiler {
                     self.scoreboard_variables.insert(assign.target.clone());
                 }
             }
-            self.module_level_vars.push((
-                assign.target.clone(),
-                assign.value.clone(),
-                self.current_statement_source.clone(),
-            ));
+            self.module_level_vars
+                .push(ModuleLevelAssignment::Variable {
+                    target: assign.target.clone(),
+                    value: assign.value.clone(),
+                    source: self.current_statement_source.clone(),
+                });
             return Ok(());
         }
 
@@ -119,16 +301,22 @@ impl Transpiler {
         // Do this before borrowing to avoid borrow checker issues
         // 4. Handle Complex Expressions (Math, Binary, etc.)
         let needs_complex_eval = match &assign.value {
-            Expression::Binary(left, _, right) => {
-                // Simple binary (atom op atom) handled by optimized code in assignment.rs
-                // Complex binary (nested expressions) need the expression evaluator
-                !matches!(
-                    (&**left, &**right),
-                    (
-                        Expression::Identifier(_) | Expression::Number(_),
-                        Expression::Identifier(_) | Expression::Number(_)
+            Expression::Binary(left, op, right) => {
+                // Pow always goes through the expression evaluator (both
+                // constant and runtime exponents), as do expressions touching
+                // macro params. Simple binary (atom op atom) stays on the
+                // optimized ladder below; nested expressions need the
+                // expression evaluator.
+                matches!(op, BinaryOp::Pow)
+                    || Self::expr_contains_param(left, &self.current_context.params)
+                    || Self::expr_contains_param(right, &self.current_context.params)
+                    || !matches!(
+                        (&**left, &**right),
+                        (
+                            Expression::Identifier(_) | Expression::Number(_),
+                            Expression::Identifier(_) | Expression::Number(_)
+                        )
                     )
-                )
             }
             Expression::Unary(_, _) | Expression::Call(_, _) => true,
             // Attribute/Subscript falling through here means they failed storage resolution
@@ -139,6 +327,21 @@ impl Transpiler {
 
         if needs_complex_eval {
             // Handle complex nested expressions
+            self.data_pack.track_objective("temp");
+            self.variable_objectives
+                .insert(assign.target.clone(), "temp".to_string());
+            self.scoreboard_variables.insert(assign.target.clone());
+            let expr_commands =
+                self.evaluate_expression_to_target(&assign.value, &assign.target)?;
+
+            if let Some(ref mut commands) = self.current_function {
+                commands.extend(expr_commands);
+            }
+            return Ok(());
+        }
+
+        if matches!(&assign.value, Expression::Identifier(var) if self.current_context.params.iter().any(|param| param == var))
+        {
             self.data_pack.track_objective("temp");
             self.variable_objectives
                 .insert(assign.target.clone(), "temp".to_string());
@@ -163,17 +366,22 @@ impl Transpiler {
             self.variable_storage_paths
                 .insert(assign.target.clone(), storage_path.clone());
 
-            let snbt = self.serialize_to_snbt(&assign.value)?;
-
-            let cmd = format!(
-                "data modify storage {}:global {} set value {}",
-                self.data_pack.namespace, storage_path, snbt
-            );
+            let value_commands = self.storage_value_commands(&storage_path, &assign.value)?;
 
             if let Some(ref mut commands) = self.current_function {
-                commands.push(cmd);
+                commands.extend(value_commands);
             }
             return Ok(());
+        }
+
+        // Scoreboard arithmetic below reads identifier operands as scores; a
+        // storage-backed string's score mirror only holds the string length.
+        if let Expression::Binary(left, _, right) = &assign.value {
+            for operand in [&**left, &**right] {
+                if let Expression::Identifier(name) = operand {
+                    self.reject_string_score_operand(name)?;
+                }
+            }
         }
 
         // If it's a score assignment, generate scoreboard command
@@ -277,7 +485,10 @@ impl Transpiler {
                     }
                 }
                 Expression::Binary(left, op, right) => {
-                    // Binary operation (already handled complex case above, so this is simple)
+                    // Binary operation (already handled complex case above, so this is simple).
+                    // NOTE: BinaryOp::Pow never reaches this ladder — `needs_complex_eval`
+                    // routes every Pow assignment to the expression evaluator, which
+                    // handles both constant and runtime exponents.
                     self.data_pack.track_objective("temp");
                     self.variable_objectives
                         .insert(assign.target.clone(), "temp".to_string());
@@ -406,56 +617,6 @@ impl Transpiler {
                                         assign.target
                                     ));
                                 }
-                                BinaryOp::Pow => {
-                                    // Power operation: compile-time expansion
-                                    if value < 0 {
-                                        return Err(
-                                            "Power exponent must be non-negative".to_string()
-                                        );
-                                    }
-                                    // Limit maximum exponent to prevent excessive command generation
-                                    const MAX_POWER_EXPONENT: i32 = 100;
-                                    if value > MAX_POWER_EXPONENT {
-                                        return Err(format!(
-                                            "Power exponent too large: {} > {}.\n\
-                                            \n\
-                                            Large exponents generate {} multiplication commands, which is excessive.\n\
-                                            Solution: Use a smaller exponent or implement iterative multiplication:\n\
-                                            \n\
-                                            result = 1\n\
-                                            for i in range({}):\n\
-                                                result = result * base",
-                                            value, MAX_POWER_EXPONENT, value - 1, value
-                                        ));
-                                    }
-                                    if value == 0 {
-                                        // x^0 = 1
-                                        commands.push(format!(
-                                            "scoreboard players set {} temp 1",
-                                            assign.target
-                                        ));
-                                    } else {
-                                        // Optimization: Skip self-assignment if target == var
-                                        if assign.target != *var || var_obj != "temp" {
-                                            commands.push(format!(
-                                                "scoreboard players operation {} temp = {} {}",
-                                                assign.target, var, var_obj
-                                            ));
-                                        }
-                                        if value > 1 {
-                                            commands.push(format!(
-                                                "scoreboard players operation #power_base temp = {} temp",
-                                                assign.target
-                                            ));
-                                            for _ in 0..(value - 1) {
-                                                commands.push(format!(
-                                                    "scoreboard players operation {} temp *= #power_base temp",
-                                                    assign.target
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
                                 _ => {}
                             }
                         }
@@ -482,25 +643,6 @@ impl Transpiler {
                                         ));
                                     }
                                     (*n1 as i32 % *n2 as i32) as f64
-                                }
-                                BinaryOp::Pow => {
-                                    let base = *n1 as i32;
-                                    let exp = *n2 as i32;
-                                    if exp < 0 {
-                                        return Err(
-                                            "Power exponent must be non-negative".to_string()
-                                        );
-                                    }
-                                    match base.checked_pow(exp as u32) {
-                                        Some(result) => result as f64,
-                                        None => {
-                                            eprintln!(
-                                                "⚠️  Warning: Power operation {}^{} overflows i32, clamping to i32::MAX",
-                                                base, exp
-                                            );
-                                            i32::MAX as f64
-                                        }
-                                    }
                                 }
                                 _ => 0.0,
                             };
@@ -635,10 +777,6 @@ impl Transpiler {
                                         assign.target, var, var_obj
                                     ));
                                 }
-                                BinaryOp::Pow => {
-                                    // Power with variable exponent is not supported at compile time
-                                    return Err("Power with variable exponent is not supported. Use constant exponents only.".to_string());
-                                }
                                 _ => {}
                             }
                         }
@@ -708,9 +846,6 @@ impl Transpiler {
                                             "scoreboard players operation {} temp %= {} {}",
                                             assign.target, var2, var_obj
                                         ));
-                                    }
-                                    BinaryOp::Pow => {
-                                        return Err("Power with variable exponent is not supported. Use constant exponents only.".to_string());
                                     }
                                     _ => {}
                                 }
@@ -793,43 +928,6 @@ impl Transpiler {
                                             "scoreboard players operation {} temp %= #modulus temp",
                                             assign.target
                                         ));
-                                    }
-                                    BinaryOp::Pow => {
-                                        if num < 0 {
-                                            return Err(
-                                                "Power exponent must be non-negative".to_string()
-                                            );
-                                        }
-                                        // Limit maximum exponent to prevent excessive command generation
-                                        const MAX_POWER_EXPONENT: i32 = 100;
-                                        if num > MAX_POWER_EXPONENT {
-                                            return Err(format!(
-                                                "Power exponent too large: {} > {}.\n\
-                                                \n\
-                                                Large exponents generate {} multiplication commands, which is excessive.\n\
-                                                Solution: Use a smaller exponent or implement iterative multiplication in a loop.",
-                                                num, MAX_POWER_EXPONENT, num - 1
-                                            ));
-                                        }
-                                        if num == 0 {
-                                            commands.push(format!(
-                                                "scoreboard players set {} temp 1",
-                                                assign.target
-                                            ));
-                                        } else if num == 1 {
-                                            // nothing to do
-                                        } else {
-                                            commands.push(format!(
-                                                "scoreboard players operation #power_base temp = {} temp",
-                                                assign.target
-                                            ));
-                                            for _ in 0..(num - 1) {
-                                                commands.push(format!(
-                                                    "scoreboard players operation {} temp *= #power_base temp",
-                                                    assign.target
-                                                ));
-                                            }
-                                        }
                                     }
                                     _ => {}
                                 }
@@ -918,9 +1016,6 @@ impl Transpiler {
                                             assign.target, var2, var2_obj
                                         ));
                                     }
-                                    BinaryOp::Pow => {
-                                        return Err("Power with variable exponent is not supported. Use constant exponents only.".to_string());
-                                    }
                                     _ => {}
                                 }
                             }
@@ -935,7 +1030,8 @@ impl Transpiler {
                     }
                 }
                 Expression::Call(func, _args) => {
-                    // Function calls in assignments are not supported
+                    // Value-returning user calls are handled by the expression evaluator above.
+                    // Reaching this branch means the call is not assignable as a score value.
                     let func_name = match &**func {
                         Expression::Identifier(name) => name.clone(),
                         Expression::Attribute(obj, method) => {
@@ -949,27 +1045,18 @@ impl Transpiler {
                     };
 
                     return Err(format!(
-                        "Cannot assign function call result to variable.\n\n\
+                        "Cannot assign this function call result to a variable.\n\n\
                         Attempted: {} = {}()\n\n\
-                        Minecraft functions don't return values that can be assigned to variables.\n\n\
+                        Only Cobble user functions with integer `return` values can be assigned in expressions.\n\n\
                         Solutions:\n\
-                        1. Call the function separately (not in an assignment):\n\
+                        1. If this is a side-effect function, call it separately:\n\
                            {}()\n\
-                           # Then use scoreboard operations to track state\n\n\
-                        2. If you need to track state, use scoreboard variables:\n\
-                           # In the called function:\n\
+                           # Then read any state it updates explicitly\n\n\
+                        2. If you need an expression value, return an integer score:\n\
                            def {}():\n\
-                               result = 42  # This sets a scoreboard value\n\
-                           \n\
-                           # In the caller:\n\
-                           {}()\n\
-                           # Now 'result' variable can be used\n\n\
-                        3. Pass the target variable name as a parameter:\n\
-                           def set_value(target_var):\n\
-                               /scoreboard players set {{target_var}} temp 42\n\
-                           \n\
-                           set_value(\"my_var\")",
-                        assign.target, func_name, func_name, func_name, func_name
+                               return 42\n\n\
+                        3. For storage/string/list/map data, write to storage and read it through a storage-backed variable.",
+                        assign.target, func_name, func_name, func_name
                     ));
                 }
                 Expression::None => {
@@ -1032,6 +1119,33 @@ impl Transpiler {
         }
     }
 
+    fn expr_contains_param(expr: &Expression, params: &[String]) -> bool {
+        match expr {
+            Expression::Identifier(name) => params.iter().any(|param| param == name),
+            Expression::Binary(left, _, right) => {
+                Self::expr_contains_param(left, params) || Self::expr_contains_param(right, params)
+            }
+            Expression::Unary(_, inner) => Self::expr_contains_param(inner, params),
+            Expression::Call(func, args) => {
+                Self::expr_contains_param(func, params)
+                    || args
+                        .iter()
+                        .any(|arg| Self::expr_contains_param(arg, params))
+            }
+            Expression::Attribute(obj, _) => Self::expr_contains_param(obj, params),
+            Expression::Subscript(obj, index) => {
+                Self::expr_contains_param(obj, params) || Self::expr_contains_param(index, params)
+            }
+            Expression::Array(items) => items
+                .iter()
+                .any(|item| Self::expr_contains_param(item, params)),
+            Expression::Map(entries) => entries
+                .iter()
+                .any(|(_, value)| Self::expr_contains_param(value, params)),
+            _ => false,
+        }
+    }
+
     pub(in crate::transpiler) fn serialize_to_snbt(
         &self,
         expr: &Expression,
@@ -1084,7 +1198,7 @@ impl Transpiler {
                 if let Some(val) = self.compile_time_constants.get(name) {
                     Ok(format!("{}", val))
                 } else {
-                    Err(format!("Variables inside array/map literals are not yet supported in this context ('{}'). Use constants or literal values.", name))
+                    Err(format!("Runtime variable '{}' cannot be serialized as static SNBT. Use the storage runtime materialization path or a compile-time constant.", name))
                 }
             }
             _ => Err(format!(
@@ -1094,7 +1208,7 @@ impl Transpiler {
         }
     }
 
-    fn serialize_snbt_key(key: &str) -> String {
+    pub(in crate::transpiler) fn serialize_snbt_key(key: &str) -> String {
         if !key.is_empty()
             && key
                 .chars()

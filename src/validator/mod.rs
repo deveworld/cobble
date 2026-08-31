@@ -524,6 +524,16 @@ mod tests {
             .is_ok());
         assert!(v
             .validate_command(
+                "$execute store result score selected temp run data get storage cobble:global vars.items[$(idx)]"
+            )
+            .is_ok());
+        assert!(v
+            .validate_command(
+                "$execute store result score selected temp run data get storage cobble:global vars.config.$(key)"
+            )
+            .is_ok());
+        assert!(v
+            .validate_command(
                 "$summon minecraft:armor_stand $(x) $(y) $(z) {Invisible:1b,CustomName:'{\"text\":\"Checkpoint_$(id)\"}'}"
             )
             .is_ok());

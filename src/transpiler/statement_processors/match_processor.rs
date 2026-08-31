@@ -13,23 +13,49 @@ impl Transpiler {
         match_stmt: &MatchStatement,
     ) -> Result<(), String> {
         // Create a temporary variable to hold the match value
-        let temp_var = format!("match_temp_{}", self.temp_counter);
-        self.temp_counter += 1;
+        let temp_var = format!("match_temp_{}", self.next_temp_id());
 
         // Evaluate the match expression into the temporary variable
         self.data_pack.track_objective("temp");
         match &match_stmt.value {
             Expression::Identifier(name) => {
-                let obj = self
-                    .variable_objectives
-                    .get(name)
-                    .unwrap_or(&"temp".to_string())
-                    .clone();
-                if let Some(ref mut commands) = self.current_function {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        temp_var, name, obj
-                    ));
+                if self
+                    .current_context
+                    .params
+                    .iter()
+                    .any(|param| param == name)
+                {
+                    let commands =
+                        self.evaluate_expression_to_target(&match_stmt.value, &temp_var)?;
+                    if let Some(ref mut cmds) = self.current_function {
+                        cmds.extend(commands);
+                    }
+                } else {
+                    // A storage-backed string/list/map has no meaningful score,
+                    // so copying it as one would silently always hit `case _`.
+                    if let Some(var_type) = self.variable_types.get(name) {
+                        if matches!(
+                            var_type,
+                            CobbleType::String | CobbleType::List | CobbleType::Map
+                        ) {
+                            return Err(format!(
+                                "Cannot match on '{}': it holds a {} value stored in storage, and match only supports integer scoreboard values.",
+                                name,
+                                var_type.name()
+                            ));
+                        }
+                    }
+                    let obj = self
+                        .variable_objectives
+                        .get(name)
+                        .unwrap_or(&"temp".to_string())
+                        .clone();
+                    if let Some(ref mut commands) = self.current_function {
+                        commands.push(format!(
+                            "scoreboard players operation {} temp = {} {}",
+                            temp_var, name, obj
+                        ));
+                    }
                 }
             }
             Expression::Number(n) => {
@@ -147,14 +173,14 @@ impl Transpiler {
                 })?;
             } else {
                 // Create function for multi-statement wildcard
-                let func_name = format!("match_default_{}", self.temp_counter);
-                self.temp_counter += 1;
+                let func_name = format!("match_default_{}", self.next_temp_id());
 
                 let needs_storage = prepared_case.needs_storage;
                 self.add_captured_function(func_name.clone(), prepared_case.capture);
 
                 // Call function only if no other case matched
                 let call_cmd = self.function_call_command(&func_name, needs_storage);
+                let return_cmd = self.return_propagation_command();
                 if let Some(ref mut commands) = self.current_function {
                     if unless_conditions.is_empty() {
                         commands.push(call_cmd);
@@ -165,6 +191,9 @@ impl Transpiler {
                             unless_conditions.join(" "),
                             call_cmd
                         ));
+                    }
+                    if let Some(return_cmd) = return_cmd {
+                        commands.push(return_cmd);
                     }
                 }
             }
@@ -215,8 +244,7 @@ impl Transpiler {
                 }
             } else {
                 // Create function for multi-statement case
-                let func_name = format!("match_case_{}_{}", min, self.temp_counter);
-                self.temp_counter += 1;
+                let func_name = format!("match_case_{}_{}", min, self.next_temp_id());
 
                 let needs_storage = prepared_case.needs_storage;
                 self.add_captured_function(func_name.clone(), prepared_case.capture);
@@ -231,8 +259,12 @@ impl Transpiler {
                     "execute if score {} {} matches {} run {}",
                     var, obj, range, call_cmd
                 );
+                let return_cmd = self.return_propagation_command();
                 if let Some(ref mut commands) = self.current_function {
                     commands.push(call_cmd);
+                    if let Some(return_cmd) = return_cmd {
+                        commands.push(return_cmd);
+                    }
                 }
             }
             return Ok(());
@@ -256,8 +288,7 @@ impl Transpiler {
                 self.generate_switch_tree(var, obj, sub_cases, prepared_cases)?;
             } else {
                 // Multiple cases - create a function and recursively process
-                let func_name = format!("match_switch_{}_{}", vmin, self.temp_counter);
-                self.temp_counter += 1;
+                let func_name = format!("match_switch_{}_{}", vmin, self.next_temp_id());
 
                 // Recursively generate the switch tree in the new function
                 let capture = self.capture_commands(|transpiler| {
@@ -268,12 +299,16 @@ impl Transpiler {
                 self.add_captured_function(func_name.clone(), capture);
 
                 // Call the function with range condition
+                let return_cmd = self.return_propagation_command();
                 if let Some(ref mut commands) = self.current_function {
                     let call_cmd = format!(
                         "execute if score {} {} matches {}..{} run function {}:{}",
                         var, obj, vmin, vmax, self.data_pack.namespace, func_name
                     );
                     commands.push(call_cmd);
+                    if let Some(return_cmd) = return_cmd {
+                        commands.push(return_cmd);
+                    }
                 }
             }
         }

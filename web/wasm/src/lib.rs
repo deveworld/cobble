@@ -717,14 +717,13 @@ fn generic_diagnostic(kind: &str, message: String) -> CompileDiagnostic {
 }
 
 fn transpile_error_diagnostics(error: &str, source: &str) -> Vec<CompileDiagnostic> {
-    if error.starts_with("unroll-")
-        || error.contains("not imported")
-        || error.contains("Unknown stdlib module")
-    {
+    if diagnostics::SourceDiagnostic::transpiler_error_is_recognized(error) {
         return source_diagnostics(
             "demo.cbl",
             source,
-            vec![semantic_source_diagnostic(error, source)],
+            vec![diagnostics::SourceDiagnostic::from_transpiler_error(
+                error, source,
+            )],
         );
     }
 
@@ -732,129 +731,6 @@ fn transpile_error_diagnostics(error: &str, source: &str) -> Vec<CompileDiagnost
         "transpile",
         format!("Transpile error: {error}"),
     )]
-}
-
-fn semantic_source_diagnostic(error: &str, source: &str) -> diagnostics::SourceDiagnostic {
-    let kind = if let Some((kind, _)) = error.split_once(':') {
-        if kind.starts_with("unroll-") {
-            kind.to_string()
-        } else if error.contains("not imported") {
-            "missing-stdlib-module".to_string()
-        } else if error.contains("Unknown stdlib module") {
-            "unknown-stdlib-module".to_string()
-        } else {
-            "semantic".to_string()
-        }
-    } else if error.contains("not imported") {
-        "missing-stdlib-module".to_string()
-    } else if error.contains("Unknown stdlib module") {
-        "unknown-stdlib-module".to_string()
-    } else {
-        "semantic".to_string()
-    };
-    let (line, column) = semantic_error_location(error, source).unwrap_or((1, 1));
-    diagnostics::SourceDiagnostic::error(kind, line, column, clean_semantic_error_message(error))
-}
-
-fn clean_semantic_error_message(error: &str) -> String {
-    error
-        .lines()
-        .filter(|line| {
-            let line = line.trim_start();
-            !line.starts_with("source-key:") && !line.starts_with("location:")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn semantic_error_location(error: &str, source: &str) -> Option<(usize, usize)> {
-    if error.starts_with("unroll-") {
-        return unroll_error_location(error)
-            .or_else(|| {
-                unroll_error_source_key(error)
-                    .and_then(|source_key| find_for_loop_location_for_source_key(source, source_key))
-            })
-            .or_else(|| {
-                unroll_error_target(error)
-                    .and_then(|target| find_for_loop_location_for_target(source, target))
-            })
-            .or_else(|| find_for_loop_location(source));
-    }
-
-    let module = error
-        .split_once("module '")
-        .and_then(|(_, rest)| rest.split_once('\''))
-        .map(|(module, _)| module)?;
-    let needle = format!("{module}.");
-    find_source_location(source, &needle).or_else(|| find_source_location(source, module))
-}
-
-fn unroll_error_target(error: &str) -> Option<&str> {
-    error
-        .split_once("\n  loop: for ")
-        .and_then(|(_, rest)| rest.split_whitespace().next())
-}
-
-fn unroll_error_location(error: &str) -> Option<(usize, usize)> {
-    let location = error
-        .split_once("\n  location: ")
-        .and_then(|(_, rest)| rest.lines().next())?
-        .trim();
-    let (line, column) = location.split_once(':')?;
-    Some((line.parse().ok()?, column.parse().ok()?))
-}
-
-fn unroll_error_source_key(error: &str) -> Option<&str> {
-    error
-        .split_once("\n  source-key: ")
-        .and_then(|(_, rest)| rest.lines().next())
-        .map(str::trim)
-        .filter(|source_key| !source_key.is_empty())
-}
-
-fn find_source_location(source: &str, needle: &str) -> Option<(usize, usize)> {
-    source.lines().enumerate().find_map(|(line_index, line)| {
-        line.find(needle)
-            .map(|column_index| (line_index + 1, column_index + 1))
-    })
-}
-
-fn find_for_loop_location_for_target(source: &str, target: &str) -> Option<(usize, usize)> {
-    let needle = format!("for {target} ");
-    source.lines().enumerate().find_map(|(line_index, line)| {
-        let column_index = line.find(&needle)?;
-        line[column_index..]
-            .trim_start()
-            .starts_with(&needle)
-            .then_some((line_index + 1, column_index + 1))
-    })
-}
-
-fn find_for_loop_location_for_source_key(
-    source: &str,
-    source_key: &str,
-) -> Option<(usize, usize)> {
-    source.lines().enumerate().find_map(|(line_index, line)| {
-        let statement = line.trim_start();
-        if !statement.starts_with("for ") {
-            return None;
-        }
-        if Transpiler::source_line_key(statement) != source_key {
-            return None;
-        }
-        let column = line.len() - statement.len() + 1;
-        Some((line_index + 1, column))
-    })
-}
-
-fn find_for_loop_location(source: &str) -> Option<(usize, usize)> {
-    source.lines().enumerate().find_map(|(line_index, line)| {
-        let column_index = line.find("for ")?;
-        line[column_index..]
-            .trim_start()
-            .starts_with("for ")
-            .then_some((line_index + 1, column_index + 1))
-    })
 }
 
 fn formatted_diagnostics(diagnostics: &[CompileDiagnostic]) -> Vec<String> {
@@ -1139,21 +1015,20 @@ stdlib.addEventListener(event.TICK, tick)
     }
 
     #[test]
-    fn compile_returns_semantic_preflight_diagnostics() {
-        let diagnostics = match compile_default("def main():\n    return\n", "web_test", "Web test")
-        {
-            Ok(_) => panic!("unsupported source should fail"),
-            Err(diagnostics) => diagnostics,
-        };
+    fn compile_materializes_return_value_statements() {
+        let response = compile_default(
+            "def main():\n    value = 7\n    return value\n",
+            "web_test",
+            "Web test",
+        )
+        .expect("return values should compile");
 
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].file, "demo.cbl");
-        assert_eq!(diagnostics[0].line, 2);
-        assert_eq!(diagnostics[0].column, 5);
-        assert_eq!(diagnostics[0].kind, "unsupported-return");
-        assert!(diagnostics[0]
-            .message
-            .contains("Return statements are not supported"));
+        assert!(response.diagnostics.is_empty());
+        let content = &file(&response, "data/web_test/function/main.mcfunction").content;
+        assert!(
+            content.contains("return run scoreboard players get #return_value_"),
+            "{content}"
+        );
     }
 
     #[test]
@@ -1176,22 +1051,26 @@ stdlib.addEventListener(event.TICK, tick)
     }
 
     #[test]
-    fn compile_returns_nested_function_argument_diagnostics() {
-        let diagnostics = match compile_default(
-            "def main():\n    greet(make_name())\n\ndef make_name():\n    pass\n\ndef greet(name):\n    /say hi\n",
+    fn compile_materializes_nested_function_call_arguments() {
+        let response = compile_default(
+            "def main():\n    greet(make_name())\n\ndef make_name():\n    return 7\n\ndef greet(name):\n    if name == 7:\n        /say nested call ok\n",
             "web_test",
             "Web test",
-        ) {
-            Ok(_) => panic!("unsupported source should fail"),
-            Err(diagnostics) => diagnostics,
-        };
+        )
+        .expect("nested function call arguments should compile");
 
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].file, "demo.cbl");
-        assert_eq!(diagnostics[0].kind, "unsupported-function-call-argument");
-        assert!(diagnostics[0]
-            .message
-            .contains("Function `greet` arguments cannot contain function call expressions"));
+        assert!(response.diagnostics.is_empty());
+        let main_content = &file(&response, "data/web_test/function/main.mcfunction").content;
+        assert!(
+            main_content.contains("run function web_test:make_name"),
+            "{main_content}"
+        );
+        assert!(
+            main_content.contains("function web_test:greet with storage web_test:global args"),
+            "{main_content}"
+        );
+        let greet_content = &file(&response, "data/web_test/function/greet.mcfunction").content;
+        assert!(greet_content.contains("run say nested call ok"));
     }
 
     #[test]

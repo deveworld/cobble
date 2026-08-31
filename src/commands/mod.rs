@@ -21,10 +21,31 @@ pub use inspect::{inspect, InspectOptions};
 pub use link::{link, LinkOptions};
 pub use migrate::{migrate, MigrateOptions};
 pub use validate::validate;
-pub use watch::watch;
+pub use watch::{watch, WatchOptions};
 
+use crate::config::CobbleConfig;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+/// Locate the project's `cobble.toml`: for a file input, search its parent
+/// directories; for a directory input, search the directory itself; with no
+/// input, search the current directory.
+pub(crate) fn find_config(input: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = input {
+        if path.is_file() {
+            // If input is a file, look for config in parent directories
+            if let Some(parent) = path.parent() {
+                return CobbleConfig::find_in_path(parent);
+            }
+        } else {
+            // If input is a directory, look for config in it
+            return CobbleConfig::find_in_path(path);
+        }
+    }
+    // Look in current directory
+    CobbleConfig::find_in_path(".")
+}
 
 pub(crate) fn resolve_entry_points(
     source_dir: &Path,
@@ -48,6 +69,11 @@ pub(crate) fn resolve_entry_points(
             return Err(format!("Entry point does not exist: {}", path.display()));
         }
     }
+
+    // Entry points may overlap (for example a directory plus a file inside
+    // it); compile each file once, keeping the first occurrence's order.
+    let mut seen = HashSet::new();
+    files.retain(|path| seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())));
 
     Ok(files)
 }

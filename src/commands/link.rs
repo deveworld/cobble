@@ -1,3 +1,4 @@
+use super::find_config;
 use super::output_safety::{
     build_manifest_path, ensure_no_symlink_components, project_marker_identity,
     read_build_manifest, require_manifest_ownership,
@@ -51,6 +52,16 @@ pub fn link(options: LinkOptions) -> Result<(), String> {
         return Ok(());
     }
 
+    // A typo'd --world/--minecraft path must fail instead of silently
+    // creating a directory tree; only the datapacks/ (and saves/<pack>/)
+    // subdirectories are created automatically once the base directory exists.
+    if let Some(world) = &options.world {
+        ensure_link_base_directory_exists(&resolve_path(&config_dir, world), "World")?;
+    }
+    if let Some(minecraft) = &options.minecraft {
+        ensure_link_base_directory_exists(&resolve_path(&config_dir, minecraft), ".minecraft")?;
+    }
+
     let target_path = PathBuf::from(&state.target_path);
     ensure_safe_directory_target(&target_path)?;
     fs::create_dir_all(&target_path)
@@ -83,7 +94,7 @@ pub(crate) fn validate_link_state_paths(state: &LinkState) -> Result<(), String>
 }
 
 fn load_project(project_path: &Option<PathBuf>) -> Result<(CobbleConfig, PathBuf), String> {
-    let config_path = find_config(project_path)
+    let config_path = find_config(project_path.as_deref())
         .ok_or_else(|| "No cobble.toml found for link command".to_string())?;
     let config = CobbleConfig::load(&config_path)?;
     let config_dir = config_path
@@ -243,6 +254,22 @@ pub(crate) fn link_state_path(config_dir: &Path) -> PathBuf {
     config_dir.join(".cobble").join("link_state.json")
 }
 
+fn ensure_link_base_directory_exists(path: &Path, label: &str) -> Result<(), String> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    if path.exists() {
+        return Err(format!(
+            "{label} path is not a directory: {}",
+            path.display()
+        ));
+    }
+    Err(format!(
+        "{label} directory does not exist: {} (check the path; it is not created automatically)",
+        path.display()
+    ))
+}
+
 fn ensure_safe_directory_target(path: &Path) -> Result<(), String> {
     ensure_no_symlink_components(path, "link")?;
     if path.exists() {
@@ -327,19 +354,6 @@ fn resolve_path(config_dir: &Path, path: &Path) -> PathBuf {
 
 fn path_display(path: &Path) -> String {
     path.to_string_lossy().into_owned()
-}
-
-fn find_config(path: &Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(path) = path {
-        if path.is_file() {
-            if let Some(parent) = path.parent() {
-                return CobbleConfig::find_in_path(parent);
-            }
-        } else {
-            return CobbleConfig::find_in_path(path);
-        }
-    }
-    CobbleConfig::find_in_path(".")
 }
 
 #[cfg(test)]

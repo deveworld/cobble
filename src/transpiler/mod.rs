@@ -5,6 +5,7 @@ mod data_pack;
 mod expression_evaluator;
 mod source_map;
 mod statement_processors;
+mod storage_paths;
 
 // Public exports
 pub use data_pack::{
@@ -18,8 +19,17 @@ use crate::stdlib::EventType;
 use command_processor::CommandProcessor;
 use condition_translator::ConditionTranslator;
 use expression_evaluator::ExpressionEvaluator;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use storage_paths::StoragePathOps;
+
+/// Maximum exponent for compile-time power expansion (`x^n` emits `n - 1` multiplications).
+pub(in crate::transpiler) const MAX_POWER_EXPONENT: i32 = 100;
+
+/// Maximum import depth before a build is rejected. Shared source of truth
+/// for the transpiler and the diagnostics import scanner
+/// (`src/diagnostics/imports.rs` derives its copy from this constant).
+pub(crate) const MAX_IMPORT_DEPTH: usize = 50;
 
 /// Context for tracking function parameters and scope
 #[derive(Clone)]
@@ -27,9 +37,139 @@ struct FunctionContext {
     params: Vec<String>,
 }
 
+#[derive(Clone)]
+struct ReturnContext {
+    value_score: String,
+    flag_score: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::transpiler) enum FunctionReturnKind {
+    None,
+    Integer,
+    NonInteger,
+}
+
+#[derive(Clone)]
+pub(in crate::transpiler) enum ModuleLevelAssignment {
+    Variable {
+        target: String,
+        value: Expression,
+        source: Option<SourceLocation>,
+    },
+    StorageTarget {
+        target_expr: Expression,
+        value: Expression,
+        source: Option<SourceLocation>,
+    },
+}
+
 pub(in crate::transpiler) struct FunctionCapture {
     pub(in crate::transpiler) commands: Vec<String>,
     pub(in crate::transpiler) metadata: HashMap<usize, GeneratedCommand>,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::transpiler) struct DynamicStoragePathArg {
+    pub(in crate::transpiler) placeholder: String,
+    pub(in crate::transpiler) expr: Expression,
+    pub(in crate::transpiler) kind: DynamicStoragePathArgKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::transpiler) enum DynamicStoragePathArgKind {
+    Index,
+    Key,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::transpiler) enum StoragePathPlan {
+    Static(String),
+    Dynamic {
+        template: String,
+        args: Vec<DynamicStoragePathArg>,
+    },
+}
+
+impl StoragePathPlan {
+    pub(in crate::transpiler) fn static_path(path: impl Into<String>) -> Self {
+        Self::Static(path.into())
+    }
+
+    pub(in crate::transpiler) fn as_static(&self) -> Option<&str> {
+        match self {
+            Self::Static(path) => Some(path),
+            Self::Dynamic { .. } => None,
+        }
+    }
+
+    pub(in crate::transpiler) fn template(&self) -> &str {
+        match self {
+            Self::Static(path) => path,
+            Self::Dynamic { template, .. } => template,
+        }
+    }
+
+    pub(in crate::transpiler) fn dynamic_args(&self) -> &[DynamicStoragePathArg] {
+        match self {
+            Self::Static(_) => &[],
+            Self::Dynamic { args, .. } => args,
+        }
+    }
+
+    pub(in crate::transpiler) fn append_field(self, field: &str) -> Self {
+        match self {
+            Self::Static(path) => Self::Static(format!("{}.{}", path, field)),
+            Self::Dynamic { template, args } => Self::Dynamic {
+                template: format!("{}.{}", template, field),
+                args,
+            },
+        }
+    }
+
+    pub(in crate::transpiler) fn append_static_index(self, index: i32) -> Self {
+        match self {
+            Self::Static(path) => Self::Static(format!("{}[{}]", path, index)),
+            Self::Dynamic { template, args } => Self::Dynamic {
+                template: format!("{}[{}]", template, index),
+                args,
+            },
+        }
+    }
+
+    pub(in crate::transpiler) fn append_dynamic_index(self, expr: Expression) -> Self {
+        let (template, mut args) = match self {
+            Self::Static(path) => (path, Vec::new()),
+            Self::Dynamic { template, args } => (template, args),
+        };
+        let placeholder = format!("idx{}", args.len());
+        args.push(DynamicStoragePathArg {
+            placeholder: placeholder.clone(),
+            expr,
+            kind: DynamicStoragePathArgKind::Index,
+        });
+        Self::Dynamic {
+            template: format!("{}[$({})]", template, placeholder),
+            args,
+        }
+    }
+
+    pub(in crate::transpiler) fn append_dynamic_key(self, expr: Expression) -> Self {
+        let (template, mut args) = match self {
+            Self::Static(path) => (path, Vec::new()),
+            Self::Dynamic { template, args } => (template, args),
+        };
+        let placeholder = format!("key{}", args.len());
+        args.push(DynamicStoragePathArg {
+            placeholder: placeholder.clone(),
+            expr,
+            kind: DynamicStoragePathArgKind::Key,
+        });
+        Self::Dynamic {
+            template: format!("{}.$({})", template, placeholder),
+            args,
+        }
+    }
 }
 
 struct SavedFunctionCapture {
@@ -108,42 +248,28 @@ fn validate_text_color(color: &str) -> Result<(), String> {
 /// Stdlib module names that can be imported via `from stdlib import <name>`.
 ///
 /// `import stdlib` (without `from`) activates every module for backward
-/// compatibility with 0.7.x. See `docs/stdlib-v2-design.md`.
-pub(in crate::transpiler) const ALL_STDLIB_MODULES: &[&str] = &[
-    "text",
-    "score",
-    "score.objective",
-    "random",
-    "timer",
-    "storage",
-    "item_component",
-    "schedule",
-    "selector",
-    "position",
-    "bossbar",
-    "team",
-    "entity",
-    "math",
-    "event",
-    "datapack",
-    "resource_pack",
-];
+/// compatibility with 0.7.x. See `docs/stdlib-v2-design.md`. The canonical
+/// table lives in `crate::stdlib::STDLIB_MODULES`.
+pub(crate) use crate::stdlib::STDLIB_MODULES as ALL_STDLIB_MODULES;
 
 pub struct Transpiler {
     pub data_pack: DataPack,
     current_function: Option<Vec<String>>,
     current_function_metadata: Option<HashMap<usize, GeneratedCommand>>,
     current_context: FunctionContext,
+    current_return: Option<ReturnContext>,
     variables: HashMap<String, Expression>,
     temp_counter: u32,
     variable_objectives: HashMap<String, String>, // Track which objective each variable uses
     scoreboard_variables: HashSet<String>, // Track variables backed by scoreboard (not constants)
     function_params: HashMap<String, Vec<String>>, // Track function parameter names
-    global_variables: HashSet<String>,     // Track global variables declared in current function
-    module_level_vars: Vec<(String, Expression, Option<SourceLocation>)>, // Store module-level assignments (Vec for ordering)
-    compile_time_constants: HashMap<String, f64>, // Store compile-time constant values
-    selector_aliases: HashMap<String, String>,    // Store selector definitions (@Name -> @a[...])
-    entity_templates: HashMap<String, EntityDef>, // Store entity templates
+    function_returns: HashMap<String, FunctionReturnKind>, // Track value-call return eligibility
+    qualified_function_aliases: HashMap<String, String>, // Track import-module calls (module.func -> func)
+    global_variables: HashSet<String>, // Track global variables declared in current function
+    module_level_vars: Vec<ModuleLevelAssignment>, // Store module-level assignments (Vec for ordering)
+    compile_time_constants: HashMap<String, f64>,  // Store compile-time constant values
+    selector_aliases: HashMap<String, String>,     // Store selector definitions (@Name -> @a[...])
+    entity_templates: HashMap<String, EntityDef>,  // Store entity templates
     variable_storage_paths: HashMap<String, String>, // Track storage path for variables (e.g., "list" -> "vars.list")
     imported_files: HashSet<PathBuf>, // Track imported files to prevent circular dependencies
     import_stack: Vec<PathBuf>,       // Track current import chain for circular detection
@@ -172,6 +298,18 @@ pub struct Transpiler {
     unroll_iteration_factor: usize,
     /// Generated command count at the start of the outermost unroll.
     unroll_command_baseline: Option<usize>,
+    /// Stack of per-site condition holder slots for nested `execute` blocks.
+    /// One frame per active `process_execute_block`; the frame counts the
+    /// condition holders scoped to `@s` so their objectives can be pooled by
+    /// (nesting depth, slot) instead of allocated per call site.
+    execute_condition_slots: Vec<usize>,
+    /// Name of the user function whose body is currently being lowered.
+    /// Used to reject recursive calls at the call site.
+    current_function_name: Option<String>,
+    /// Caller -> callees edges for every lowered user-function call, used to
+    /// reject mutually recursive call cycles at the end of `transpile()`.
+    /// BTree containers keep the reported cycle deterministic.
+    function_call_edges: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Transpiler {
@@ -184,11 +322,14 @@ impl Transpiler {
             current_function: None,
             current_function_metadata: None,
             current_context: FunctionContext::new(),
+            current_return: None,
             variables: HashMap::new(),
             temp_counter: 0,
             variable_objectives: HashMap::new(),
             scoreboard_variables: HashSet::new(),
             function_params: HashMap::new(),
+            function_returns: HashMap::new(),
+            qualified_function_aliases: HashMap::new(),
             global_variables: HashSet::new(),
             module_level_vars: Vec::new(),
             compile_time_constants: HashMap::new(),
@@ -210,6 +351,9 @@ impl Transpiler {
             unroll_depth: 0,
             unroll_iteration_factor: 1,
             unroll_command_baseline: None,
+            execute_condition_slots: Vec::new(),
+            current_function_name: None,
+            function_call_edges: BTreeMap::new(),
         }
     }
 
@@ -324,8 +468,91 @@ impl Transpiler {
                     UnaryOp::Neg | UnaryOp::Pos => CobbleType::Integer,
                 }
             }
-            Expression::Call(_, _) => CobbleType::Unknown, // Function return types not tracked yet
+            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "len") => {
+                CobbleType::Integer
+            }
+            Expression::Call(func, _)
+                if self
+                    .resolve_user_function_call_name(func)
+                    .is_some_and(|name| {
+                        matches!(
+                            self.function_returns.get(name),
+                            Some(FunctionReturnKind::Integer)
+                        )
+                    }) =>
+            {
+                CobbleType::Integer
+            }
+            Expression::Call(func, _) if matches!(&**func, Expression::Attribute(obj, _) if matches!(&**obj, Expression::Identifier(module) if module == "math")) => {
+                CobbleType::Integer
+            }
+            Expression::Call(_, _) => CobbleType::Unknown,
             _ => CobbleType::Unknown,
+        }
+    }
+
+    fn analyze_function_return_kind(body: &[Statement]) -> FunctionReturnKind {
+        body.iter()
+            .fold(FunctionReturnKind::None, |acc, statement| {
+                Self::merge_return_kind(acc, Self::statement_return_kind(statement))
+            })
+    }
+
+    fn statement_return_kind(statement: &Statement) -> FunctionReturnKind {
+        match statement {
+            Statement::Return(expr) => expr
+                .as_ref()
+                .map(Self::expression_return_kind)
+                .unwrap_or(FunctionReturnKind::Integer),
+            Statement::If(if_stmt) => {
+                let mut kind = Self::analyze_function_return_kind(&if_stmt.then_branch);
+                for (_, branch) in &if_stmt.elif_branches {
+                    kind =
+                        Self::merge_return_kind(kind, Self::analyze_function_return_kind(branch));
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    kind =
+                        Self::merge_return_kind(kind, Self::analyze_function_return_kind(branch));
+                }
+                kind
+            }
+            Statement::For(for_loop) => Self::analyze_function_return_kind(&for_loop.body),
+            Statement::While(while_loop) => Self::analyze_function_return_kind(&while_loop.body),
+            Statement::Match(match_stmt) => {
+                match_stmt
+                    .cases
+                    .iter()
+                    .fold(FunctionReturnKind::None, |acc, case| {
+                        Self::merge_return_kind(acc, Self::analyze_function_return_kind(&case.body))
+                    })
+            }
+            Statement::Execute(exec_block) => Self::analyze_function_return_kind(&exec_block.body),
+            _ => FunctionReturnKind::None,
+        }
+    }
+
+    fn expression_return_kind(expr: &Expression) -> FunctionReturnKind {
+        match expr {
+            Expression::String(_)
+            | Expression::Array(_)
+            | Expression::Map(_)
+            | Expression::None => FunctionReturnKind::NonInteger,
+            _ => FunctionReturnKind::Integer,
+        }
+    }
+
+    fn merge_return_kind(
+        left: FunctionReturnKind,
+        right: FunctionReturnKind,
+    ) -> FunctionReturnKind {
+        match (left, right) {
+            (FunctionReturnKind::NonInteger, _) | (_, FunctionReturnKind::NonInteger) => {
+                FunctionReturnKind::NonInteger
+            }
+            (FunctionReturnKind::Integer, _) | (_, FunctionReturnKind::Integer) => {
+                FunctionReturnKind::Integer
+            }
+            _ => FunctionReturnKind::None,
         }
     }
 
@@ -461,127 +688,34 @@ impl Transpiler {
         }
 
         // PASS 1: Register all function signatures first (to handle forward references)
-        for statement in &program.statements {
-            if let Statement::FunctionDef(func) = statement {
-                let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
-                self.function_params.insert(func.name.clone(), param_names);
-            }
-        }
+        self.register_program_function_metadata(program);
 
         // PASS 2: Process all statements (function bodies, etc.)
         for statement in &program.statements {
             self.process_statement(statement)?;
         }
 
-        // Track temp objective for module-level variables BEFORE ensuring init function
-        if !self.module_level_vars.is_empty() {
-            self.data_pack.track_objective("temp");
-        }
+        // Direct self-calls error at the call site; this rejects mutual
+        // recursion (a -> b -> a) across everything lowered so far.
+        self.check_recursive_call_cycles()?;
 
-        // Ensure objectives are initialized FIRST
+        let module_init = if self.module_level_vars.is_empty() {
+            None
+        } else {
+            Some(self.build_module_init_commands()?)
+        };
+
+        // Ensure objectives are initialized after module init commands have had
+        // a chance to register every objective they need.
         self.data_pack.ensure_init_function();
 
-        // Then initialize module-level variables in the init function
-        if !self.module_level_vars.is_empty() {
-            let mut init_commands = Vec::new();
-            let mut init_metadata = HashMap::new();
-
-            for (var_name, value, source) in self.module_level_vars.clone() {
-                let command_start = init_commands.len();
-                if let Some(const_value) = self.try_eval_const(&value) {
-                    let truncated = const_value as i32;
-
-                    if const_value > i32::MAX as f64 || const_value < i32::MIN as f64 {
-                        eprintln!(
-                            "⚠️  Warning: Module-level value {} for variable '{}' exceeds Minecraft scoreboard range.\n\
-                            Scoreboard range: {} to {}\n\
-                            Value will be clamped to: {}",
-                            const_value,
-                            var_name,
-                            i32::MIN,
-                            i32::MAX,
-                            if const_value > i32::MAX as f64 { i32::MAX } else { i32::MIN }
-                        );
-                    }
-
-                    if const_value.fract() != 0.0 {
-                        eprintln!(
-                            "⚠️  Warning: Module-level value {} for variable '{}' will lose precision.\n\
-                            Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                            const_value,
-                            var_name,
-                            truncated
-                        );
-                    }
-
-                    init_commands.push(format!(
-                        "scoreboard players set {} temp {}",
-                        var_name, truncated
-                    ));
-                    init_metadata.insert(
-                        command_start,
-                        GeneratedCommand::new(
-                            init_commands[command_start].clone(),
-                            source,
-                            GeneratedCommandKind::ControlFlow,
-                        ),
-                    );
-                    continue;
-                }
-
-                match &value {
-                    Expression::Array(_) | Expression::Map(_) | Expression::String(_) => {
-                        // Storage variable initialization
-                        let storage_path = format!("vars.{}", var_name);
-                        self.variable_storage_paths
-                            .insert(var_name.clone(), storage_path.clone());
-
-                        // We need to serialize the value.
-                        // self.serialize_to_snbt is defined in assignment.rs but available on Transpiler.
-                        // However, Rust might complain if it's not visible?
-                        // It is `pub(in crate::transpiler)`. `mod.rs` IS `crate::transpiler`.
-                        // So it should be visible.
-                        match self.serialize_to_snbt(&value) {
-                            Ok(snbt) => {
-                                init_commands.push(format!(
-                                    "data modify storage {}:global {} set value {}",
-                                    self.data_pack.namespace, storage_path, snbt
-                                ));
-                                init_metadata.insert(
-                                    command_start,
-                                    GeneratedCommand::new(
-                                        init_commands[command_start].clone(),
-                                        source,
-                                        GeneratedCommandKind::ControlFlow,
-                                    ),
-                                );
-                            }
-                            Err(e) => {
-                                return Err(format!(
-                                    "Failed to serialize module variable '{}': {}",
-                                    var_name, e
-                                ));
-                            }
-                        }
-                    }
-                    _ => {
-                        // Other complex expressions at module level
-                        eprintln!("Note: Complex expression for '{}' cannot be initialized at module level", var_name);
-                    }
-                }
-            }
-
+        // Then initialize module-level variables in the init function.
+        if let Some((init_commands, init_metadata)) = module_init {
             // Add these commands after gamerule and objective creation
             if !init_commands.is_empty() {
                 if let Some(existing_init) = self.data_pack.functions.get("_cobble_init") {
                     // Find the position after gamerule and all objectives
-                    let setup_end = existing_init
-                        .iter()
-                        .position(|cmd| {
-                            !cmd.starts_with("gamerule")
-                                && !cmd.starts_with("scoreboard objectives add")
-                        })
-                        .unwrap_or(existing_init.len());
+                    let setup_end = self.data_pack.runtime_setup_end_index(existing_init);
 
                     self.data_pack.insert_function_commands_with_metadata(
                         "_cobble_init",
@@ -595,13 +729,7 @@ impl Transpiler {
                     if let Some(handler_name) = load_handlers.first() {
                         if let Some(handler_func) = self.data_pack.functions.get(handler_name) {
                             // Find the position after gamerule and all objectives
-                            let setup_end = handler_func
-                                .iter()
-                                .position(|cmd| {
-                                    !cmd.starts_with("gamerule")
-                                        && !cmd.starts_with("scoreboard objectives add")
-                                })
-                                .unwrap_or(handler_func.len());
+                            let setup_end = self.data_pack.runtime_setup_end_index(handler_func);
 
                             self.data_pack.insert_function_commands_with_metadata(
                                 handler_name,
@@ -633,6 +761,136 @@ impl Transpiler {
         Ok(())
     }
 
+    fn build_module_init_commands(
+        &mut self,
+    ) -> Result<(Vec<String>, HashMap<usize, GeneratedCommand>), String> {
+        let mut init_commands = Vec::new();
+        let mut init_metadata = HashMap::new();
+
+        for assignment in self.module_level_vars.clone() {
+            match assignment {
+                ModuleLevelAssignment::Variable {
+                    target,
+                    value,
+                    source,
+                } => {
+                    let previous_source = self.current_statement_source.clone();
+                    self.current_statement_source = source.clone();
+                    let generated = self.module_variable_init_commands(&target, &value);
+                    self.current_statement_source = previous_source;
+                    let generated = generated?;
+                    Self::append_module_init_commands(
+                        &mut init_commands,
+                        &mut init_metadata,
+                        generated,
+                        source,
+                    );
+                }
+                ModuleLevelAssignment::StorageTarget {
+                    target_expr,
+                    value,
+                    source,
+                } => {
+                    let previous_source = self.current_statement_source.clone();
+                    self.current_statement_source = source.clone();
+                    let generated = self.storage_target_assignment_commands(&target_expr, &value);
+                    self.current_statement_source = previous_source;
+                    let generated = generated?;
+                    Self::append_module_init_commands(
+                        &mut init_commands,
+                        &mut init_metadata,
+                        generated,
+                        source,
+                    );
+                }
+            }
+        }
+
+        Ok((init_commands, init_metadata))
+    }
+
+    fn append_module_init_commands(
+        init_commands: &mut Vec<String>,
+        init_metadata: &mut HashMap<usize, GeneratedCommand>,
+        commands: Vec<String>,
+        source: Option<SourceLocation>,
+    ) {
+        for command in commands {
+            let index = init_commands.len();
+            init_metadata.insert(
+                index,
+                GeneratedCommand::new(
+                    command.clone(),
+                    source.clone(),
+                    GeneratedCommandKind::ControlFlow,
+                ),
+            );
+            init_commands.push(command);
+        }
+    }
+
+    fn module_variable_init_commands(
+        &mut self,
+        var_name: &str,
+        value: &Expression,
+    ) -> Result<Vec<String>, String> {
+        if let Some(const_value) = self.try_eval_const(value) {
+            let truncated = const_value as i32;
+
+            if const_value > i32::MAX as f64 || const_value < i32::MIN as f64 {
+                eprintln!(
+                    "⚠️  Warning: Module-level value {} for variable '{}' exceeds Minecraft scoreboard range.\n\
+                    Scoreboard range: {} to {}\n\
+                    Value will be clamped to: {}",
+                    const_value,
+                    var_name,
+                    i32::MIN,
+                    i32::MAX,
+                    if const_value > i32::MAX as f64 {
+                        i32::MAX
+                    } else {
+                        i32::MIN
+                    }
+                );
+            }
+
+            if const_value.fract() != 0.0 {
+                eprintln!(
+                    "⚠️  Warning: Module-level value {} for variable '{}' will lose precision.\n\
+                    Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                    const_value, var_name, truncated
+                );
+            }
+
+            return Ok(vec![format!(
+                "scoreboard players set {} temp {}",
+                var_name, truncated
+            )]);
+        }
+
+        match value {
+            Expression::Array(_) | Expression::Map(_) | Expression::String(_) => {
+                let storage_path = format!("vars.{}", var_name);
+                self.variable_storage_paths
+                    .insert(var_name.to_string(), storage_path.clone());
+                self.storage_value_commands(&storage_path, value)
+                    .map_err(|e| {
+                        format!("Failed to initialize module variable '{}': {}", var_name, e)
+                    })
+            }
+            _ => {
+                self.data_pack.track_objective("temp");
+                self.variable_objectives
+                    .insert(var_name.to_string(), "temp".to_string());
+                self.scoreboard_variables.insert(var_name.to_string());
+                self.evaluate_expression_to_target(value, var_name)
+                    .map_err(|e| {
+                        format!("Failed to initialize module variable '{}': {}", var_name, e)
+                    })
+            }
+        }
+    }
+
     fn process_import(&mut self, import: &Import) -> Result<(), String> {
         // Handle stdlib imports
         if import.module == "stdlib" {
@@ -661,7 +919,6 @@ impl Transpiler {
         }
 
         // Security: Limit import depth to prevent stack overflow
-        const MAX_IMPORT_DEPTH: usize = 50;
         if self.import_stack.len() >= MAX_IMPORT_DEPTH {
             return Err(format!(
                 "Maximum import depth exceeded ({}).\n\
@@ -684,11 +941,6 @@ impl Transpiler {
             ));
         }
 
-        // Check if already imported
-        if self.imported_files.contains(&canonical_path) {
-            return Ok(()); // Already imported, skip to avoid infinite loop
-        }
-
         // Check if file exists
         if !canonical_path.exists() && !import_path.exists() {
             return Err(format!(
@@ -697,6 +949,38 @@ impl Transpiler {
                 self.current_importer_display(),
                 import_path.display()
             ));
+        }
+
+        // A later `import module` may follow an earlier `from module import ...`.
+        // Re-read just enough metadata to enable qualified `module.func()` calls
+        // without processing the imported statements twice.
+        if self.imported_files.contains(&canonical_path) {
+            if import.items.is_empty() {
+                let source = std::fs::read_to_string(&import_path).map_err(|e| {
+                    format!(
+                        "Failed to read import file '{}': {}",
+                        import_path.display(),
+                        e
+                    )
+                })?;
+                let located =
+                    crate::parser::parse_located_with_diagnostics(&source).map_err(|errors| {
+                        format!(
+                            "Parse failed for '{}': {}",
+                            import.module,
+                            errors
+                                .iter()
+                                .map(|error| format!(
+                                    "{}:{} {}",
+                                    error.span.line, error.span.column, error.message
+                                ))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })?;
+                self.register_qualified_function_aliases(&import.module, &located.program);
+            }
+            return Ok(()); // Already imported, skip to avoid duplicate generated output
         }
 
         // Add to import stack and mark as imported
@@ -748,6 +1032,10 @@ impl Transpiler {
         }
 
         // Then process imported program statements
+        self.register_program_function_metadata(&program);
+        if import.items.is_empty() {
+            self.register_qualified_function_aliases(&import.module, &program);
+        }
         for statement in &program.statements {
             self.process_statement(statement)?;
         }
@@ -777,6 +1065,44 @@ impl Transpiler {
             .collect();
         chain.push(next_path.display().to_string());
         chain.join(" -> ")
+    }
+
+    fn register_program_function_metadata(&mut self, program: &Program) {
+        for statement in &program.statements {
+            if let Statement::FunctionDef(func) = statement {
+                let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
+                self.function_params.insert(func.name.clone(), param_names);
+                self.function_returns.insert(
+                    func.name.clone(),
+                    Self::analyze_function_return_kind(&func.body),
+                );
+            }
+        }
+    }
+
+    fn register_qualified_function_aliases(&mut self, module: &str, program: &Program) {
+        for statement in &program.statements {
+            if let Statement::FunctionDef(func) = statement {
+                self.qualified_function_aliases
+                    .insert(format!("{}.{}", module, func.name), func.name.clone());
+            }
+        }
+    }
+
+    fn resolve_user_function_call_name<'a>(&'a self, func: &'a Expression) -> Option<&'a str> {
+        match func {
+            Expression::Identifier(name) if self.function_params.contains_key(name) => {
+                Some(name.as_str())
+            }
+            Expression::Attribute(obj, method) => {
+                let module_name = Self::expression_path(obj)?;
+                let key = format!("{}.{}", module_name, method);
+                self.qualified_function_aliases
+                    .get(&key)
+                    .map(String::as_str)
+            }
+            _ => None,
+        }
     }
 
     /// Activate every stdlib module. Used by `import stdlib` and by
@@ -888,29 +1214,7 @@ impl Transpiler {
                 self.process_match(match_stmt)?;
             }
             Statement::Return(expr) => {
-                // Return statements are not supported in Minecraft functions
-                // Minecraft functions execute all commands sequentially and cannot return early
-                let expr_info = if let Some(e) = expr {
-                    format!("\nAttempted to return: {:?}", e)
-                } else {
-                    String::new()
-                };
-
-                return Err(format!(
-                    "Return statements are not supported.{}\n\n\
-                    Minecraft functions cannot return early or return values.\n\
-                    All commands in a function execute sequentially until the end.\n\n\
-                    Solutions:\n\
-                    1. Remove the return statement and restructure your code\n\
-                    2. Use if/else blocks to conditionally execute code:\n\
-                       if condition:\n\
-                           # code to run\n\
-                       # rest of function only runs if condition is false\n\
-                    3. Use separate functions to organize logic\n\n\
-                    Note: This is a limitation of Minecraft's function system,\n\
-                    not a Cobble compiler issue.",
-                    expr_info
-                ));
+                self.process_return(expr.as_ref())?;
             }
             Statement::Pass => {
                 // Pass is a no-op
@@ -1253,8 +1557,13 @@ impl Transpiler {
         let previous_function = self.current_function.take();
         let previous_metadata = self.current_function_metadata.take();
         let previous_context = self.current_context.clone();
+        let previous_return = self.current_return.clone();
+        let previous_function_name = self.current_function_name.take();
         let previous_globals = self.global_variables.clone();
         let previous_variables = self.variables.clone();
+        let previous_variable_objectives = self.variable_objectives.clone();
+        let previous_scoreboard_variables = self.scoreboard_variables.clone();
+        let previous_variable_storage_paths = self.variable_storage_paths.clone();
         let previous_variable_types = self.variable_types.clone();
 
         // Extract parameter names from Parameter structs
@@ -1264,10 +1573,34 @@ impl Transpiler {
         self.current_context = FunctionContext::with_params(param_names.clone());
         self.current_function = Some(Vec::new());
         self.current_function_metadata = Some(HashMap::new());
+        self.current_function_name = Some(func.name.clone());
+        let return_kind = Self::analyze_function_return_kind(&func.body);
+        // Only functions that actually contain a `return` statement need the
+        // return-flag protocol. Everything else skips the prologue and the
+        // `temp` objective so simple packs stay free of `_cobble_init`.
+        if matches!(return_kind, FunctionReturnKind::None) {
+            self.current_return = None;
+        } else {
+            let return_id = self.next_temp_id();
+            self.current_return = Some(ReturnContext {
+                value_score: format!("#return_value_{}", return_id),
+                flag_score: format!("#return_flag_{}", return_id),
+            });
+            self.data_pack.track_objective("temp");
+            if let (Some(commands), Some(return_context)) =
+                (&mut self.current_function, &self.current_return)
+            {
+                commands.push(format!(
+                    "scoreboard players set {} temp 0",
+                    return_context.flag_score
+                ));
+            }
+        }
         self.global_variables.clear();
 
         // Store function parameters
         self.function_params.insert(func.name.clone(), param_names);
+        self.function_returns.insert(func.name.clone(), return_kind);
 
         // Process function body
         for statement in &func.body {
@@ -1275,7 +1608,15 @@ impl Transpiler {
         }
 
         // Get the generated commands
-        if let Some(commands) = self.current_function.take() {
+        if let Some(mut commands) = self.current_function.take() {
+            if matches!(return_kind, FunctionReturnKind::Integer) {
+                if let Some(return_context) = &self.current_return {
+                    commands.push(format!(
+                        "execute unless score {} temp matches 1 run return 0",
+                        return_context.flag_score
+                    ));
+                }
+            }
             let metadata = self.current_function_metadata.take().unwrap_or_default();
             self.data_pack
                 .add_function_with_metadata(func.name.clone(), commands, metadata);
@@ -1285,8 +1626,13 @@ impl Transpiler {
         self.current_function = previous_function;
         self.current_function_metadata = previous_metadata;
         self.current_context = previous_context;
+        self.current_return = previous_return;
+        self.current_function_name = previous_function_name;
         self.global_variables = previous_globals;
         self.variables = previous_variables;
+        self.variable_objectives = previous_variable_objectives;
+        self.scoreboard_variables = previous_scoreboard_variables;
+        self.variable_storage_paths = previous_variable_storage_paths;
         self.variable_types = previous_variable_types;
 
         Ok(())
@@ -1304,6 +1650,15 @@ impl Transpiler {
             &self.variable_objectives,
             &self.variable_storage_paths,
             &self.compile_time_constants,
+            &self.function_params,
+            &self.function_returns,
+            &self.qualified_function_aliases,
+            &self.current_context.params,
+            &self.variable_types,
+            &mut self.temp_counter,
+            self.current_statement_source.clone(),
+            self.current_function_name.as_deref(),
+            &mut self.function_call_edges,
         );
         evaluator.evaluate_expression_to_target(expr, target)
     }
@@ -1389,6 +1744,11 @@ impl Transpiler {
                             } else if module_name == "resource_pack" {
                                 self.require_stdlib_module("resource_pack")?;
                                 self.process_resource_pack_intrinsic(method, args)?;
+                            } else if let Some(func_name) = self
+                                .resolve_user_function_call_name(func)
+                                .map(str::to_string)
+                            {
+                                self.generate_function_call(&func_name, args)?;
                             } else {
                                 return Err(format!(
                                     "Unknown module method: {}.{}",
@@ -1411,6 +1771,157 @@ impl Transpiler {
         Ok(())
     }
 
+    fn process_return(&mut self, expr: Option<&Expression>) -> Result<(), String> {
+        if self.current_function.is_none() {
+            return Err("return can only be used inside a function".to_string());
+        }
+
+        let mut commands = Vec::new();
+        let context = self.current_return.clone();
+        if let Some(expr) = expr {
+            match self.infer_type(expr) {
+                CobbleType::String | CobbleType::List | CobbleType::Map => {
+                    return Err(
+                        "return values must be integer scoreboard expressions; use storage/output variables for strings, lists, and maps."
+                            .to_string(),
+                    );
+                }
+                _ => {}
+            }
+            let temp_var = context
+                .as_ref()
+                .map(|context| context.value_score.clone())
+                .unwrap_or_else(|| {
+                    let temp_var = format!("#return_value_{}", self.next_temp_id());
+                    temp_var
+                });
+            commands.extend(self.evaluate_expression_to_target(expr, &temp_var)?);
+            if let Some(context) = &context {
+                commands.push(format!(
+                    "scoreboard players set {} temp 1",
+                    context.flag_score
+                ));
+            }
+            commands.push(format!(
+                "return run scoreboard players get {} temp",
+                temp_var
+            ));
+        } else {
+            if let Some(context) = &context {
+                commands.push(format!(
+                    "scoreboard players set {} temp 0",
+                    context.value_score
+                ));
+                commands.push(format!(
+                    "scoreboard players set {} temp 1",
+                    context.flag_score
+                ));
+            }
+            commands.push("return 0".to_string());
+        }
+
+        if let Some(ref mut function_commands) = self.current_function {
+            function_commands.extend(commands);
+        }
+
+        Ok(())
+    }
+
+    /// Record a lowered user-function call edge for cycle detection and reject
+    /// direct self-recursion at the call site. Module-level calls (no enclosing
+    /// user function) record nothing.
+    pub(in crate::transpiler) fn record_user_function_call(
+        &mut self,
+        callee: &str,
+    ) -> Result<(), String> {
+        let Some(caller) = self.current_function_name.clone() else {
+            return Ok(());
+        };
+        if caller == callee {
+            return Err(format!(
+                "Recursive call to '{}' is not supported. Rewrite the recursion as a loop (while/for) instead.",
+                callee
+            ));
+        }
+        self.function_call_edges
+            .entry(caller)
+            .or_default()
+            .insert(callee.to_string());
+        Ok(())
+    }
+
+    /// Reject mutually recursive user-function call cycles. Direct self-calls
+    /// error eagerly at the call site; this catches `a -> b -> a` style cycles
+    /// once all call edges have been recorded. Recursion cannot compile
+    /// correctly because argument frames and return flags are global fake
+    /// players, not per-invocation stacks.
+    fn check_recursive_call_cycles(&self) -> Result<(), String> {
+        fn visit(
+            node: &str,
+            edges: &BTreeMap<String, BTreeSet<String>>,
+            visiting: &mut Vec<String>,
+            done: &mut HashSet<String>,
+        ) -> Option<Vec<String>> {
+            if let Some(position) = visiting.iter().position(|name| name == node) {
+                let mut cycle = visiting[position..].to_vec();
+                cycle.push(node.to_string());
+                return Some(cycle);
+            }
+            if done.contains(node) {
+                return None;
+            }
+            visiting.push(node.to_string());
+            if let Some(callees) = edges.get(node) {
+                for callee in callees {
+                    if let Some(cycle) = visit(callee, edges, visiting, done) {
+                        return Some(cycle);
+                    }
+                }
+            }
+            visiting.pop();
+            done.insert(node.to_string());
+            None
+        }
+
+        let mut done = HashSet::new();
+        for node in self.function_call_edges.keys() {
+            let mut visiting = Vec::new();
+            if let Some(cycle) = visit(node, &self.function_call_edges, &mut visiting, &mut done) {
+                return Err(format!(
+                    "Recursive function calls are not supported: cycle {}. Rewrite the recursion as a loop (while/for) instead.",
+                    cycle.join(" -> ")
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A storage-backed string variable's scoreboard mirror only holds the
+    /// string length (`data get` on a string), so reading it as a score in
+    /// arithmetic silently computes garbage. Reject it up front.
+    pub(in crate::transpiler) fn reject_string_score_operand(
+        &self,
+        name: &str,
+    ) -> Result<(), String> {
+        if self.variable_storage_paths.contains_key(name)
+            && matches!(self.variable_types.get(name), Some(CobbleType::String))
+        {
+            return Err(format!(
+                "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
+                name
+            ));
+        }
+        Ok(())
+    }
+
+    pub(in crate::transpiler) fn return_propagation_command(&self) -> Option<String> {
+        let context = self.current_return.as_ref()?;
+        Some(format!(
+            "execute if score {} temp matches 1 run return run scoreboard players get {} temp",
+            context.flag_score, context.value_score
+        ))
+    }
+
     fn push_current_command(&mut self, command: String) -> Result<(), String> {
         if let Some(ref mut commands) = self.current_function {
             let command_index = commands.len();
@@ -1429,6 +1940,13 @@ impl Transpiler {
         } else {
             Err("Stdlib helper called outside of function context".to_string())
         }
+    }
+
+    fn push_current_commands(&mut self, commands: Vec<String>) -> Result<(), String> {
+        for command in commands {
+            self.push_current_command(command)?;
+        }
+        Ok(())
     }
 
     fn expr_to_plain_arg(&self, expr: &Expression, label: &str) -> Result<String, String> {
@@ -1451,6 +1969,18 @@ impl Transpiler {
         }
     }
 
+    fn expr_to_selector_arg(&self, expr: &Expression, label: &str) -> Result<String, String> {
+        let value = self.expr_to_plain_arg(expr, label)?;
+        Ok(self.expand_selector_alias_arg(value))
+    }
+
+    fn expand_selector_alias_arg(&self, value: String) -> String {
+        let Some(alias) = value.strip_prefix('@') else {
+            return value;
+        };
+        self.selector_aliases.get(alias).cloned().unwrap_or(value)
+    }
+
     fn expr_to_i32(&self, expr: &Expression, label: &str) -> Result<i32, String> {
         match expr {
             Expression::Number(n) => Ok(*n as i32),
@@ -1467,6 +1997,232 @@ impl Transpiler {
         match expr {
             Expression::Boolean(value) => Ok(*value),
             _ => Err(format!("{} must be a literal boolean", label)),
+        }
+    }
+
+    fn next_temp_id(&mut self) -> u32 {
+        let id = self.temp_counter;
+        self.temp_counter += 1;
+        id
+    }
+
+    fn dynamic_storage_command<F>(
+        &mut self,
+        plan: &StoragePathPlan,
+        kind: GeneratedCommandKind,
+        build_helper_commands: F,
+    ) -> Result<Vec<String>, String>
+    where
+        F: FnOnce(&str) -> Vec<String>,
+    {
+        let id = self.next_temp_id();
+        let (mut commands, args_path) = self.prepare_dynamic_storage_path(id, plan)?;
+        let helper_name = format!("_cobble_storage_dyn_{}", id);
+        let helper_commands = build_helper_commands(plan.template());
+        self.add_generated_helper_function(helper_name.clone(), helper_commands, kind);
+        commands.push(format!(
+            "function {}:{} with storage {}:global {}",
+            self.data_pack.namespace, helper_name, self.data_pack.namespace, args_path
+        ));
+        commands.push(format!(
+            "data remove storage {}:global {}",
+            self.data_pack.namespace, args_path
+        ));
+        Ok(commands)
+    }
+
+    fn storage_value_commands(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+    ) -> Result<Vec<String>, String> {
+        if let Ok(snbt) = self.serialize_to_snbt(expr) {
+            return Ok(vec![format!(
+                "data modify storage {}:global {} set value {}",
+                self.data_pack.namespace, target_path, snbt
+            )]);
+        }
+
+        match expr {
+            Expression::Array(_) | Expression::Map(_) => {
+                let shell = self.storage_shell_snbt(expr)?;
+                let mut commands = vec![format!(
+                    "data modify storage {}:global {} set value {}",
+                    self.data_pack.namespace, target_path, shell
+                )];
+                commands.extend(self.storage_runtime_patch_commands(target_path, expr)?);
+                Ok(commands)
+            }
+            _ => self.storage_leaf_set_commands(target_path, expr),
+        }
+    }
+
+    fn materialize_storage_value(
+        &mut self,
+        expr: &Expression,
+    ) -> Result<(Vec<String>, String), String> {
+        let id = self.next_temp_id();
+        let path = format!("_cobble_value_{}", id);
+        let commands = self.storage_value_commands(&path, expr)?;
+        Ok((commands, path))
+    }
+
+    fn storage_shell_snbt(&self, expr: &Expression) -> Result<String, String> {
+        match expr {
+            Expression::Number(_)
+            | Expression::String(_)
+            | Expression::Boolean(_)
+            | Expression::None => self.serialize_to_snbt(expr),
+            Expression::Identifier(name) => {
+                if self.compile_time_constants.contains_key(name) {
+                    self.serialize_to_snbt(expr)
+                } else {
+                    Ok(self.default_snbt_for_runtime_identifier(name))
+                }
+            }
+            Expression::Array(items) => {
+                let mut result = String::from("[");
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        result.push(',');
+                    }
+                    result.push_str(&self.storage_shell_snbt(item)?);
+                }
+                result.push(']');
+                Ok(result)
+            }
+            Expression::Map(entries) => {
+                let mut result = String::from("{");
+                for (index, (key, value)) in entries.iter().enumerate() {
+                    if index > 0 {
+                        result.push(',');
+                    }
+                    result.push_str(&Self::serialize_snbt_key(key));
+                    result.push(':');
+                    result.push_str(&self.storage_shell_snbt(value)?);
+                }
+                result.push('}');
+                Ok(result)
+            }
+            _ => Ok("0".to_string()),
+        }
+    }
+
+    fn default_snbt_for_runtime_identifier(&self, name: &str) -> String {
+        match self.variable_types.get(name) {
+            Some(CobbleType::String) => "\"\"".to_string(),
+            Some(CobbleType::List) => "[]".to_string(),
+            Some(CobbleType::Map) => "{}".to_string(),
+            Some(CobbleType::Boolean) => "0b".to_string(),
+            _ => "0".to_string(),
+        }
+    }
+
+    fn storage_runtime_patch_commands(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+    ) -> Result<Vec<String>, String> {
+        match expr {
+            Expression::Array(items) => {
+                let mut commands = Vec::new();
+                for (index, item) in items.iter().enumerate() {
+                    commands.extend(self.storage_runtime_patch_commands(
+                        &format!("{}[{}]", target_path, index),
+                        item,
+                    )?);
+                }
+                Ok(commands)
+            }
+            Expression::Map(entries) => {
+                let mut commands = Vec::new();
+                for (key, value) in entries {
+                    commands.extend(self.storage_runtime_patch_commands(
+                        &Self::storage_child_path(target_path, key),
+                        value,
+                    )?);
+                }
+                Ok(commands)
+            }
+            Expression::Number(_)
+            | Expression::String(_)
+            | Expression::Boolean(_)
+            | Expression::None => Ok(Vec::new()),
+            Expression::Identifier(name) if self.compile_time_constants.contains_key(name) => {
+                Ok(Vec::new())
+            }
+            _ => self.storage_leaf_set_commands(target_path, expr),
+        }
+    }
+
+    fn storage_child_path(base: &str, key: &str) -> String {
+        if !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '+')
+        {
+            format!("{}.{}", base, key)
+        } else {
+            let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("{}.\"{}\"", base, escaped)
+        }
+    }
+
+    fn storage_leaf_set_commands(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+    ) -> Result<Vec<String>, String> {
+        let namespace = self.data_pack.namespace.clone();
+        match expr {
+            Expression::Identifier(name) => {
+                if let Some(source_path) = self.variable_storage_paths.get(name) {
+                    return Ok(vec![format!(
+                        "data modify storage {}:global {} set from storage {}:global {}",
+                        namespace, target_path, namespace, source_path
+                    )]);
+                }
+                if self.is_current_macro_param(name) {
+                    return Ok(vec![format!(
+                        "data modify storage {}:global {} set from storage {}:global args.{}",
+                        namespace, target_path, namespace, name
+                    )]);
+                }
+                if self.scoreboard_variables.contains(name)
+                    || self.variable_objectives.contains_key(name)
+                    || self.variables.contains_key(name)
+                {
+                    let objective = self
+                        .variable_objectives
+                        .get(name)
+                        .map(String::as_str)
+                        .unwrap_or("temp");
+                    return Ok(vec![format!(
+                        "execute store result storage {}:global {} int 1 run scoreboard players get {} {}",
+                        namespace, target_path, name, objective
+                    )]);
+                }
+                Err(format!(
+                    "Identifier '{}' cannot be stored in SNBT here; use a literal, const, runtime score, storage-backed value, or function parameter",
+                    name
+                ))
+            }
+            Expression::Number(_)
+            | Expression::String(_)
+            | Expression::Boolean(_)
+            | Expression::Array(_)
+            | Expression::Map(_) => self.storage_value_commands(target_path, expr),
+            Expression::None => self.serialize_to_snbt(expr).map(|_| Vec::new()),
+            _ => {
+                let id = self.next_temp_id();
+                let temp_score = format!("#cobble_value_{}", id);
+                let mut commands = self.evaluate_expression_to_target(expr, &temp_score)?;
+                commands.push(format!(
+                    "execute store result storage {}:global {} int 1 run scoreboard players get {} temp",
+                    namespace, target_path, temp_score
+                ));
+                Ok(commands)
+            }
         }
     }
 
@@ -1581,7 +2337,7 @@ impl Transpiler {
                 if args.len() != 1 {
                     return Err("text.selector() takes 1 argument".to_string());
                 }
-                let selector = self.expr_to_plain_arg(&args[0], "selector component")?;
+                let selector = self.expr_to_selector_arg(&args[0], "selector component")?;
                 serde_json::json!({ "selector": selector })
             }
             _ => return Ok(None),
@@ -1688,11 +2444,52 @@ impl Transpiler {
         ))
     }
 
+    fn expr_to_storage_path_plan(
+        &self,
+        expr: &Expression,
+        label: &str,
+    ) -> Result<StoragePathPlan, String> {
+        match expr {
+            Expression::String(s) | Expression::Identifier(s) => {
+                Ok(StoragePathPlan::static_path(s.clone()))
+            }
+            Expression::Number(n) if n.fract() == 0.0 => {
+                Ok(StoragePathPlan::static_path((*n as i32).to_string()))
+            }
+            Expression::Number(n) => Ok(StoragePathPlan::static_path(n.to_string())),
+            Expression::Call(func, args) => {
+                if let Some(value) = self.storage_path_helper_plan(func, args)? {
+                    Ok(value)
+                } else {
+                    Err(format!("{} must be a storage path", label))
+                }
+            }
+            _ => Err(format!("{} must be a storage path", label)),
+        }
+    }
+
     fn storage_path_helper_string(
         &self,
         func: &Expression,
         args: &[Expression],
     ) -> Result<Option<String>, String> {
+        let Some(plan) = self.storage_path_helper_plan(func, args)? else {
+            return Ok(None);
+        };
+        match plan {
+            StoragePathPlan::Static(path) => Ok(Some(path)),
+            StoragePathPlan::Dynamic { .. } => Err(
+                "Dynamic storage paths can only be used by storage helpers that emit Minecraft commands"
+                    .to_string(),
+            ),
+        }
+    }
+
+    fn storage_path_helper_plan(
+        &self,
+        func: &Expression,
+        args: &[Expression],
+    ) -> Result<Option<StoragePathPlan>, String> {
         let Expression::Attribute(obj, method) = func else {
             return Ok(None);
         };
@@ -1709,26 +2506,33 @@ impl Transpiler {
                 if args.is_empty() {
                     return Err("storage.path() takes at least 1 argument".to_string());
                 }
-                args.iter()
-                    .map(|arg| self.expr_to_storage_path_component(arg, "storage path component"))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(".")
+                StoragePathPlan::static_path(
+                    args.iter()
+                        .map(|arg| {
+                            self.expr_to_storage_path_component(arg, "storage path component")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join("."),
+                )
             }
             "child" => {
                 if args.len() != 2 {
                     return Err("storage.child() takes 2 arguments".to_string());
                 }
-                let base = self.expr_to_plain_arg(&args[0], "storage base path")?;
+                let base = self.expr_to_storage_path_plan(&args[0], "storage base path")?;
                 let child = self.expr_to_storage_path_component(&args[1], "storage child path")?;
-                format!("{}.{}", base, child)
+                base.append_field(&child)
             }
             "index" => {
                 if args.len() != 2 {
                     return Err("storage.index() takes 2 arguments".to_string());
                 }
-                let base = self.expr_to_plain_arg(&args[0], "storage base path")?;
-                let index = self.expr_to_i32(&args[1], "storage list index")?;
-                format!("{}[{}]", base, index)
+                let base = self.expr_to_storage_path_plan(&args[0], "storage base path")?;
+                if let Ok(index) = self.expr_to_i32(&args[1], "storage list index") {
+                    base.append_static_index(index)
+                } else {
+                    base.append_dynamic_index(args[1].clone())
+                }
             }
             _ => return Ok(None),
         };
@@ -1924,7 +2728,7 @@ impl Transpiler {
             return Err(format!("text.{}() takes 2 arguments", method));
         }
 
-        let target = self.expr_to_plain_arg(&args[0], "text target")?;
+        let target = self.expr_to_selector_arg(&args[0], "text target")?;
         let component = self.expr_to_text_component(&args[1])?;
         let command = match method {
             "tellraw" => format!("tellraw {} {}", target, component),
@@ -2059,10 +2863,14 @@ impl Transpiler {
                 if min > max {
                     return Err("random.int() min cannot be greater than max".to_string());
                 }
-                format!(
-                    "execute store result score {} temp run random value {}..{}",
-                    name, min, max
-                )
+                if min == max {
+                    format!("scoreboard players set {} temp {}", name, min)
+                } else {
+                    format!(
+                        "execute store result score {} temp run random value {}..{}",
+                        name, min, max
+                    )
+                }
             }
             "bool" => {
                 if args.len() != 1 {
@@ -2129,82 +2937,294 @@ impl Transpiler {
         method: &str,
         args: &[Expression],
     ) -> Result<(), String> {
-        let command = match method {
+        let namespace = self.data_pack.namespace.clone();
+        let mut commands = Vec::new();
+
+        match method {
             "set" => {
                 if args.len() != 2 {
                     return Err("storage.set() takes 2 arguments".to_string());
                 }
-                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
-                let value = self.serialize_to_snbt(&args[1])?;
-                format!(
-                    "data modify storage {}:global {} set value {}",
-                    self.data_pack.namespace, path, value
-                )
+                let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
+                if let Some(static_path) = path.as_static().map(str::to_string) {
+                    commands.extend(self.storage_value_commands(&static_path, &args[1])?);
+                } else if let Ok(value) = self.serialize_to_snbt(&args[1]) {
+                    let ns = namespace.clone();
+                    commands.extend(self.dynamic_storage_command(
+                        &path,
+                        GeneratedCommandKind::StdLib,
+                        |template| {
+                            vec![format!(
+                                "$data modify storage {}:global {} set value {}",
+                                ns, template, value
+                            )]
+                        },
+                    )?);
+                } else {
+                    let (value_commands, value_path) = self.materialize_storage_value(&args[1])?;
+                    commands.extend(value_commands);
+                    let ns = namespace.clone();
+                    commands.extend(self.dynamic_storage_command(
+                        &path,
+                        GeneratedCommandKind::StdLib,
+                        |template| {
+                            vec![format!(
+                                "$data modify storage {}:global {} set from storage {}:global {}",
+                                ns, template, ns, value_path
+                            )]
+                        },
+                    )?);
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        namespace, value_path
+                    ));
+                }
             }
             "merge" => {
                 if args.len() != 2 {
                     return Err("storage.merge() takes 2 arguments".to_string());
                 }
-                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
-                let value = self.serialize_to_snbt(&args[1])?;
-                format!(
-                    "data modify storage {}:global {} merge value {}",
-                    self.data_pack.namespace, path, value
-                )
+                let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
+                if let Ok(value) = self.serialize_to_snbt(&args[1]) {
+                    if let Some(static_path) = path.as_static() {
+                        commands.push(format!(
+                            "data modify storage {}:global {} merge value {}",
+                            namespace, static_path, value
+                        ));
+                    } else {
+                        let ns = namespace.clone();
+                        commands.extend(self.dynamic_storage_command(
+                            &path,
+                            GeneratedCommandKind::StdLib,
+                            |template| {
+                                vec![format!(
+                                    "$data modify storage {}:global {} merge value {}",
+                                    ns, template, value
+                                )]
+                            },
+                        )?);
+                    }
+                } else {
+                    let (value_commands, value_path) = self.materialize_storage_value(&args[1])?;
+                    commands.extend(value_commands);
+                    if let Some(static_path) = path.as_static() {
+                        commands.push(format!(
+                            "data modify storage {}:global {} merge from storage {}:global {}",
+                            namespace, static_path, namespace, value_path
+                        ));
+                    } else {
+                        let ns = namespace.clone();
+                        commands.extend(self.dynamic_storage_command(
+                            &path,
+                            GeneratedCommandKind::StdLib,
+                            |template| {
+                                vec![format!(
+                                    "$data modify storage {}:global {} merge from storage {}:global {}",
+                                    ns, template, ns, value_path
+                                )]
+                            },
+                        )?);
+                    }
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        namespace, value_path
+                    ));
+                }
             }
             "remove" => {
                 if args.len() != 1 {
                     return Err("storage.remove() takes 1 argument".to_string());
                 }
-                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
-                format!(
-                    "data remove storage {}:global {}",
-                    self.data_pack.namespace, path
-                )
+                let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
+                if let Some(static_path) = path.as_static() {
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        namespace, static_path
+                    ));
+                } else {
+                    let ns = namespace.clone();
+                    commands.extend(self.dynamic_storage_command(
+                        &path,
+                        GeneratedCommandKind::StdLib,
+                        |template| vec![format!("$data remove storage {}:global {}", ns, template)],
+                    )?);
+                }
             }
             "copy" => {
                 if args.len() != 2 {
                     return Err("storage.copy() takes 2 arguments".to_string());
                 }
-                let dst = self.expr_to_plain_arg(&args[0], "destination storage path")?;
-                let src = self.expr_to_plain_arg(&args[1], "source storage path")?;
-                format!(
-                    "data modify storage {}:global {} set from storage {}:global {}",
-                    self.data_pack.namespace, dst, self.data_pack.namespace, src
-                )
+                let dst = self.expr_to_storage_path_plan(&args[0], "destination storage path")?;
+                let src = self.expr_to_storage_path_plan(&args[1], "source storage path")?;
+
+                let source_path = if let Some(static_src) = src.as_static().map(str::to_string) {
+                    static_src
+                } else {
+                    let temp_path = format!("_cobble_copy_source_{}", self.next_temp_id());
+                    let ns = namespace.clone();
+                    commands.extend(self.dynamic_storage_command(
+                        &src,
+                        GeneratedCommandKind::StdLib,
+                        |template| {
+                            vec![
+                                format!("data remove storage {}:global {}", ns, temp_path),
+                                format!(
+                                    "$data modify storage {}:global {} set from storage {}:global {}",
+                                    ns, temp_path, ns, template
+                                ),
+                            ]
+                        },
+                    )?);
+                    temp_path
+                };
+
+                if let Some(static_dst) = dst.as_static() {
+                    commands.push(format!(
+                        "data modify storage {}:global {} set from storage {}:global {}",
+                        namespace, static_dst, namespace, source_path
+                    ));
+                } else {
+                    let ns = namespace.clone();
+                    commands.extend(self.dynamic_storage_command(
+                        &dst,
+                        GeneratedCommandKind::StdLib,
+                        |template| {
+                            vec![format!(
+                                "$data modify storage {}:global {} set from storage {}:global {}",
+                                ns, template, ns, source_path
+                            )]
+                        },
+                    )?);
+                }
+
+                if source_path.starts_with("_cobble_copy_source_") {
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        namespace, source_path
+                    ));
+                }
             }
             "append" | "prepend" => {
                 if args.len() != 2 {
                     return Err(format!("storage.{}() takes 2 arguments", method));
                 }
-                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
-                let value = self.serialize_to_snbt(&args[1])?;
-                format!(
-                    "data modify storage {}:global {} {} value {}",
-                    self.data_pack.namespace, path, method, value
-                )
+                let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
+                if let Ok(value) = self.serialize_to_snbt(&args[1]) {
+                    if let Some(static_path) = path.as_static() {
+                        commands.push(format!(
+                            "data modify storage {}:global {} {} value {}",
+                            namespace, static_path, method, value
+                        ));
+                    } else {
+                        let ns = namespace.clone();
+                        commands.extend(self.dynamic_storage_command(
+                            &path,
+                            GeneratedCommandKind::StdLib,
+                            |template| {
+                                vec![format!(
+                                    "$data modify storage {}:global {} {} value {}",
+                                    ns, template, method, value
+                                )]
+                            },
+                        )?);
+                    }
+                } else {
+                    let (value_commands, value_path) = self.materialize_storage_value(&args[1])?;
+                    commands.extend(value_commands);
+                    if let Some(static_path) = path.as_static() {
+                        commands.push(format!(
+                            "data modify storage {}:global {} {} from storage {}:global {}",
+                            namespace, static_path, method, namespace, value_path
+                        ));
+                    } else {
+                        let ns = namespace.clone();
+                        commands.extend(self.dynamic_storage_command(
+                            &path,
+                            GeneratedCommandKind::StdLib,
+                            |template| {
+                                vec![format!(
+                                    "$data modify storage {}:global {} {} from storage {}:global {}",
+                                    ns, template, method, ns, value_path
+                                )]
+                            },
+                        )?);
+                    }
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        namespace, value_path
+                    ));
+                }
             }
             "insert" => {
                 if args.len() != 3 {
                     return Err("storage.insert() takes 3 arguments".to_string());
                 }
-                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
+                let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
                 let index = self.expr_to_i32(&args[1], "storage insert index")?;
-                let value = self.serialize_to_snbt(&args[2])?;
-                format!(
-                    "data modify storage {}:global {} insert {} value {}",
-                    self.data_pack.namespace, path, index, value
-                )
+                if let Ok(value) = self.serialize_to_snbt(&args[2]) {
+                    if let Some(static_path) = path.as_static() {
+                        commands.push(format!(
+                            "data modify storage {}:global {} insert {} value {}",
+                            namespace, static_path, index, value
+                        ));
+                    } else {
+                        let ns = namespace.clone();
+                        commands.extend(self.dynamic_storage_command(
+                            &path,
+                            GeneratedCommandKind::StdLib,
+                            |template| {
+                                vec![format!(
+                                    "$data modify storage {}:global {} insert {} value {}",
+                                    ns, template, index, value
+                                )]
+                            },
+                        )?);
+                    }
+                } else {
+                    let (value_commands, value_path) = self.materialize_storage_value(&args[2])?;
+                    commands.extend(value_commands);
+                    if let Some(static_path) = path.as_static() {
+                        commands.push(format!(
+                            "data modify storage {}:global {} insert {} from storage {}:global {}",
+                            namespace, static_path, index, namespace, value_path
+                        ));
+                    } else {
+                        let ns = namespace.clone();
+                        commands.extend(self.dynamic_storage_command(
+                            &path,
+                            GeneratedCommandKind::StdLib,
+                            |template| {
+                                vec![format!(
+                                    "$data modify storage {}:global {} insert {} from storage {}:global {}",
+                                    ns, template, index, ns, value_path
+                                )]
+                            },
+                        )?);
+                    }
+                    commands.push(format!(
+                        "data remove storage {}:global {}",
+                        namespace, value_path
+                    ));
+                }
             }
             "get" => {
                 if args.len() != 1 {
                     return Err("storage.get() takes 1 argument".to_string());
                 }
-                let path = self.expr_to_plain_arg(&args[0], "storage path")?;
-                format!(
-                    "data get storage {}:global {}",
-                    self.data_pack.namespace, path
-                )
+                let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
+                if let Some(static_path) = path.as_static() {
+                    commands.push(format!(
+                        "data get storage {}:global {}",
+                        namespace, static_path
+                    ));
+                } else {
+                    let ns = namespace.clone();
+                    commands.extend(self.dynamic_storage_command(
+                        &path,
+                        GeneratedCommandKind::StdLib,
+                        |template| vec![format!("$data get storage {}:global {}", ns, template)],
+                    )?);
+                }
             }
             "read_score" => {
                 if !(2..=3).contains(&args.len()) {
@@ -2212,24 +3232,45 @@ impl Transpiler {
                 }
                 self.data_pack.track_objective("temp");
                 let score = self.expr_to_plain_arg(&args[0], "target score")?;
-                let path = self.expr_to_plain_arg(&args[1], "storage path")?;
+                let path = self.expr_to_storage_path_plan(&args[1], "storage path")?;
                 let scale = if args.len() == 3 {
                     self.expr_to_plain_arg(&args[2], "data get scale")?
                 } else {
                     "1".to_string()
                 };
-                format!(
-                    "execute store result score {} temp run data get storage {}:global {} {}",
-                    score, self.data_pack.namespace, path, scale
-                )
+                if let Some(static_path) = path.as_static() {
+                    commands.push(format!(
+                        "execute store result score {} temp run data get storage {}:global {} {}",
+                        score, namespace, static_path, scale
+                    ));
+                } else {
+                    let ns = namespace.clone();
+                    commands.extend(self.dynamic_storage_command(
+                        &path,
+                        GeneratedCommandKind::StdLib,
+                        |template| {
+                            vec![
+                                format!("scoreboard players set {} temp 0", score),
+                                format!(
+                                    "$execute store result score {} temp run data get storage {}:global {} {}",
+                                    score, ns, template, scale
+                                ),
+                            ]
+                        },
+                    )?);
+                }
             }
             "copy_from" => {
                 if args.len() != 4 {
                     return Err("storage.copy_from() takes 4 arguments".to_string());
                 }
-                let dst = self.expr_to_plain_arg(&args[0], "destination storage path")?;
+                let dst = self.expr_to_storage_path_plan(&args[0], "destination storage path")?;
                 let source_type = self.expr_to_plain_arg(&args[1], "source type")?;
-                let source_id = self.expr_to_plain_arg(&args[2], "source id")?;
+                let source_id = if source_type == "entity" {
+                    self.expr_to_selector_arg(&args[2], "source id")?
+                } else {
+                    self.expr_to_plain_arg(&args[2], "source id")?
+                };
                 let source_path = self.expr_to_plain_arg(&args[3], "source path")?;
                 if !matches!(source_type.as_str(), "entity" | "block" | "storage") {
                     return Err(
@@ -2237,17 +3278,31 @@ impl Transpiler {
                             .to_string(),
                     );
                 }
-                format!(
-                    "data modify storage {}:global {} set from {} {} {}",
-                    self.data_pack.namespace, dst, source_type, source_id, source_path
-                )
+                if let Some(static_dst) = dst.as_static() {
+                    commands.push(format!(
+                        "data modify storage {}:global {} set from {} {} {}",
+                        namespace, static_dst, source_type, source_id, source_path
+                    ));
+                } else {
+                    let ns = namespace.clone();
+                    commands.extend(self.dynamic_storage_command(
+                        &dst,
+                        GeneratedCommandKind::StdLib,
+                        |template| {
+                            vec![format!(
+                                "$data modify storage {}:global {} set from {} {} {}",
+                                ns, template, source_type, source_id, source_path
+                            )]
+                        },
+                    )?);
+                }
             }
             "path" | "child" | "index" => {
                 let func = Expression::Attribute(
                     Box::new(Expression::Identifier("storage".to_string())),
                     method.to_string(),
                 );
-                if self.storage_path_helper_string(&func, args)?.is_some() {
+                if self.storage_path_helper_plan(&func, args)?.is_some() {
                     return Err(format!(
                         "storage.{}() returns a storage path string; pass it to a helper that accepts a storage path",
                         method
@@ -2256,8 +3311,9 @@ impl Transpiler {
                 return Err(format!("Unknown storage function: storage.{}", method));
             }
             _ => return Err(format!("Unknown storage function: storage.{}", method)),
-        };
-        self.push_current_command(command)
+        }
+
+        self.push_current_commands(commands)
     }
 
     fn process_schedule_intrinsic(
@@ -2382,7 +3438,7 @@ impl Transpiler {
                     return Err("bossbar.set_players() takes 2 arguments".to_string());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
-                let players = self.expr_to_plain_arg(&args[1], "bossbar players")?;
+                let players = self.expr_to_selector_arg(&args[1], "bossbar players")?;
                 format!(
                     "bossbar set {} players {}",
                     self.qualify_namespaced_id(&id),
@@ -2435,7 +3491,7 @@ impl Transpiler {
                 }
                 let name = self.expr_to_plain_arg(&args[0], "team name")?;
                 if args.len() == 2 {
-                    let members = self.expr_to_plain_arg(&args[1], "team members")?;
+                    let members = self.expr_to_selector_arg(&args[1], "team members")?;
                     format!("team join {} {}", name, members)
                 } else {
                     format!("team join {}", name)
@@ -2445,7 +3501,7 @@ impl Transpiler {
                 if args.len() != 1 {
                     return Err("team.leave() takes 1 argument".to_string());
                 }
-                let members = self.expr_to_plain_arg(&args[0], "team members")?;
+                let members = self.expr_to_selector_arg(&args[0], "team members")?;
                 format!("team leave {}", members)
             }
             "modify" => {
@@ -2475,7 +3531,7 @@ impl Transpiler {
                 if args.len() != 2 {
                     return Err(format!("entity.{}() takes 2 arguments", method));
                 }
-                let target = self.expr_to_plain_arg(&args[0], "entity target")?;
+                let target = self.expr_to_selector_arg(&args[0], "entity target")?;
                 let tag = self.expr_to_plain_arg(&args[1], "entity tag")?;
                 let action = method.strip_prefix("tag_").unwrap();
                 format!("tag {} {} {}", target, action, tag)
@@ -2484,7 +3540,7 @@ impl Transpiler {
                 if !(2..=5).contains(&args.len()) {
                     return Err("entity.effect_give() takes 2 to 5 arguments".to_string());
                 }
-                let target = self.expr_to_plain_arg(&args[0], "effect target")?;
+                let target = self.expr_to_selector_arg(&args[0], "effect target")?;
                 let effect = self.expr_to_plain_arg(&args[1], "effect id")?;
                 let mut command = format!("effect give {} {}", target, effect);
                 if args.len() >= 3 {
@@ -2509,7 +3565,7 @@ impl Transpiler {
                 if !(1..=2).contains(&args.len()) {
                     return Err("entity.effect_clear() takes 1 or 2 arguments".to_string());
                 }
-                let target = self.expr_to_plain_arg(&args[0], "effect target")?;
+                let target = self.expr_to_selector_arg(&args[0], "effect target")?;
                 if args.len() == 2 {
                     let effect = self.expr_to_plain_arg(&args[1], "effect id")?;
                     format!("effect clear {} {}", target, effect)
@@ -2521,7 +3577,7 @@ impl Transpiler {
                 if !(2..=3).contains(&args.len()) {
                     return Err("entity.attribute_get() takes 2 or 3 arguments".to_string());
                 }
-                let target = self.expr_to_plain_arg(&args[0], "attribute target")?;
+                let target = self.expr_to_selector_arg(&args[0], "attribute target")?;
                 let attribute = self.expr_to_plain_arg(&args[1], "attribute id")?;
                 if args.len() == 3 {
                     let scale = self.expr_to_plain_arg(&args[2], "attribute scale")?;
@@ -2534,7 +3590,7 @@ impl Transpiler {
                 if args.len() != 3 {
                     return Err("entity.attribute_base_set() takes 3 arguments".to_string());
                 }
-                let target = self.expr_to_plain_arg(&args[0], "attribute target")?;
+                let target = self.expr_to_selector_arg(&args[0], "attribute target")?;
                 let attribute = self.expr_to_plain_arg(&args[1], "attribute id")?;
                 let value = self.expr_to_plain_arg(&args[2], "attribute value")?;
                 format!("attribute {} {} base set {}", target, attribute, value)
@@ -2543,7 +3599,7 @@ impl Transpiler {
                 if args.len() != 2 {
                     return Err("entity.teleport() takes 2 arguments".to_string());
                 }
-                let target = self.expr_to_plain_arg(&args[0], "teleport target")?;
+                let target = self.expr_to_selector_arg(&args[0], "teleport target")?;
                 let destination = self.expr_to_plain_arg(&args[1], "teleport destination")?;
                 format!("tp {} {}", target, destination)
             }
@@ -3023,10 +4079,25 @@ impl Transpiler {
         self.scoreboard_variables.insert(input1.to_string());
         self.scoreboard_variables.insert(input2.to_string());
 
-        // Evaluate arguments
+        // Evaluating an argument can itself run a math helper (a nested
+        // math.* call), which stages into the shared #math_input scores and
+        // would clobber an argument staged earlier. Stage each argument into
+        // a unique scratch and copy into the helper inputs right before the
+        // call.
+        let arg1_scratch = format!("#math_arg_{}", self.next_temp_id());
+        let arg2_scratch = format!("#math_arg_{}", self.next_temp_id());
+
         let mut cmds = Vec::new();
-        cmds.extend(self.evaluate_expression_to_target(&args[0], input1)?);
-        cmds.extend(self.evaluate_expression_to_target(&args[1], input2)?);
+        cmds.extend(self.evaluate_expression_to_target(&args[0], &arg1_scratch)?);
+        cmds.extend(self.evaluate_expression_to_target(&args[1], &arg2_scratch)?);
+        cmds.push(format!(
+            "scoreboard players operation {} math = {} math",
+            input1, arg1_scratch
+        ));
+        cmds.push(format!(
+            "scoreboard players operation {} math = {} math",
+            input2, arg2_scratch
+        ));
 
         self.ensure_math_helper(op);
 
@@ -3049,6 +4120,7 @@ impl Transpiler {
         func_name: &str,
         args: &[Expression],
     ) -> Result<(), String> {
+        self.record_user_function_call(func_name)?;
         let mut commands = Vec::new();
 
         if let Some(param_names) = self.function_params.get(func_name).cloned() {
@@ -3067,26 +4139,28 @@ impl Transpiler {
             // If function has parameters, use macro system
             if !param_names.is_empty() && !args.is_empty() {
                 let preserve_caller_args = !self.current_context.params.is_empty();
-                let staged_args_path = if preserve_caller_args {
-                    let id = self.temp_counter;
-                    self.temp_counter += 1;
-                    let caller_path = format!("_caller_args_{}", id);
+                let staged_args_path = {
+                    let id = self.next_temp_id();
                     let call_path = format!("_call_args_{}", id);
-                    commands.push(format!(
-                        "data remove storage {}:global {}",
-                        self.data_pack.namespace, caller_path
-                    ));
-                    commands.push(format!(
-                        "data modify storage {}:global {} set from storage {}:global args",
-                        self.data_pack.namespace, caller_path, self.data_pack.namespace
-                    ));
+                    let caller_path = if preserve_caller_args {
+                        let caller_path = format!("_caller_args_{}", id);
+                        commands.push(format!(
+                            "data remove storage {}:global {}",
+                            self.data_pack.namespace, caller_path
+                        ));
+                        commands.push(format!(
+                            "data modify storage {}:global {} set from storage {}:global args",
+                            self.data_pack.namespace, caller_path, self.data_pack.namespace
+                        ));
+                        Some(caller_path)
+                    } else {
+                        None
+                    };
                     commands.push(format!(
                         "data remove storage {}:global {}",
                         self.data_pack.namespace, call_path
                     ));
                     Some((call_path, caller_path))
-                } else {
-                    None
                 };
 
                 // Store arguments in storage for macro substitution
@@ -3161,10 +4235,13 @@ impl Transpiler {
                                         ));
                                     }
                                 } else {
-                                    // Unknown identifier - treat as string literal (for items, etc.)
-                                    commands.push(format!(
-                                        "data modify storage {}:global {} set value \"{}\"",
-                                        self.data_pack.namespace, target_path, var
+                                    // Unknown identifier: silently passing it through as a
+                                    // string literal hides typos from library callers, so
+                                    // fail loudly instead (the CLI diagnostics catch this
+                                    // earlier with `undefined-variable`).
+                                    return Err(format!(
+                                        "Unknown identifier '{}' passed as argument to function '{}'. Define the variable first, or quote it (\"{}\") to pass a string literal.",
+                                        var, func_name, var
                                     ));
                                 }
                             }
@@ -3176,7 +4253,11 @@ impl Transpiler {
                                     self.data_pack.namespace, target_path, value
                                 ));
                             }
-                            Expression::Binary(_, _, _) | Expression::Unary(_, _) => {
+                            Expression::Binary(_, _, _)
+                            | Expression::Unary(_, _)
+                            | Expression::Call(_, _)
+                            | Expression::Attribute(_, _)
+                            | Expression::Subscript(_, _) => {
                                 // Arithmetic expression - evaluate to a temporary variable and store
                                 let temp_var = format!("_arg_temp_{}", i);
 
@@ -3189,6 +4270,7 @@ impl Transpiler {
                                 // Evaluate the expression into the temp variable
                                 let assignment = Assignment {
                                     target: temp_var.clone(),
+                                    target_expr: None,
                                     value: arg.clone(),
                                 };
                                 self.process_assignment(&assignment)?;
@@ -3214,8 +4296,7 @@ impl Transpiler {
                                      - Arithmetic expressions: func(x + 10)\n\
                                      \n\
                                      Not supported:\n\
-                                     - Function calls as parameters: func(other_func())\n\
-                                     - Complex expressions with function calls",
+                                     - Arrays/maps as direct macro arguments",
                                     param_name, arg
                                 ));
                             }
@@ -3236,14 +4317,16 @@ impl Transpiler {
                 ));
 
                 if let Some((staged_args_path, caller_args_path)) = staged_args_path {
-                    commands.push(format!(
-                        "data modify storage {}:global args set from storage {}:global {}",
-                        self.data_pack.namespace, self.data_pack.namespace, caller_args_path
-                    ));
-                    commands.push(format!(
-                        "data remove storage {}:global {}",
-                        self.data_pack.namespace, caller_args_path
-                    ));
+                    if let Some(caller_args_path) = caller_args_path {
+                        commands.push(format!(
+                            "data modify storage {}:global args set from storage {}:global {}",
+                            self.data_pack.namespace, self.data_pack.namespace, caller_args_path
+                        ));
+                        commands.push(format!(
+                            "data remove storage {}:global {}",
+                            self.data_pack.namespace, caller_args_path
+                        ));
+                    }
                     commands.push(format!(
                         "data remove storage {}:global {}",
                         self.data_pack.namespace, staged_args_path
@@ -3334,11 +4417,10 @@ impl Transpiler {
 
                 if is_comparison {
                     match &**left {
-                        Expression::Binary(_, _, _) => {
+                        expr if self.condition_operand_needs_temp(expr) => {
                             // Left side is a binary expression, need to evaluate it first
                             // Use unique temp variable name to avoid conflicts in AND/OR chains
-                            let temp_var = format!("expr_cond_temp_{}", self.temp_counter);
-                            self.temp_counter += 1;
+                            let temp_var = format!("expr_cond_temp_{}", self.next_temp_id());
 
                             self.data_pack.track_objective("temp");
                             self.variable_objectives
@@ -3363,10 +4445,10 @@ impl Transpiler {
                         _ => {
                             // Left side is simple, check if right side needs preprocessing
                             match &**right {
-                                Expression::Binary(_, _, _) => {
+                                expr if self.condition_operand_needs_temp(expr) => {
                                     // Right side is a binary expression
-                                    let temp_var = format!("expr_cond_temp_{}", self.temp_counter);
-                                    self.temp_counter += 1;
+                                    let temp_var =
+                                        format!("expr_cond_temp_{}", self.next_temp_id());
 
                                     self.data_pack.track_objective("temp");
                                     self.variable_objectives
@@ -3406,8 +4488,8 @@ impl Transpiler {
                             ))
                         }
                         _ => {
-                            // Other binary operators (arithmetic) shouldn't be in conditions
-                            Ok(condition.clone())
+                            // Arithmetic expressions in condition position use numeric truthiness.
+                            self.lower_condition_value_to_temp(condition)
                         }
                     }
                 }
@@ -3417,11 +4499,38 @@ impl Transpiler {
                 let new_expr = self.preprocess_condition(expr)?;
                 Ok(Expression::Unary(op.clone(), Box::new(new_expr)))
             }
-            _ => {
-                // Simple expressions (Identifier, Number, etc.) don't need preprocessing
-                Ok(condition.clone())
+            expr if self.condition_operand_needs_temp(expr) => {
+                self.lower_condition_value_to_temp(expr)
             }
+            _ => Ok(condition.clone()),
         }
+    }
+
+    fn lower_condition_value_to_temp(&mut self, expr: &Expression) -> Result<Expression, String> {
+        let temp_var = format!("expr_cond_temp_{}", self.next_temp_id());
+
+        self.data_pack.track_objective("temp");
+        self.variable_objectives
+            .insert(temp_var.clone(), "temp".to_string());
+        self.scoreboard_variables.insert(temp_var.clone());
+
+        let eval_commands = self.evaluate_expression_to_target(expr, &temp_var)?;
+        if let Some(ref mut commands) = self.current_function {
+            commands.extend(eval_commands);
+        }
+
+        Ok(Expression::Identifier(temp_var))
+    }
+
+    fn condition_operand_needs_temp(&self, expr: &Expression) -> bool {
+        matches!(
+            expr,
+            Expression::Binary(_, _, _)
+                | Expression::Unary(_, _)
+                | Expression::Call(_, _)
+                | Expression::Attribute(_, _)
+                | Expression::Subscript(_, _)
+        ) || matches!(expr, Expression::Identifier(name) if self.is_current_macro_param(name))
     }
 
     /// Check if an expression contains any Boolean literals (True or False)
@@ -3436,9 +4545,227 @@ impl Transpiler {
         }
     }
 
+    pub(in crate::transpiler) fn capture_preprocessed_condition(
+        &mut self,
+        condition: &Expression,
+    ) -> Result<(String, FunctionCapture), String> {
+        self.capture_commands_with_result(|transpiler| {
+            let processed_condition = transpiler.preprocess_condition(condition)?;
+            transpiler.translate_condition(&processed_condition)
+        })
+    }
+
+    pub(in crate::transpiler) fn capture_raw_python_condition(
+        &mut self,
+        condition: &str,
+    ) -> Result<Option<(String, FunctionCapture)>, String> {
+        if !self.looks_like_python_expression(condition) {
+            return Ok(None);
+        }
+
+        // Selector operands (`@s > 5`) and macro-parameter braces
+        // (`{count} >= 3`) are valid in raw execute conditions but cannot be
+        // parsed as Python expressions; mask them with synthetic identifiers
+        // and restore the original spelling after translation.
+        let (masked, operand_tokens) = Self::mask_condition_operand_tokens(condition);
+        let Some(expr) = Self::parse_raw_condition_expression(&masked) else {
+            return Ok(None);
+        };
+
+        let (translated, mut capture) = self.capture_preprocessed_condition(&expr)?;
+        let mut translated = Self::fold_always_false_conditions(translated);
+        for (placeholder, original) in &operand_tokens {
+            translated = translated.replace(placeholder, original);
+            for command in &mut capture.commands {
+                *command = command.replace(placeholder, original);
+            }
+            for generated in capture.metadata.values_mut() {
+                generated.text = generated.text.replace(placeholder, original);
+            }
+        }
+        Ok(Some((translated, capture)))
+    }
+
+    /// Replace selector tokens (`@s`, `@a[tag=x]`, ...) and macro-parameter
+    /// braces (`{count}`) in a raw condition string with synthetic
+    /// identifiers so the condition can be parsed as a Python expression.
+    /// Returns the masked string plus (placeholder, original) pairs used to
+    /// restore the original spelling in the translated condition and any
+    /// captured commands.
+    fn mask_condition_operand_tokens(condition: &str) -> (String, Vec<(String, String)>) {
+        let bytes = condition.as_bytes();
+        let mut masked = String::with_capacity(condition.len());
+        let mut operand_tokens: Vec<(String, String)> = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if ch == '"' || ch == '\'' {
+                let quote = bytes[i];
+                masked.push(ch);
+                i += 1;
+                while i < bytes.len() {
+                    let c = bytes[i];
+                    masked.push(c as char);
+                    i += 1;
+                    if c == b'\\' && i < bytes.len() {
+                        masked.push(bytes[i] as char);
+                        i += 1;
+                    } else if c == quote {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            let token_start = i;
+            if ch == '@' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphabetic() {
+                i += 1;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                if i < bytes.len() && bytes[i] == b'[' {
+                    let Some(end) = Self::selector_bracket_end(condition, i) else {
+                        // Unbalanced selector brackets; keep the rest verbatim.
+                        masked.push_str(&condition[token_start..]);
+                        break;
+                    };
+                    i = end;
+                }
+            } else if ch == '{' {
+                let mut j = i + 1;
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                    j += 1;
+                }
+                if j > i + 1 && j < bytes.len() && bytes[j] == b'}' {
+                    i = j + 1;
+                } else {
+                    masked.push(ch);
+                    i += 1;
+                    continue;
+                }
+            } else {
+                masked.push(ch);
+                i += 1;
+                continue;
+            }
+
+            let original = condition[token_start..i].to_string();
+            let placeholder = format!("__cobble_cond_operand_{}__", operand_tokens.len());
+            masked.push_str(&placeholder);
+            operand_tokens.push((placeholder, original));
+        }
+        (masked, operand_tokens)
+    }
+
+    /// Byte index just past the `]` closing the selector bracket group that
+    /// opens at `open`, honoring quoted strings inside the brackets.
+    fn selector_bracket_end(condition: &str, open: usize) -> Option<usize> {
+        let bytes = condition.as_bytes();
+        let mut depth = 0usize;
+        let mut i = open;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' | b'\'' => {
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != quote {
+                        if bytes[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                    if i >= bytes.len() {
+                        return None;
+                    }
+                }
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Map the AST translator's inline always-false output
+    /// (`score X O matches 0 unless score X O matches 0`, produced for
+    /// comparisons like `x > i32::MAX`) onto `ALWAYS_FALSE_CONDITION`, the
+    /// marker the execute processor understands, including inside `OR(...)`
+    /// markers. This keeps the marker-based simplifications (dropping
+    /// impossible branches, `unless`-elision) that the retired string
+    /// translator provided for raw execute conditions.
+    fn fold_always_false_conditions(translated: String) -> String {
+        if Self::is_inline_always_false_condition(&translated) {
+            return Self::ALWAYS_FALSE_CONDITION.to_string();
+        }
+        let Some(inner) = translated
+            .strip_prefix("OR(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        else {
+            return translated;
+        };
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0i32;
+        for ch in inner.chars() {
+            match ch {
+                '(' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                ')' => {
+                    depth -= 1;
+                    current.push(ch);
+                }
+                ';' if depth == 0 => parts.push(std::mem::take(&mut current)),
+                _ => current.push(ch),
+            }
+        }
+        parts.push(current);
+        let folded: Vec<String> = parts
+            .into_iter()
+            .map(Self::fold_always_false_conditions)
+            .collect();
+        format!("OR({})", folded.join(";"))
+    }
+
+    fn is_inline_always_false_condition(condition: &str) -> bool {
+        let Some(rest) = condition.strip_prefix("score ") else {
+            return false;
+        };
+        let Some((head, tail)) = rest.split_once(" matches 0 unless score ") else {
+            return false;
+        };
+        tail.strip_suffix(" matches 0") == Some(head)
+    }
+
+    fn parse_raw_condition_expression(condition: &str) -> Option<Expression> {
+        let source = format!(
+            "def __cobble_condition__():\n    if {}:\n        pass\n",
+            condition
+        );
+        let program = crate::parser::parse(&source).ok()?;
+        let Statement::FunctionDef(function) = program.statements.first()? else {
+            return None;
+        };
+        let Statement::If(if_stmt) = function.body.first()? else {
+            return None;
+        };
+        Some(if_stmt.condition.clone())
+    }
+
     fn translate_condition(&self, condition: &Expression) -> Result<String, String> {
-        let translator =
-            ConditionTranslator::new(&self.variable_objectives, &self.compile_time_constants);
+        let translator = ConditionTranslator::new(
+            &self.variable_objectives,
+            &self.compile_time_constants,
+            &self.variable_storage_paths,
+            &self.variable_types,
+        );
         translator.translate(condition)
     }
 
@@ -3447,7 +4774,7 @@ impl Transpiler {
         let conditions = Self::flatten_or_conditions(or_expr)?;
 
         // Use unique variable name to prevent race conditions with multiple entities
-        let or_var = format!("or_temp_{}", self.get_unique_id());
+        let or_var = format!("or_temp_{}", self.next_temp_id());
 
         // Track the temp objective for or result
         self.data_pack.track_objective("temp");
@@ -3606,30 +4933,14 @@ impl Transpiler {
         self.data_pack.write()
     }
 
-    /// Get a unique ID for temporary variables
-    fn get_unique_id(&mut self) -> u32 {
-        let id = self.temp_counter;
-        self.temp_counter += 1;
-        id
-    }
-
     /// Check if a condition string looks like a Python expression
     fn looks_like_python_expression(&self, condition: &str) -> bool {
-        // Check for Python expression indicators FIRST
-        // This must come before the Minecraft keyword check because a user variable
-        // might have the same name as a Minecraft keyword (e.g., `score >= 10`)
-        let python_indicators = [
-            " >= ", " <= ", " == ", " != ", " > ", " < ", " and ", " or ", " not ",
-        ];
-        for indicator in &python_indicators {
-            if condition.contains(indicator) {
-                return true;
-            }
-        }
-
-        // Minecraft raw conditions usually start with these keywords followed by
-        // specific syntax (e.g., "score x temp matches 5", "entity @a", "block ~ ~ ~ stone")
-        // Only treat as raw Minecraft if it matches the full pattern, not just the keyword
+        // Raw Minecraft conditions start with an execute-condition keyword
+        // (e.g. "entity @a[...]", "score x temp matches 5", "data storage ...").
+        // This whitelist must be checked BEFORE the Python heuristics below:
+        // raw conditions may legitimately contain parentheses or operator-like
+        // text (selector `name="Bob (Admin)"`, SNBT strings), which would
+        // otherwise misroute them into Python translation.
         let minecraft_raw_patterns = [
             "score ",     // "score <target> <objective> matches/</>/>=/<=/= ..."
             "entity ",    // "entity <selector>"
@@ -3639,24 +4950,48 @@ impl Transpiler {
             "dimension ", // "dimension <dimension>"
             "predicate ", // "predicate <predicate>"
             "data ",      // "data <source> <path>"
+            "items ",     // "items <source> <slots> <item>"
+            "function ",  // "function <function/tag>"
+            "loaded ",    // "loaded <pos>"
         ];
 
         for pattern in &minecraft_raw_patterns {
-            if condition.starts_with(pattern) {
-                // Extra check: if this looks like "score <target> <obj> matches/op",
-                // it's raw Minecraft. If it looks like "score >= 10", it's Python.
-                if pattern == &"score " {
-                    // Raw Minecraft score condition has at least 3 space-separated parts
-                    // e.g., "score x temp matches 5" or "score x temp = y temp"
-                    let parts: Vec<&str> = condition.splitn(4, ' ').collect();
-                    if parts.len() >= 4 {
-                        return false; // Looks like raw Minecraft: "score <target> <obj> ..."
-                    }
-                    // Otherwise it might be a Python expression with variable named "score"
-                    return true;
-                }
-                return false;
+            if let Some(rest) = condition.strip_prefix(pattern) {
+                // A user variable may share a keyword's name (e.g. `score >= 10`).
+                // If the keyword is directly followed by a comparison or logical
+                // operator, this is a Python expression, not raw execute syntax.
+                let next_token = rest.split_whitespace().next().unwrap_or("");
+                return matches!(
+                    next_token,
+                    "==" | "!="
+                        | ">="
+                        | "<="
+                        | ">"
+                        | "<"
+                        | "and"
+                        | "or"
+                        | "not"
+                        | "+"
+                        | "-"
+                        | "*"
+                        | "/"
+                        | "%"
+                );
             }
+        }
+
+        // Check for Python expression indicators
+        let python_indicators = [
+            " >= ", " <= ", " == ", " != ", " > ", " < ", " and ", " or ", " not ",
+        ];
+        for indicator in &python_indicators {
+            if condition.contains(indicator) {
+                return true;
+            }
+        }
+
+        if condition.starts_with("not ") || condition.contains('(') {
+            return true;
         }
 
         // Check if it's a simple variable name (also a Python expression)
@@ -3667,266 +5002,5 @@ impl Transpiler {
         }
 
         false
-    }
-
-    /// Try to translate a Python expression string to Minecraft condition
-    fn try_translate_python_expression(
-        &self,
-        condition: &str,
-        _is_unless: bool,
-    ) -> Result<String, String> {
-        // First check if this contains AND or OR operators
-        if condition.contains(" and ") || condition.contains(" or ") {
-            // Complex expression with logical operators
-            // We need to parse this properly, but for now we can handle simple cases
-
-            // Handle AND conditions specially
-            if condition.contains(" and ") {
-                let parts: Vec<&str> = condition.split(" and ").collect();
-                let mut translated_parts = Vec::new();
-
-                for part in parts {
-                    // Trim the part but preserve the basic structure
-                    let part = part.trim();
-
-                    // Add proper spacing before range operators if missing
-                    let fixed_part = if part.contains("matches..") {
-                        part.replace("matches..", "matches ..")
-                    } else {
-                        part.to_string()
-                    };
-
-                    // Check if this part already has "score" keyword (raw Minecraft condition)
-                    if fixed_part.starts_with("score ") {
-                        // This is already a Minecraft condition, just add "if" prefix
-                        translated_parts.push(format!("if {}", fixed_part));
-                    } else {
-                        // Try to translate as Python expression
-                        if let Ok(translated) =
-                            self.try_translate_python_expression(&fixed_part, false)
-                        {
-                            if translated == Self::ALWAYS_FALSE_CONDITION {
-                                return Ok(Self::ALWAYS_FALSE_CONDITION.to_string());
-                            }
-                            // The translated part should already be in the form "score x temp matches ..."
-                            // We just need to add "if " prefix
-                            if translated.starts_with("score ") {
-                                translated_parts.push(format!("if {}", translated));
-                            } else if translated.starts_with("if ")
-                                || translated.starts_with("unless ")
-                            {
-                                translated_parts.push(translated);
-                            } else {
-                                translated_parts.push(format!("if {}", translated));
-                            }
-                        } else {
-                            return Err(format!(
-                                "Failed to translate condition part: {}",
-                                fixed_part
-                            ));
-                        }
-                    }
-                }
-
-                // Join with spaces to create chained conditions
-                return Ok(translated_parts.join(" "));
-            }
-
-            // OR conditions - return a special marker
-            // We'll expand this into multiple conditions later
-            // For now, translate each part and return OR(part1, part2)
-            if condition.contains(" or ") {
-                let parts: Vec<&str> = condition.split(" or ").collect();
-                let mut translated_parts = Vec::new();
-
-                for part in parts {
-                    let part = part.trim();
-                    // Recursively translate each part
-                    if let Ok(translated) = self.try_translate_python_expression(part, false) {
-                        if translated == Self::ALWAYS_FALSE_CONDITION {
-                            translated_parts.push(translated);
-                            continue;
-                        }
-                        translated_parts.push(translated);
-                    } else {
-                        // Try simple translation
-                        translated_parts.push(part.to_string());
-                    }
-                }
-
-                // Return OR marker - use semicolon as separator to avoid confusion with commas in conditions
-                return Ok(format!("OR({})", translated_parts.join(";")));
-            }
-
-            // AND conditions handling remains the same
-            return Err("Complex logical expressions not supported".to_string());
-        }
-
-        // Simple variable check: "varname" -> "score varname objective matches 1.."
-        if condition.chars().all(|c| c.is_alphanumeric() || c == '_')
-            && (self.variables.contains_key(condition)
-                || self.scoreboard_variables.contains(condition))
-        {
-            let objective = self
-                .variable_objectives
-                .get(condition)
-                .map(|s| s.as_str())
-                .unwrap_or("temp");
-            return Ok(format!("score {} {} matches 1..", condition, objective));
-        }
-
-        // For more complex expressions, we need proper parsing
-        // This is a simplified version - ideally we'd parse the expression properly
-
-        // Handle simple comparisons: "x > 5", "y == 10", etc.
-        if let Some(op_pos) = condition.find(" > ") {
-            let (left, right) = condition.split_at(op_pos);
-            let right = &right[3..]; // Skip " > "
-            let left = left.trim();
-            let right = right.trim();
-
-            // Check if left side is a macro parameter {param}
-            let left_var = left.to_string();
-            let objective = if left.starts_with('{') && left.ends_with('}') {
-                "temp".to_string() // Use temp for macro params
-            } else {
-                self.variable_objectives
-                    .get(left)
-                    .map(|s| s.as_str())
-                    .unwrap_or("temp")
-                    .to_string()
-            };
-
-            // Check if right side is a macro parameter {param}
-            let right_value = if right.starts_with('{') && right.ends_with('}') {
-                // This is a macro parameter, keep as-is with ..
-                format!("{}..", right)
-            } else if let Ok(value) = right.parse::<i32>() {
-                if value == i32::MAX {
-                    return Ok(Self::ALWAYS_FALSE_CONDITION.to_string());
-                } else {
-                    format!("{}..", value + 1)
-                }
-            } else {
-                return Err("Cannot parse right side of comparison".to_string());
-            };
-
-            return Ok(format!(
-                "score {} {} matches {}",
-                left_var, objective, right_value
-            ));
-        }
-
-        if let Some(op_pos) = condition.find(" < ") {
-            let (left, right) = condition.split_at(op_pos);
-            let right = &right[3..]; // Skip " < "
-            let left = left.trim();
-            let right = right.trim();
-
-            if let Ok(value) = right.parse::<i32>() {
-                let objective = self
-                    .variable_objectives
-                    .get(left)
-                    .map(|s| s.as_str())
-                    .unwrap_or("temp");
-                if value == i32::MIN {
-                    return Ok(Self::ALWAYS_FALSE_CONDITION.to_string());
-                }
-                return Ok(format!(
-                    "score {} {} matches ..{}",
-                    left,
-                    objective,
-                    value - 1
-                ));
-            }
-        }
-
-        if let Some(op_pos) = condition.find(" == ") {
-            let (left, right) = condition.split_at(op_pos);
-            let right = &right[4..]; // Skip " == "
-            let left = left.trim();
-            let right = right.trim();
-
-            if let Ok(value) = right.parse::<i32>() {
-                let objective = self
-                    .variable_objectives
-                    .get(left)
-                    .map(|s| s.as_str())
-                    .unwrap_or("temp");
-                return Ok(format!("score {} {} matches {}", left, objective, value));
-            }
-        }
-
-        if let Some(op_pos) = condition.find(" >= ") {
-            let (left, right) = condition.split_at(op_pos);
-            let right = &right[4..]; // Skip " >= "
-            let left = left.trim();
-            let right = right.trim();
-
-            // Check if right side is a macro parameter {param}
-            let right_value = if right.starts_with('{') && right.ends_with('}') {
-                // This is a macro parameter, keep as-is with ..
-                format!("{}..", right)
-            } else if let Ok(value) = right.parse::<i32>() {
-                format!("{}..", value)
-            } else {
-                return Err("Cannot parse right side of comparison".to_string());
-            };
-
-            let left_var = left.to_string();
-            let objective = if left.starts_with('{') && left.ends_with('}') {
-                "temp".to_string()
-            } else {
-                self.variable_objectives
-                    .get(left)
-                    .map(|s| s.as_str())
-                    .unwrap_or("temp")
-                    .to_string()
-            };
-
-            return Ok(format!(
-                "score {} {} matches {}",
-                left_var, objective, right_value
-            ));
-        }
-
-        if let Some(op_pos) = condition.find(" <= ") {
-            let (left, right) = condition.split_at(op_pos);
-            let right = &right[4..]; // Skip " <= "
-            let left = left.trim();
-            let right = right.trim();
-
-            if let Ok(value) = right.parse::<i32>() {
-                let objective = self
-                    .variable_objectives
-                    .get(left)
-                    .map(|s| s.as_str())
-                    .unwrap_or("temp");
-                return Ok(format!("score {} {} matches ..{}", left, objective, value));
-            }
-        }
-
-        if let Some(op_pos) = condition.find(" != ") {
-            let (left, right) = condition.split_at(op_pos);
-            let right = &right[4..]; // Skip " != "
-            let left = left.trim();
-            let right = right.trim();
-
-            if let Ok(value) = right.parse::<i32>() {
-                let objective = self
-                    .variable_objectives
-                    .get(left)
-                    .map(|s| s.as_str())
-                    .unwrap_or("temp");
-                // != translates to "unless ... matches"
-                return Ok(format!(
-                    "unless score {} {} matches {}",
-                    left, objective, value
-                ));
-            }
-        }
-
-        // If we can't parse it, return error
-        Err("Could not parse Python expression".to_string())
     }
 }

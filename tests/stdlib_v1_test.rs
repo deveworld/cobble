@@ -261,6 +261,64 @@ def selector_position():
 }
 
 #[test]
+fn stdlib_helpers_expand_selector_alias_arguments() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+@Runner = @e[type=minecraft:pig,tag=runner,limit=1]
+
+def selector_alias_helpers():
+    text.tellraw("@Runner", text.selector("@Runner"))
+    entity.tag_add("@Runner", "ready")
+    entity.effect_give("@Runner", "minecraft:glowing", 1, 0, True)
+    entity.attribute_get("@Runner", "minecraft:max_health", 1)
+    entity.teleport("@Runner", position.relative(0, 1, 0))
+    storage.copy_from("runner_health", "entity", "@Runner", "Health")
+    bossbar.add("timer", "Timer")
+    bossbar.set_players("timer", "@Runner")
+    team.add("runners")
+    team.join("runners", "@Runner")
+    team.leave("@Runner")
+"#,
+    )
+    .unwrap();
+
+    let content = read_function(&output_dir, "selector_alias_helpers");
+    let selector = "@e[type=minecraft:pig,tag=runner,limit=1]";
+
+    assert!(content.contains(&format!(
+        r#"tellraw {selector} {{"selector":"{selector}"}}"#
+    )));
+    assert!(content.contains(&format!("tag {selector} add ready")));
+    assert!(content.contains(&format!(
+        "effect give {selector} minecraft:glowing 1 0 true"
+    )));
+    assert!(content.contains(&format!("attribute {selector} minecraft:max_health get 1")));
+    assert!(content.contains(&format!("tp {selector} ~ ~1 ~")));
+    assert!(content.contains(&format!(
+        "data modify storage stdlib_v1:global runner_health set from entity {selector} Health"
+    )));
+    assert!(content.contains(&format!("bossbar set stdlib_v1:timer players {selector}")));
+    assert!(content.contains(&format!("team join runners {selector}")));
+    assert!(content.contains(&format!("team leave {selector}")));
+    assert!(!content.contains("@Runner"), "{content}");
+}
+
+#[test]
+fn random_int_single_value_range_sets_score_directly() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+def fixed_random():
+    random.int("fixed", 4, 4)
+"#,
+    )
+    .unwrap();
+
+    let content = read_function(&output_dir, "fixed_random");
+    assert!(content.contains("scoreboard players set fixed temp 4"));
+    assert!(!content.contains("random value 4..4"), "{content}");
+}
+
+#[test]
 fn selector_and_position_helpers_must_be_used_as_values() {
     let selector_error = compile_source(
         r#"
@@ -323,8 +381,12 @@ def use_math():
     assert!(!content.contains("scoreboard players set #math_input temp 100"));
     assert!(content.contains("function stdlib_v1:_cobble_math_sqrt"));
     assert!(content.contains("scoreboard players operation root temp = #math_result math"));
-    assert!(content.contains("scoreboard players set #math_input math 3"));
-    assert!(content.contains("scoreboard players set #math_input2 math 4"));
+    // Binary math arguments are staged into unique scratches and copied into
+    // the shared helper inputs right before the call.
+    assert!(content.contains("scoreboard players set #math_arg_0 math 3"));
+    assert!(content.contains("scoreboard players set #math_arg_1 math 4"));
+    assert!(content.contains("scoreboard players operation #math_input math = #math_arg_0 math"));
+    assert!(content.contains("scoreboard players operation #math_input2 math = #math_arg_1 math"));
     assert!(content.contains("function stdlib_v1:_cobble_math_min"));
     assert!(content.contains("scoreboard players operation lower temp = #math_result math"));
 }

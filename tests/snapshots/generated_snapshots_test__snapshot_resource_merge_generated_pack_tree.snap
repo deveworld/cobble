@@ -1,6 +1,6 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 300
+assertion_line: 329
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -151,8 +151,8 @@ expression: datapack_tree_snapshot(&output_dir)
 ===== data/minecraft/tags/function/load.json =====
 {
   "values": [
-    "snapshot_merge:load",
-    "snapshot_merge:extra_load"
+    "snapshot_merge:extra_load",
+    "snapshot_merge:load"
   ]
 }
 

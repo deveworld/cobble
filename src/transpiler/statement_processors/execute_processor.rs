@@ -1,11 +1,20 @@
 use crate::ast::*;
-use crate::transpiler::Transpiler;
+use crate::transpiler::{FunctionCapture, Transpiler};
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_execute_block(
         &mut self,
         exec_block: &ExecuteBlock,
     ) -> Result<(), String> {
+        // Track a per-site holder slot so condition-scope objectives can be
+        // pooled by (nesting depth, slot) instead of growing per call site.
+        self.execute_condition_slots.push(0);
+        let result = self.process_execute_block_impl(exec_block);
+        self.execute_condition_slots.pop();
+        result
+    }
+
+    fn process_execute_block_impl(&mut self, exec_block: &ExecuteBlock) -> Result<(), String> {
         // Build execute command from modifiers
         let mut execute_parts = vec!["execute".to_string()];
 
@@ -62,32 +71,6 @@ impl Transpiler {
 
                     execute_parts.push(format!("at {}", processed_selector));
                 }
-                ExecuteModifier::If(expr) => {
-                    // Python-style expression - translate to Minecraft condition
-                    let condition = self.translate_condition(expr)?;
-
-                    // Special handling for OR conditions
-                    if condition.starts_with("OR(") {
-                        // Mark that this execute block has OR condition
-                        // We'll handle this specially when generating commands
-                        execute_parts.push(format!("OR_CONDITION:{}", condition));
-                        // Don't return error, continue processing
-                        continue;
-                    }
-
-                    // Special handling for AND conditions which return multiple "if" parts
-                    if Self::is_prefixed_condition_chain(&condition) {
-                        // This is an AND condition that already includes multiple conditions
-                        // Don't add another "if" prefix
-                        execute_parts.push(condition);
-                    } else if condition.starts_with("if ") || condition.starts_with("unless ") {
-                        // Single condition with prefix
-                        execute_parts.push(condition);
-                    } else {
-                        // Single condition without prefix
-                        execute_parts.push(format!("if {}", condition));
-                    }
-                }
                 ExecuteModifier::IfRaw(condition) => {
                     // Check for macro parameters in the condition
                     if condition.contains("{") && condition.contains("}") {
@@ -100,38 +83,45 @@ impl Transpiler {
                         }
                     }
 
-                    // Check if this is actually a Python expression that needs translation
-                    if self.looks_like_python_expression(condition) {
-                        // Try to parse and translate as Python expression
-                        if let Ok(translated) =
-                            self.try_translate_python_expression(condition, false)
-                        {
-                            // Check if it's an OR condition marker
-                            if translated.starts_with("OR(") {
-                                // Mark as OR condition for special handling
-                                execute_parts.push(format!("OR_CONDITION:{}", translated));
-                                continue;
-                            }
-                            if translated == Self::ALWAYS_FALSE_CONDITION {
-                                execute_parts.push(self.always_false_execute_condition());
-                                continue;
-                            }
-                            // Check if the translated condition already has a prefix
-                            // This happens with AND conditions ("if ... if ...") or != conditions ("unless ...")
-                            if translated.starts_with("if ") || translated.starts_with("unless ") {
-                                execute_parts.push(translated);
-                            } else {
-                                execute_parts.push(format!("if {}", translated));
-                            }
-                        } else {
-                            // Translation failed - this is a Python expression we can't handle
-                            return Err(format!(
-                                "Failed to translate Python expression '{}' to Minecraft condition.\n\
-                                 This may be an unsupported construct like OR conditions.\n\
-                                 Consider rewriting the condition or using raw Minecraft syntax.",
-                                condition
-                            ));
+                    if let Some((translated, capture)) =
+                        self.capture_raw_python_condition(condition)?
+                    {
+                        let (translated, capture) = self.scope_condition_capture_for_execute(
+                            translated,
+                            capture,
+                            &execute_parts,
+                        );
+                        self.append_scoped_execute_capture(
+                            capture,
+                            &execute_parts,
+                            &mut has_macro_params,
+                        )?;
+
+                        if translated.starts_with("OR(") {
+                            execute_parts.push(format!("OR_CONDITION:{}", translated));
+                            continue;
                         }
+                        if translated == Self::ALWAYS_FALSE_CONDITION {
+                            execute_parts.push(self.always_false_execute_condition());
+                            continue;
+                        }
+                        if translated.starts_with("if ") || translated.starts_with("unless ") {
+                            execute_parts.push(translated);
+                        } else {
+                            execute_parts.push(format!("if {}", translated));
+                        }
+                        continue;
+                    }
+
+                    // The condition looked like a Python expression but did not
+                    // parse; there is no string-based fallback translator anymore.
+                    if self.looks_like_python_expression(condition) {
+                        return Err(format!(
+                            "Failed to translate Python expression '{}' to Minecraft condition.\n\
+                             This may be an unsupported construct like OR conditions.\n\
+                             Consider rewriting the condition or using raw Minecraft syntax.",
+                            condition
+                        ));
                     } else {
                         // Raw Minecraft syntax - check for AND/OR conditions
                         if condition.contains(" or ") {
@@ -171,68 +161,52 @@ impl Transpiler {
                         }
                     }
                 }
-                ExecuteModifier::Unless(expr) => {
-                    // Python-style expression - translate to Minecraft condition
-                    let condition = self.translate_condition(expr)?;
-
-                    // Special handling for OR conditions
-                    if condition.starts_with("OR(") {
-                        // unless (A or B) = unless A and unless B (De Morgan's law)
-                        // We can chain unless conditions in Minecraft
-                        let or_conditions = Transpiler::flatten_or_conditions(&condition)?;
-                        for cond in or_conditions {
-                            execute_parts.push(Self::negate_execute_condition(&cond));
-                        }
-                        continue;
-                    }
-
-                    // Special handling for AND conditions
-                    if condition.contains(" if ") || condition.contains(" unless ") {
-                        // This is an AND condition that has "if" parts
-                        // For unless (A and B), we apply De Morgan's law: unless (A and B) = unless A or unless B
-                        // Since Minecraft doesn't support OR directly, we need to use a flag variable
-                        execute_parts.push(format!("UNLESS_AND:{}", condition));
-                        continue;
-                    }
-
-                    execute_parts.push(Self::negate_execute_condition(&condition));
-                }
                 ExecuteModifier::UnlessRaw(condition) => {
-                    // Check if this is actually a Python expression that needs translation
-                    if self.looks_like_python_expression(condition) {
-                        // Try to parse and translate as Python expression
-                        if let Ok(translated) =
-                            self.try_translate_python_expression(condition, true)
-                        {
-                            // Check if it's an OR condition marker
-                            if translated.starts_with("OR(") {
-                                // unless (A or B) = unless A and unless B (De Morgan's law)
-                                let or_conditions = Transpiler::flatten_or_conditions(&translated)?;
-                                for cond in or_conditions {
-                                    if cond == Self::ALWAYS_FALSE_CONDITION {
-                                        continue;
-                                    }
-                                    execute_parts.push(Self::negate_execute_condition(&cond));
+                    if let Some((translated, capture)) =
+                        self.capture_raw_python_condition(condition)?
+                    {
+                        let (translated, capture) = self.scope_condition_capture_for_execute(
+                            translated,
+                            capture,
+                            &execute_parts,
+                        );
+                        self.append_scoped_execute_capture(
+                            capture,
+                            &execute_parts,
+                            &mut has_macro_params,
+                        )?;
+
+                        if translated.starts_with("OR(") {
+                            // unless (A or B) = unless A and unless B (De Morgan's law)
+                            let or_conditions = Transpiler::flatten_or_conditions(&translated)?;
+                            for cond in or_conditions {
+                                if cond == Self::ALWAYS_FALSE_CONDITION {
+                                    continue;
                                 }
-                                continue;
+                                execute_parts.push(Self::negate_execute_condition(&cond));
                             }
-                            if translated == Self::ALWAYS_FALSE_CONDITION {
-                                continue;
-                            }
-                            if Self::is_prefixed_condition_chain(&translated) {
-                                execute_parts.push(format!("UNLESS_AND:{}", translated));
-                                continue;
-                            }
-                            execute_parts.push(Self::negate_execute_condition(&translated));
-                        } else {
-                            // Translation failed - this is a Python expression we can't handle
-                            return Err(format!(
-                                "Failed to translate Python expression '{}' to Minecraft condition.\n\
-                                 This may be an unsupported construct.\n\
-                                 Consider rewriting the condition or using raw Minecraft syntax.",
-                                condition
-                            ));
+                            continue;
                         }
+                        if translated == Self::ALWAYS_FALSE_CONDITION {
+                            continue;
+                        }
+                        if Self::is_prefixed_condition_chain(&translated) {
+                            execute_parts.push(format!("UNLESS_AND:{}", translated));
+                            continue;
+                        }
+                        execute_parts.push(Self::negate_execute_condition(&translated));
+                        continue;
+                    }
+
+                    // The condition looked like a Python expression but did not
+                    // parse; there is no string-based fallback translator anymore.
+                    if self.looks_like_python_expression(condition) {
+                        return Err(format!(
+                            "Failed to translate Python expression '{}' to Minecraft condition.\n\
+                             This may be an unsupported construct.\n\
+                             Consider rewriting the condition or using raw Minecraft syntax.",
+                            condition
+                        ));
                     } else {
                         // Raw Minecraft syntax - check for AND conditions
                         if condition.contains(" and ") {
@@ -345,7 +319,7 @@ impl Transpiler {
             let mut setup_commands = Vec::new();
 
             for (kind, condition) in special_conditions {
-                let unique_id = self.get_unique_id();
+                let unique_id = self.next_temp_id();
                 let objective = if use_dedicated_objectives {
                     format!("cblx{}", unique_id)
                 } else {
@@ -453,6 +427,119 @@ impl Transpiler {
         }
 
         Ok(())
+    }
+
+    fn scope_condition_capture_for_execute(
+        &mut self,
+        condition: String,
+        mut capture: FunctionCapture,
+        execute_parts: &[String],
+    ) -> (String, FunctionCapture) {
+        if !Self::has_as_modifier(execute_parts) {
+            return (condition, capture);
+        }
+
+        let mut scoped_condition = condition;
+        for holder in Self::condition_temp_holders(&scoped_condition) {
+            let objective = self.next_condition_scope_objective();
+            self.data_pack.track_objective(&objective);
+            let from = format!("{} temp", holder);
+            let to = format!("@s {}", objective);
+
+            scoped_condition = scoped_condition.replace(&from, &to);
+            for command in &mut capture.commands {
+                *command = command.replace(&from, &to);
+            }
+            for generated in capture.metadata.values_mut() {
+                generated.text = generated.text.replace(&from, &to);
+            }
+        }
+
+        (scoped_condition, capture)
+    }
+
+    /// Objective used to scope one condition holder to `@s` inside an
+    /// `execute as` block. Objectives are pooled by (execute nesting depth,
+    /// holder slot within the site): sibling sites reuse the same names because
+    /// each site rewrites its holders before reading them, while nested sites
+    /// get a deeper name so an inner evaluation cannot clobber the outer
+    /// condition that is re-checked on every body command. This keeps the
+    /// number of registered objectives bounded by the maximum number of
+    /// concurrently live holders instead of the number of call sites.
+    fn next_condition_scope_objective(&mut self) -> String {
+        let depth = self.execute_condition_slots.len().saturating_sub(1);
+        if let Some(slot) = self.execute_condition_slots.last_mut() {
+            let index = *slot;
+            *slot += 1;
+            format!("cblc{}_{}", depth, index)
+        } else {
+            // Not inside process_execute_block; fall back to a unique name.
+            format!("cblc{}", self.next_temp_id())
+        }
+    }
+
+    fn condition_temp_holders(text: &str) -> Vec<String> {
+        let mut holders = Vec::new();
+        let mut start = 0;
+        while let Some(relative_index) = text[start..].find("expr_cond_temp_") {
+            let holder_start = start + relative_index;
+            let holder_end = text[holder_start..]
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .map(|offset| holder_start + offset)
+                .unwrap_or(text.len());
+            let holder = text[holder_start..holder_end].to_string();
+            if !holders.contains(&holder) {
+                holders.push(holder);
+            }
+            start = holder_end;
+        }
+        holders
+    }
+
+    fn append_scoped_execute_capture(
+        &mut self,
+        capture: FunctionCapture,
+        execute_parts: &[String],
+        has_macro_params: &mut bool,
+    ) -> Result<(), String> {
+        if capture.commands.is_empty() {
+            return Ok(());
+        }
+
+        let modifier_args = Self::modifier_args(execute_parts);
+        let params = self.current_context.params.clone();
+        self.append_transformed_capture(capture, |cmd| {
+            let mut command_needs_macro = false;
+            let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
+                command_needs_macro = true;
+                *has_macro_params = true;
+                stripped
+            } else {
+                cmd
+            };
+
+            let mut final_cmd = if modifier_args.is_empty() {
+                inner_cmd.to_string()
+            } else if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
+                format!("execute {} {}", modifier_args, inner_parts)
+            } else {
+                format!("execute {} run {}", modifier_args, inner_cmd)
+            };
+
+            if *has_macro_params {
+                for param in &params {
+                    let from = format!("{{{}}}", param);
+                    let to = format!("$({})", param);
+                    final_cmd = final_cmd.replace(&from, &to);
+                }
+            }
+
+            if command_needs_macro || *has_macro_params {
+                format!("${}", final_cmd)
+            } else {
+                final_cmd
+            }
+        })
     }
 
     fn modifier_args(parts: &[String]) -> String {

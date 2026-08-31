@@ -95,11 +95,20 @@ fn write_project(project_dir: &Path) {
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
     fs::write(
+        src_dir.join("helpers.cbl"),
+        r#"def imported_ready(value):
+    return value
+"#,
+    )
+    .unwrap();
+    fs::write(
         src_dir.join("main.cbl"),
         r#"import stdlib
+from helpers import imported_ready
 from stdlib import event
 
 counter = 0
+smoke_loop_flag = 0
 
 def init():
     /say Cobble quiet load ok
@@ -109,12 +118,54 @@ def init():
     /stopwatch create cobble:server_smoke
     /stopwatch query cobble:server_smoke 1.0
 
+def ready_value(value):
+    return value
+
+def should_continue():
+    return smoke_loop_flag
+
+def return_from_if(flag):
+    if flag == 1:
+        return 7
+    return 0
+
+def return_from_match(value):
+    match value:
+        case 2:
+            return 5
+        case _:
+            return 0
+
 def probe():
     global counter
+    global smoke_loop_flag
     counter = counter + 1
 
     if counter >= 1:
         /say probe counter {counter}
+
+    if ready_value(1):
+        /say function call condition ok
+
+    imported_value = imported_ready(4)
+    if imported_value == 4 and imported_ready(1):
+        /say imported function expression condition ok
+
+    positioned ~ ~ ~ if ready_value(1):
+        /say execute function call condition ok
+    positioned ~ ~ ~ unless ready_value(0):
+        /say execute function call unless ok
+
+    storage_target = {"count": 1, "nested": {"value": 2}}
+    storage_target.count = 3
+    storage_target.nested.value += 4
+    if storage_target.count == 3 and storage_target.nested.value == 6:
+        /say storage assignment target server ok
+
+    returned_from_if = return_from_if(1)
+    returned_from_match = return_from_match(2)
+    if returned_from_if == 7 and returned_from_match == 5:
+        /say cobble return propagation server ok
 
     match counter:
         case 1:
@@ -124,6 +175,92 @@ def probe():
 
     for i in range(2):
         /say probe loop {i}
+
+    i = 1
+    items = [3, 5, 8]
+    picked = items[i]
+    if picked == 5:
+        /say dynamic picked 5
+
+    storage.set("events", [10, 20, 30])
+    picked_again = 0
+    storage.read_score("picked_again", storage.index("events", i))
+    if picked_again == 20:
+        /say storage index ok
+
+    runtime_values = [picked, picked_again]
+    runtime_state = {"picked": picked, "again": picked_again}
+    runtime_picked = runtime_state.picked
+    if runtime_picked == 5:
+        /say runtime literal ok
+    map_key = "picked"
+    dynamic_map_value = runtime_state[map_key]
+    if dynamic_map_value == 5:
+        /say dynamic map key ok
+
+    loop_i = 0
+    while loop_i < 2:
+        loop_pick = items[loop_i]
+        loop_i = loop_i + 1
+    if loop_pick == 5:
+        /say dynamic while ok
+    smoke_loop_flag = 1
+    while should_continue():
+        /say while function call condition ok
+        smoke_loop_flag = 0
+
+    limit = 3
+    dynamic_total = 0
+    for dyn_i in range(limit):
+        dynamic_total = dynamic_total + dyn_i
+    if dynamic_total == 3:
+        /say dynamic for ok
+    step_size = 2
+    stepped_total = 0
+    for step_i in range(0, limit, step_size):
+        stepped_total = stepped_total + step_i
+    if stepped_total == 2:
+        /say dynamic for step ok
+    list_step = -1
+    list_total = 0
+    for list_value in runtime_values by list_step:
+        list_total = list_total + list_value
+    if list_total == 25:
+        /say runtime list for ok
+    literal_loop_total = 0
+    for literal_value in [picked, picked_again, ready_value(1)]:
+        literal_loop_total = literal_loop_total + literal_value
+    if literal_loop_total == 26:
+        /say runtime literal array for ok
+    groups = [[2, 3], [7, 11]]
+    group_i = 1
+    group_total = 0
+    for group_value in groups[group_i]:
+        group_total = group_total + group_value
+    if group_total == 18:
+        /say dynamic list path for ok
+    runtime_values_len = len(runtime_values)
+    map_key_len = len(map_key)
+    if runtime_values_len == 2 and map_key_len == 6:
+        /tellraw @a [{"text":"runtime array len {runtime_values_len}","color":"green"},{"text":" key {map_key}"}]
+        /say runtime len ok
+        /say runtime json array ok
+    pow_base = 3
+    pow_exp = 4
+    pow_result = pow_base ^ pow_exp
+    pow_zero = pow_base ^ (pow_exp - 4)
+    if pow_result == 81 and pow_zero == 1:
+        /say runtime power ok
+    compound_score = 10
+    compound_score += 5
+    compound_score -= 3
+    compound_score *= 2
+    compound_score /= 4
+    compound_score %= 5
+    compound_base = 2
+    compound_base ^= pow_exp
+    if compound_score == 1 and compound_base == 16:
+        /say compound assignment ok
 
     /data get storage cobble:server_smoke status
     /return run say return command ok
@@ -277,6 +414,72 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         COMMAND_TIMEOUT,
     )?;
     wait_for_log(child, &log_path, "probe first", COMMAND_TIMEOUT)?;
+    wait_for_log(
+        child,
+        &log_path,
+        "function call condition ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(
+        child,
+        &log_path,
+        "imported function expression condition ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(
+        child,
+        &log_path,
+        "execute function call condition ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(
+        child,
+        &log_path,
+        "execute function call unless ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(
+        child,
+        &log_path,
+        "storage assignment target server ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(
+        child,
+        &log_path,
+        "cobble return propagation server ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(child, &log_path, "dynamic picked 5", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "storage index ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "runtime literal ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "dynamic map key ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "dynamic while ok", COMMAND_TIMEOUT)?;
+    wait_for_log(
+        child,
+        &log_path,
+        "while function call condition ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(child, &log_path, "dynamic for ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "dynamic for step ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "runtime list for ok", COMMAND_TIMEOUT)?;
+    wait_for_log(
+        child,
+        &log_path,
+        "runtime literal array for ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(
+        child,
+        &log_path,
+        "dynamic list path for ok",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(child, &log_path, "runtime len ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "runtime json array ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "runtime power ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "compound assignment ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "return command ok", COMMAND_TIMEOUT)?;
 
     send_command(child, "reload")?;

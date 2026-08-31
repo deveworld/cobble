@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 const PYTHON_COMPAT_DEF_FUNCTIONS: &str = "def functions with Cobble-compatible bodies";
 const PYTHON_COMPAT_IF_BLOCKS: &str = "if/elif/else blocks";
-const PYTHON_COMPAT_FOR_RANGE: &str = "for range(...) loops with literal bounds";
+const PYTHON_COMPAT_FOR_RANGE: &str = "for range(...) loops";
 const PYTHON_COMPAT_BOOLEAN_GUARDS: &str =
     "boolean and/or/not expressions in supported command guards";
 const PYTHON_COMPAT_COMPARISONS: &str = "comparison expressions over scores and literals";
@@ -81,20 +81,11 @@ pub fn python_compat_suggestion_for_kind(
             "Use plain positional parameters and assign defaults inside the function body."
         }
         "duplicate-function-parameter" => "Use each function parameter name once.",
-        "unsupported-return" => {
-            "Use commands, scoreboard values, storage, or helper functions instead of returning Python values."
-        }
         "unsupported-function-call-expression" => {
             "Call Cobble helper functions as statements, or use documented value helpers where expressions are accepted."
         }
-        "unsupported-function-call-argument" => {
-            "Use literal values, constants, or supported value-helper calls for this argument."
-        }
-        "unsupported-assignment" => {
-            "Assign simple Cobble expressions, constants, or supported JSON/resource values."
-        }
         "unsupported-assignment-target" => {
-            "Assign to a simple variable name; destructuring, attributes, and subscripts are not assignment targets."
+            "Assign to a variable name or to a field/index of an already storage-backed list, map, or string. Destructuring assignment is not supported."
         }
         "unsupported-import" => {
             "Use simple Cobble imports such as `import helpers` or `from stdlib import text`."

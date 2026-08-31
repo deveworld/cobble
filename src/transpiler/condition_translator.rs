@@ -1,20 +1,26 @@
-use crate::ast::{BinaryOp, Expression, UnaryOp};
+use crate::ast::{BinaryOp, CobbleType, Expression, UnaryOp};
 use std::collections::HashMap;
 
 /// Translates Python-like conditions to Minecraft execute conditions
 pub struct ConditionTranslator<'a> {
     pub variable_objectives: &'a HashMap<String, String>,
     pub compile_time_constants: &'a HashMap<String, f64>,
+    pub variable_storage_paths: &'a HashMap<String, String>,
+    pub variable_types: &'a HashMap<String, CobbleType>,
 }
 
 impl<'a> ConditionTranslator<'a> {
     pub fn new(
         variable_objectives: &'a HashMap<String, String>,
         compile_time_constants: &'a HashMap<String, f64>,
+        variable_storage_paths: &'a HashMap<String, String>,
+        variable_types: &'a HashMap<String, CobbleType>,
     ) -> Self {
         Self {
             variable_objectives,
             compile_time_constants,
+            variable_storage_paths,
+            variable_types,
         }
     }
 
@@ -64,6 +70,9 @@ impl<'a> ConditionTranslator<'a> {
                     }
                     // Comparison operators
                     _ => {
+                        self.reject_storage_backed_operand(left)?;
+                        self.reject_storage_backed_operand(right)?;
+
                         let left_score = self.extract_scoreboard(left);
                         let right_score = self.extract_scoreboard(right);
                         let left_literal = self.extract_literal(left);
@@ -129,6 +138,8 @@ impl<'a> ConditionTranslator<'a> {
                 }
             }
             Expression::Identifier(var) => {
+                self.reject_storage_backed_operand(condition)?;
+
                 // Simple boolean check: treat as "var > 0"
                 let objective = self
                     .variable_objectives
@@ -212,6 +223,47 @@ impl<'a> ConditionTranslator<'a> {
             }
         } else {
             None
+        }
+    }
+
+    fn reject_storage_backed_operand(&self, expr: &Expression) -> Result<(), String> {
+        if let Expression::Identifier(name) = expr {
+            if let Some(message) = Self::storage_backed_condition_error(
+                self.variable_storage_paths,
+                self.variable_types,
+                name,
+            ) {
+                return Err(message);
+            }
+        }
+        Ok(())
+    }
+
+    /// A storage-backed variable holding a non-integer value (string, list, map)
+    /// has no meaningful scoreboard score, so reading it in a scoreboard
+    /// condition would silently test a score that is never written. Integer,
+    /// boolean, and unknown-typed variables keep compiling: runtime list-loop
+    /// targets are registered in both the scoreboard and storage worlds and are
+    /// typed Unknown or Integer.
+    pub fn storage_backed_condition_error(
+        variable_storage_paths: &HashMap<String, String>,
+        variable_types: &HashMap<String, CobbleType>,
+        name: &str,
+    ) -> Option<String> {
+        if !variable_storage_paths.contains_key(name) {
+            return None;
+        }
+        let var_type = variable_types
+            .get(name)
+            .cloned()
+            .unwrap_or(CobbleType::Unknown);
+        match var_type {
+            CobbleType::Integer | CobbleType::Boolean | CobbleType::Unknown => None,
+            CobbleType::String | CobbleType::List | CobbleType::Map => Some(format!(
+                "Variable '{}' is storage-backed ({}) and cannot be used in a scoreboard condition; compare integers or use a score variable",
+                name,
+                var_type.name()
+            )),
         }
     }
 

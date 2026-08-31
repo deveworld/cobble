@@ -12,7 +12,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 pub struct DoctorOptions {
     pub path: Option<PathBuf>,
@@ -213,39 +214,70 @@ fn print_json_report(report: &DoctorReport) -> Result<(), String> {
     Ok(())
 }
 
+const TOOL_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const TOOL_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 fn inspect_tool(id: &str, label: &str, command: &str, args: &[&str]) -> ToolReport {
-    let status = Command::new(command).args(args).output();
-    match status {
-        Ok(output) if output.status.success() => ToolReport {
-            id: id.to_string(),
-            label: label.to_string(),
-            command: command.to_string(),
-            status: "ok".to_string(),
-            exit_code: output.status.code(),
-            message: "available".to_string(),
-        },
-        Ok(output) => {
-            let exit_code = output.status.code();
-            ToolReport {
-                id: id.to_string(),
-                label: label.to_string(),
-                command: command.to_string(),
-                status: "warning".to_string(),
-                exit_code,
-                message: format!(
-                    "found but exited with {}",
-                    exit_code.map_or_else(|| "signal".to_string(), |code| code.to_string())
-                ),
+    let tool_report = |status: &str, exit_code: Option<i32>, message: String| ToolReport {
+        id: id.to_string(),
+        label: label.to_string(),
+        command: command.to_string(),
+        status: status.to_string(),
+        exit_code,
+        message,
+    };
+
+    let mut child = match Command::new(command)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => return tool_report("warning", None, format!("not available ({error})")),
+    };
+
+    // A hanging probe must not hang `cobble doctor`: poll with a bounded wait
+    // and degrade to a warning when the tool does not finish in time.
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                return tool_report("ok", status.code(), "available".to_string());
+            }
+            Ok(Some(status)) => {
+                let exit_code = status.code();
+                return tool_report(
+                    "warning",
+                    exit_code,
+                    format!(
+                        "found but exited with {}",
+                        exit_code.map_or_else(|| "signal".to_string(), |code| code.to_string())
+                    ),
+                );
+            }
+            Ok(None) => {
+                if started.elapsed() >= TOOL_PROBE_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return tool_report(
+                        "warning",
+                        None,
+                        format!(
+                            "found but timed out after {}s",
+                            TOOL_PROBE_TIMEOUT.as_secs()
+                        ),
+                    );
+                }
+                std::thread::sleep(TOOL_PROBE_POLL_INTERVAL);
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return tool_report("warning", None, format!("failed to poll ({error})"));
             }
         }
-        Err(error) => ToolReport {
-            id: id.to_string(),
-            label: label.to_string(),
-            command: command.to_string(),
-            status: "warning".to_string(),
-            exit_code: None,
-            message: format!("not available ({error})"),
-        },
     }
 }
 
@@ -452,8 +484,10 @@ fn inspect_output_marker(
                 if let Err(error) =
                     require_manifest_ownership(&manifest, expected_namespace, expected_project_id)
                 {
+                    // A marker owned by another project is the same hazard for
+                    // the output directory as it is for a linked pack.
                     OutputMarkerReport {
-                        status: "warning".to_string(),
+                        status: "error".to_string(),
                         path: Some(path_display(&marker_path)),
                         present: true,
                         namespace,
@@ -988,6 +1022,41 @@ mod tests {
         };
 
         assert_eq!(matches_supported, Some(false));
+    }
+
+    #[test]
+    fn inspect_tool_reports_missing_command_as_warning() {
+        let report = inspect_tool(
+            "tool.missing",
+            "Missing",
+            "cobble-doctor-missing-tool-fixture",
+            &[],
+        );
+
+        assert_eq!(report.status, "warning");
+        assert!(report.message.contains("not available"));
+    }
+
+    #[test]
+    fn inspect_output_marker_reports_foreign_project_as_error() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let output_dir = temp_dir.path().join("output");
+        fs::create_dir_all(output_dir.join(".cobble")).unwrap();
+        fs::write(
+            output_dir.join(".cobble/build_manifest.json"),
+            r#"{
+  "version": 1,
+  "cobble_version": "0.9.0",
+  "namespace": "example",
+  "project_id": "other-project"
+}"#,
+        )
+        .unwrap();
+
+        let marker = inspect_output_marker(&output_dir, Some("example"), Some("this-project"));
+
+        assert_eq!(marker.status, "error");
+        assert!(marker.message.contains("does not match"));
     }
 
     #[test]

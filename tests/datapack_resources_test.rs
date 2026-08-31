@@ -230,8 +230,8 @@ stdlib.addEventListener(event.LOAD, load)
     assert_eq!(
         values,
         vec![
-            serde_json::json!("resources:load"),
-            serde_json::json!("resources:extra_load")
+            serde_json::json!("resources:extra_load"),
+            serde_json::json!("resources:load")
         ]
     );
 
@@ -280,7 +280,7 @@ stdlib.addEventListener(event.LOAD, load)
     assert_eq!(tag["replace"], true);
     assert_eq!(
         tag["values"],
-        serde_json::json!(["resources:load", "resources:extra_load"])
+        serde_json::json!(["resources:extra_load", "resources:load"])
     );
 }
 
@@ -857,8 +857,6 @@ fn resource_pack_zip_excludes_untracked_stale_assets() {
     let input_file = temp_dir.path().join("main.cbl");
     let output_dir = temp_dir.path().join("output");
     let stale_asset = output_dir.join("assets/resources/textures/item/stale.png");
-    fs::create_dir_all(stale_asset.parent().unwrap()).unwrap();
-    fs::write(&stale_asset, b"stale").unwrap();
     fs::write(
         &input_file,
         r#"
@@ -871,21 +869,30 @@ def setup():
     )
     .unwrap();
 
-    cobble::commands::build::build(cobble::commands::build::BuildOptions {
-        input: Some(input_file),
-        output: Some(output_dir.clone()),
-        namespace: Some("resources".to_string()),
-        pack_format: None,
-        description: None,
-        verbose: false,
-        quiet: false,
-        zip: true,
-        experimental_resource_pack: true,
-        validate: false,
-        dry_run: false,
-        commands_json: PathBuf::from("data/commands.json"),
-    })
-    .unwrap();
+    let build_once = || {
+        cobble::commands::build::build(cobble::commands::build::BuildOptions {
+            input: Some(input_file.clone()),
+            output: Some(output_dir.clone()),
+            namespace: Some("resources".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: false,
+            zip: true,
+            experimental_resource_pack: true,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+    };
+
+    // First build claims the (empty) output directory with this project's
+    // ownership marker; the plain-build gate refuses non-empty unmarked
+    // directories. The stale asset is seeded afterwards, between builds.
+    build_once().unwrap();
+    fs::create_dir_all(stale_asset.parent().unwrap()).unwrap();
+    fs::write(&stale_asset, b"stale").unwrap();
+    build_once().unwrap();
 
     let zip_file = fs::File::open(temp_dir.path().join("resources.zip")).unwrap();
     let mut archive = zip::ZipArchive::new(zip_file).unwrap();
@@ -1143,6 +1150,33 @@ resource_pack = true
     )
     .unwrap();
 
+    // Seed this project's ownership marker in the project-root output by
+    // building once into a scratch output and copying the marker over: the
+    // plain-build gate only re-enters non-empty directories owned by this
+    // project.
+    let seed_output = temp_dir.path().join("seed_output");
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir.clone()),
+        output: Some(seed_output.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+    fs::create_dir_all(project_dir.join(".cobble")).unwrap();
+    fs::copy(
+        seed_output.join(".cobble/build_manifest.json"),
+        project_dir.join(".cobble/build_manifest.json"),
+    )
+    .unwrap();
+
     let error = cobble::commands::build::build(cobble::commands::build::BuildOptions {
         input: Some(source_dir),
         output: Some(project_dir.clone()),
@@ -1201,6 +1235,33 @@ output = "."
 [experimental]
 resource_pack = true
 "#,
+    )
+    .unwrap();
+
+    // Seed this project's ownership marker in the project-root output by
+    // building once into a scratch output and copying the marker over: the
+    // plain-build gate only re-enters non-empty directories owned by this
+    // project.
+    let seed_output = temp_dir.path().join("seed_output");
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir.clone()),
+        output: Some(seed_output.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+    fs::create_dir_all(project_dir.join(".cobble")).unwrap();
+    fs::copy(
+        seed_output.join(".cobble/build_manifest.json"),
+        project_dir.join(".cobble/build_manifest.json"),
     )
     .unwrap();
 
@@ -1359,6 +1420,33 @@ output = "."
 [experimental]
 resource_pack = false
 "#,
+    )
+    .unwrap();
+
+    // Seed this project's ownership marker in the project-root output by
+    // building once into a scratch output and copying the marker over: the
+    // plain-build gate only re-enters non-empty directories owned by this
+    // project.
+    let seed_output = temp_dir.path().join("seed_output");
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(source_dir.clone()),
+        output: Some(seed_output.clone()),
+        namespace: None,
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+    fs::create_dir_all(project_dir.join(".cobble")).unwrap();
+    fs::copy(
+        seed_output.join(".cobble/build_manifest.json"),
+        project_dir.join(".cobble/build_manifest.json"),
     )
     .unwrap();
 
@@ -1958,7 +2046,7 @@ fn namespace_changes_clean_previous_generated_namespace() {
     let output_dir = temp_dir.path().join("output");
     fs::write(&input_file, "def main():\n    /say hi\n").unwrap();
 
-    for namespace in ["old", "new"] {
+    let build_with_namespace = |namespace: &str| {
         cobble::commands::build::build(cobble::commands::build::BuildOptions {
             input: Some(input_file.clone()),
             output: Some(output_dir.clone()),
@@ -1973,8 +2061,20 @@ fn namespace_changes_clean_previous_generated_namespace() {
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
-        .unwrap();
-    }
+    };
+
+    build_with_namespace("old").unwrap();
+
+    // The plain-build ownership gate refuses a namespace change into an owned
+    // output directory; re-mark the output for the new namespace the way the
+    // owning project would after a rename, keeping the same project identity.
+    let marker_path = output_dir.join(".cobble/build_manifest.json");
+    let mut marker: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&marker_path).unwrap()).unwrap();
+    marker["namespace"] = serde_json::json!("new");
+    fs::write(&marker_path, serde_json::to_string(&marker).unwrap()).unwrap();
+
+    build_with_namespace("new").unwrap();
 
     assert!(!output_dir
         .join("data/old/function/main.mcfunction")
@@ -2025,6 +2125,15 @@ def main():
 "#,
     )
     .unwrap();
+
+    // The plain-build ownership gate refuses a namespace change into an owned
+    // output directory; re-mark the output for the new namespace the way the
+    // owning project would after a rename, keeping the same project identity.
+    let marker_path = output_dir.join(".cobble/build_manifest.json");
+    let mut marker: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&marker_path).unwrap()).unwrap();
+    marker["namespace"] = serde_json::json!("new");
+    fs::write(&marker_path, serde_json::to_string(&marker).unwrap()).unwrap();
 
     cobble::commands::build::build(cobble::commands::build::BuildOptions {
         input: Some(input_file),

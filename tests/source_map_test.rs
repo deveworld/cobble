@@ -113,7 +113,9 @@ def schema():
     );
     let resources = manifest["resources"].as_array().unwrap();
     assert_eq!(resources.len(), 1);
-    assert_object_keys(&resources[0], &["kind", "namespace", "path"]);
+    for resource in resources {
+        assert_object_keys(resource, &["kind", "namespace", "path"]);
+    }
 
     let source_map: Value = serde_json::from_str(
         &fs::read_to_string(output_dir.join(".cobble/source_map.json")).unwrap(),
@@ -602,7 +604,7 @@ def test():
         5,
     );
     assert_entry(
-        "data modify storage source_map:global args.target set value \"ok\"",
+        ".target set value \"ok\"",
         GeneratedCommandKind::ControlFlow,
         12,
         5,

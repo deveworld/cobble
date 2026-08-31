@@ -29,9 +29,32 @@ fn read_function(output_dir: &Path, name: &str) -> String {
     fs::read_to_string(output_dir.join(format!("data/unroll/function/{name}.mcfunction"))).unwrap()
 }
 
+fn read_first_function_with_prefix(output_dir: &Path, prefix: &str) -> String {
+    let function_dir = output_dir.join("data/unroll/function");
+    let entry = fs::read_dir(function_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().starts_with(prefix))
+        .unwrap_or_else(|| panic!("No function with prefix {prefix} generated"));
+    fs::read_to_string(entry.path()).unwrap()
+}
+
+fn read_all_functions(output_dir: &Path) -> String {
+    let function_dir = output_dir.join("data/unroll/function");
+    let mut content = String::new();
+    for entry in fs::read_dir(function_dir).unwrap().filter_map(Result::ok) {
+        if entry.path().extension().and_then(|ext| ext.to_str()) == Some("mcfunction") {
+            content.push_str(&fs::read_to_string(entry.path()).unwrap());
+            content.push('\n');
+        }
+    }
+    content
+}
+
 fn function_lines(output_dir: &Path, name: &str) -> Vec<String> {
     read_function(output_dir, name)
         .lines()
+        .filter(|line| !line.starts_with("scoreboard players set #return_flag_"))
         .map(str::to_string)
         .collect()
 }
@@ -115,7 +138,7 @@ def test():
 }
 
 #[test]
-fn rejects_non_literal_iterables() {
+fn rejects_identifier_iterables_without_storage_backing() {
     let error = compile_error(
         r#"
 def test():
@@ -125,6 +148,50 @@ def test():
     );
 
     assert!(error.contains("unroll-non-literal"), "{error}");
+}
+
+#[test]
+fn compiles_literal_arrays_with_runtime_values_as_runtime_list_loop() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+def plus_one(value):
+    return value + 1
+
+def test():
+    first = 2
+    total = 0
+    for value in [first, plus_one(3), 5]:
+        total = total + value
+"#,
+    )
+    .unwrap();
+
+    let content = read_function(&output_dir, "test");
+    let body = read_first_function_with_prefix(&output_dir, "for_list_body_");
+    let all_functions = read_all_functions(&output_dir);
+
+    assert!(content.contains("data modify storage unroll:global _cobble_for_iter_"));
+    assert!(content.contains("function unroll:for_list_temp_"));
+    assert!(body.contains("function unroll:_cobble_storage_dyn_"));
+    assert!(all_functions.contains("$data modify storage unroll:global vars.value set from storage unroll:global _cobble_for_iter_"));
+}
+
+#[test]
+fn compiles_dynamic_range_step_as_runtime_loop() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+def test():
+    limit = 10
+    step = 2
+    for i in range(0, limit, step):
+        /say {i}
+"#,
+    )
+    .unwrap();
+
+    let content = read_function(&output_dir, "test");
+    assert!(content.contains("#for_range_step_"));
+    assert!(content.contains("function unroll:for_range_temp_"));
 }
 
 #[test]

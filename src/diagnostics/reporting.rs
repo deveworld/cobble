@@ -137,6 +137,156 @@ impl SourceDiagnostic {
     }
 }
 
+impl SourceDiagnostic {
+    /// Returns true when a transpiler error string matches one of the shapes
+    /// the shared classifier below recognizes (unroll/runtime-for prefixes and
+    /// stdlib-module wording). Callers that fall back to a generic diagnostic
+    /// for other transpiler errors gate on this predicate.
+    pub fn transpiler_error_is_recognized(error: &str) -> bool {
+        error.starts_with("unroll-")
+            || error.starts_with("runtime-for-")
+            || error.contains("not imported")
+            || error.contains("Unknown stdlib module")
+    }
+
+    /// Classifies a transpiler error string into a diagnostic kind:
+    /// `unroll-*` and `runtime-for-*` keys pass through, stdlib-module errors
+    /// map to `missing-stdlib-module`/`unknown-stdlib-module`, and everything
+    /// else falls back to `semantic`.
+    pub fn classify_transpiler_error(error: &str) -> String {
+        if let Some((kind, _)) = error.split_once(':') {
+            if kind.starts_with("unroll-") || kind.starts_with("runtime-for-") {
+                kind.to_string()
+            } else if error.contains("not imported") {
+                "missing-stdlib-module".to_string()
+            } else if error.contains("Unknown stdlib module") {
+                "unknown-stdlib-module".to_string()
+            } else {
+                "semantic".to_string()
+            }
+        } else if error.contains("not imported") {
+            "missing-stdlib-module".to_string()
+        } else if error.contains("Unknown stdlib module") {
+            "unknown-stdlib-module".to_string()
+        } else {
+            "semantic".to_string()
+        }
+    }
+
+    /// Recovers a best-effort 1-based source location for a transpiler error:
+    /// structured `location:`/`source-key:`/`loop:` trailers for unroll and
+    /// runtime-for errors, and a `module '<name>'` scan for stdlib errors.
+    pub fn recover_transpiler_error_location(error: &str, source: &str) -> Option<(usize, usize)> {
+        if error.starts_with("unroll-") || error.starts_with("runtime-for-") {
+            return unroll_error_location(error)
+                .or_else(|| {
+                    unroll_error_source_key(error).and_then(|source_key| {
+                        find_for_loop_location_for_source_key(source, source_key)
+                    })
+                })
+                .or_else(|| {
+                    unroll_error_target(error)
+                        .and_then(|target| find_for_loop_location_for_target(source, target))
+                })
+                .or_else(|| find_for_loop_location(source));
+        }
+
+        let module = error
+            .split_once("module '")
+            .and_then(|(_, rest)| rest.split_once('\''))
+            .map(|(module, _)| module)?;
+        let needle = format!("{module}.");
+        find_source_location(source, &needle).or_else(|| find_source_location(source, module))
+    }
+
+    /// Builds the error diagnostic `cobble check` and the web demo report for
+    /// a transpiler error string, combining [`Self::classify_transpiler_error`]
+    /// and [`Self::recover_transpiler_error_location`] and stripping the
+    /// machine-oriented `source-key:`/`location:` trailer lines.
+    pub fn from_transpiler_error(error: &str, source: &str) -> Self {
+        let kind = Self::classify_transpiler_error(error);
+        let (line, column) =
+            Self::recover_transpiler_error_location(error, source).unwrap_or((1, 1));
+        Self::error(kind, line, column, clean_transpiler_error_message(error))
+    }
+}
+
+fn clean_transpiler_error_message(error: &str) -> String {
+    error
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            !line.starts_with("source-key:") && !line.starts_with("location:")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn unroll_error_target(error: &str) -> Option<&str> {
+    error
+        .split_once("\n  loop: for ")
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+}
+
+fn unroll_error_location(error: &str) -> Option<(usize, usize)> {
+    let location = error
+        .split_once("\n  location: ")
+        .and_then(|(_, rest)| rest.lines().next())?
+        .trim();
+    let (line, column) = location.split_once(':')?;
+    Some((line.parse().ok()?, column.parse().ok()?))
+}
+
+fn unroll_error_source_key(error: &str) -> Option<&str> {
+    error
+        .split_once("\n  source-key: ")
+        .and_then(|(_, rest)| rest.lines().next())
+        .map(str::trim)
+        .filter(|source_key| !source_key.is_empty())
+}
+
+fn find_source_location(source: &str, needle: &str) -> Option<(usize, usize)> {
+    source.lines().enumerate().find_map(|(line_index, line)| {
+        line.find(needle)
+            .map(|column_index| (line_index + 1, column_index + 1))
+    })
+}
+
+fn find_for_loop_location_for_target(source: &str, target: &str) -> Option<(usize, usize)> {
+    let needle = format!("for {target} ");
+    source.lines().enumerate().find_map(|(line_index, line)| {
+        let column_index = line.find(&needle)?;
+        line[column_index..]
+            .trim_start()
+            .starts_with(&needle)
+            .then_some((line_index + 1, column_index + 1))
+    })
+}
+
+fn find_for_loop_location_for_source_key(source: &str, source_key: &str) -> Option<(usize, usize)> {
+    source.lines().enumerate().find_map(|(line_index, line)| {
+        let statement = line.trim_start();
+        if !statement.starts_with("for ") {
+            return None;
+        }
+        if crate::transpiler::Transpiler::source_line_key(statement) != source_key {
+            return None;
+        }
+        let column = line.len() - statement.len() + 1;
+        Some((line_index + 1, column))
+    })
+}
+
+fn find_for_loop_location(source: &str) -> Option<(usize, usize)> {
+    source.lines().enumerate().find_map(|(line_index, line)| {
+        let column_index = line.find("for ")?;
+        line[column_index..]
+            .trim_start()
+            .starts_with("for ")
+            .then_some((line_index + 1, column_index + 1))
+    })
+}
+
 pub fn format_diagnostics(filename: &str, diagnostics: &[SourceDiagnostic]) -> String {
     diagnostics
         .iter()
@@ -196,6 +346,59 @@ fn format_help(help: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_transpiler_error_maps_recognized_error_shapes() {
+        assert_eq!(
+            SourceDiagnostic::classify_transpiler_error("unroll-limit-exceeded: too many"),
+            "unroll-limit-exceeded"
+        );
+        assert_eq!(
+            SourceDiagnostic::classify_transpiler_error("runtime-for-unsupported: 'x' is bad"),
+            "runtime-for-unsupported"
+        );
+        assert_eq!(
+            SourceDiagnostic::classify_transpiler_error("module 'text' not imported."),
+            "missing-stdlib-module"
+        );
+        assert_eq!(
+            SourceDiagnostic::classify_transpiler_error("Unknown stdlib module 'bogus'."),
+            "unknown-stdlib-module"
+        );
+        assert_eq!(
+            SourceDiagnostic::classify_transpiler_error("something else went wrong"),
+            "semantic"
+        );
+    }
+
+    #[test]
+    fn from_transpiler_error_recovers_location_and_strips_trailers() {
+        let error = "unroll-limit-exceeded: range expands past 1024 iterations.\n  loop: for i\n  location: 2:5";
+        let diagnostic = SourceDiagnostic::from_transpiler_error(
+            error,
+            "def main():\n    for i in range(1025):\n        /say bad {i}\n",
+        );
+
+        assert_eq!(diagnostic.kind, "unroll-limit-exceeded");
+        assert_eq!((diagnostic.line, diagnostic.column), (2, 5));
+        assert_eq!(
+            diagnostic.message,
+            "unroll-limit-exceeded: range expands past 1024 iterations.\n  loop: for i"
+        );
+    }
+
+    #[test]
+    fn transpiler_error_recognition_gates_on_raw_error_text() {
+        assert!(SourceDiagnostic::transpiler_error_is_recognized(
+            "unroll-non-literal: dynamic bound"
+        ));
+        assert!(SourceDiagnostic::transpiler_error_is_recognized(
+            "module 'text' not imported."
+        ));
+        assert!(!SourceDiagnostic::transpiler_error_is_recognized(
+            "Transpile exploded for other reasons"
+        ));
+    }
 
     #[test]
     fn error_at_span_preserves_existing_line_column_shape() {

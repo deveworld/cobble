@@ -792,7 +792,10 @@ fn tokenize_line(
                     line_number,
                     column_from_byte(line, start, column_offset),
                 );
-                *paren_depth -= 1;
+                // Clamp at zero: a stray closer must not drive the depth
+                // negative and suppress Newline/Indent emission for the
+                // rest of the file.
+                *paren_depth = (*paren_depth - 1).max(0);
             }
             '[' => {
                 chars.next();
@@ -816,7 +819,10 @@ fn tokenize_line(
                     line_number,
                     column_from_byte(line, start, column_offset),
                 );
-                *paren_depth -= 1;
+                // Clamp at zero: a stray closer must not drive the depth
+                // negative and suppress Newline/Indent emission for the
+                // rest of the file.
+                *paren_depth = (*paren_depth - 1).max(0);
             }
             ':' => {
                 chars.next();
@@ -987,7 +993,10 @@ fn tokenize_line(
                     line_number,
                     column_from_byte(line, start, column_offset),
                 );
-                *paren_depth -= 1;
+                // Clamp at zero: a stray closer must not drive the depth
+                // negative and suppress Newline/Indent emission for the
+                // rest of the file.
+                *paren_depth = (*paren_depth - 1).max(0);
             }
             '#' => {
                 // Comment - ignore rest of line

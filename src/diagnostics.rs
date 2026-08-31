@@ -31,6 +31,19 @@ use text::{
     split_top_level_args, starts_with_keyword, triple_quote_pattern, ArgumentSpan,
 };
 
+/// Base keyword sets shared by the line-scan skip lists below. Each scan site
+/// combines these slices and documents its own additions/omissions so every
+/// check's effective skip set stays explicit in one place.
+const DECLARATION_KEYWORDS: &[&str] = &["def", "import", "from", "define"];
+const CONTROL_FLOW_KEYWORDS: &[&str] = &["if", "elif", "while", "for"];
+const RESOURCE_BLOCK_KEYWORDS: &[&str] = &["create", "end"];
+
+fn starts_with_any_keyword(trimmed: &str, keywords: &[&str]) -> bool {
+    keywords
+        .iter()
+        .any(|keyword| starts_with_keyword(trimmed, keyword))
+}
+
 pub fn parse_source(source: &str) -> Result<Program, Vec<SourceDiagnostic>> {
     parse_source_located(source).map(|located| located.program)
 }
@@ -137,21 +150,18 @@ pub fn analyze_source(source: &str) -> Vec<SourceDiagnostic> {
         check_missing_block_colon(line, trimmed, line_number, &mut diagnostics);
         check_decorator(line, trimmed, line_number, trimmed_column, &mut diagnostics);
         check_unsupported_keywords(line, trimmed, line_number, indent, &mut diagnostics);
-        check_imports(line, trimmed, line_number, indent, &mut diagnostics);
+        check_imports(trimmed, line_number, indent, &mut diagnostics);
         check_function_definition(
-            line,
             trimmed,
             line_number,
             indent,
             &mut function_defs,
             &mut diagnostics,
         );
-        check_function_parameters(line, trimmed, line_number, indent, &mut diagnostics);
-        check_return_statement(line, trimmed, line_number, indent, &mut diagnostics);
-        check_compound_assignment(line, &masked, line_number, &mut diagnostics);
+        check_function_parameters(trimmed, line_number, indent, &mut diagnostics);
         check_assignment_target(line, trimmed, line_number, indent, &mut diagnostics);
-        check_assignment_function_calls(line, trimmed, line_number, indent, &mut diagnostics);
-        check_comprehension(line, &masked, line_number, &mut diagnostics);
+        check_assignment_function_calls(trimmed, line_number, indent, &mut diagnostics);
+        check_comprehension(&masked, line_number, &mut diagnostics);
         check_datapack_helper_argument_shapes(
             line,
             trimmed,
@@ -573,7 +583,7 @@ fn check_unsupported_keywords(
                 SourceDiagnostic::error(
                     "unsupported-python-syntax",
                     line_number,
-                    column_from_byte(line, indent + index),
+                    indent + column_from_byte(trimmed, index),
                     format!("`{keyword}` is not supported in Cobble"),
                 )
                 .with_help(help),
@@ -630,7 +640,6 @@ fn looks_like_block_header(trimmed: &str) -> bool {
 }
 
 fn check_imports(
-    line: &str,
     trimmed: &str,
     line_number: usize,
     indent: usize,
@@ -647,7 +656,7 @@ fn check_imports(
                 SourceDiagnostic::error(
                     "unsupported-import",
                     line_number,
-                    column_from_byte(line, indent + "import ".len() + index),
+                    indent + column_from_byte(trimmed, "import ".len() + index),
                     "Multiple modules in one import statement are not supported",
                 )
                 .with_help("Use one `import module` statement per line."),
@@ -659,7 +668,7 @@ fn check_imports(
                 SourceDiagnostic::error(
                     "unsupported-import",
                     line_number,
-                    column_from_byte(line, indent + "import ".len() + index),
+                    indent + column_from_byte(trimmed, "import ".len() + index),
                     "Import aliases are not supported",
                 )
                 .with_help(
@@ -673,7 +682,7 @@ fn check_imports(
                 SourceDiagnostic::error(
                     "unsupported-import",
                     line_number,
-                    column_from_byte(line, indent + "import ".len()),
+                    indent + column_from_byte(trimmed, "import ".len()),
                     "Relative imports are not supported",
                 )
                 .with_help(
@@ -685,7 +694,7 @@ fn check_imports(
                 SourceDiagnostic::error(
                     "unsupported-import",
                     line_number,
-                    column_from_byte(line, indent + "import ".len() + index),
+                    indent + column_from_byte(trimmed, "import ".len() + index),
                     "Dotted imports are not supported",
                 )
                 .with_help(
@@ -701,14 +710,14 @@ fn check_imports(
             return;
         };
 
-        let items_offset = indent + "from ".len() + module.len() + " import ".len();
+        let items_offset = "from ".len() + module.len() + " import ".len();
 
         if module.starts_with('.') {
             diagnostics.push(
                 SourceDiagnostic::error(
                     "unsupported-import",
                     line_number,
-                    column_from_byte(line, indent + "from ".len()),
+                    indent + column_from_byte(trimmed, "from ".len()),
                     "Relative imports are not supported",
                 )
                 .with_help(
@@ -720,7 +729,7 @@ fn check_imports(
                 SourceDiagnostic::error(
                     "unsupported-import",
                     line_number,
-                    column_from_byte(line, indent + "from ".len() + index),
+                    indent + column_from_byte(trimmed, "from ".len() + index),
                     "Dotted imports are not supported",
                 )
                 .with_help(
@@ -735,7 +744,7 @@ fn check_imports(
                 SourceDiagnostic::error(
                     "unsupported-import",
                     line_number,
-                    column_from_byte(line, items_offset + leading),
+                    indent + column_from_byte(trimmed, items_offset + leading),
                     "Wildcard imports are not supported",
                 )
                 .with_help("Import explicit names such as `from helpers import setup`."),
@@ -747,7 +756,7 @@ fn check_imports(
                 SourceDiagnostic::error(
                     "unsupported-import",
                     line_number,
-                    column_from_byte(line, items_offset + index),
+                    indent + column_from_byte(trimmed, items_offset + index),
                     "Import aliases are not supported",
                 )
                 .with_help(
@@ -776,7 +785,6 @@ fn find_import_alias_keyword(text: &str) -> Option<usize> {
 }
 
 fn check_function_parameters(
-    line: &str,
     trimmed: &str,
     line_number: usize,
     indent: usize,
@@ -802,7 +810,7 @@ fn check_function_parameters(
             SourceDiagnostic::error(
                 "unsupported-function-parameter",
                 line_number,
-                column_from_byte(line, indent + open + 1 + index),
+                indent + column_from_byte(trimmed, open + 1 + index),
                 "`*args` and `**kwargs` parameters are not supported",
             )
             .with_help("List every Cobble function parameter explicitly."),
@@ -814,7 +822,7 @@ fn check_function_parameters(
             SourceDiagnostic::error(
                 "unsupported-function-parameter",
                 line_number,
-                column_from_byte(line, indent + open + 1 + index),
+                indent + column_from_byte(trimmed, open + 1 + index),
                 "Default parameter values are not supported",
             )
             .with_help("Use explicit arguments at each call site."),
@@ -828,7 +836,7 @@ fn check_function_parameters(
             continue;
         }
 
-        let column = column_from_byte(line, indent + open + 1 + param.offset);
+        let column = indent + column_from_byte(trimmed, open + 1 + param.offset);
         if let Some(first_column) = seen_params.insert(name.to_string(), column) {
             diagnostics.push(
                 SourceDiagnostic::error(
@@ -846,7 +854,6 @@ fn check_function_parameters(
 }
 
 fn check_function_definition(
-    line: &str,
     trimmed: &str,
     line_number: usize,
     indent: usize,
@@ -857,7 +864,7 @@ fn check_function_definition(
         return;
     }
 
-    let Some(signature) = parse_function_signature(line, trimmed, line_number, indent) else {
+    let Some(signature) = parse_function_signature(trimmed, line_number, indent) else {
         return;
     };
 
@@ -879,12 +886,14 @@ fn check_function_definition(
 }
 
 pub(super) fn parse_function_signature(
-    line: &str,
     trimmed: &str,
     line_number: usize,
     indent: usize,
 ) -> Option<FunctionSignature> {
     let rest = trimmed.strip_prefix("def")?.trim_start();
+    // Column of the function name, computed from the `def ` prefix width so a
+    // name that also occurs inside `def ` (e.g. `def de()`) is not mislocated.
+    let name_offset = trimmed.len() - rest.len();
     let name = rest
         .chars()
         .take_while(|ch| is_ident_char(*ch))
@@ -907,54 +916,8 @@ pub(super) fn parse_function_signature(
         name: name.clone(),
         params,
         line: line_number,
-        column: column_from_byte(line, indent + trimmed.find(&name).unwrap_or(0)),
+        column: indent + column_from_byte(trimmed, name_offset),
     })
-}
-
-fn check_return_statement(
-    line: &str,
-    trimmed: &str,
-    line_number: usize,
-    indent: usize,
-    diagnostics: &mut Vec<SourceDiagnostic>,
-) {
-    if !starts_with_keyword(trimmed, "return") {
-        return;
-    }
-
-    diagnostics.push(
-        SourceDiagnostic::error(
-            "unsupported-return",
-            line_number,
-            column_from_byte(line, indent),
-            "Return statements are not supported",
-        )
-        .with_help(
-            "Minecraft functions cannot return early or return values. Use if/else blocks, scoreboard state, or separate functions to structure control flow.",
-        ),
-    );
-}
-
-fn check_compound_assignment(
-    line: &str,
-    masked: &str,
-    line_number: usize,
-    diagnostics: &mut Vec<SourceDiagnostic>,
-) {
-    for operator in ["+=", "-=", "*=", "/=", "%=", "^="] {
-        if let Some(index) = masked.find(operator) {
-            diagnostics.push(
-                SourceDiagnostic::error(
-                    "unsupported-assignment",
-                    line_number,
-                    column_from_byte(line, index),
-                    format!("Compound assignment `{operator}` is not supported"),
-                )
-                .with_help("Write the assignment explicitly, for example `x = x + value`."),
-            );
-            return;
-        }
-    }
 }
 
 fn check_assignment_target(
@@ -964,18 +927,29 @@ fn check_assignment_target(
     indent: usize,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
-    if starts_with_keyword(trimmed, "def")
-        || starts_with_keyword(trimmed, "if")
-        || starts_with_keyword(trimmed, "elif")
-        || starts_with_keyword(trimmed, "while")
-        || starts_with_keyword(trimmed, "for")
+    // Declarations, control-flow headers, `return`/`global` statements, and
+    // selector (`@`) lines are never assignment statements.
+    if starts_with_any_keyword(trimmed, DECLARATION_KEYWORDS)
+        || starts_with_any_keyword(trimmed, CONTROL_FLOW_KEYWORDS)
         || starts_with_keyword(trimmed, "return")
-        || starts_with_keyword(trimmed, "import")
-        || starts_with_keyword(trimmed, "from")
         || starts_with_keyword(trimmed, "global")
-        || starts_with_keyword(trimmed, "define")
         || trimmed.starts_with('@')
     {
+        return;
+    }
+
+    if let Some(compound) = compound_assignment_span(trimmed) {
+        if compound.target.contains(',') {
+            diagnostics.push(
+                SourceDiagnostic::error(
+                    "unsupported-assignment-target",
+                    line_number,
+                    column_from_byte(line, indent),
+                    "Unsupported assignment target",
+                )
+                .with_help("Assign to a variable or storage-backed attribute/subscript target."),
+            );
+        }
         return;
     }
 
@@ -989,54 +963,52 @@ fn check_assignment_target(
         .unwrap_or(raw_target)
         .trim();
 
-    if target.contains('.') || target.contains('[') || target.contains(']') || target.contains(',')
-    {
+    if target.contains(',') {
         diagnostics.push(
             SourceDiagnostic::error(
                 "unsupported-assignment-target",
                 line_number,
                 column_from_byte(line, indent),
-                "Only simple identifier assignment targets are supported",
+                "Unsupported assignment target",
             )
-            .with_help("Assign to a named variable, then call storage helpers for nested data."),
+            .with_help("Assign to a variable or storage-backed attribute/subscript target."),
         );
     }
 }
 
 fn check_assignment_function_calls(
-    line: &str,
     trimmed: &str,
     line_number: usize,
     indent: usize,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
-    if starts_with_keyword(trimmed, "def")
-        || starts_with_keyword(trimmed, "if")
-        || starts_with_keyword(trimmed, "elif")
-        || starts_with_keyword(trimmed, "while")
-        || starts_with_keyword(trimmed, "for")
-        || starts_with_keyword(trimmed, "return")
-        || starts_with_keyword(trimmed, "import")
-        || starts_with_keyword(trimmed, "from")
+    // Same skip set as `check_assignment_target` minus `return`: a returned
+    // expression is scanned like an assignment RHS so misused value helpers in
+    // `return ...` lines are reported at the `return` site.
+    if starts_with_any_keyword(trimmed, DECLARATION_KEYWORDS)
+        || starts_with_any_keyword(trimmed, CONTROL_FLOW_KEYWORDS)
         || starts_with_keyword(trimmed, "global")
-        || starts_with_keyword(trimmed, "define")
         || trimmed.starts_with('@')
     {
         return;
     }
 
-    let Some(equals_index) = single_equals_index(trimmed) else {
-        return;
+    let (rhs_span, is_return_expression) = match return_expression_span(trimmed) {
+        Some(span) => (span, true),
+        None => match assignment_rhs_span(trimmed) {
+            Some(span) => (span, false),
+            None => return,
+        },
     };
-    let rhs = &trimmed[equals_index + 1..];
+    let rhs = &rhs_span.text;
 
     for call in function_calls_in_expression(rhs) {
-        if let Some(diagnostic) = invalid_math_value_function_call(&call) {
+        if let Some(diagnostic) = invalid_value_function_call(&call) {
             diagnostics.push(
                 SourceDiagnostic::error(
                     diagnostic.kind,
                     line_number,
-                    column_from_byte(line, indent + equals_index + 1 + call.offset),
+                    indent + column_from_byte(trimmed, rhs_span.offset + call.offset),
                     diagnostic.message,
                 )
                 .with_help(diagnostic.help),
@@ -1048,16 +1020,32 @@ fn check_assignment_function_calls(
             continue;
         }
 
-        diagnostics.push(
-            SourceDiagnostic::error(
-                "unsupported-function-call-expression",
-                line_number,
-                column_from_byte(line, indent + equals_index + 1 + call.offset),
-                "Function calls in expressions are not supported (except math intrinsics).",
-            )
-            .with_help("Call Cobble functions as standalone statements, or store results through scoreboard/storage state explicitly."),
-        );
-        return;
+        if is_return_expression {
+            // Module calls in `return <expression>` are validated by the
+            // undefined-function scan and the transpiler; only value-helper
+            // misuse (len/math arity, unknown math) is reported here.
+            continue;
+        }
+
+        if let Some((module, method)) = split_module_call_name(&call.name) {
+            if is_known_module_call(module, method) {
+                diagnostics.push(
+                    SourceDiagnostic::error(
+                        "unsupported-function-call-expression",
+                        line_number,
+                        indent + column_from_byte(trimmed, rhs_span.offset + call.offset),
+                        format!(
+                            "`{}` is a command helper and cannot be used as an expression value",
+                            call.name
+                        ),
+                    )
+                    .with_help(
+                        "Use command helpers as standalone statements, or call a user function that returns an integer score value.",
+                    ),
+                );
+                return;
+            }
+        }
     }
 }
 
@@ -1090,32 +1078,6 @@ fn check_user_function_call_arguments(
                 continue;
             };
             if call.arg_count == signature.params.len() {
-                for argument in &call.arguments {
-                    let Some(nested_call) = function_calls_in_expression(&argument.text)
-                        .into_iter()
-                        .next()
-                    else {
-                        continue;
-                    };
-
-                    diagnostics.push(
-                        SourceDiagnostic::error(
-                            "unsupported-function-call-argument",
-                            line_number,
-                            column_from_byte(
-                                line,
-                                indent + argument.offset + nested_call.offset,
-                            ),
-                            format!(
-                                "Function `{}` arguments cannot contain function call expressions",
-                                signature.name
-                            ),
-                        )
-                        .with_help(
-                            "Call Cobble functions as standalone statements, or pass a literal, variable, selector, or storage-backed value.",
-                        ),
-                    );
-                }
                 continue;
             }
 
@@ -1123,7 +1085,7 @@ fn check_user_function_call_arguments(
                 SourceDiagnostic::error(
                     "function-argument-count",
                     line_number,
-                    column_from_byte(line, indent + call.offset),
+                    column_from_byte(&masked, indent + call.offset),
                     format!(
                         "Function `{}` expects {} argument(s), but {} provided",
                         signature.name,
@@ -1165,26 +1127,24 @@ fn check_undefined_function_calls(
         let indent = masked.len() - trimmed.len();
         if !inside_multiline_expression {
             for call in function_calls_in_expression(trimmed) {
-                if !is_user_function_call_statement(trimmed, &call) {
-                    continue;
-                }
-
                 if let Some((module, method)) = split_module_call_name(&call.name) {
-                    if let Some(message) =
-                        value_only_module_call_message(module, method, &call.name)
-                    {
-                        diagnostics.push(
-                            SourceDiagnostic::error(
-                                "unsupported-function-call-expression",
-                                line_number,
-                                column_from_byte(line, indent + call.offset),
-                                message,
-                            )
-                            .with_help(
-                                "Pass the returned value to another helper or JSON resource value instead.",
-                            ),
-                        );
-                        continue;
+                    if is_user_function_call_statement(trimmed, &call) {
+                        if let Some(message) =
+                            value_only_module_call_message(module, method, &call.name)
+                        {
+                            diagnostics.push(
+                                SourceDiagnostic::error(
+                                    "unsupported-function-call-expression",
+                                    line_number,
+                                    column_from_byte(&masked, indent + call.offset),
+                                    message,
+                                )
+                                .with_help(
+                                    "Pass the returned value to another helper or JSON resource value instead.",
+                                ),
+                            );
+                            continue;
+                        }
                     }
 
                     if is_known_module_call(module, method) {
@@ -1195,7 +1155,7 @@ fn check_undefined_function_calls(
                         SourceDiagnostic::error(
                             "undefined-function",
                             line_number,
-                            column_from_byte(line, indent + call.offset),
+                            column_from_byte(&masked, indent + call.offset),
                             format!("Unknown helper function `{}`", call.name),
                         )
                         .with_help(
@@ -1207,6 +1167,7 @@ fn check_undefined_function_calls(
 
                 if function_defs.contains_key(&call.name)
                     || is_allowed_value_function_call(&call.name)
+                    || call.name == "range"
                 {
                     continue;
                 }
@@ -1215,7 +1176,7 @@ fn check_undefined_function_calls(
                     SourceDiagnostic::error(
                         "undefined-function",
                         line_number,
-                        column_from_byte(line, indent + call.offset),
+                        column_from_byte(&masked, indent + call.offset),
                         format!("Undefined function `{}`", call.name),
                     )
                     .with_help(
@@ -1291,89 +1252,111 @@ pub(super) fn split_module_call_name(name: &str) -> Option<(&str, &str)> {
     name.rsplit_once('.')
 }
 
+/// Callable stdlib method names per module, layered on the shared registry
+/// in `crate::stdlib::STDLIB_MODULES`. Deliberate per-site deltas from that
+/// base:
+/// - adds the "stdlib" pseudo-module (`stdlib.addEventListener`);
+/// - omits "event": its members (`event.LOAD`, `event.TICK`) are attributes,
+///   not calls;
+/// - omits "datapack": its helpers are validated through the datapack
+///   resource/tag tables inside `is_known_module_call`.
+pub(crate) const STDLIB_MODULE_METHODS: &[(&str, &[&str])] = &[
+    ("stdlib", &["addEventListener"]),
+    ("math", &["sqrt", "abs", "min", "max"]),
+    (
+        "text",
+        &[
+            "plain",
+            "colored",
+            "score",
+            "selector",
+            "tellraw",
+            "title",
+            "subtitle",
+            "actionbar",
+        ],
+    ),
+    (
+        "score",
+        &["set", "add", "remove", "reset", "copy", "operation"],
+    ),
+    ("score.objective", &["add", "remove", "display"]),
+    ("random", &["int", "bool"]),
+    ("timer", &["set", "tick", "done", "reset"]),
+    (
+        "storage",
+        &[
+            "set",
+            "merge",
+            "remove",
+            "copy",
+            "append",
+            "prepend",
+            "insert",
+            "get",
+            "read_score",
+            "copy_from",
+            "path",
+            "child",
+            "index",
+        ],
+    ),
+    (
+        "item_component",
+        &["components", "custom_name", "lore", "unbreakable"],
+    ),
+    ("schedule", &["once", "clear"]),
+    (
+        "selector",
+        &[
+            "current",
+            "nearest_player",
+            "all_players",
+            "all_entities",
+            "tagged",
+            "players_tagged",
+            "entity_type",
+        ],
+    ),
+    ("position", &["here", "absolute", "relative", "local"]),
+    (
+        "bossbar",
+        &[
+            "add",
+            "remove",
+            "set_value",
+            "set_max",
+            "set_name",
+            "set_color",
+            "set_style",
+            "set_visible",
+            "set_players",
+        ],
+    ),
+    ("team", &["add", "remove", "join", "leave", "modify"]),
+    (
+        "entity",
+        &[
+            "tag_add",
+            "tag_remove",
+            "effect_give",
+            "effect_clear",
+            "attribute_get",
+            "attribute_base_set",
+            "teleport",
+        ],
+    ),
+    ("resource_pack", &["item_model", "block_model", "lang"]),
+];
+
 pub(super) fn is_known_module_call(module: &str, method: &str) -> bool {
-    match module {
-        "stdlib" => method == "addEventListener",
-        "math" => matches!(method, "sqrt" | "abs" | "min" | "max"),
-        "text" => matches!(
-            method,
-            "plain"
-                | "colored"
-                | "score"
-                | "selector"
-                | "tellraw"
-                | "title"
-                | "subtitle"
-                | "actionbar"
-        ),
-        "score" => matches!(
-            method,
-            "set" | "add" | "remove" | "reset" | "copy" | "operation"
-        ),
-        "score.objective" => matches!(method, "add" | "remove" | "display"),
-        "random" => matches!(method, "int" | "bool"),
-        "timer" => matches!(method, "set" | "tick" | "done" | "reset"),
-        "storage" => matches!(
-            method,
-            "set"
-                | "merge"
-                | "remove"
-                | "copy"
-                | "append"
-                | "prepend"
-                | "insert"
-                | "get"
-                | "read_score"
-                | "copy_from"
-                | "path"
-                | "child"
-                | "index"
-        ),
-        "item_component" => matches!(
-            method,
-            "components" | "custom_name" | "lore" | "unbreakable"
-        ),
-        "schedule" => matches!(method, "once" | "clear"),
-        "selector" => matches!(
-            method,
-            "current"
-                | "nearest_player"
-                | "all_players"
-                | "all_entities"
-                | "tagged"
-                | "players_tagged"
-                | "entity_type"
-        ),
-        "position" => matches!(method, "here" | "absolute" | "relative" | "local"),
-        "bossbar" => matches!(
-            method,
-            "add"
-                | "remove"
-                | "set_value"
-                | "set_max"
-                | "set_name"
-                | "set_color"
-                | "set_style"
-                | "set_visible"
-                | "set_players"
-        ),
-        "team" => matches!(method, "add" | "remove" | "join" | "leave" | "modify"),
-        "entity" => matches!(
-            method,
-            "tag_add"
-                | "tag_remove"
-                | "effect_give"
-                | "effect_clear"
-                | "attribute_get"
-                | "attribute_base_set"
-                | "teleport"
-        ),
-        "datapack" => {
-            datapack_json_resource_type(method).is_some() || datapack_tag_type(method).is_some()
-        }
-        "resource_pack" => matches!(method, "item_model" | "block_model" | "lang"),
-        _ => false,
+    if module == "datapack" {
+        return datapack_json_resource_type(method).is_some()
+            || datapack_tag_type(method).is_some();
     }
+    STDLIB_MODULE_METHODS
+        .iter()
+        .any(|(name, methods)| *name == module && methods.contains(&method))
 }
 
 pub(super) fn value_only_module_call_message(
@@ -1470,7 +1453,7 @@ fn check_unsupported_none_usage(source: &str, diagnostics: &mut Vec<SourceDiagno
             continue;
         }
 
-        check_none_usage_in_line(line, trimmed, line_number, indent, diagnostics);
+        check_none_usage_in_line(trimmed, line_number, indent, diagnostics);
     }
 }
 
@@ -1494,7 +1477,6 @@ fn check_none_usage_in_mapped_expression(
 }
 
 fn check_none_usage_in_line(
-    line: &str,
     trimmed: &str,
     line_number: usize,
     indent: usize,
@@ -1505,7 +1487,7 @@ fn check_none_usage_in_line(
             SourceDiagnostic::error(
                 "unsupported-none",
                 line_number,
-                column_from_byte(line, indent + token.offset),
+                indent + column_from_byte(trimmed, token.offset),
                 "None/null is only supported in data pack JSON resource helper values",
             )
             .with_help(
@@ -1655,7 +1637,10 @@ fn check_storage_backed_access(source: &str, diagnostics: &mut Vec<SourceDiagnos
                 SourceDiagnostic::error(
                     "unsupported-storage-access",
                     line_number,
-                    column_from_byte(line, indent + assignment.value_offset + diagnostic.offset),
+                    column_from_byte(
+                        &masked,
+                        indent + assignment.value_offset + diagnostic.offset,
+                    ),
                     diagnostic.message,
                 )
                 .with_help(diagnostic.help),
@@ -1741,18 +1726,53 @@ fn unsupported_subscript_access(
             continue;
         };
         let index_expression = expression[index + 1..close_index].trim();
-        let Some(base_type) = type_env.get(base) else {
-            return Some(StorageAccessDiagnostic {
-                offset: base_start,
-                message: format!("Cannot resolve storage-backed subscript access `{base}[...]`"),
-                help: "Assign a list, map, or string literal to the base variable before using storage-backed access.".to_string(),
-            });
+        let (base_type, nested_storage_chain) = match type_env.get(base) {
+            Some(base_type) => (base_type.clone(), false),
+            None => {
+                let Some((root, _root_start)) =
+                    storage_chain_root_before_subscript(expression, base_start)
+                else {
+                    return Some(StorageAccessDiagnostic {
+                        offset: base_start,
+                        message: format!(
+                            "Cannot resolve storage-backed subscript access `{base}[...]`"
+                        ),
+                        help: "Assign a list, map, or string literal to the base variable before using storage-backed access.".to_string(),
+                    });
+                };
+                let Some(root_type) = type_env.get(root) else {
+                    return Some(StorageAccessDiagnostic {
+                        offset: base_start,
+                        message: format!(
+                            "Cannot resolve storage-backed subscript access `{base}[...]`"
+                        ),
+                        help: "Assign a list, map, or string literal to the base variable before using storage-backed access.".to_string(),
+                    });
+                };
+                if !matches!(
+                    root_type,
+                    CobbleType::List | CobbleType::Map | CobbleType::String
+                ) {
+                    return Some(StorageAccessDiagnostic {
+                        offset: base_start,
+                        message: format!(
+                            "Variable `{root}` is type {}, which does not support subscript access",
+                            root_type.name()
+                        ),
+                        help: "Use subscript access only on storage-backed list, map, or string variables."
+                            .to_string(),
+                    });
+                }
+                (CobbleType::Unknown, true)
+            }
         };
 
-        if !matches!(
-            base_type,
-            CobbleType::List | CobbleType::Map | CobbleType::String
-        ) {
+        if !nested_storage_chain
+            && !matches!(
+                base_type,
+                CobbleType::List | CobbleType::Map | CobbleType::String
+            )
+        {
             return Some(StorageAccessDiagnostic {
                 offset: base_start,
                 message: format!(
@@ -1764,14 +1784,79 @@ fn unsupported_subscript_access(
             });
         }
 
-        if !is_literal_storage_index(index_expression)
-            && !is_constant_storage_index(index_expression, constant_env)
-        {
-            return Some(StorageAccessDiagnostic {
-                offset: index + 1,
-                message: "Dynamic storage-backed subscript indexes are not supported".to_string(),
-                help: "Use a numeric/string literal index or a numeric compile-time constant such as `items[0]`, `config[\"chance\"]`, or `items[INDEX]`.".to_string(),
-            });
+        if base_type == CobbleType::Map {
+            if is_quoted_string_literal(index_expression) {
+                index = close_index + 1;
+                continue;
+            }
+
+            if let Some(index_type) =
+                infer_expression_type_for_diagnostics(index_expression, type_env)
+            {
+                if index_type != CobbleType::String && index_type != CobbleType::Unknown {
+                    return Some(StorageAccessDiagnostic {
+                        offset: index + 1,
+                        message: format!(
+                            "Dynamic storage-backed map keys must be string values, not {}",
+                            index_type.name()
+                        ),
+                        help: "Use a string variable, function parameter, string literal key, or attribute access for maps, such as `config[key]`, `config[\"chance\"]`, or `config.chance`.".to_string(),
+                    });
+                }
+            }
+
+            if is_constant_storage_index(index_expression, constant_env) {
+                return Some(StorageAccessDiagnostic {
+                    offset: index + 1,
+                    message: "Storage-backed map keys must be strings, not numeric consts"
+                        .to_string(),
+                    help: "Use a string variable, string literal key, or attribute access for maps, such as `config[key]`, `config[\"chance\"]`, or `config.chance`.".to_string(),
+                });
+            }
+
+            index = close_index + 1;
+            continue;
+        }
+
+        if nested_storage_chain {
+            if let Some(index_type) =
+                infer_expression_type_for_diagnostics(index_expression, type_env)
+            {
+                if !matches!(
+                    index_type,
+                    CobbleType::Integer | CobbleType::String | CobbleType::Unknown
+                ) {
+                    return Some(StorageAccessDiagnostic {
+                        offset: index + 1,
+                        message: format!(
+                            "Dynamic storage-backed indexes must be integer or string values, not {}",
+                            index_type.name()
+                        ),
+                        help: "Use integer scores for list/string indexes or string values for map keys in storage-backed chains.".to_string(),
+                    });
+                }
+            }
+            index = close_index + 1;
+            continue;
+        }
+
+        let is_static_index = is_literal_storage_index(index_expression)
+            || is_constant_storage_index(index_expression, constant_env);
+        if !is_static_index {
+            if let Some(index_type) =
+                infer_expression_type_for_diagnostics(index_expression, type_env)
+            {
+                if index_type != CobbleType::Integer {
+                    return Some(StorageAccessDiagnostic {
+                        offset: index + 1,
+                        message: format!(
+                            "Dynamic storage-backed list indexes must be integer scores, not {}",
+                            index_type.name()
+                        ),
+                        help: "Use an integer score expression for runtime list/string indexes, such as `items[i]` after `i = 0`.".to_string(),
+                    });
+                }
+            }
         }
 
         index = close_index + 1;
@@ -1796,10 +1881,14 @@ fn unsupported_attribute_access(
             index += 1;
             continue;
         };
-        let Some((_field, _field_end)) = identifier_after(expression, index + 1) else {
+        let Some((_field, field_end)) = identifier_after(expression, index + 1) else {
             index += 1;
             continue;
         };
+        if matches!(next_non_whitespace_byte(expression, field_end), Some(b'(')) {
+            index = field_end;
+            continue;
+        }
         if is_builtin_symbol(base) {
             index += 1;
             continue;
@@ -1862,6 +1951,51 @@ fn identifier_after(text: &str, after: usize) -> Option<(&str, usize)> {
     Some((&text[start..end], end))
 }
 
+fn storage_chain_root_before_subscript(text: &str, base_start: usize) -> Option<(&str, usize)> {
+    let bytes = text.as_bytes();
+    let mut cursor = base_start;
+    let mut chain_start = base_start;
+
+    loop {
+        let mut dot = cursor;
+        while dot > 0 && bytes[dot - 1].is_ascii_whitespace() {
+            dot -= 1;
+        }
+        if dot == 0 || bytes[dot - 1] != b'.' {
+            break;
+        }
+
+        let segment_start = storage_chain_segment_start_before(text, dot - 1)?;
+        chain_start = segment_start;
+        cursor = segment_start;
+    }
+
+    if chain_start == base_start {
+        return None;
+    }
+    identifier_after(text, chain_start)
+}
+
+fn storage_chain_segment_start_before(text: &str, before_dot: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut end = before_dot;
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    if end == 0 {
+        return None;
+    }
+
+    if bytes[end - 1] == b']' {
+        let open = matching_open_bracket(text, end - 1)?;
+        let (_name, start) = identifier_before(text, open)?;
+        return Some(start);
+    }
+
+    let (_name, start) = identifier_before(text, end)?;
+    Some(start)
+}
+
 fn matching_close_bracket(expression: &str, open_index: usize) -> Option<usize> {
     let bytes = expression.as_bytes();
     let mut depth = 0usize;
@@ -1882,15 +2016,39 @@ fn matching_close_bracket(expression: &str, open_index: usize) -> Option<usize> 
     None
 }
 
+fn matching_open_bracket(expression: &str, close_index: usize) -> Option<usize> {
+    let bytes = expression.as_bytes();
+    let mut depth = 0usize;
+
+    for (index, byte) in bytes.iter().enumerate().take(close_index + 1).rev() {
+        match byte {
+            b']' => depth += 1,
+            b'[' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 fn is_literal_storage_index(index_expression: &str) -> bool {
     let index_expression = index_expression.trim();
-    is_numeric_literal(index_expression)
-        || (index_expression.len() >= 2
-            && matches!(index_expression.as_bytes()[0], b'"' | b'\'')
-            && index_expression
-                .as_bytes()
-                .last()
-                .is_some_and(|last| *last == index_expression.as_bytes()[0]))
+    is_numeric_literal(index_expression) || is_quoted_string_literal(index_expression)
+}
+
+fn is_quoted_string_literal(index_expression: &str) -> bool {
+    let index_expression = index_expression.trim();
+    index_expression.len() >= 2
+        && matches!(index_expression.as_bytes()[0], b'"' | b'\'')
+        && index_expression
+            .as_bytes()
+            .last()
+            .is_some_and(|last| *last == index_expression.as_bytes()[0])
 }
 
 fn is_constant_storage_index(index_expression: &str, constant_env: &HashMap<String, f64>) -> bool {
@@ -1934,7 +2092,9 @@ fn evaluate_numeric_const_for_diagnostics(
                 "*" => Some(left * right),
                 "/" if right != 0.0 => Some(left / right),
                 "%" if (right as i32) != 0 => Some(((left as i32) % (right as i32)) as f64),
-                "^" => Some((left as i32).checked_pow(right as u32)? as f64),
+                // Negative constant exponents cannot be folded to an integer
+                // result; leave them unfolded instead of casting through u32.
+                "^" if right >= 0.0 => Some((left as i32).checked_pow(right as u32)? as f64),
                 _ => None,
             };
         }
@@ -2095,6 +2255,28 @@ fn assignment_span_for_type_check(
         return None;
     }
 
+    if let Some(compound) = compound_assignment_span(masked_trimmed) {
+        if !is_simple_module_name(&compound.target) {
+            return None;
+        }
+
+        let raw_trimmed = line.trim_start();
+        let raw_rhs = raw_trimmed.get(compound.value_offset..)?;
+        let stripped_rhs = strip_comment_preserving_strings(raw_rhs);
+        let value = stripped_rhs.trim();
+        if value.is_empty() {
+            return None;
+        }
+
+        return Some(TypeAssignmentSpan {
+            target: compound.target.clone(),
+            value: format!("{} {} ({})", compound.target, compound.operator, value),
+            value_offset: compound.target_offset,
+            column: indent + column_from_byte(masked_trimmed, compound.target_offset),
+            is_const: false,
+        });
+    }
+
     let equals_index = single_equals_index(masked_trimmed)?;
     let raw_target = masked_trimmed[..equals_index].trim();
     let is_const = raw_target.starts_with("const ");
@@ -2119,7 +2301,7 @@ fn assignment_span_for_type_check(
         target: target.to_string(),
         value,
         value_offset: equals_index + 1 + trim_start,
-        column: column_from_byte(line, indent + raw_target.find(target).unwrap_or(0)),
+        column: indent + column_from_byte(masked_trimmed, raw_target.find(target).unwrap_or(0)),
         is_const,
     })
 }
@@ -2146,6 +2328,15 @@ fn infer_expression_type_for_diagnostics(
         return Some(CobbleType::Map);
     }
     let function_calls = function_calls_in_expression(expression);
+    if expression.starts_with("len(") && function_calls.len() == 1 {
+        let call = &function_calls[0];
+        if call.name == "len"
+            && call.arg_count == 1
+            && expression_references_are_known(expression, type_env)
+        {
+            return Some(CobbleType::Integer);
+        }
+    }
     if expression.starts_with("math.") && function_calls.len() == 1 {
         let call = &function_calls[0];
         if math_value_function_arity(&call.name).is_some_and(|arity| arity == call.arg_count)
@@ -2424,7 +2615,7 @@ fn check_raw_command_placeholders(
         }
 
         if starts_with_keyword(trimmed, "def") {
-            if let Some(signature) = parse_function_signature(line, trimmed, line_number, indent) {
+            if let Some(signature) = parse_function_signature(trimmed, line_number, indent) {
                 current_function =
                     Some((indent, signature.params.into_iter().collect::<HashSet<_>>()));
             }
@@ -2784,6 +2975,13 @@ fn assignment_symbol_name(trimmed: &str) -> Option<String> {
         return None;
     }
 
+    if let Some(compound) = compound_assignment_span(trimmed) {
+        if is_simple_module_name(&compound.target) {
+            return Some(compound.target);
+        }
+        return None;
+    }
+
     let equals_index = single_equals_index(trimmed)?;
     let raw_target = trimmed[..equals_index].trim();
     let target = raw_target
@@ -2797,19 +2995,131 @@ fn assignment_symbol_name(trimmed: &str) -> Option<String> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AssignmentRhsSpan {
+    text: String,
+    offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompoundAssignmentSpan {
+    target: String,
+    target_offset: usize,
+    operator: &'static str,
+    value: String,
+    value_offset: usize,
+}
+
+/// Treats `return <expression>` like an assignment RHS so expression-position
+/// checks can report at the `return` site. Offsets stay relative to `trimmed`.
+fn return_expression_span(trimmed: &str) -> Option<AssignmentRhsSpan> {
+    if !starts_with_keyword(trimmed, "return") {
+        return None;
+    }
+
+    let rest = &trimmed["return".len()..];
+    let offset = "return".len() + (rest.len() - rest.trim_start().len());
+    let text = rest.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(AssignmentRhsSpan {
+        text: text.to_string(),
+        offset,
+    })
+}
+
+fn assignment_rhs_span(trimmed: &str) -> Option<AssignmentRhsSpan> {
+    if let Some(compound) = compound_assignment_span(trimmed) {
+        return Some(AssignmentRhsSpan {
+            text: compound.value,
+            offset: compound.value_offset,
+        });
+    }
+
+    let equals_index = single_equals_index(trimmed)?;
+    let rhs = &trimmed[equals_index + 1..];
+    let trim_start = rhs.len() - rhs.trim_start().len();
+    Some(AssignmentRhsSpan {
+        text: rhs.trim().to_string(),
+        offset: equals_index + 1 + trim_start,
+    })
+}
+
+fn compound_assignment_span(trimmed: &str) -> Option<CompoundAssignmentSpan> {
+    let (operator_index, operator_token, operator) = top_level_compound_assignment(trimmed)?;
+    let raw_target = trimmed[..operator_index].trim();
+    let target_offset =
+        trimmed[..operator_index].len() - trimmed[..operator_index].trim_start().len();
+    let value_start = operator_index + operator_token.len();
+    let raw_value = trimmed.get(value_start..)?;
+    let value_trim_start = raw_value.len() - raw_value.trim_start().len();
+    let value = raw_value.trim().to_string();
+    if raw_target.is_empty() || value.is_empty() {
+        return None;
+    }
+
+    Some(CompoundAssignmentSpan {
+        target: raw_target.to_string(),
+        target_offset,
+        operator,
+        value,
+        value_offset: value_start + value_trim_start,
+    })
+}
+
+fn top_level_compound_assignment(trimmed: &str) -> Option<(usize, &'static str, &'static str)> {
+    let bytes = trimmed.as_bytes();
+    let mut delimiter_depth = 0usize;
+    let operators = [
+        ("+=", "+"),
+        ("-=", "-"),
+        ("*=", "*"),
+        ("/=", "/"),
+        ("%=", "%"),
+        ("^=", "^"),
+    ];
+
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => {
+                delimiter_depth += 1;
+                index += 1;
+                continue;
+            }
+            b')' | b']' | b'}' => {
+                delimiter_depth = delimiter_depth.saturating_sub(1);
+                index += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        if delimiter_depth == 0 {
+            for (token, operator) in operators {
+                if trimmed[index..].starts_with(token) {
+                    return Some((index, token, operator));
+                }
+            }
+        }
+
+        index += 1;
+    }
+
+    None
+}
+
 pub(super) fn should_skip_assignment_symbol_scan(trimmed: &str) -> bool {
-    starts_with_keyword(trimmed, "def")
-        || starts_with_keyword(trimmed, "if")
-        || starts_with_keyword(trimmed, "elif")
-        || starts_with_keyword(trimmed, "while")
-        || starts_with_keyword(trimmed, "for")
+    // Declarations, control flow, and resource blocks, plus `return`/`global`
+    // statements and selector (`@`) lines: none of them define symbols via
+    // assignment syntax.
+    starts_with_any_keyword(trimmed, DECLARATION_KEYWORDS)
+        || starts_with_any_keyword(trimmed, CONTROL_FLOW_KEYWORDS)
+        || starts_with_any_keyword(trimmed, RESOURCE_BLOCK_KEYWORDS)
         || starts_with_keyword(trimmed, "return")
-        || starts_with_keyword(trimmed, "import")
-        || starts_with_keyword(trimmed, "from")
         || starts_with_keyword(trimmed, "global")
-        || starts_with_keyword(trimmed, "define")
-        || starts_with_keyword(trimmed, "create")
-        || starts_with_keyword(trimmed, "end")
         || trimmed.starts_with('@')
 }
 
@@ -2884,7 +3194,7 @@ fn check_undefined_variable_references(
         }
 
         if starts_with_keyword(trimmed, "def") {
-            if let Some(signature) = parse_function_signature(line, trimmed, line_number, indent) {
+            if let Some(signature) = parse_function_signature(trimmed, line_number, indent) {
                 current_function =
                     Some((indent, signature.params.into_iter().collect::<HashSet<_>>()));
             }
@@ -2916,7 +3226,7 @@ fn check_undefined_variable_references(
                     SourceDiagnostic::error(
                         "undefined-variable",
                         line_number,
-                        column_from_byte(line, indent + expression.offset + reference.offset),
+                        column_from_byte(&masked, indent + expression.offset + reference.offset),
                         format!("Undefined variable `{}`", reference.name),
                     )
                     .with_help(format!(
@@ -2949,6 +3259,20 @@ fn expression_spans_for_undefined_scan(trimmed: &str) -> Vec<ExpressionSpan> {
     }
 
     let mut expressions = Vec::new();
+    if let Some(compound) = compound_assignment_span(trimmed) {
+        expressions.push(ExpressionSpan {
+            text: compound.target,
+            offset: compound.target_offset,
+        });
+        if !compound.value.is_empty() {
+            expressions.push(ExpressionSpan {
+                text: compound.value,
+                offset: compound.value_offset,
+            });
+        }
+        return expressions;
+    }
+
     if let Some(equals_index) = single_equals_index(trimmed) {
         let rhs = &trimmed[equals_index + 1..];
         let trim_start = rhs.len() - rhs.trim_start().len();
@@ -2957,6 +3281,19 @@ fn expression_spans_for_undefined_scan(trimmed: &str) -> Vec<ExpressionSpan> {
             expressions.push(ExpressionSpan {
                 text: expression.to_string(),
                 offset: equals_index + 1 + trim_start,
+            });
+        }
+        return expressions;
+    }
+
+    if starts_with_keyword(trimmed, "return") {
+        let rest_offset = "return".len();
+        let rest = trimmed[rest_offset..].trim_start();
+        let trim_start = trimmed[rest_offset..].len() - rest.len();
+        if !rest.is_empty() {
+            expressions.push(ExpressionSpan {
+                text: rest.to_string(),
+                offset: rest_offset + trim_start,
             });
         }
         return expressions;
@@ -3041,14 +3378,12 @@ fn should_scan_call_argument_references(argument: &str) -> bool {
 }
 
 fn should_skip_expression_reference_scan(trimmed: &str) -> bool {
-    starts_with_keyword(trimmed, "def")
-        || starts_with_keyword(trimmed, "import")
-        || starts_with_keyword(trimmed, "from")
+    // Declarations and resource blocks plus `global` statements and selector
+    // (`@`) lines. Control-flow headers and `return` lines are NOT skipped so
+    // the expressions they carry still get reference checks.
+    starts_with_any_keyword(trimmed, DECLARATION_KEYWORDS)
+        || starts_with_any_keyword(trimmed, RESOURCE_BLOCK_KEYWORDS)
         || starts_with_keyword(trimmed, "global")
-        || starts_with_keyword(trimmed, "return")
-        || starts_with_keyword(trimmed, "define")
-        || starts_with_keyword(trimmed, "create")
-        || starts_with_keyword(trimmed, "end")
         || trimmed.starts_with('@')
 }
 
@@ -3186,59 +3521,40 @@ fn is_expression_keyword(name: &str) -> bool {
     matches!(name, "and" | "or" | "not" | "in" | "by" | "to")
 }
 
-fn is_builtin_symbol(name: &str) -> bool {
-    matches!(
-        name,
-        "True"
-            | "False"
-            | "None"
-            | "range"
-            | "math"
-            | "datapack"
-            | "stdlib"
-            | "event"
-            | "score"
-            | "text"
-            | "random"
-            | "timer"
-            | "storage"
-            | "item_component"
-            | "schedule"
-            | "selector"
-            | "position"
-            | "bossbar"
-            | "team"
-            | "entity"
-            | "resource_pack"
-    )
+/// Builtin names that are not stdlib modules, layered on the shared registry
+/// in `crate::stdlib::STDLIB_MODULES`: every non-dotted entry of that table
+/// is also a builtin symbol (dotted entries like "score.objective" can never
+/// appear as a bare identifier).
+pub(crate) const NON_MODULE_BUILTIN_SYMBOLS: &[&str] =
+    &["True", "False", "None", "len", "range", "stdlib"];
+
+pub(crate) fn is_builtin_symbol(name: &str) -> bool {
+    NON_MODULE_BUILTIN_SYMBOLS.contains(&name)
+        || crate::stdlib::STDLIB_MODULES
+            .iter()
+            .any(|module| !module.contains('.') && *module == name)
 }
 
 pub(super) fn should_skip_call_argument_scan(trimmed: &str) -> bool {
+    // Declarations and resource blocks plus raw-command (`/`) and selector
+    // (`@`) lines. Unlike the assignment scans this keeps `global` lines
+    // scannable, and `return` lines are scanned so calls inside a returned
+    // expression get arity/existence checks at the `return` site.
     trimmed.is_empty()
         || trimmed.starts_with('/')
         || trimmed.starts_with('@')
-        || starts_with_keyword(trimmed, "def")
-        || starts_with_keyword(trimmed, "import")
-        || starts_with_keyword(trimmed, "from")
-        || starts_with_keyword(trimmed, "return")
-        || starts_with_keyword(trimmed, "define")
-        || starts_with_keyword(trimmed, "create")
-        || starts_with_keyword(trimmed, "end")
+        || starts_with_any_keyword(trimmed, DECLARATION_KEYWORDS)
+        || starts_with_any_keyword(trimmed, RESOURCE_BLOCK_KEYWORDS)
 }
 
-fn check_comprehension(
-    line: &str,
-    masked: &str,
-    line_number: usize,
-    diagnostics: &mut Vec<SourceDiagnostic>,
-) {
+fn check_comprehension(masked: &str, line_number: usize, diagnostics: &mut Vec<SourceDiagnostic>) {
     for (open, close) in [('[', ']'), ('{', '}')] {
         if let Some(index) = comprehension_for_index(masked, open, close) {
             diagnostics.push(
                 SourceDiagnostic::error(
                     "unsupported-comprehension",
                     line_number,
-                    column_from_byte(line, index),
+                    column_from_byte(masked, index),
                     "List and dict comprehensions are not supported",
                 )
                 .with_help("Use explicit loops or storage helpers."),
@@ -3289,7 +3605,7 @@ fn check_datapack_helper_argument_shapes(
                     SourceDiagnostic::error(
                         "datapack-resource-argument",
                         line_number,
-                        column_from_byte(line, indent + call.offset),
+                        indent + column_from_byte(trimmed, call.offset),
                         format!("datapack.{resource_type}() takes 2 arguments"),
                     )
                     .with_help("Pass a resource name and an object JSON value."),
@@ -3317,7 +3633,7 @@ fn check_datapack_helper_argument_shapes(
                     SourceDiagnostic::error(
                         "datapack-resource-argument",
                         line_number,
-                        column_from_byte(line, indent + json_arg.offset),
+                        indent + column_from_byte(trimmed, json_arg.offset),
                         format!("datapack.{resource_type}() JSON value must be an object"),
                     )
                     .with_help("Use an object literal such as `{ \"condition\": \"...\" }`."),
@@ -3332,7 +3648,7 @@ fn check_datapack_helper_argument_shapes(
                     SourceDiagnostic::error(
                         "datapack-resource-argument",
                         line_number,
-                        column_from_byte(line, indent + call.offset),
+                        indent + column_from_byte(trimmed, call.offset),
                         format!("datapack.{tag_type}_tag() takes 2 or 3 arguments"),
                     )
                     .with_help(
@@ -3362,7 +3678,7 @@ fn check_datapack_helper_argument_shapes(
                     SourceDiagnostic::error(
                         "datapack-resource-argument",
                         line_number,
-                        column_from_byte(line, indent + values_arg.offset),
+                        indent + column_from_byte(trimmed, values_arg.offset),
                         "Tag values must be an array",
                     )
                     .with_help("Use an array literal such as `[\"minecraft:stone\"]`."),
@@ -3385,7 +3701,7 @@ fn check_datapack_helper_argument_shapes(
                         SourceDiagnostic::error(
                             "datapack-resource-argument",
                             line_number,
-                            column_from_byte(line, indent + replace_arg.offset),
+                            indent + column_from_byte(trimmed, replace_arg.offset),
                             "Tag replace must be a literal boolean",
                         )
                         .with_help("Use `True` to replace vanilla tag values or `False` to preserve the explicit setting."),
@@ -3840,29 +4156,26 @@ fn check_noop_expression_statement(
 }
 
 fn should_skip_noop_expression_scan(trimmed: &str, raw_trimmed: &str) -> bool {
+    // Every statement-leading keyword: declarations, control flow (plus
+    // `else`/`match`/`case`), resource blocks, `return`, `global`, `pass`,
+    // and `const`, alongside raw-command/selector/docstring/assignment lines.
     trimmed.is_empty()
         || trimmed.starts_with('/')
         || trimmed.starts_with('@')
         || trimmed.ends_with(':')
         || raw_trimmed.starts_with('"')
         || raw_trimmed.starts_with('\'')
-        || starts_with_keyword(trimmed, "def")
-        || starts_with_keyword(trimmed, "if")
-        || starts_with_keyword(trimmed, "elif")
+        || starts_with_any_keyword(trimmed, DECLARATION_KEYWORDS)
+        || starts_with_any_keyword(trimmed, CONTROL_FLOW_KEYWORDS)
+        || starts_with_any_keyword(trimmed, RESOURCE_BLOCK_KEYWORDS)
         || starts_with_keyword(trimmed, "else")
-        || starts_with_keyword(trimmed, "while")
-        || starts_with_keyword(trimmed, "for")
         || starts_with_keyword(trimmed, "match")
         || starts_with_keyword(trimmed, "case")
         || starts_with_keyword(trimmed, "return")
-        || starts_with_keyword(trimmed, "import")
-        || starts_with_keyword(trimmed, "from")
         || starts_with_keyword(trimmed, "global")
-        || starts_with_keyword(trimmed, "define")
-        || starts_with_keyword(trimmed, "create")
-        || starts_with_keyword(trimmed, "end")
         || starts_with_keyword(trimmed, "pass")
         || starts_with_keyword(trimmed, "const")
+        || compound_assignment_span(trimmed).is_some()
         || single_equals_index(trimmed).is_some()
 }
 
@@ -4283,21 +4596,34 @@ pub(super) fn function_calls_in_expression(expression: &str) -> Vec<FunctionCall
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MathValueFunctionDiagnostic {
+struct ValueFunctionDiagnostic {
     kind: &'static str,
     message: String,
     help: &'static str,
 }
 
-fn invalid_math_value_function_call(
-    call: &FunctionCallSpan,
-) -> Option<MathValueFunctionDiagnostic> {
+fn invalid_value_function_call(call: &FunctionCallSpan) -> Option<ValueFunctionDiagnostic> {
+    if call.name == "len" {
+        if call.arg_count != 1 {
+            return Some(ValueFunctionDiagnostic {
+                kind: "function-argument-count",
+                message: format!("len() takes 1 argument, but {} provided", call.arg_count),
+                help: "Use len(value) with a string, list, map, or storage-backed value.",
+            });
+        }
+        return None;
+    }
+
+    invalid_math_value_function_call(call)
+}
+
+fn invalid_math_value_function_call(call: &FunctionCallSpan) -> Option<ValueFunctionDiagnostic> {
     if !call.name.starts_with("math.") {
         return None;
     }
 
     let Some(arity) = math_value_function_arity(&call.name) else {
-        return Some(MathValueFunctionDiagnostic {
+        return Some(ValueFunctionDiagnostic {
             kind: "undefined-function",
             message: format!("Unknown math function `{}`", call.name),
             help: "Use one of the supported math intrinsics: math.sqrt, math.abs, math.min, or math.max.",
@@ -4305,7 +4631,7 @@ fn invalid_math_value_function_call(
     };
 
     if call.arg_count != arity {
-        return Some(MathValueFunctionDiagnostic {
+        return Some(ValueFunctionDiagnostic {
             kind: "function-argument-count",
             message: format!(
                 "{}() takes {} {}, but {} provided",
@@ -4338,7 +4664,7 @@ fn argument_word(count: usize) -> &'static str {
 }
 
 fn is_allowed_value_function_call(name: &str) -> bool {
-    math_value_function_arity(name).is_some()
+    name == "len" || math_value_function_arity(name).is_some()
 }
 
 fn is_control_word(name: &str) -> bool {
@@ -4402,6 +4728,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn negative_constant_exponents_do_not_fold() {
+        let constant_env = HashMap::new();
+        // A negative exponent used to be cast through `as u32` (yielding 0 and
+        // folding the expression to 1); it must not fold at all.
+        assert_eq!(
+            evaluate_numeric_const_for_diagnostics("2 ^ (0 - 1)", &constant_env),
+            None
+        );
+        assert_eq!(
+            evaluate_numeric_const_for_diagnostics("2 ^ 3", &constant_env),
+            Some(8.0)
+        );
+    }
+
     fn messages(source: &str) -> Vec<String> {
         analyze_source(source)
             .into_iter()
@@ -4457,13 +4798,31 @@ def main():
     }
 
     #[test]
+    fn allows_compound_assignment_statements() {
+        let diagnostics = analyze_source(
+            r#"
+def main():
+    score = 1
+    other = 2
+    score += other
+    score -= 1
+    score *= 2
+    score /= 2
+    score %= 2
+    score ^= other
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
     fn reports_python_like_unsupported_syntax() {
         let source = r#"
 @tick
 def reward(player, amount=1, *extra):
     values = [i for i in range(3)]
-    score += 1
-    obj.field = 2
+    a, b = 2
     break
     continue
     assert score
@@ -4481,10 +4840,7 @@ import foo.bar
         assert!(diagnostics.iter().any(|m| m.contains("comprehensions")));
         assert!(diagnostics
             .iter()
-            .any(|m| m.contains("Compound assignment")));
-        assert!(diagnostics
-            .iter()
-            .any(|m| m.contains("simple identifier assignment")));
+            .any(|m| m.contains("Unsupported assignment target")));
         assert!(diagnostics.iter().any(|m| m.contains("Dotted imports")));
         assert!(diagnostics.iter().any(|m| m.contains("`break`")));
         assert!(diagnostics.iter().any(|m| m.contains("`continue`")));
@@ -4588,12 +4944,12 @@ def main():
 const LABEL = "é"
 
 def main():
-    items = [1, 2, 3]
-    first = items[i]
+    config = {"chance": 1}
+    first = config[0]
 "#;
 
-        let diagnostics = parse_source(source)
-            .expect_err("dynamic storage index should still report a diagnostic");
+        let diagnostics =
+            parse_source(source).expect_err("numeric map key should still report a diagnostic");
 
         assert!(diagnostics
             .iter()
@@ -4606,12 +4962,12 @@ def main():
 const INDEX = 1 % 0.5
 
 def main():
-    items = [1, 2, 3]
-    first = items[INDEX]
+    config = {"chance": 1}
+    first = config[INDEX]
 "#;
 
         let diagnostics = parse_source(source)
-            .expect_err("non-evaluable const index should still report a diagnostic");
+            .expect_err("non-evaluable map key should still report a diagnostic");
 
         assert!(diagnostics
             .iter()
@@ -4771,29 +5127,20 @@ def main():
     }
 
     #[test]
-    fn reports_return_duplicate_function_and_call_assignment() {
+    fn reports_undefined_function_call_expression() {
         let diagnostics = analyze_source(
             r#"
 def helper():
-    pass
-
-def helper():
-    return
+    return 1
 
 def main():
-    value = helper()
+    value = missing()
 "#,
         );
 
         assert!(diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.kind == "duplicate-function"));
-        assert!(diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.kind == "unsupported-return"));
-        assert!(diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.kind == "unsupported-function-call-expression"));
+            .any(|diagnostic| diagnostic.kind == "undefined-function"));
     }
 
     #[test]
@@ -4811,16 +5158,15 @@ def main():
 
     #[test]
     fn parse_source_returns_preflight_diagnostics() {
-        let diagnostics = parse_source(
+        let program = parse_source(
             r#"
 def main():
-    return
+    return 1
 "#,
         )
-        .expect_err("parse_source should reject unsupported return");
+        .expect("parse_source should allow return statements");
 
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].kind, "unsupported-return");
+        assert_eq!(program.statements.len(), 1);
     }
 
     #[test]
@@ -5419,26 +5765,21 @@ def main():
     }
 
     #[test]
-    fn reports_nested_function_call_arguments_for_user_functions() {
+    fn allows_nested_function_call_arguments_for_user_functions() {
         let diagnostics = analyze_source(
             r#"
 def main():
     greet(make_name())
 
 def make_name():
-    pass
+    return 7
 
 def greet(name):
     /say {name}
 "#,
         );
 
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].kind, "unsupported-function-call-argument");
-        assert!(diagnostics[0]
-            .message
-            .contains("Function `greet` arguments cannot contain function call expressions"));
-        assert_eq!(diagnostics[0].line, 3);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]
@@ -5528,8 +5869,9 @@ datapack.predicate(None, {"condition": "minecraft:random_chance", "chance": 1})
         let diagnostics = analyze_source(
             r#"
 def main():
-    items = [1, 2, 3]
-    first = items[i]
+    config = {"chance": 1}
+    i = 0
+    first = config[i]
 "#,
         );
 
@@ -5537,7 +5879,18 @@ def main():
         assert_eq!(diagnostics[0].kind, "unsupported-storage-access");
         assert!(diagnostics[0]
             .message
-            .contains("Dynamic storage-backed subscript indexes are not supported"));
+            .contains("Dynamic storage-backed map keys must be string values"));
+
+        let diagnostics = analyze_source(
+            r#"
+def main():
+    config = {"chance": 1}
+    key = "chance"
+    first = config[key]
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
 
         let diagnostics = analyze_source(
             r#"
@@ -5581,12 +5934,27 @@ def main():
     }
 
     #[test]
+    fn allows_storage_backed_subscript_with_runtime_list_index() {
+        let diagnostics = analyze_source(
+            r#"
+def main():
+    i = 1
+    items = [1, 2, 3]
+    first = items[i]
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
     fn reports_storage_access_and_later_type_mismatch_together() {
         let diagnostics = analyze_source(
             r#"
 def main():
-    items = [1, 2, 3]
-    first = items[i]
+    config = {"chance": 1}
+    i = 0
+    first = config[i]
     value = 1
     value = "one"
 "#,
@@ -5714,6 +6082,32 @@ def main():
             .as_deref()
             .unwrap()
             .contains("Import chain:"));
+    }
+
+    #[test]
+    fn python_compat_range_construct_does_not_claim_literal_only_bounds() {
+        let observed = python_compat_observed_constructs(
+            "def main(limit):\n    for i in range(limit):\n        pass\n",
+        );
+
+        assert!(observed.contains(&"for range(...) loops".to_string()));
+        assert!(!observed
+            .iter()
+            .any(|construct| construct.contains("literal bounds")));
+    }
+
+    #[test]
+    fn python_compat_assignment_target_suggestion_mentions_storage_targets() {
+        let suggestion = python_compat_suggestion_for_kind(
+            "unsupported-assignment-target",
+            "Unsupported assignment target",
+            None,
+        )
+        .unwrap();
+
+        assert!(suggestion.contains("already storage-backed"));
+        assert!(suggestion.contains("Destructuring assignment is not supported"));
+        assert!(!suggestion.contains("attributes, and subscripts are not assignment targets"));
     }
 
     #[test]
@@ -5956,5 +6350,24 @@ def main():
         assert!(diagnostics[0].diagnostics[0]
             .message
             .contains("Unknown helper function `helper.do`"));
+    }
+
+    #[test]
+    fn parse_source_file_allows_qualified_imported_function_calls() {
+        let temp_dir = TempDir::new("qualified-imported-function");
+        let main = temp_dir.path().join("main.cbl");
+        let helper = temp_dir.path().join("helper.cbl");
+        std::fs::write(
+            &main,
+            "import helper\n\ndef main():\n    helper.do()\n    value = helper.double(6)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &helper,
+            "def do():\n    /say helper\n\ndef double(value):\n    return value * 2\n",
+        )
+        .unwrap();
+
+        parse_source_file(&main).expect("qualified imported calls should pass diagnostics");
     }
 }

@@ -115,6 +115,22 @@ impl DataPack {
             .collect()
     }
 
+    /// Best-effort normalization for tag JSON that already exists on disk:
+    /// entries that fail validation are kept unchanged instead of aborting
+    /// the merge. Shares [`Self::normalize_tag_value`] with the in-memory
+    /// typed tag merge so both paths produce identical canonical entries.
+    pub(in crate::transpiler::data_pack) fn normalize_tag_values_lossy(
+        values: &[serde_json::Value],
+    ) -> Vec<serde_json::Value> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                Self::normalize_tag_value("", "", idx, entry).unwrap_or_else(|_| entry.clone())
+            })
+            .collect()
+    }
+
     fn normalize_tag_value(
         namespace: &str,
         relative_path: &str,
@@ -170,7 +186,9 @@ impl DataPack {
         }
     }
 
-    fn sort_and_dedup_tag_values(values: &mut Vec<serde_json::Value>) {
+    pub(in crate::transpiler::data_pack) fn sort_and_dedup_tag_values(
+        values: &mut Vec<serde_json::Value>,
+    ) {
         values.sort_by(|a, b| {
             let (a_id, a_required_rank) = Self::tag_value_sort_key(a);
             let (b_id, b_required_rank) = Self::tag_value_sort_key(b);

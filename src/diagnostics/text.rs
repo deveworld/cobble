@@ -200,6 +200,11 @@ pub(super) fn is_ident_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
 }
 
+/// Converts a byte index into a 1-based column by counting the chars before
+/// it. `line` must be the exact text the byte index was found in: byte offsets
+/// found in `mask_non_code` output must be counted against the masked text
+/// (masking preserves char positions but not byte positions), while offsets
+/// found in the raw line must be counted against the raw line.
 pub(super) fn column_from_byte(line: &str, byte_index: usize) -> usize {
     line[..byte_index.min(line.len())].chars().count() + 1
 }

@@ -101,6 +101,8 @@ pub struct Parameter {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Assignment {
     pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_expr: Option<Expression>,
     pub value: Expression,
 }
 
@@ -161,9 +163,7 @@ pub struct ExecuteBlock {
 pub enum ExecuteModifier {
     As(String),         // as @a
     At(String),         // at @s
-    If(Expression),     // if x > 0 (Python-style expression)
     IfRaw(String),      // if block ~ ~ ~ stone (raw Minecraft syntax)
-    Unless(Expression), // unless x > 0 (Python-style expression)
     UnlessRaw(String),  // unless entity @a[tag=done] (raw Minecraft syntax)
     Positioned(String), // positioned ~ ~1 ~
     Rotated(String),    // rotated ~ ~

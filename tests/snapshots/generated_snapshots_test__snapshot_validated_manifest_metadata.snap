@@ -1,6 +1,6 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 269
+assertion_line: 298
 expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json\")"
 ---
 {

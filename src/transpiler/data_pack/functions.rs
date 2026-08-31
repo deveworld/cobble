@@ -58,50 +58,6 @@ impl DataPack {
         self.functions.insert(name, commands);
     }
 
-    pub fn insert_function_commands_with_kind(
-        &mut self,
-        name: &str,
-        index: usize,
-        new_commands: &[String],
-        kind: GeneratedCommandKind,
-    ) {
-        if new_commands.is_empty() {
-            return;
-        }
-
-        let Some(commands) = self.functions.get_mut(name) else {
-            return;
-        };
-        let insert_index = index.min(commands.len());
-        for (offset, command) in new_commands.iter().enumerate() {
-            commands.insert(insert_index + offset, command.clone());
-        }
-
-        let existing_metadata = self.command_metadata.remove(name).unwrap_or_default();
-        let mut updated_metadata = HashMap::new();
-        for (old_index, metadata) in existing_metadata {
-            let new_index = if old_index >= insert_index {
-                old_index + new_commands.len()
-            } else {
-                old_index
-            };
-            updated_metadata.insert(new_index, metadata);
-        }
-        for (offset, command) in new_commands.iter().enumerate() {
-            updated_metadata.insert(
-                insert_index + offset,
-                GeneratedCommand::new(command.clone(), None, kind.clone()),
-            );
-        }
-
-        let completed = Self::complete_metadata(
-            commands,
-            updated_metadata,
-            GeneratedCommandKind::ControlFlow,
-        );
-        self.command_metadata.insert(name.to_string(), completed);
-    }
-
     pub fn insert_function_commands_with_metadata(
         &mut self,
         name: &str,

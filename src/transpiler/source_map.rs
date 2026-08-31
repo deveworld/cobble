@@ -452,11 +452,7 @@ impl Transpiler {
         match modifier {
             ExecuteModifier::As(selector) => format!("as{}", selector),
             ExecuteModifier::At(selector) => format!("at{}", selector),
-            ExecuteModifier::If(expr) => format!("if{}", Self::expression_source_key(expr)),
             ExecuteModifier::IfRaw(raw) => format!("if{}", raw),
-            ExecuteModifier::Unless(expr) => {
-                format!("unless{}", Self::expression_source_key(expr))
-            }
             ExecuteModifier::UnlessRaw(raw) => format!("unless{}", raw),
             ExecuteModifier::Positioned(pos) => format!("positioned{}", pos),
             ExecuteModifier::Rotated(rot) => format!("rotated{}", rot),

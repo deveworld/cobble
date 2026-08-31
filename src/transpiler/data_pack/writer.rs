@@ -324,11 +324,13 @@ impl DataPack {
             return Ok(new_json.to_string());
         };
 
-        for new_value in new_values {
-            if !merged_values.contains(new_value) {
-                merged_values.push(new_value.clone());
-            }
-        }
+        // Run both value lists through the same normalize + sort + dedup
+        // pipeline as the in-memory typed tag merge (tags.rs) so the on-disk
+        // merge produces identical, stable output across rebuilds.
+        let mut combined = Self::normalize_tag_values_lossy(merged_values);
+        combined.extend(Self::normalize_tag_values_lossy(new_values));
+        Self::sort_and_dedup_tag_values(&mut combined);
+        *merged_values = combined;
 
         let replace = merged_value
             .get("replace")

@@ -18,7 +18,9 @@ pub(crate) fn write_file_atomic(path: &Path, contents: impl AsRef<[u8]>) -> io::
     result
 }
 
-#[allow(dead_code)]
+// Used by `commands::migrate`; dead only in the wasm build, which includes
+// this file via `#[path]` without the `commands` modules.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn write_file_atomic_with_permissions(
     path: &Path,
     contents: impl AsRef<[u8]>,
@@ -41,7 +43,9 @@ pub(crate) fn write_file_atomic_with_permissions(
     result
 }
 
-#[allow(dead_code)]
+// Used by `commands::build`; dead only in the wasm build, which includes
+// this file via `#[path]` without the `commands` modules.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn copy_file_atomic(source: &Path, target: &Path) -> io::Result<u64> {
     let mut source_file = File::open(source)?;
     let (mut target_file, temp_path) = create_temp_output_file(target)?;

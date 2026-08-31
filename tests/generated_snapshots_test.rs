@@ -38,10 +38,30 @@ fn commands_json_fixture(temp_dir: &Path, validate: bool) -> PathBuf {
             r#"{
                 "type": "root",
                 "children": {
+                    "gamerule": {
+                        "type": "literal",
+                        "children": {
+                            "rest": {
+                                "type": "argument",
+                                "parser": "minecraft:message",
+                                "executable": true
+                            }
+                        }
+                    },
                     "say": {
                         "type": "literal",
                         "children": {
                             "message": {
+                                "type": "argument",
+                                "parser": "minecraft:message",
+                                "executable": true
+                            }
+                        }
+                    },
+                    "scoreboard": {
+                        "type": "literal",
+                        "children": {
+                            "rest": {
                                 "type": "argument",
                                 "parser": "minecraft:message",
                                 "executable": true

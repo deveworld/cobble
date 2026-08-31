@@ -28,6 +28,13 @@ fn read_function(output_dir: &Path, name: &str) -> String {
     fs::read_to_string(path).unwrap()
 }
 
+fn command_lines(content: &str) -> Vec<&str> {
+    content
+        .lines()
+        .filter(|line| !line.starts_with("scoreboard players set #return_flag_"))
+        .collect()
+}
+
 #[test]
 fn test_for_loop_negative_step_minus_two() {
     let source = r#"
@@ -95,10 +102,11 @@ def test(player):
 
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
+    let lines = command_lines(&content);
 
     // Bug fix: Commands with $(param) should have $ line prefix
     assert!(
-        content.starts_with("$give"),
+        lines.first().is_some_and(|line| line.starts_with("$give")),
         "Macro function with $(param) should have $ line prefix"
     );
     assert!(
@@ -119,7 +127,7 @@ def test(player, item):
     let content = read_function(&output_dir, "test");
 
     // Both lines should have $ prefix
-    let lines: Vec<&str> = content.lines().collect();
+    let lines = command_lines(&content);
     assert_eq!(lines.len(), 2, "Should have exactly 2 lines");
     assert!(
         lines[0].starts_with("$give"),

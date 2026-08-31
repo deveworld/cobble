@@ -1,4 +1,4 @@
-use super::{find_cobble_files, output_safety::ensure_no_symlink_components};
+use super::{find_cobble_files, find_config, output_safety::ensure_no_symlink_components};
 use crate::config::CobbleConfig;
 use crate::diagnostics::{parse_source, FileSourceDiagnostics, SourceDiagnostic};
 use crate::error::report_file_source_diagnostics;
@@ -19,7 +19,7 @@ struct FormatCandidate {
 }
 
 pub fn format(options: FmtOptions) -> Result<(), String> {
-    let (config, config_dir) = if let Some(config_path) = find_config(&options.input) {
+    let (config, config_dir) = if let Some(config_path) = find_config(options.input.as_deref()) {
         let config = CobbleConfig::load(&config_path)?;
         let config_dir = config_path.parent().unwrap().to_path_buf();
         (Some(config), config_dir)
@@ -414,19 +414,6 @@ fn display_path(path: &Path, base: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .into_owned()
-}
-
-fn find_config(input: &Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(path) = input {
-        if path.is_file() {
-            if let Some(parent) = path.parent() {
-                return CobbleConfig::find_in_path(parent);
-            }
-        } else {
-            return CobbleConfig::find_in_path(path);
-        }
-    }
-    CobbleConfig::find_in_path(".")
 }
 
 #[cfg(test)]
