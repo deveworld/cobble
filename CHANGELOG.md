@@ -65,6 +65,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commands, one `next_temp_id`, a `WatchOptions` struct instead of an
   11-argument `watch` signature, a shared web zip test helper, and
   `qa_09_release_gate.sh` reading the crate version from `Cargo.toml`.
+- Further internal consolidation with no behavior change: the storage-value
+  lowering helpers now live beside storage-path planning in
+  `src/transpiler/storage_paths.rs`; the three runtime loop shapes
+  (`for` over runtime `range(...)`, `for` over storage-backed lists, and
+  `while`) share one parameterized loop driver; condition translation
+  returns a structured condition value instead of marker strings patched
+  into rendered commands; assignment lowering classifies its target
+  (storage expression, module-level, or local variable) up front and
+  dispatches to per-case lowering; and the `watch` CLI flags are derived
+  directly from the `WatchOptions` struct via clap `Args`.
+- Library API: transpiler errors are now typed — `TranspileError` carrying an
+  error kind plus message — replacing the previous `Result<_, String>`
+  channel, and error classification reads the kind instead of matching
+  message prefixes. CLI, `check --json`, and web/wasm output are unchanged.
 
 ### Fixed
 - Recursive function calls (direct or through a cycle) are now rejected at
@@ -117,6 +131,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `migrate` compares parsed `pack_format` values so formatting variants of
   the supported version are not reported as migration candidates, and it now
   records source locations for `from stdlib import ...` lines.
+- Raw execute conditions that fail Python translation now report the original
+  operand spelling (for example `@s` or `{count}`) in the error message
+  instead of leaking internal `__cobble_cond_operand_N__` placeholder names.
+- `datapack.*` resource ID diagnostics now report correct column and caret
+  positions when a non-ASCII string literal or comment appears earlier on the
+  same line.
 
 ### Removed
 - The unused `thiserror` dependency.

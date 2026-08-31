@@ -120,41 +120,32 @@ Structural work should keep these gates green before merge:
 ## Known Debt
 
 Deliberately left in place by the 2026-08 hardening pass; recorded here so
-the scope decision is explicit. Line anchors are as of that pass.
+the scope decision is explicit. Entries retired by later structural rounds
+stay listed with one-line resolution notes.
 
-- Text-heuristic diagnostics engine — `src/diagnostics.rs` (~6.4k lines
-  including tests) scans source line-by-line without an AST, and the
+- Text-heuristic diagnostics engine — remaining. `src/diagnostics.rs` (~6.4k
+  lines including tests) scans source line-by-line without an AST, and the
   expression/keyword skip lists are replicated across several scan helpers,
-  so each new syntax form must be registered in multiple places. Extraction
-  plan: move post-parse semantic checks onto the span-backed AST checker
-  described under Source Provenance And Spans, keeping only the pre-parse
-  structural/indentation scans as text passes.
-- Assignment decision ladder —
-  `src/transpiler/statement_processors/assignment.rs:180`
-  (`process_assignment`, ~1,000 lines of ordered special cases deciding
-  storage vs. scoreboard lowering). Extraction plan: split into a target
-  classification step plus per-kind lowering functions once
-  `ExpressionEvaluator` is the single scoreboard codegen path.
-- Execute-block string surgery —
-  `src/transpiler/statement_processors/execute_processor.rs:17`
-  (`process_execute_block_impl`) rewrites condition markers and scoreboard
-  holders through string substitution on rendered commands. Extraction plan:
-  lower execute conditions to a structured condition value before emission
-  (the `transpiler/execute.rs` extraction target above).
-- Three loop drivers — `src/transpiler/statement_processors/loop_processor.rs:203`
-  (`process_runtime_range_for`), `:353` (`process_runtime_storage_list_for`),
-  and `:1186` (`process_while`) repeat the recursive-helper loop shape with
-  copy-paste variation. Extraction plan: one parameterized loop-driver
-  builder with init/condition/step hooks.
-- Error-string-keyed classification — now centralized in
-  `src/diagnostics/reporting.rs:145` (`transpiler_error_is_recognized`) and
-  `:156` (`classify_transpiler_error`), but transpiler errors are still
-  `String`s keyed by prefix/wording, and
-  `src/transpiler/statement_processors/loop_processor.rs:75` branches on the
-  `unroll-non-literal` prefix. Extraction plan: a typed transpiler error enum
-  carrying kind plus span, rendered to strings only at the CLI/WASM edge.
-- Watch options — `cobble watch` passes a `WatchOptions` struct internally
-  (`src/commands/watch.rs:20`, constructed at `src/main.rs:345`), but the
-  clap `Watch` variant still declares each field individually. Extraction
-  plan: derive clap `Args` on the options struct and flatten it into the
-  subcommand.
+  so each new syntax form must be registered in multiple places (the shared
+  line-text helpers such as `mask_non_code` now live in
+  `src/diagnostics/text.rs`, but the heuristic scans themselves are
+  unchanged). Extraction plan: move post-parse semantic checks onto the
+  span-backed AST checker described under Source Provenance And Spans,
+  keeping only the pre-parse structural/indentation scans as text passes.
+- Assignment decision ladder — resolved in this round: `process_assignment`
+  now classifies the target (`AssignTargetKind`: storage expression,
+  module-level, local variable) and dispatches to per-kind lowering
+  functions.
+- Execute-block string surgery — resolved in this round: condition
+  translation returns a structured `TranslatedCondition` value, so execute
+  emission no longer rewrites marker strings in rendered commands.
+- Three loop drivers — resolved in this round: runtime `range(...)` `for`,
+  storage-list `for`, and `while` all run through one parameterized
+  `emit_runtime_loop(RuntimeLoopDriver)` with init/condition/step hooks.
+- Error-string-keyed classification — resolved in this round: transpiler
+  errors are typed `TranspileError` values carrying a `TranspileErrorKind`,
+  classification reads the kind instead of matching message prefixes, and
+  errors are rendered to strings only at the CLI/WASM edge. (Spans on errors
+  remain future work under Source Provenance And Spans.)
+- Watch options — resolved in this round: `WatchOptions` derives clap `Args`
+  and is flattened into the `watch` subcommand.

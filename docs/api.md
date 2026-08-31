@@ -456,7 +456,7 @@ Creates a new transpiler instance.
 - `namespace` - The data pack namespace
 - `output_dir` - Output directory path
 
-##### `transpile(&mut self, program: &Program) -> Result<(), String>`
+##### `transpile(&mut self, program: &Program) -> Result<(), TranspileError>`
 
 Transpiles a program into a data pack.
 
