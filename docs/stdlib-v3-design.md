@@ -146,7 +146,8 @@ create hidden scheduled functions or recurring loops for these helpers.
 
 ## Diagnostics
 
-- Missing module imports keep using `stdlib-module-not-imported`.
+- Missing module imports keep using the stdlib module gating error
+  (diagnostic kind `missing-stdlib-module`).
 - Standalone storage path helpers report that the helper returns a storage path
   string.
 - Standalone item component helpers report that the helper returns an item

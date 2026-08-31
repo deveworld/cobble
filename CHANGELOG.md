@@ -7,6 +7,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Integer-returning user functions with `return`: `return expr` compiles to
+  Minecraft's function return value, and integer-returning functions can be
+  called inside assignments, arithmetic expressions, and conditions such as
+  `if ready():` or `while should_continue():`. Imported functions carry the
+  same return metadata, and `import m` now also enables qualified `m.func()`
+  calls.
+- Compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`, and `^=`,
+  lowering to the equivalent explicit assignment; arithmetic compound
+  assignment also works on storage-backed targets such as `values[i] += 1`.
+- Storage-backed assignment targets: `config.count = ...`,
+  `groups[i].value = ...`, including dynamic (runtime) list indexes and
+  string map keys through generated macro helpers.
+- `len(value)` for strings, lists, and maps (literal and storage-backed).
+- Runtime `for` loops: `range(...)` with runtime bounds or steps, iteration
+  over storage-backed lists, and literal arrays containing runtime values.
+  Unsupported runtime iterables fail with the new `runtime-for-unsupported`,
+  `runtime-for-bad-step`, and `runtime-for-bad-range` diagnostics.
+- Runtime power: `x ^ n` with a non-constant exponent compiles to a generated
+  scoreboard helper function (runtime negative exponents produce `0`).
+- `{var}` substitution inside `tellraw`/`title` JSON array components.
+
+### Changed
+- Generated code: functions containing `return` start with a
+  `#return_flag_<id>` prologue and generated control-flow helper calls
+  propagate pending returns; user-function calls stage arguments through
+  `_call_args_<id>`/`_caller_args_<id>` storage. Snapshots regenerated.
+- On-disk tag merging (generic JSON tag resources merged with pre-existing
+  files) now runs through the same normalize/sort/dedup pipeline as the
+  in-memory typed tag merge, so merged tag values are canonical and sorted.
+  Note: for merged `minecraft:load`/`minecraft:tick` function tags this can
+  change handler order — packs relying on stdlib-registered handlers running
+  before their own tag entries now get sorted order instead.
+- `cobble check` continues past the first failing file and reports every
+  file's first semantic error (identical errors are de-duplicated).
+- `check --json` and the web compiler classify transpiler failures through
+  one shared classifier: `unroll-*` and `runtime-for-*` error keys pass
+  through as diagnostic kinds, stdlib module errors map to
+  `missing-stdlib-module`/`unknown-stdlib-module`, and everything else stays
+  `semantic`.
+- Mutually exclusive CLI flags (`fmt --check`/`--diff`,
+  `clean --linked`/`--output`, `watch --link`/`--output`, and the
+  `link --datapacks`/`--world`/`--minecraft` targets) are now enforced by
+  clap at argument-parse time.
+- `doctor` tool probes (`java`, `curl`) now time out after 10 seconds instead
+  of hanging on a stuck process.
+- `watch` caps the rebuild debounce window at 2 seconds so a busy event
+  stream cannot postpone rebuilds forever, and a `cobble.toml` hot reload now
+  re-resolves the linked output target and project identity.
+- CI: the Rust job sets `COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD=0` so tests never
+  auto-download a Mojang server jar to regenerate `data/commands.json`.
+- Internal consolidation with no behavior change: one canonical stdlib module
+  table (`STDLIB_MODULES` in `src/stdlib.rs`), one `MAX_IMPORT_DEPTH`
+  constant, storage-path planning shared through
+  `src/transpiler/storage_paths.rs`, one `find_config` shared by all CLI
+  commands, one `next_temp_id`, a `WatchOptions` struct instead of an
+  11-argument `watch` signature, a shared web zip test helper, and
+  `qa_09_release_gate.sh` reading the crate version from `Cargo.toml`.
+
+### Fixed
+- Recursive function calls (direct or through a cycle) are now rejected at
+  compile time with a diagnostic suggesting a loop rewrite. Previously
+  recursion compiled but mis-executed: per-call-site argument staging was
+  overwritten and return flags were never reset across calls.
+- Self-referential assignments where the target appears on the right-hand
+  side anywhere but the leftmost operand (`x = 2 - x`, `y = 10 / y`,
+  `z = 3 * z + z`) now compute correct values instead of clobbering the
+  target mid-evaluation.
+- Right operands nested two or more levels deep (`a * (b * (c * d))`,
+  `a - (b - (c - d))`) now evaluate into unique `#expr_temp_<id>` temporaries
+  instead of overwriting one shared scratch score.
+- Nested `math.*` calls (`math.sqrt(math.sqrt(256))`,
+  `math.max(math.abs(-5), 3)`) now copy intermediate results using the actual
+  target objective instead of a hardcoded `temp` objective.
+- Storage-backed string/list/map variables are rejected with a compile error
+  when used in scoreboard conditions (for example `if name:` where `name`
+  holds a string) or as `match` scrutinees; both previously compiled to reads
+  of a score that is never written.
+- Non-integer `match` case patterns such as `case 1.5:` now fail with a
+  parse error instead of panicking the compiler.
+- Raw execute conditions survive re-stringification: dotted NBT/storage/
+  resource paths (`path.sub`, `ns:foo.bar`) keep their dots unspaced, and
+  SNBT `True`/`False` values after `:` are lowered to `true`/`false`.
+- Raw execute conditions that start with a Minecraft condition keyword are no
+  longer misrouted into Python translation just because they contain
+  parentheses or operator-like text (for example
+  `entity @s[name="Bob (Admin)"]`); conversely, paren-free Python conditions
+  (`x > 3 and y < 2`, `not done`) in execute blocks now translate through the
+  same parser-backed condition pipeline as their parenthesized forms.
+- `if`/`elif`/`else` branches that expand to more than one command now run in
+  a generated helper function so the condition is evaluated exactly once;
+  previously every captured command was prefixed with the condition, and a
+  command that changed the condition variables cut off the rest of the
+  branch.
+- The return-flag prologue and `temp` objective are emitted only for
+  functions that actually contain `return`, so simple packs no longer gain a
+  `_cobble_init` function.
+- `link --world`/`--minecraft` now require the given base directory to
+  exist; a typo'd path fails instead of silently creating a directory tree.
+- Cleanup failures after a successful validated publish (backup or staging
+  directory removal) are downgraded to warnings instead of failing the
+  build.
+- Overlapping entry points (a directory plus a file inside it) are
+  de-duplicated instead of compiling the same file twice.
+- `init` validates the configuration (including `--pack-format`) before
+  creating the project directory, so an invalid option no longer leaves an
+  empty directory behind.
+- `migrate` compares parsed `pack_format` values so formatting variants of
+  the supported version are not reported as migration candidates, and it now
+  records source locations for `from stdlib import ...` lines.
+
+### Removed
+- The unused `thiserror` dependency.
+- Dead public API: the `CobbleError` enum (with the unused
+  `report_error`/`report_parse_errors` helpers) and the never-constructed
+  `ExecuteModifier::If(Expression)`/`ExecuteModifier::Unless(Expression)`
+  variants (raw execute conditions always parse as `IfRaw`/`UnlessRaw`). The
+  unused `stdlib::builtins` module is also gone.
+
+### Security
+- Plain (non-`--validate`) `cobble build` now refuses to write into an
+  existing non-empty output directory unless it carries this project's
+  ownership marker (`.cobble/build_manifest.json` with matching namespace and
+  `project_id`); previously the stale-output cleanup could delete data from a
+  directory Cobble did not create. Migration note: output directories that
+  predate Cobble's build manifest or were produced by other tools are now
+  refused — remove them once or point the build at a fresh directory.
+- `cobble clean --output <DIR>` now enforces the same project-ownership
+  marker check as the default clean path, so one project can no longer clean
+  another project's marked output.
+
+### Versioning
+- This delta changes the public serde AST shape (`Assignment.target_expr`
+  added, `ExecuteModifier` expression variants removed), which
+  `docs/compiler-maintenance-plan.md` reserves for a minor release: the next
+  release must be 0.10.0, not a 0.9.x patch (`Cargo.toml` stays at 0.9.0
+  until that release is cut).
+
 ## [0.9.0] - 2026-06-27
 
 ### Added

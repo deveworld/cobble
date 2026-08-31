@@ -270,6 +270,15 @@ The pass condition is that validation succeeds, `data/commands.json` is
 generated, and `doctor` reports a target match for the supported Minecraft
 version.
 
+Generating `data/commands.json` — whether through this E2E flow,
+`scripts/setup_commands_json.sh`, or the automatic download during
+`build --validate` — requires network access, `curl`, and Java: Cobble
+downloads a Mojang server jar and runs `java --reports` to extract the
+command tree. Because `data/commands.json` is gitignored, the GitHub Actions
+Rust job sets `COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD=0` so tests that pass
+`--validate` skip instead of hitting the network; unset it (or pre-generate
+the file) when validation coverage is wanted in CI.
+
 ## Optional Server Gate
 
 The server smoke requires Java, network/cache access, and EULA acceptance:
@@ -302,7 +311,8 @@ Coverage:
 
 - `qa_08_stdlib_v2.sh` covers per-module opt-in (`from stdlib import text`,
   `from stdlib import text, score`), `import stdlib` full activation,
-  `stdlib-module-not-imported` diagnostics for unimported modules,
+  module-gating errors (diagnostic kind `missing-stdlib-module`) for
+  unimported modules,
   `[stdlib] version = 1` deprecation warning, and build manifest
   `stdlib_version`/`active_stdlib_modules` fields.
 - `qa_08_resource_authoring.sh` covers tag auto-merge for

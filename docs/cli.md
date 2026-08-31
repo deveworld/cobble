@@ -121,6 +121,20 @@ non-directories, traverse an existing symlink component, or contain existing
 symlink descendants. This applies to normal builds, validated builds, and
 `--dry-run --validate` staging output. A pure `--dry-run` does not write output.
 
+A plain (non-`--validate`) build into an existing non-empty output directory
+also requires this project's ownership marker: a
+`.cobble/build_manifest.json` whose namespace and `project_id` match the
+current project. Unmarked directories and directories owned by another Cobble
+project are refused; pick a new or empty output directory, or use
+`cobble build --validate` for staged publishing. Inside an owned output
+directory a build deletes and rewrites what Cobble generates: the
+`data/<namespace>/function/` tree, the `.cobble/` metadata directory,
+`data/minecraft/tags/function/`, namespaces recorded in
+`.cobble/generated_namespaces.json` by the previous build, and the generated
+JSON resource directories (tags, advancements, loot tables, recipes,
+predicates, item modifiers, dialogs) of generated namespaces. Files Cobble
+does not generate elsewhere in the directory are left in place.
+
 When `--validate` is enabled, Cobble fails the build if any generated command is
 invalid for Minecraft Java Edition 26.1.2. If the default `data/commands.json`
 is missing, Cobble downloads the Minecraft server jar and generates it
@@ -377,6 +391,10 @@ output. The target must be a directory and contain `.cobble/build_manifest.json`
 `pack.mcmeta`, and `data/`. Cobble refuses symlink outputs, existing symlink
 parent components, symlink descendants, non-directories, unmarked directories,
 and a configured output that resolves to the project root.
+When a `cobble.toml` is in scope, `clean` — including `clean --output <DIR>` —
+also requires the target's build-manifest `project_id` to match the current
+project, so one project cannot clean another project's output; the namespace
+check applies to linked cleanup.
 Linked cleanup also requires the saved link state to resolve under the saved
 `datapacks/` target and the linked pack manifest namespace and `project_id` to
 match the current project. Linked cleanup requires `--yes` for real deletion;
@@ -420,9 +438,13 @@ cobble link --status
 cobble link --clear
 ```
 
-`link` writes project-local state to `.cobble/link_state.json`. It creates the
-target `datapacks/` directory when configuring a real link, but it does not
-delete or replace existing data packs. Link state reads, writes, and clears
+`link` writes project-local state to `.cobble/link_state.json`. The base
+directory given to `--world` or `--minecraft` must already exist — a typo'd
+path fails instead of silently creating a directory tree; only the
+`datapacks/` (and `saves/<pack-name>/`) subdirectories are created
+automatically. A direct `--datapacks` target directory is created when
+configuring a real link. Link configuration does not delete or replace
+existing data packs. Link state reads, writes, and clears
 refuse symlink components in the project-local `.cobble/link_state.json` path.
 `link --status`, `doctor --json`, `watch --link`, and `clean --linked` all
 reject a saved `pack_path` that is not under the saved `target_path` or would

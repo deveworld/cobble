@@ -252,6 +252,12 @@ alongside data-pack resources. The generated counts include
 | `resource-pack-non-object` | error | JSON value is not an object |
 | `resource-pack-duplicate` | error | same path, different JSON |
 
+These codes are the design contract. The current implementation reports these
+failures as transpiler error strings (for example `resource_pack.* requires
+--experimental-resource-pack or [experimental] resource_pack = true`);
+`cobble check --json` classifies them under the generic `semantic` kind, and
+no `resource-pack-*` diagnostic kinds are emitted yet.
+
 ## Stability
 
 Resource-pack support is beta-gated in 0.9.0:

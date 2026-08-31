@@ -5,6 +5,8 @@ This directory contains example Cobble programs demonstrating various language f
 ## Basic Examples
 
 - **hello_world.cbl** - Simple "Hello World" example
+- **hello.cbl** - Event-driven greeting and score tracking with the stdlib
+- **basics.cbl** - Small tour of variables, functions, and raw commands
 - **counter.cbl** - Tick counter with module-level variables
 - **functions.cbl** - Function parameters and macro system
 
@@ -20,12 +22,24 @@ This directory contains example Cobble programs demonstrating various language f
 - **arithmetic.cbl** - Arithmetic operations and precedence
 - **type_system.cbl** - Static type system examples
 
+## Game Systems
+
+- **events.cbl** - Event listener registration with the stdlib `event` module
+- **game_mechanics.cbl** - Minigame teams, scoring, coins, and death tracking
+- **inventory.cbl** - Villager shop and starter-kit inventory management
+- **boss.cbl** - Boss fight system (older NBT-heavy commands; compiles, but is
+  not part of the 26.1.2 `--validate` QA matrix)
+- **parkour.cbl** - Parkour course system (older NBT-heavy commands; compiles,
+  but is not part of the 26.1.2 `--validate` QA matrix)
+
 ## Project Fixtures
 
 - **26_smoke/** - Minecraft Java Edition 26.1.2 command smoke project with imports, events, macros, and latest commands.
 - **26_feature_matrix/** - Full project fixture covering control flow, storage, stdlib v1.1 helpers, explicit namespaced JSON resources, and build validation.
 - **resource_authoring/** - Resource-heavy project fixture covering tags, predicates, advancements, loot tables, recipes, item modifiers, dialogs, imports, and generated-output snapshots.
+- **stdlib_v2/** - Stdlib v2 per-module opt-in fixture covering `datapack`, `event`, `score`, `storage`, and `text` helpers.
 - **stdlib_v3/** - Stdlib v3 fixture covering storage path values, item component JSON, selector/position values, entity teleport, and schedule cancellation.
+- **unrolling/** - Compile-time loop unrolling fixture with literal `range(...)`/array loops and function tags.
 - **resource_pack/** - Resource-pack beta fixture covering generated models, lang files, and resource-pack ZIP/export metadata.
 
 ## Running Examples

@@ -112,15 +112,14 @@ Returns diagnostics without parsing. This is useful for tests and future editor
 tooling.
 
 Current early diagnostics include unsupported default parameters, `*args` and
-`**kwargs`, decorators, compound assignment, list/dict comprehensions,
+`**kwargs`, decorators, list/dict comprehensions,
 `for ... else`, missing block colons, unexpected or inconsistent indentation,
 unclosed or unmatched delimiters, unterminated strings, dotted or relative
 imports, import aliases, wildcard imports, comma-separated module imports,
-unsupported Python keywords, non-identifier assignment targets, duplicate
-function parameters, duplicate function definitions, unsupported `return`
-statements, non-math function calls used as assignment values, standalone
-expressions that would otherwise be no-ops, and same-file user function calls
-with the wrong argument count or nested function-call expressions as arguments.
+unsupported Python keywords, invalid assignment targets, duplicate function
+parameters, duplicate function definitions, command helper calls used as
+assignment values, standalone expressions that would otherwise be no-ops, and
+same-file user function calls with the wrong argument count.
 The semantic preflight also reports undefined variables in expressions that
 require variable lookup, such as assignment RHS values, control-flow
 conditions, and standalone helper/function call arguments. Raw command `{name}`
@@ -225,6 +224,21 @@ pub enum Statement {
 - **v0.4.0**: `SelectorDef` - Entity selector definitions (e.g., `@Player = @a[type=player]`)
 - **v0.3.0**: `ConstAssignment` - Compile-time constants (e.g., `const MAX_HEALTH = 100`)
 - **v0.3.0**: `Match` - Match/switch statements with literal, range, and wildcard patterns
+
+#### Struct: `Assignment`
+
+Assignments keep both the legacy string target and the parsed target
+expression. Simple assignments use `target_expr = None` or an identifier
+matching `target`; storage-backed field/index assignments use `target_expr`
+for paths such as `config.count` or `groups[i].value`.
+
+```rust
+pub struct Assignment {
+    pub target: String,
+    pub target_expr: Option<Expression>,
+    pub value: Expression,
+}
+```
 
 #### Struct: `FunctionDef`
 
@@ -351,14 +365,18 @@ pub struct Transpiler {
     current_function: Option<Vec<String>>,
     current_context: FunctionContext,
     variables: HashMap<String, Expression>,
-    module_level_vars: HashMap<String, Expression>,  // Top-level variables to initialize
-    constants: HashMap<String, i32>,                  // v0.3.0: Compile-time constants
-    selector_aliases: HashMap<String, String>,        // v0.4.0: Entity selector definitions
-    imported_files: HashSet<PathBuf>,                 // v0.4.0: Imported file tracking
-    current_file_dir: PathBuf,                        // v0.4.0: Current file directory for imports
+    module_level_vars: Vec<ModuleLevelAssignment>,    // Ordered top-level init work
+    compile_time_constants: HashMap<String, f64>,
+    selector_aliases: HashMap<String, String>,
+    variable_storage_paths: HashMap<String, String>,
+    scoreboard_variables: HashSet<String>,
+    variable_types: HashMap<String, CobbleType>,
+    imported_files: HashSet<PathBuf>,
+    current_file_dir: PathBuf,
     temp_counter: u32,
-    variable_objectives: HashMap<String, String>,  // Tracks which objective each variable uses
-    function_params: HashMap<String, Vec<String>>,  // Tracks parameter names for each function
+    variable_objectives: HashMap<String, String>,
+    function_params: HashMap<String, Vec<String>>,
+    function_returns: HashMap<String, FunctionReturnKind>,
 }
 ```
 
@@ -826,6 +844,15 @@ sources, and summarizes unsupported Python-like diagnostics with suggested
 Cobble alternatives when available, without changing parser or transpiler
 behavior.
 
+Semantic transpiler failures are classified into diagnostic kinds by the
+shared classifier in `src/diagnostics/reporting.rs`
+(`SourceDiagnostic::classify_transpiler_error`): `unroll-*` and
+`runtime-for-*` error keys pass through as kinds, stdlib module errors map to
+`missing-stdlib-module`/`unknown-stdlib-module`, and any other transpiler
+error is reported as `semantic`. Configuration loading failures are reported
+under kind `config`. The web compiler uses the same classifier for its
+structured diagnostics.
+
 ### `commands/watch.rs`
 
 Handles the `watch` command.
@@ -841,17 +868,10 @@ reload fails. `watch --link` resolves output from `.cobble/link_state.json`.
 
 ### Module: `error.rs`
 
-#### Enum: `CobbleError`
-
-```rust
-pub enum CobbleError {
-    ParseError(String),
-    IoError(std::io::Error),
-    TranspileError(String),
-}
-```
-
-All compiler errors are wrapped in this enum for consistent handling.
+Holds the ariadne-based renderers `report_source_diagnostics` and
+`report_file_source_diagnostics` for structured `SourceDiagnostic` values.
+Compiler errors are plain `Result<_, String>` values throughout the CLI and
+transpiler; the former `CobbleError` enum was unused and has been removed.
 
 ## Usage Examples
 
@@ -950,7 +970,9 @@ Data Pack (.mcfunction files, pack.mcmeta, tags)
 3. **Operator Precedence**: Four-level precedence system matches standard mathematical conventions (pow > mul/div/mod > add/sub > comparisons)
 4. **Complex Expression Handling**: Recursive evaluation for nested binary expressions with temporary variables
 5. **Macro-based Parameters**: Uses Minecraft's function macro system for function parameters
-6. **Automatic Recursion**: For loops and while loops compile to recursive functions
+6. **Loop Lowering**: Literal `for` loops can unroll; runtime `range(...)`,
+   runtime literal arrays, storage-backed list loops, and `while` loops compile
+   to helper functions.
 7. **Separate Functions for Complex Control Flow**: Nested if statements become separate functions to avoid command limit issues
 8. **Scoreboard Variables**: All variables are stored as scoreboard objectives with proper tracking
 9. **Module-level Initialization**: Top-level variables automatically initialized at pack load
@@ -967,7 +989,9 @@ Data Pack (.mcfunction files, pack.mcmeta, tags)
 ### Generated Code Size
 
 - Simple functions: 1-10 commands
-- For loops: 2-3 functions (init + loop function)
+- For loops: literal loops may emit no helper functions; runtime `range(...)`
+  and runtime list/literal-array loops usually emit helper functions for loop
+  control and body execution.
 - While loops: 1-2 functions
 - Nested control flow: Additional helper functions as needed
 
@@ -975,19 +999,20 @@ Data Pack (.mcfunction files, pack.mcmeta, tags)
 
 When adding new features to the API:
 
-1. Update the AST structures in `ast.rs`
-2. Add parser support in `parser.rs` using chumsky combinators
-3. Implement transpilation in `transpiler.rs`
+1. Update the AST structures in `src/ast.rs`
+2. Add parser support in `src/parser/combinators.rs` using chumsky combinators
+3. Implement transpilation in `src/transpiler/` (`mod.rs` or a statement
+   processor)
 4. Add tests in `tests/`
 5. Update this documentation
 
 ### Parser Development
 
 When extending the parser:
-- Tokenizer is in `parser.rs::tokenize()` - handles lexical analysis and indentation
-- Parser combinators are in `parser.rs::token_parser()` - handles syntax analysis
+- Tokenizer is in `src/parser/tokenizer.rs` (`tokenize`/`tokenize_spanned`) - handles lexical analysis and indentation
+- Parser combinators are in `src/parser/combinators.rs` (`token_parser`) - handles syntax analysis
 - Use chumsky's `recursive()` for nested structures
-- Test with both unit tests in `parser.rs` and integration tests in `tests/`
+- Test with both unit tests in the parser modules and integration tests in `tests/`
 
 ## Further Reading
 

@@ -116,3 +116,45 @@ Structural work should keep these gates green before merge:
 - `cargo test --manifest-path web/wasm/Cargo.toml --locked`
 - `node scripts/check_web_metadata.mjs`
 - `scripts/qa_09_release_gate.sh`
+
+## Known Debt
+
+Deliberately left in place by the 2026-08 hardening pass; recorded here so
+the scope decision is explicit. Line anchors are as of that pass.
+
+- Text-heuristic diagnostics engine — `src/diagnostics.rs` (~6.4k lines
+  including tests) scans source line-by-line without an AST, and the
+  expression/keyword skip lists are replicated across several scan helpers,
+  so each new syntax form must be registered in multiple places. Extraction
+  plan: move post-parse semantic checks onto the span-backed AST checker
+  described under Source Provenance And Spans, keeping only the pre-parse
+  structural/indentation scans as text passes.
+- Assignment decision ladder —
+  `src/transpiler/statement_processors/assignment.rs:180`
+  (`process_assignment`, ~1,000 lines of ordered special cases deciding
+  storage vs. scoreboard lowering). Extraction plan: split into a target
+  classification step plus per-kind lowering functions once
+  `ExpressionEvaluator` is the single scoreboard codegen path.
+- Execute-block string surgery —
+  `src/transpiler/statement_processors/execute_processor.rs:17`
+  (`process_execute_block_impl`) rewrites condition markers and scoreboard
+  holders through string substitution on rendered commands. Extraction plan:
+  lower execute conditions to a structured condition value before emission
+  (the `transpiler/execute.rs` extraction target above).
+- Three loop drivers — `src/transpiler/statement_processors/loop_processor.rs:203`
+  (`process_runtime_range_for`), `:353` (`process_runtime_storage_list_for`),
+  and `:1186` (`process_while`) repeat the recursive-helper loop shape with
+  copy-paste variation. Extraction plan: one parameterized loop-driver
+  builder with init/condition/step hooks.
+- Error-string-keyed classification — now centralized in
+  `src/diagnostics/reporting.rs:145` (`transpiler_error_is_recognized`) and
+  `:156` (`classify_transpiler_error`), but transpiler errors are still
+  `String`s keyed by prefix/wording, and
+  `src/transpiler/statement_processors/loop_processor.rs:75` branches on the
+  `unroll-non-literal` prefix. Extraction plan: a typed transpiler error enum
+  carrying kind plus span, rendered to strings only at the CLI/WASM edge.
+- Watch options — `cobble watch` passes a `WatchOptions` struct internally
+  (`src/commands/watch.rs:20`, constructed at `src/main.rs:345`), but the
+  clap `Watch` variant still declares each field individually. Extraction
+  plan: derive clap `Args` on the options struct and flatten it into the
+  subcommand.

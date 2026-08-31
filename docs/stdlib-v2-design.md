@@ -78,13 +78,14 @@ The importable module names are:
 
 ### Gating Behavior
 
-When a helper is called whose module is not active, Cobble emits diagnostic
-`stdlib-module-not-imported`:
+When a helper is called whose module is not active, Cobble fails with a
+module-gating error, reported by `cobble check --json` and the web compiler
+under diagnostic kind `missing-stdlib-module`:
 
 ```
 error: module 'text' not imported.
-  Add `from stdlib import text` or use `import stdlib` to enable all modules.
-  Source: src/main.cbl:3:5
+Add `from stdlib import text` or use `import stdlib` to enable all modules.
+See docs/stdlib-v2-design.md for the import and versioning model.
 ```
 
 This diagnostic is an error in `version = 2`. In `version = 1`, it is never
@@ -239,8 +240,10 @@ These are not part of 0.8.0 unless a separate design is accepted:
 - Track active stdlib modules in `Transpiler`.
 - Update `process_import` to populate the active set from stdlib imports.
 - Gate each `process_*_intrinsic` on module activation.
-- Add `stdlib-module-not-imported` diagnostic.
-- Add `stdlib-v1-deprecated` warning for `version = 1`.
+- Add the stdlib module gating error (diagnostic kind
+  `missing-stdlib-module` in `check --json` and the web compiler).
+- Add a build-time stderr deprecation warning for `version = 1` (a plain
+  warning, not a structured diagnostic kind).
 - Add unit tests for opt-in, full-activate, and not-imported diagnostics.
 - Record `stdlib_version` and `active_stdlib_modules` in the build manifest.
 - Add snapshots for generated functions and JSON.

@@ -77,8 +77,13 @@ datapack.predicate("maybe", {
 
 Lists and maps are storage-backed values. Cobble supports attribute and
 subscript access when the base value resolves to a storage path, including
-literal or constant subscript segments. Arbitrary Python-style indexing is not a
-general runtime feature yet.
+literal or constant subscript segments, runtime integer list/string indexes, and
+runtime string map keys. Arbitrary Python-style indexing is not a general
+runtime feature yet.
+
+`len(value)` returns the length of literal arrays, maps, and strings, as well as
+storage-backed list, map, and string values. Storage-backed lengths compile to a
+Minecraft `data get storage ...` result stored in a scoreboard integer.
 
 `None` is supported where Cobble serializes data pack JSON resources. It is
 emitted as JSON `null`; it is not a scoreboard value and should not be used as a
@@ -177,7 +182,16 @@ def my_function():
     score = 0
     score = score + 10  # Compiles to: scoreboard players add score temp 10
     score = score - 5   # Compiles to: scoreboard players remove score temp 5
+    config = {"count": 1}
+    values = [1, 2, 3]
+    i = 1
+    config.count = 5
+    values[i] = config.count + 2
 ```
+
+Storage-backed list, map, and string paths can be assigned through attribute
+or subscript targets inside functions. Dynamic list indexes and string map keys
+use the same runtime storage path support as storage reads.
 
 ### The `global` Keyword
 
@@ -288,6 +302,30 @@ def main():
     give_reward("Steve", 5)
 ```
 
+Functions can return integer scoreboard values:
+
+```python
+def double(value):
+    return value * 2
+
+def main():
+    score = double(5) + 1
+```
+
+Cobble compiles `return expr` to Minecraft's function return value. Calls used
+inside expressions are executed with `execute store result score ... run
+function ...`, so returned values are scoreboard integers. Integer-returning
+user functions can be used in assignments, arithmetic expressions, and
+conditions such as `if ready():` or `while should_continue():`. Imported
+functions have the same return metadata after their module is processed. Use
+storage or explicit output variables for non-integer data.
+
+**Recursion is not supported.** A function may not call itself, directly or
+through a cycle of other functions. Recursive calls are rejected at compile
+time with an error such as
+`Recursive call to 'fact' is not supported. Rewrite the recursion as a loop (while/for) instead.`
+Use a `while` or `for` loop with explicit state instead of recursive calls.
+
 Parameterized functions can call other parameterized functions and forward their
 own parameters:
 
@@ -338,6 +376,10 @@ def check_value():
     b = 5
     if a % 5 == 2 and b ^ 2 == 25:
         /say Both conditions are true!
+
+    # Integer-returning function calls are valid condition values
+    if is_ready(a) and not is_locked():
+        /say Function calls can drive conditions
 ```
 
 Under the hood, Cobble automatically creates temporary variables to evaluate complex expressions before comparison.
@@ -405,15 +447,16 @@ execute if score y temp matches 10 run scoreboard players set or_result temp 1
 execute if score or_result temp matches 1 run say test
 ```
 
-**Note:** Boolean operators are only supported in regular `if` and `while` statements. Execute blocks (`as`, `at`, `asat`) use raw Minecraft syntax for their `if` modifiers:
+**Note:** Boolean operators also work in execute-block (`as`, `at`, `asat`) `if`/`unless` modifiers. A condition that starts with a Minecraft condition keyword (`score `, `entity `, `block `, `data `, `predicate `, ...) is treated as raw Minecraft syntax; other conditions that look like Python expressions are translated through the same condition pipeline as regular `if` statements:
 
 ```python
 def check_players():
-    # Execute blocks use raw Minecraft syntax
+    # Raw Minecraft condition syntax
     as @a if entity @s[tag=special]:
         /say Special player!
 
-    # Use regular if statements for Cobble boolean expressions
+    # Python-style boolean expressions work in regular if statements
+    # and in execute-block conditions
     x = 5
     if x > 0 and not x == 10:
         as @a:
@@ -473,18 +516,58 @@ def stepped_range():
 def literal_array():
     for direction in ["north", "south"]:
         /say direction = {direction}
+
+def runtime_list():
+    values = [2, 4, 6]
+    total = 0
+    for value in values by 2:
+        total = total + value
+
+def runtime_list_path():
+    groups = [[2, 3], [7, 11]]
+    row = 1
+    total = 0
+    for value in groups[row]:
+        total = total + value
+
+def runtime_literal_array():
+    first = 2
+    total = 0
+    for value in [first, first + 3, 5]:
+        total = total + value
 ```
 
-For loops over literal ranges and literal arrays are expanded at compile time.
-They emit the repeated commands directly instead of runtime scoreboard loop
-counters or helper functions.
+For loops over literal ranges and literal scalar arrays are expanded at compile
+time. They emit the repeated commands directly instead of runtime scoreboard
+loop counters or helper functions. `range(...)` loops with runtime start, stop,
+count, or step expressions compile to scoreboard-backed recursive helper
+functions. Runtime literal arrays such as `[first, first + 3]` are materialized
+into temporary storage and then iterated as runtime lists. Loops over
+storage-backed list expressions such as `for value in values:` or
+`for value in groups[row]:` compile to an index loop that reads the list length
+at runtime and copies each element into the loop variable before running the
+body. `by` steps also work for runtime list loops; negative steps start at the
+last item.
 
 **Unrolling Support:**
 - `range(n)` iterates `0..n`.
 - `range(start, stop, step)` uses Python-style half-open bounds.
 - `for i in range(n) by step:` remains supported for compatibility.
 - Negative `by` over `range(n)` starts at `n - 1` and counts down.
-- Literal arrays may contain numbers, strings, or booleans.
+- Runtime `range(...)` supports dynamic count/start/stop/step expressions.
+- A statically known step of `0` is rejected. If a dynamic step expression
+  evaluates to `0` at runtime, the loop executes zero iterations so the
+  generated datapack does not recurse forever.
+- Literal arrays containing only numbers, strings, or booleans are unrolled.
+- Literal arrays containing runtime expressions are materialized and iterated
+  at runtime.
+- Runtime storage-backed list iteration supports list expressions/paths. The
+  loop variable is mirrored as storage and as a score, so numeric list items
+  can be used in arithmetic and any item can be displayed through
+  storage-backed text output.
+- Runtime list `by` steps support positive, negative, and dynamic integer
+  expressions. A statically known step of `0` is rejected; a dynamic step that
+  evaluates to `0` executes zero iterations.
 - A single loop may expand up to 1024 iterations. Expansions above 256 emit a warning.
 - Nested unrolling is capped at 65,536 aggregate iterations and one outer
   unroll may emit at most 65,536 generated commands.
@@ -644,7 +727,12 @@ JSON-based commands are fully supported:
 def announce():
     /tellraw @a {"text":"Game Started!", "color":"gold", "bold":true}
     /title @a title {"text":"Welcome", "color":"aqua"}
+    /tellraw @a [{"text":"Score: {score}", "color":"gold"}, {"text":" ready"}]
 ```
+
+For `tellraw` and `title`, scoreboard and storage-backed variables inside JSON
+object `text` fields or JSON array string components are expanded to Minecraft
+score/NBT text components while preserving styling on surrounding text.
 
 ### Variable Substitution in Commands
 
@@ -745,6 +833,7 @@ import utils
 
 def test():
     helper_function()
+    utils.helper_function()
     as @AllPlayers:
         /say Test
 ```
@@ -753,12 +842,16 @@ def test():
 - Use `import filename` to import another `.cbl` file
 - Imported files are resolved relative to the importing file
 - All functions and selector definitions are merged
+- Functions from `import module` can also be called as `module.function()`
 - Duplicate function names, selector aliases, and entity template names across
   imported files are compile errors
 - Circular imports are compile errors and include the import chain
 - Missing imports include the importing file and expected path
 - `from module import item` verifies that each requested item exists in the
   imported file
+- Imported integer-returning functions can be used as expression and condition
+  values. Imported functions with no return value, or with non-integer return
+  values, remain invalid in value positions.
 - Import aliases, wildcard imports, and comma-separated `import a, b` module
   lists are not supported; use one explicit import per line
 - Standard library imports (`import stdlib`) work as before
@@ -821,7 +914,9 @@ def roll():
 ```
 
 Random helpers compile to Minecraft's 26.1.2 `random value` command and store
-the result in a scoreboard value.
+the result in a scoreboard value. A single-value `random.int("score", n, n)`
+range is lowered to a direct scoreboard set because Minecraft rejects
+degenerate `random value n..n` ranges.
 
 ### Timer Helpers
 
@@ -1069,7 +1164,15 @@ def calculate():
     product = a * b      # Multiplication: 50 (uses multiplier helper)
     quotient = a / b     # Division: 2 (uses divisor helper)
     remainder = a % c    # Modulo: 1 (uses modulus helper)
-    power = b ^ 2        # Power: 25 (compile-time expansion)
+    power = b ^ e        # Power: 25 (runtime helper when exponent is dynamic)
+
+    # Compound assignment
+    a += 1               # Equivalent to: a = a + 1
+    a -= 1
+    a *= 2
+    a /= 2
+    a %= 3
+    b ^= e               # Equivalent to: b = b ^ e
 
     # Multi-operator expressions
     result1 = a + b + c          # Chain addition: 18
@@ -1095,10 +1198,16 @@ def calculate():
 **Important Notes**:
 - Operators follow standard mathematical precedence
 - Multiplication, division, and modulo use temporary fake players such as `#multiplier`, `#divisor`, and `#modulus` in the `temp` objective
-- Power operator (`^`) uses compile-time expansion: `x^3` becomes `x*x*x`
-- Power exponent must be a constant (variables not supported)
-- Complex expressions automatically use temporary fake players such as `#expr_temp` for intermediate results
+- Power operator (`^`) with a constant exponent uses compile-time expansion:
+  `x^3` becomes `x*x*x`
+- Power with a runtime exponent uses a scoreboard-backed recursive helper.
+  Runtime negative exponents produce `0` because integer reciprocal values are
+  not representable in Minecraft scoreboards.
+- Complex expressions automatically use temporary fake players such as `#expr_temp_<n>` for intermediate results
 - All operations work with both constants and variables
+- Compound assignment is supported for simple variable targets and
+  storage-backed targets, and lowers to the equivalent explicit assignment.
+  For example, `x += y` lowers as `x = x + y`.
 - Literal loop variables are substituted at compile time during unrolling
 
 **⚠️ Division and Modulo by Zero:**
@@ -1195,16 +1304,17 @@ constructs fail before transpilation when practical.
 - Classes, decorators, `try`/`except`/`finally`, `with`, `lambda`, `yield`,
   `async`, `await`, `break`, `continue`, `raise`, `assert`, `del`, and
   `nonlocal` are not supported.
-- Runtime `return` statements and return values are not supported.
 - Default parameters, duplicate parameter names, `*args`, and `**kwargs` are not
   supported.
 - List and dict comprehensions are not supported.
 - `for ... else` is not supported.
 - Dotted or relative imports are not supported. Use simple local module names.
-- Assignment targets must be simple identifiers.
-- Cobble function calls are standalone statements. Assignment expressions may
-  use math intrinsics such as `math.sqrt(...)`, but arbitrary function calls in
-  expressions are rejected.
+- Assignment targets may be simple identifiers or storage-backed
+  attribute/subscript paths. Other assignment target forms are rejected by the
+  parser or storage validation.
+- Cobble command helpers are standalone statements. Assignment expressions may
+  use value intrinsics such as `math.sqrt(...)` and `len(value)`, and user
+  functions that return integer score values.
 - Standalone value expressions such as `score + 1` do not generate commands and
   are rejected. Use an assignment, function/helper call, raw command, or `pass`.
 - The browser compiler accepts a single in-memory file. Non-`stdlib` imports
@@ -1240,11 +1350,16 @@ structured diagnostics.
 
 ## Limitations
 
-- No Python class, exception, decorator, or runtime return-value semantics
+- No Python class, exception, or decorator semantics
 - Lists and maps are storage-backed values; access works only when the base
-  resolves to storage, and dynamic indexing remains limited
+  resolves to storage. List/string indexes may be literals, compile-time
+  constants, or runtime integer scores such as `items[i]` and
+  `storage.index("items", i)`. Map keys may be attributes, string literals, or
+  runtime string values such as `config[key]`; numeric map indexes are invalid.
 - Function parameters require Minecraft's function macro support
-- For loops only support literal `range(...)` iterators or literal arrays
+- Runtime `for` loops require `range(...)`, runtime literal arrays, or
+  storage-backed list expressions. Non-storage arbitrary iterables are
+  unsupported.
 - While loops compile to recursive functions (performance impact for very long loops)
 
 ## Further Reading
