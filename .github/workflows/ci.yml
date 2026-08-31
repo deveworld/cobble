@@ -31,6 +31,13 @@ jobs:
     name: Rust
     runs-on: ubuntu-latest
 
+    env:
+      # data/commands.json is gitignored; without this, tests that pass
+      # --validate would download a Mojang server.jar and run `java --reports`
+      # to regenerate it (an undeclared network/Java dependency). Disabling
+      # auto-download makes those tests skip when the file is absent.
+      COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD: "0"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
