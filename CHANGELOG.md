@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message prefixes. CLI, `check --json`, and web/wasm output are unchanged.
 
 ### Fixed
+- `resource_pack.*` failures now report the diagnostic codes documented in
+  `docs/resource-pack-design.md` (`resource-pack-not-enabled`,
+  `resource-pack-bad-id`, `resource-pack-non-object`,
+  `resource-pack-duplicate`) instead of the generic `semantic` kind, in both
+  `cobble check --json` and the browser compiler. Message text is unchanged.
+- A source file reachable both as its own entry point and through another
+  entry point's imports no longer has its diagnostics reported twice.
 - Compiler panic on non-ASCII identifiers: the compound-assignment and
   top-level-operator scanners walked raw byte positions but sliced the source
   as text, so a name such as `val한e` or an expression containing multi-byte

@@ -252,11 +252,13 @@ alongside data-pack resources. The generated counts include
 | `resource-pack-non-object` | error | JSON value is not an object |
 | `resource-pack-duplicate` | error | same path, different JSON |
 
-These codes are the design contract. The current implementation reports these
-failures as transpiler error strings (for example `resource_pack.* requires
---experimental-resource-pack or [experimental] resource_pack = true`);
-`cobble check --json` classifies them under the generic `semantic` kind, and
-no `resource-pack-*` diagnostic kinds are emitted yet.
+These codes are implemented as `TranspileErrorKind` variants, so `cobble check`
+and the browser compiler report them as `error[resource-pack-…]` rather than
+the generic `semantic` kind. The message text is unchanged (for example
+`resource_pack.* requires --experimental-resource-pack or [experimental]
+resource_pack = true`). `resource-pack-non-object` covers both the model
+payload and the `resource_pack.lang()` payload; `resource-pack-bad-id` covers
+malformed resource IDs and locale names reached through `resource_pack.*`.
 
 ## Stability
 
