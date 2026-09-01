@@ -71,6 +71,7 @@ pub fn parse_source_files(
     let mut roots = Vec::new();
     let mut all_files = Vec::new();
     let mut seen_files = HashSet::new();
+    let mut seen_diagnostic_files = HashSet::new();
     let mut diagnostics = Vec::new();
 
     for path in paths {
@@ -91,7 +92,16 @@ pub fn parse_source_files(
                     }
                 }
             }
-            Err(mut file_diagnostics) => diagnostics.append(&mut file_diagnostics),
+            Err(file_diagnostics) => {
+                // A file reachable both as its own entry point and through
+                // another entry point's import tree is analyzed twice; report
+                // each file's findings only once.
+                for file_diagnostic in file_diagnostics {
+                    if seen_diagnostic_files.insert(canonical_or_original(&file_diagnostic.path)) {
+                        diagnostics.push(file_diagnostic);
+                    }
+                }
+            }
         }
     }
 

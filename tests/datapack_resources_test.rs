@@ -2286,3 +2286,66 @@ fn direct_datapack_writer_rejects_traversal_tag_paths() {
 
     assert!(error.to_string().contains("Invalid function tag path"));
 }
+
+/// The `resource_pack.*` diagnostics documented in
+/// `docs/resource-pack-design.md` are real `TranspileErrorKind`s, so
+/// `cobble check --json` and the web compiler report them by their own slugs
+/// instead of the generic `semantic` fallback.
+#[test]
+fn resource_pack_failures_carry_their_documented_diagnostic_kinds() {
+    use cobble::transpiler::TranspileErrorKind;
+
+    fn kind_of(source: &str, experimental: bool) -> TranspileErrorKind {
+        let program = cobble::parser::parse(source)
+            .map_err(|errors| errors.join("\n"))
+            .expect("fixture parses");
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let mut transpiler =
+            cobble::transpiler::Transpiler::new("resources".to_string(), temp_dir.path().join("o"));
+        transpiler.set_experimental_resource_pack(experimental);
+        transpiler
+            .transpile(&program)
+            .expect_err("fixture must fail")
+            .kind
+    }
+
+    let model = |body: &str| format!("from stdlib import resource_pack\n{body}\n");
+
+    assert_eq!(
+        kind_of(
+            &model(r#"resource_pack.item_model("resources:t", {"parent": "item/generated"})"#),
+            false,
+        ),
+        TranspileErrorKind::ResourcePackNotEnabled,
+    );
+    assert_eq!(
+        kind_of(
+            &model(r#"resource_pack.item_model("BAD::x:t", {"parent": "item/generated"})"#),
+            true,
+        ),
+        TranspileErrorKind::ResourcePackBadId,
+    );
+    assert_eq!(
+        kind_of(
+            &model(r#"resource_pack.item_model("resources:t", [1, 2])"#),
+            true
+        ),
+        TranspileErrorKind::ResourcePackNonObject,
+    );
+    assert_eq!(
+        kind_of(
+            &model(r#"resource_pack.lang("resources:en_us", [1, 2])"#),
+            true
+        ),
+        TranspileErrorKind::ResourcePackNonObject,
+    );
+    assert_eq!(
+        kind_of(
+            &model(
+                "resource_pack.item_model(\"resources:t\", {\"parent\": \"item/generated\"})\nresource_pack.item_model(\"resources:t\", {\"parent\": \"item/handheld\"})"
+            ),
+            true,
+        ),
+        TranspileErrorKind::ResourcePackDuplicate,
+    );
+}

@@ -3534,10 +3534,10 @@ impl Transpiler {
         args: &[Expression],
     ) -> Result<(), TranspileError> {
         if !self.experimental_resource_pack {
-            return Err(
-                "resource_pack.* requires --experimental-resource-pack or [experimental] resource_pack = true"
-                    .into(),
-            );
+            return Err(TranspileError::new(
+                TranspileErrorKind::ResourcePackNotEnabled,
+                "resource_pack.* requires --experimental-resource-pack or [experimental] resource_pack = true",
+            ));
         }
 
         match method {
@@ -3557,14 +3557,18 @@ impl Transpiler {
             return Err(format!("resource_pack.{}_model() takes 2 arguments", model_type).into());
         }
 
-        let (namespace, name) = self.expr_to_resource_id(&args[0], "model name")?;
+        let (namespace, name) = self
+            .expr_to_resource_id(&args[0], "model name")
+            .map_err(|error| error.classify_semantic(TranspileErrorKind::ResourcePackBadId))?;
         let json = self.expr_to_json_value(&args[1])?;
         if !json.is_object() {
-            return Err(format!(
-                "resource_pack.{}_model() JSON value must be an object",
-                model_type
-            )
-            .into());
+            return Err(TranspileError::new(
+                TranspileErrorKind::ResourcePackNonObject,
+                format!(
+                    "resource_pack.{}_model() JSON value must be an object",
+                    model_type
+                ),
+            ));
         }
         Self::validate_resource_pack_model_json(model_type, &json)?;
         let content = serde_json::to_string_pretty(&json)
@@ -3577,7 +3581,9 @@ impl Transpiler {
                 content,
                 self.current_statement_source.clone(),
             )
-            .map_err(TranspileError::from)
+            .map_err(|message| {
+                TranspileError::new(TranspileErrorKind::ResourcePackDuplicate, message)
+            })
     }
 
     fn validate_resource_pack_model_json(
@@ -3585,9 +3591,12 @@ impl Transpiler {
         json: &serde_json::Value,
     ) -> Result<(), TranspileError> {
         let object = json.as_object().ok_or_else(|| {
-            format!(
-                "resource_pack.{}_model() JSON value must be an object",
-                model_type
+            TranspileError::new(
+                TranspileErrorKind::ResourcePackNonObject,
+                format!(
+                    "resource_pack.{}_model() JSON value must be an object",
+                    model_type
+                ),
             )
         })?;
         Self::require_optional_json_string(
@@ -3679,20 +3688,25 @@ impl Transpiler {
             return Err("resource_pack.lang() takes 2 arguments".into());
         }
 
-        let (namespace, locale) = self.expr_to_resource_id(&args[0], "language locale")?;
+        let (namespace, locale) = self
+            .expr_to_resource_id(&args[0], "language locale")
+            .map_err(|error| error.classify_semantic(TranspileErrorKind::ResourcePackBadId))?;
         if locale.contains('/') {
-            return Err(format!(
-                "Invalid language locale '{}': use locale names such as 'en_us'",
-                locale
-            )
-            .into());
+            return Err(TranspileError::new(
+                TranspileErrorKind::ResourcePackBadId,
+                format!(
+                    "Invalid language locale '{}': use locale names such as 'en_us'",
+                    locale
+                ),
+            ));
         }
 
         let json = self.expr_to_json_value(&args[1])?;
         let Some(object) = json.as_object() else {
-            return Err("resource_pack.lang() JSON value must be an object"
-                .to_string()
-                .into());
+            return Err(TranspileError::new(
+                TranspileErrorKind::ResourcePackNonObject,
+                "resource_pack.lang() JSON value must be an object",
+            ));
         };
         for (key, value) in object {
             if !value.is_string() {
@@ -3712,7 +3726,9 @@ impl Transpiler {
                 content,
                 self.current_statement_source.clone(),
             )
-            .map_err(TranspileError::from)
+            .map_err(|message| {
+                TranspileError::new(TranspileErrorKind::ResourcePackDuplicate, message)
+            })
     }
 
     fn add_datapack_tag_resource(

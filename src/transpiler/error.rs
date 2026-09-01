@@ -45,6 +45,14 @@ pub enum TranspileErrorKind {
     MissingStdlibModule,
     /// `from stdlib import ...` named a module that does not exist.
     UnknownStdlibModule,
+    /// `resource_pack.*` was called without the experimental opt-in.
+    ResourcePackNotEnabled,
+    /// A `resource_pack.*` resource ID is not a valid `namespace:path`.
+    ResourcePackBadId,
+    /// A `resource_pack.*` JSON payload is not an object.
+    ResourcePackNonObject,
+    /// Two `resource_pack.*` declarations target one path with different JSON.
+    ResourcePackDuplicate,
 }
 
 impl TranspileErrorKind {
@@ -65,6 +73,10 @@ impl TranspileErrorKind {
             Self::RuntimeForInternal => "runtime-for-internal",
             Self::MissingStdlibModule => "missing-stdlib-module",
             Self::UnknownStdlibModule => "unknown-stdlib-module",
+            Self::ResourcePackNotEnabled => "resource-pack-not-enabled",
+            Self::ResourcePackBadId => "resource-pack-bad-id",
+            Self::ResourcePackNonObject => "resource-pack-non-object",
+            Self::ResourcePackDuplicate => "resource-pack-duplicate",
         }
     }
 
@@ -110,6 +122,17 @@ impl TranspileError {
             kind,
             message: message.into(),
         }
+    }
+
+    /// Re-classifies an unclassified (`Semantic`) error, leaving errors that
+    /// already carry a specific kind untouched. Used where a shared helper
+    /// raises a generic error that the calling context can classify, such as
+    /// resource-ID parsing reached from `resource_pack.*`.
+    pub fn classify_semantic(mut self, kind: TranspileErrorKind) -> Self {
+        if self.kind == TranspileErrorKind::Semantic {
+            self.kind = kind;
+        }
+        self
     }
 }
 
