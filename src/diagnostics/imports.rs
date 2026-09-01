@@ -1,7 +1,10 @@
-use crate::ast::Import;
+use crate::ast::{Import, Program, SourceSpan, Statement};
+use crate::parser::{LocatedProgram, ProgramSpanTable};
 
+use super::is_simple_module_name;
 use super::reporting::{FileSourceDiagnostics, ParsedSourceFile, SourceDiagnostic};
-use super::text::{column_from_byte, is_ident_char, mask_non_code, single_equals_index};
+use super::semantic::{self, SemanticContext};
+use super::text::{mask_non_code, source_position_at};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,15 +13,22 @@ use std::path::{Path, PathBuf};
 // preflight validation cannot recurse deeply enough to exhaust the stack.
 pub(super) const MAX_IMPORT_DEPTH: usize = crate::transpiler::MAX_IMPORT_DEPTH;
 
-pub fn analyze_in_memory_imports(source: &str, imports: &[Import]) -> Vec<SourceDiagnostic> {
+pub fn analyze_in_memory_imports(source: &str, located: &LocatedProgram) -> Vec<SourceDiagnostic> {
     let mut diagnostics = Vec::new();
 
-    for import in imports {
+    let imports = &located.program.imports;
+    let import_spans = &located.spans.imports;
+    // The span table's import spans are built 1:1, in order, with the
+    // parsed program's imports.
+    debug_assert_eq!(imports.len(), import_spans.len());
+
+    for (import_index, import) in imports.iter().enumerate() {
         if import.module == "stdlib" {
             continue;
         }
 
-        let (line, column) = find_import_location(source, import).unwrap_or((1, 1));
+        let import_span = import_spans.get(import_index).copied();
+        let (line, column) = import_site_position(source, import_span, import);
         diagnostics.push(
             SourceDiagnostic::error(
                 "missing-import",
@@ -125,7 +135,8 @@ fn parse_source_file_tree(
     analyze_import_tree(
         path,
         &source,
-        &program.imports,
+        &program,
+        &located.spans,
         &mut visited,
         &mut stack,
         &mut diagnostics,
@@ -152,23 +163,31 @@ fn parse_source_file_tree(
     Ok(parsed_files)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn analyze_import_tree(
     current_path: &Path,
     current_source: &str,
-    imports: &[Import],
+    current_program: &Program,
+    current_spans: &ProgramSpanTable,
     visited: &mut HashSet<PathBuf>,
     stack: &mut Vec<PathBuf>,
     output: &mut Vec<FileSourceDiagnostics>,
     parsed_imports: &mut Vec<ParsedSourceFile>,
 ) {
     let current_dir = current_path.parent().unwrap_or_else(|| Path::new("."));
+    let imports = &current_program.imports;
+    let import_spans = &current_spans.imports;
+    // The span table's import spans are built 1:1, in order, with the
+    // parsed program's imports.
+    debug_assert_eq!(imports.len(), import_spans.len());
 
-    for import in imports {
+    for (import_index, import) in imports.iter().enumerate() {
         if import.module == "stdlib" {
             continue;
         }
 
-        let (line, column) = find_import_location(current_source, import).unwrap_or((1, 1));
+        let import_span = import_spans.get(import_index).copied();
+        let (line, column) = import_site_position(current_source, import_span, import);
 
         if !is_simple_module_name(&import.module) {
             output.push(FileSourceDiagnostics::new(
@@ -211,9 +230,15 @@ fn analyze_import_tree(
         }
 
         if visited.contains(&canonical_path) {
-            if let Some(diagnostics) =
-                validate_import_items_from_path(current_path, current_source, import, &import_path)
-            {
+            if let Some(diagnostics) = validate_import_items_from_path(
+                current_path,
+                current_source,
+                current_program,
+                current_spans,
+                import,
+                import_span,
+                &import_path,
+            ) {
                 output.push(diagnostics);
             }
             continue;
@@ -295,9 +320,15 @@ fn analyze_import_tree(
         };
         let imported_program = imported_located.program.clone();
 
-        if let Some(diagnostics) =
-            validate_import_items(current_path, current_source, import, &imported_source)
-        {
+        if let Some(diagnostics) = validate_import_items(
+            current_path,
+            current_source,
+            current_program,
+            current_spans,
+            import,
+            import_span,
+            &imported_located.program,
+        ) {
             output.push(diagnostics);
             continue;
         }
@@ -307,7 +338,8 @@ fn analyze_import_tree(
         analyze_import_tree(
             &import_path,
             &imported_source,
-            &imported_program.imports,
+            &imported_program,
+            &imported_located.spans,
             visited,
             stack,
             output,
@@ -325,11 +357,18 @@ fn analyze_import_tree(
 }
 
 fn analyze_cross_file_functions(files: &[ParsedSourceFile]) -> Vec<FileSourceDiagnostics> {
+    // One AST/span context per file; every cross-file pass below walks the
+    // parsed programs through these instead of re-scanning source lines.
+    let contexts = files
+        .iter()
+        .map(|file| SemanticContext::new(&file.source, &file.program, &file.spans))
+        .collect::<Vec<_>>();
+
     let mut signatures = HashMap::new();
     let mut duplicate_diagnostics: BTreeMap<usize, Vec<SourceDiagnostic>> = BTreeMap::new();
 
-    for (file_index, file) in files.iter().enumerate() {
-        for signature in collect_file_function_signatures(&file.path, &file.source) {
+    for (file_index, (file, context)) in files.iter().zip(&contexts).enumerate() {
+        for signature in semantic::collect_function_definitions(context) {
             if let Some(first) = signatures.get(&signature.name) {
                 duplicate_diagnostics.entry(file_index).or_default().push(
                     SourceDiagnostic::error(
@@ -347,7 +386,16 @@ fn analyze_cross_file_functions(files: &[ParsedSourceFile]) -> Vec<FileSourceDia
                     )),
                 );
             } else {
-                signatures.insert(signature.name.clone(), signature);
+                signatures.insert(
+                    signature.name.clone(),
+                    FileFunctionSignature {
+                        path: file.path.clone(),
+                        name: signature.name,
+                        params: signature.params,
+                        line: signature.line,
+                        column: signature.column,
+                    },
+                );
             }
         }
     }
@@ -356,25 +404,46 @@ fn analyze_cross_file_functions(files: &[ParsedSourceFile]) -> Vec<FileSourceDia
         return file_diagnostics_from_map(files, duplicate_diagnostics);
     }
 
-    let duplicate_symbol_diagnostics = analyze_cross_file_named_symbols(files);
+    let duplicate_symbol_diagnostics = analyze_cross_file_named_symbols(files, &contexts);
     if !duplicate_symbol_diagnostics.is_empty() {
         return duplicate_symbol_diagnostics;
     }
 
     let mut call_diagnostics: BTreeMap<usize, Vec<SourceDiagnostic>> = BTreeMap::new();
-    for (file_index, file) in files.iter().enumerate() {
-        collect_cross_file_call_diagnostics(file_index, file, &signatures, &mut call_diagnostics);
+    for (file_index, (file, context)) in files.iter().zip(&contexts).enumerate() {
+        let call_sites = semantic::collect_call_sites(context);
+        collect_cross_file_call_diagnostics(
+            file_index,
+            file,
+            &call_sites,
+            &signatures,
+            &mut call_diagnostics,
+        );
     }
 
     file_diagnostics_from_map(files, call_diagnostics)
 }
 
-fn analyze_cross_file_named_symbols(files: &[ParsedSourceFile]) -> Vec<FileSourceDiagnostics> {
+fn analyze_cross_file_named_symbols(
+    files: &[ParsedSourceFile],
+    contexts: &[SemanticContext<'_>],
+) -> Vec<FileSourceDiagnostics> {
     let mut symbols = HashMap::new();
     let mut duplicate_diagnostics: BTreeMap<usize, Vec<SourceDiagnostic>> = BTreeMap::new();
 
-    for (file_index, file) in files.iter().enumerate() {
-        for symbol in collect_file_named_symbols(&file.path, &file.source) {
+    for (file_index, (file, context)) in files.iter().zip(contexts).enumerate() {
+        for definition in semantic::collect_named_symbol_defs(context) {
+            let symbol = FileNamedSymbol {
+                path: file.path.clone(),
+                name: definition.name,
+                kind: if definition.is_entity_template {
+                    FileSymbolKind::EntityTemplate
+                } else {
+                    FileSymbolKind::SelectorAlias
+                },
+                line: definition.line,
+                column: definition.column,
+            };
             let key = (symbol.kind, symbol.name.clone());
             if let Some(first) = symbols.get(&key) {
                 duplicate_diagnostics.entry(file_index).or_default().push(
@@ -402,31 +471,56 @@ fn analyze_cross_file_named_symbols(files: &[ParsedSourceFile]) -> Vec<FileSourc
     file_diagnostics_from_map(files, duplicate_diagnostics)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_import_items_from_path(
     current_path: &Path,
     current_source: &str,
+    current_program: &Program,
+    current_spans: &ProgramSpanTable,
     import: &Import,
+    import_span: Option<SourceSpan>,
     import_path: &Path,
 ) -> Option<FileSourceDiagnostics> {
     if import.items.is_empty() || import.module == "stdlib" {
         return None;
     }
 
+    // A module that cannot be read (or re-parsed) here is silently skipped
+    // (`.ok()?`), preserving this re-validation pass's long-standing
+    // behavior: the module was read and parsed successfully when it was
+    // first visited in this run, so a failure here is a mid-run race.
     let imported_source = fs::read_to_string(import_path).ok()?;
-    validate_import_items(current_path, current_source, import, &imported_source)
+    let imported_program = crate::parser::parse(&imported_source).ok()?;
+    validate_import_items(
+        current_path,
+        current_source,
+        current_program,
+        current_spans,
+        import,
+        import_span,
+        &imported_program,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_import_items(
     current_path: &Path,
     current_source: &str,
+    current_program: &Program,
+    current_spans: &ProgramSpanTable,
     import: &Import,
-    imported_source: &str,
+    import_span: Option<SourceSpan>,
+    imported_program: &Program,
 ) -> Option<FileSourceDiagnostics> {
     if import.items.is_empty() || import.module == "stdlib" {
         return None;
     }
 
-    let exported_symbol_kinds = collect_exported_symbol_kinds(imported_source);
+    // The importing file's own AST/span context locates raw command
+    // placeholders that reference non-value imported symbols.
+    let current_context = SemanticContext::new(current_source, current_program, current_spans);
+
+    let exported_symbol_kinds = collect_exported_symbol_kinds(imported_program);
     let exported_symbols = exported_symbol_kinds
         .keys()
         .cloned()
@@ -439,7 +533,8 @@ fn validate_import_items(
                     continue;
                 }
 
-                for (line, column) in super::raw_command_placeholder_locations(current_source, item)
+                for (line, column) in
+                    semantic::raw_command_placeholder_locations(&current_context, item)
                 {
                     diagnostics.push(
                         SourceDiagnostic::error(
@@ -459,10 +554,8 @@ fn validate_import_items(
                 }
             }
             None => {
-                let (line, column) = find_import_item_location(current_source, import, item)
-                    .unwrap_or_else(|| {
-                        find_import_location(current_source, import).unwrap_or((1, 1))
-                    });
+                let (line, column) = import_item_position(current_source, import_span, item)
+                    .unwrap_or_else(|| import_site_position(current_source, import_span, import));
 
                 diagnostics.push(
                     SourceDiagnostic::error(
@@ -517,100 +610,42 @@ impl ExportedSymbolKind {
     }
 }
 
-fn collect_exported_symbol_kinds(source: &str) -> HashMap<String, ExportedSymbolKind> {
-    let mut symbols = HashSet::new();
+/// Importable symbols a module defines, keyed by name, collected from its
+/// parsed AST (nested statements included — the old line scan had no indent
+/// filter either). A later definition of the same name overrides the
+/// earlier kind, mirroring the old scan's insert order.
+fn collect_exported_symbol_kinds(program: &Program) -> HashMap<String, ExportedSymbolKind> {
     let mut symbol_kinds = HashMap::new();
-    let mut active_docstring_quote = None;
 
-    for (line_index, line) in source.lines().enumerate() {
-        let line_number = line_index + 1;
-        let raw_trimmed = line.trim_start();
-        if super::should_skip_docstring_scan_line(line, raw_trimmed, &mut active_docstring_quote) {
-            continue;
+    semantic::for_each_statement(program, &mut |statement| match statement {
+        Statement::FunctionDef(function_def) => {
+            symbol_kinds.insert(function_def.name.clone(), ExportedSymbolKind::Function);
         }
-
-        let masked = mask_non_code(line);
-        let trimmed = masked.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('/') {
-            continue;
+        Statement::SelectorDef(selector_def) if is_simple_module_name(&selector_def.name) => {
+            symbol_kinds.insert(selector_def.name.clone(), ExportedSymbolKind::SelectorAlias);
         }
-
-        let indent = masked.len() - trimmed.len();
-        if let Some(signature) = super::parse_function_signature(trimmed, line_number, indent) {
-            symbol_kinds.insert(signature.name, ExportedSymbolKind::Function);
-            continue;
+        Statement::EntityDef(entity_def) if is_simple_module_name(&entity_def.name) => {
+            symbol_kinds.insert(entity_def.name.clone(), ExportedSymbolKind::EntityTemplate);
         }
-
-        if let Some(name) = selector_alias_name(trimmed) {
-            symbol_kinds.insert(name.to_string(), ExportedSymbolKind::SelectorAlias);
-            continue;
+        // `target` is the raw target text (`x`, `x[0]`, `x.y`); the simple-
+        // name filter keeps plain names only, like the old line scan.
+        Statement::Assignment(assignment) if is_simple_module_name(&assignment.target) => {
+            symbol_kinds.insert(assignment.target.clone(), ExportedSymbolKind::Value);
         }
-
-        if let Some(name) = entity_definition_name(trimmed) {
-            symbol_kinds.insert(name.to_string(), ExportedSymbolKind::EntityTemplate);
-            continue;
+        Statement::ConstAssignment(assignment) if is_simple_module_name(&assignment.target) => {
+            symbol_kinds.insert(assignment.target.clone(), ExportedSymbolKind::Value);
         }
-
-        collect_assignment_export(trimmed, &mut symbols);
-        for name in symbols.drain() {
-            symbol_kinds.insert(name, ExportedSymbolKind::Value);
+        Statement::Global(names) => {
+            for name in names {
+                if is_simple_module_name(name) {
+                    symbol_kinds.insert(name.clone(), ExportedSymbolKind::Value);
+                }
+            }
         }
-        collect_global_export(trimmed, &mut symbols);
-        for name in symbols.drain() {
-            symbol_kinds.insert(name, ExportedSymbolKind::Value);
-        }
-    }
+        _ => {}
+    });
 
     symbol_kinds
-}
-
-fn selector_alias_name(trimmed: &str) -> Option<&str> {
-    if !super::looks_like_selector_definition(trimmed) {
-        return None;
-    }
-    let left = trimmed.split_once('=')?.0.trim();
-    left.strip_prefix('@')
-        .filter(|name| is_simple_module_name(name))
-}
-
-fn entity_definition_name(trimmed: &str) -> Option<&str> {
-    let rest = trimmed.strip_prefix("define ")?.trim_start();
-    let name = rest.split_whitespace().next()?.strip_prefix('@')?;
-    if is_simple_module_name(name) {
-        Some(name)
-    } else {
-        None
-    }
-}
-
-fn collect_assignment_export(trimmed: &str, symbols: &mut HashSet<String>) {
-    if super::should_skip_assignment_symbol_scan(trimmed) {
-        return;
-    }
-
-    let Some(equals_index) = single_equals_index(trimmed) else {
-        return;
-    };
-    let raw_target = trimmed[..equals_index].trim();
-    let target = raw_target
-        .strip_prefix("const ")
-        .unwrap_or(raw_target)
-        .trim();
-    if is_simple_module_name(target) {
-        symbols.insert(target.to_string());
-    }
-}
-
-fn collect_global_export(trimmed: &str, symbols: &mut HashSet<String>) {
-    let Some(rest) = trimmed.strip_prefix("global ") else {
-        return;
-    };
-    for name in rest.trim_end_matches(':').split(',') {
-        let name = name.trim();
-        if is_simple_module_name(name) {
-            symbols.insert(name.to_string());
-        }
-    }
 }
 
 fn format_missing_import_item_help(module: &str, exported_symbols: &HashSet<String>) -> String {
@@ -629,11 +664,10 @@ fn format_missing_import_item_help(module: &str, exported_symbols: &HashSet<Stri
 fn collect_cross_file_call_diagnostics(
     file_index: usize,
     file: &ParsedSourceFile,
+    call_sites: &[semantic::CallSite],
     signatures: &HashMap<String, FileFunctionSignature>,
     output: &mut BTreeMap<usize, Vec<SourceDiagnostic>>,
 ) {
-    let mut active_docstring_quote = None;
-    let mut multiline_expression_depth = 0usize;
     let imported_modules = file
         .program
         .imports
@@ -641,114 +675,94 @@ fn collect_cross_file_call_diagnostics(
         .filter(|import| import.module != "stdlib" && import.items.is_empty())
         .map(|import| import.module.as_str())
         .collect::<HashSet<_>>();
-    for (line_index, line) in file.source.lines().enumerate() {
-        let line_number = line_index + 1;
-        let raw_trimmed = line.trim_start();
-        if super::should_skip_docstring_scan_line(line, raw_trimmed, &mut active_docstring_quote) {
+
+    for call in call_sites {
+        if call.name == "range" {
             continue;
         }
 
-        let masked = mask_non_code(line);
-        let trimmed = masked.trim_start();
-        if super::should_skip_call_argument_scan(trimmed) {
-            super::update_delimiter_depth_for_indentation(trimmed, &mut multiline_expression_depth);
-            continue;
-        }
+        let qualified_signature =
+            qualified_imported_function_signature(&call.name, &imported_modules, signatures);
+        let Some(signature) = signatures.get(&call.name).or(qualified_signature) else {
+            // Unresolved names are only reported when the call is an entire
+            // expression statement, matching the old scan's
+            // `is_user_function_call_statement` gate.
+            if !call.is_statement_expression {
+                continue;
+            }
 
-        let inside_multiline_expression = multiline_expression_depth > 0;
-        let indent = masked.len() - trimmed.len();
-        if !inside_multiline_expression {
-            for call in super::function_calls_in_expression(trimmed) {
-                if call.name == "range" {
-                    continue;
-                }
-
-                let qualified_signature = qualified_imported_function_signature(
-                    &call.name,
-                    &imported_modules,
-                    signatures,
-                );
-                let Some(signature) = signatures.get(&call.name).or(qualified_signature) else {
-                    if !super::is_user_function_call_statement(trimmed, &call) {
-                        continue;
-                    }
-
-                    if let Some((module, method)) = super::split_module_call_name(&call.name) {
-                        if let Some(message) =
-                            super::value_only_module_call_message(module, method, &call.name)
-                        {
-                            output.entry(file_index).or_default().push(
-                                SourceDiagnostic::error(
-                                    "unsupported-function-call-expression",
-                                    line_number,
-                                    column_from_byte(&masked, indent + call.offset),
-                                    message,
-                                )
-                                .with_help(
-                                    "Pass the returned value to another helper or JSON resource value instead.",
-                                ),
-                            );
-                            continue;
-                        }
-
-                        if super::is_known_module_call(module, method) {
-                            continue;
-                        }
-
-                        output.entry(file_index).or_default().push(
-                            SourceDiagnostic::error(
-                                "undefined-function",
-                                line_number,
-                                column_from_byte(&masked, indent + call.offset),
-                                format!("Unknown helper function `{}`", call.name),
-                            )
-                            .with_help(
-                                "Use a documented Cobble helper module/function, define a Cobble function, or use a raw Minecraft command for external behavior.",
-                            ),
-                        );
-                        continue;
-                    }
-
-                    if !super::is_known_non_user_function_call(&call.name) {
-                        output.entry(file_index).or_default().push(
-                            SourceDiagnostic::error(
-                                "undefined-function",
-                                line_number,
-                                column_from_byte(&masked, indent + call.offset),
-                                format!("Undefined function `{}`", call.name),
-                            )
-                            .with_help(
-                                "Define the Cobble function, import a file that defines it, or use a raw `/function namespace:path` command for external Minecraft functions.",
-                            ),
-                        );
-                    }
-                    continue;
-                };
-
-                if call.arg_count != signature.params.len() {
+            if let Some((module, method)) = super::split_module_call_name(&call.name) {
+                if let Some(message) =
+                    super::value_only_module_call_message(module, method, &call.name)
+                {
                     output.entry(file_index).or_default().push(
                         SourceDiagnostic::error(
-                            "function-argument-count",
-                            line_number,
-                            column_from_byte(&masked, indent + call.offset),
-                            format!(
-                                "Function `{}` expects {} argument(s), but {} provided",
-                                signature.name,
-                                signature.params.len(),
-                                call.arg_count
-                            ),
+                            "unsupported-function-call-expression",
+                            call.line,
+                            call.column,
+                            message,
                         )
-                        .with_help(format!(
-                            "Expected parameters: ({}). Definition is at {}.",
-                            signature.params.join(", "),
-                            format_file_signature_location(signature)
-                        )),
+                        .with_help(
+                            "Pass the returned value to another helper or JSON resource value instead.",
+                        ),
                     );
                     continue;
                 }
+
+                if super::is_known_module_call(module, method) {
+                    continue;
+                }
+
+                output.entry(file_index).or_default().push(
+                    SourceDiagnostic::error(
+                        "undefined-function",
+                        call.line,
+                        call.column,
+                        format!("Unknown helper function `{}`", call.name),
+                    )
+                    .with_help(
+                        "Use a documented Cobble helper module/function, define a Cobble function, or use a raw Minecraft command for external behavior.",
+                    ),
+                );
+                continue;
             }
+
+            if !super::is_allowed_value_function_call(&call.name) {
+                output.entry(file_index).or_default().push(
+                    SourceDiagnostic::error(
+                        "undefined-function",
+                        call.line,
+                        call.column,
+                        format!("Undefined function `{}`", call.name),
+                    )
+                    .with_help(
+                        "Define the Cobble function, import a file that defines it, or use a raw `/function namespace:path` command for external Minecraft functions.",
+                    ),
+                );
+            }
+            continue;
+        };
+
+        if call.arg_count != signature.params.len() {
+            output.entry(file_index).or_default().push(
+                SourceDiagnostic::error(
+                    "function-argument-count",
+                    call.line,
+                    call.column,
+                    format!(
+                        "Function `{}` expects {} argument(s), but {} provided",
+                        signature.name,
+                        signature.params.len(),
+                        call.arg_count
+                    ),
+                )
+                .with_help(format!(
+                    "Expected parameters: ({}). Definition is at {}.",
+                    signature.params.join(", "),
+                    format_file_signature_location(signature)
+                )),
+            );
         }
-        super::update_delimiter_depth_for_indentation(trimmed, &mut multiline_expression_depth);
     }
 }
 
@@ -762,82 +776,6 @@ fn qualified_imported_function_signature<'a>(
         .contains(module)
         .then(|| signatures.get(method))
         .flatten()
-}
-
-fn collect_file_function_signatures(path: &Path, source: &str) -> Vec<FileFunctionSignature> {
-    let mut signatures = Vec::new();
-    let mut active_docstring_quote = None;
-
-    for (line_index, line) in source.lines().enumerate() {
-        let line_number = line_index + 1;
-        let raw_trimmed = line.trim_start();
-        if super::should_skip_docstring_scan_line(line, raw_trimmed, &mut active_docstring_quote) {
-            continue;
-        }
-
-        let masked = mask_non_code(line);
-        let trimmed = masked.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('/') {
-            continue;
-        }
-
-        let indent = masked.len() - trimmed.len();
-        if let Some(signature) = super::parse_function_signature(trimmed, line_number, indent) {
-            signatures.push(FileFunctionSignature {
-                path: path.to_path_buf(),
-                name: signature.name,
-                params: signature.params,
-                line: signature.line,
-                column: signature.column,
-            });
-        }
-    }
-
-    signatures
-}
-
-fn collect_file_named_symbols(path: &Path, source: &str) -> Vec<FileNamedSymbol> {
-    let mut symbols = Vec::new();
-    let mut active_docstring_quote = None;
-
-    for (line_index, line) in source.lines().enumerate() {
-        let line_number = line_index + 1;
-        let raw_trimmed = line.trim_start();
-        if super::should_skip_docstring_scan_line(line, raw_trimmed, &mut active_docstring_quote) {
-            continue;
-        }
-
-        let masked = mask_non_code(line);
-        let trimmed = masked.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('/') {
-            continue;
-        }
-
-        let indent = masked.len() - trimmed.len();
-        if let Some(name) = selector_alias_name(trimmed) {
-            symbols.push(FileNamedSymbol {
-                path: path.to_path_buf(),
-                name: name.to_string(),
-                kind: FileSymbolKind::SelectorAlias,
-                line: line_number,
-                column: column_from_byte(line, indent),
-            });
-            continue;
-        }
-
-        if let Some(name) = entity_definition_name(trimmed) {
-            let name_offset = trimmed.find(name).unwrap_or(0);
-            symbols.push(FileNamedSymbol {
-                path: path.to_path_buf(),
-                name: name.to_string(),
-                kind: FileSymbolKind::EntityTemplate,
-                line: line_number,
-                column: indent + column_from_byte(trimmed, name_offset.saturating_sub(1)),
-            });
-        }
-    }
-
-    symbols
 }
 
 fn file_diagnostics_from_map(
@@ -920,87 +858,57 @@ fn canonical_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn is_simple_module_name(module: &str) -> bool {
-    let mut chars = module.chars();
-    let Some(first) = chars.next() else {
-        return false;
+/// Position of the module name inside an `import`/`from` header, derived
+/// from the header's source span (the first non-whitespace byte after the
+/// leading keyword). Every entry point threads the span table's import
+/// spans here (the wasm in-memory path included), so a missing span is a
+/// span-builder failure on parseable source — reported by the alignment
+/// `debug_assert`s at the call sites — and degrades to the 1:1 fallback
+/// position instead of a whole-source line scan.
+fn import_site_position(source: &str, span: Option<SourceSpan>, import: &Import) -> (usize, usize) {
+    let Some(span) = span else {
+        return (1, 1);
     };
-
-    (first.is_ascii_alphabetic() || first == '_') && chars.all(is_ident_char)
+    let slice = source.get(span.start..span.end).unwrap_or("");
+    let keyword = if import.items.is_empty() {
+        "import"
+    } else {
+        "from"
+    };
+    let rest = slice.strip_prefix(keyword).unwrap_or(slice);
+    let offset = (slice.len() - rest.len()) + (rest.len() - rest.trim_start().len());
+    source_position_at(source, span.start + offset)
 }
 
-fn find_import_location(source: &str, import: &Import) -> Option<(usize, usize)> {
-    for (line_index, line) in source.lines().enumerate() {
-        let masked = mask_non_code(line);
-        let trimmed = masked.trim_start();
-        let indent = masked.len() - trimmed.len();
+/// Position of one imported item inside a `from module import items`
+/// header, walking the comma-separated item list of the header's span
+/// slice.
+fn import_item_position(
+    source: &str,
+    span: Option<SourceSpan>,
+    item: &str,
+) -> Option<(usize, usize)> {
+    let span = span?;
+    let slice = source.get(span.start..span.end)?;
+    let masked = mask_non_code(slice);
+    let items_offset = masked.find(" import ")? + " import ".len();
+    let items = &masked[items_offset..];
 
-        if import.items.is_empty() {
-            let Some(rest) = trimmed.strip_prefix("import ") else {
-                continue;
-            };
-            let module = rest
-                .split(|ch: char| ch.is_whitespace() || ch == ',')
-                .next()
-                .unwrap_or("");
-            if module == import.module {
-                return Some((
-                    line_index + 1,
-                    column_from_byte(&masked, indent + "import ".len()),
-                ));
-            }
-        } else {
-            let Some(rest) = trimmed.strip_prefix("from ") else {
-                continue;
-            };
-            let Some((module, _items)) = rest.split_once(" import ") else {
-                continue;
-            };
-            if module.trim() == import.module {
-                return Some((
-                    line_index + 1,
-                    column_from_byte(&masked, indent + "from ".len()),
-                ));
-            }
+    let mut search_from = 0;
+    while search_from < items.len() {
+        let item_text = items[search_from..]
+            .split_once(',')
+            .map(|(head, _)| head)
+            .unwrap_or(&items[search_from..]);
+        let leading = item_text.len() - item_text.trim_start().len();
+        let candidate = item_text.trim().trim_end_matches(':');
+        if candidate == item {
+            return Some(source_position_at(
+                source,
+                span.start + items_offset + search_from + leading,
+            ));
         }
-    }
-
-    None
-}
-
-fn find_import_item_location(source: &str, import: &Import, item: &str) -> Option<(usize, usize)> {
-    for (line_index, line) in source.lines().enumerate() {
-        let masked = mask_non_code(line);
-        let trimmed = masked.trim_start();
-        let indent = masked.len() - trimmed.len();
-
-        let Some(rest) = trimmed.strip_prefix("from ") else {
-            continue;
-        };
-        let Some((module, items)) = rest.split_once(" import ") else {
-            continue;
-        };
-        if module.trim() != import.module {
-            continue;
-        }
-
-        let items_offset = indent + "from ".len() + module.len() + " import ".len();
-        let mut search_from = 0;
-        while search_from < items.len() {
-            let item_text = items[search_from..]
-                .split_once(',')
-                .map(|(head, _)| head)
-                .unwrap_or(&items[search_from..]);
-            let leading = item_text.len() - item_text.trim_start().len();
-            let candidate = item_text.trim().trim_end_matches(':');
-            if candidate == item {
-                return Some((
-                    line_index + 1,
-                    column_from_byte(&masked, items_offset + search_from + leading),
-                ));
-            }
-            search_from += item_text.len() + 1;
-        }
+        search_from += item_text.len() + 1;
     }
 
     None

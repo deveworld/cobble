@@ -4,8 +4,11 @@
 //! - `return`-line function calls now get arity/undefined-function checks
 //! - `def` name column computed from the `def ` prefix, not `trimmed.find(name)`
 //! - canaries pinning each consolidated keyword skip list's effective set
+//! - a vendored diagnostic corpus (`tests/fixtures/diag_corpus`) pinning the
+//!   exact kind@line:column output of the migrated AST-anchored engine
 
 use cobble::diagnostics::{analyze_source, SourceDiagnostic};
+use std::path::Path;
 
 fn find_kind<'a>(diagnostics: &'a [SourceDiagnostic], kind: &str) -> Option<&'a SourceDiagnostic> {
     diagnostics
@@ -243,6 +246,84 @@ fn datapack_tag_name_column_counts_chars_after_non_ascii_string() {
     assert_eq!((diagnostic.line, diagnostic.column), (2, 39));
 }
 
+/// Vendored diagnostic fixtures: each row pins the complete, ordered
+/// `kind@line:column` output of `analyze_source` for one source file from
+/// `tests/fixtures/diag_corpus`. Together they exercise the migrated
+/// AST-anchored engine end-to-end — call arity and undefined-function
+/// resolution, duplicate functions and parameters, value-helper misuse on
+/// assignment/return lines, no-op expressions, `None` usage, storage access,
+/// type inference, undefined variables, raw-command placeholders, and
+/// single-/multi-line datapack argument checks with non-ASCII columns —
+/// so the repo keeps corpus-level regression power after the session
+/// scratchpad corpus is gone.
+#[test]
+fn vendored_diag_corpus_pins_kinds_and_positions() {
+    /// One expected diagnostic: (kind, line, column).
+    type ExpectedDiagnostic = (&'static str, usize, usize);
+    // (file, expected diagnostics in emission order)
+    const EXPECTED: &[(&str, &[ExpectedDiagnostic])] = &[
+        ("arity_02.cbl", &[("undefined-function", 3, 13)]),
+        ("arity_04.cbl", &[("function-argument-count", 5, 12)]),
+        (
+            "callexpr_02.cbl",
+            &[("unsupported-function-call-expression", 2, 9)],
+        ),
+        ("dupfunc_01.cbl", &[("duplicate-function", 4, 5)]),
+        (
+            "dupparam_02.cbl",
+            &[("duplicate-function-parameter", 1, 28)],
+        ),
+        (
+            "multiline_01.cbl",
+            &[
+                ("datapack-resource-id", 4, 16),
+                ("datapack-resource-argument", 4, 27),
+            ],
+        ),
+        ("none_01.cbl", &[("unsupported-none", 3, 13)]),
+        ("noop_01.cbl", &[("no-op-expression", 3, 5)]),
+        ("placeholder_01.cbl", &[("undefined-placeholder", 3, 32)]),
+        (
+            "storage_03.cbl",
+            &[
+                ("unsupported-storage-access", 3, 13),
+                ("unsupported-storage-access", 4, 12),
+            ],
+        ),
+        ("typemis_01.cbl", &[("type-mismatch", 4, 5)]),
+        ("undeffunc_02.cbl", &[("undefined-function", 3, 5)]),
+        ("undefvar_01.cbl", &[("undefined-variable", 3, 13)]),
+        (
+            // The Korean tag name is 6 bytes / 2 chars: both columns must be
+            // char columns, not byte-drifted ones.
+            "unicode_06.cbl",
+            &[
+                ("datapack-resource-id", 2, 28),
+                ("datapack-resource-id", 2, 40),
+            ],
+        ),
+    ];
+
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("diag_corpus");
+    for (file, expected) in EXPECTED {
+        let path = fixtures.join(file);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let diagnostics = analyze_source(&source);
+        let actual: Vec<(&str, usize, usize)> = diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.kind.as_str(), diagnostic.line, diagnostic.column))
+            .collect();
+        assert_eq!(
+            &actual, expected,
+            "{file}: diagnostics diverged: {diagnostics:?}"
+        );
+    }
+}
+
 #[test]
 fn datapack_tag_value_column_is_unchanged_for_ascii_lines() {
     let source = "def main():\n    datapack.block_tag(\"blocks/custom\", [\"BAD\"])\n";
@@ -253,4 +334,38 @@ fn datapack_tag_value_column_is_unchanged_for_ascii_lines() {
         "Invalid tag value 'BAD'",
     );
     assert_eq!((diagnostic.line, diagnostic.column), (2, 43));
+}
+
+#[test]
+fn multibyte_identifiers_do_not_panic_the_compound_assignment_scanner() {
+    // `top_level_compound_assignment` walks raw byte positions; slicing the
+    // source with one of them panicked inside a multi-byte character whenever
+    // a non-ASCII identifier preceded a potential compound-assignment operator.
+    for source in [
+        "def main():\n    val한e = 1\n",
+        "한글 += 1\n",
+        "def main():\n    x[\"한\"] += 1\n",
+        "def main():\n    한글 -= 2\n",
+        "def main():\n    résultat *= 3\n",
+        "def main():\n    🎯 /= 4\n",
+    ] {
+        // The contract is "no panic"; whether the source is accepted or
+        // rejected is checked elsewhere.
+        let _ = analyze_source(source);
+    }
+}
+
+#[test]
+fn multibyte_expressions_do_not_panic_the_top_level_operator_scanner() {
+    // Same byte-index-into-str hazard in `contains_top_level_operator`, which
+    // scans for comparison and arithmetic operators outside delimiters.
+    for source in [
+        "def main():\n    value = helper.doubée(6)\n",
+        "def main():\n    y = 한 + 漢\n",
+        "def main():\n    z = a[\"🎯\"] == b\n",
+        "def main():\n    if 한글 > 3:\n        /say hi\n",
+        "def main():\n    q = \"한\" + '漢'\n",
+    ] {
+        let _ = analyze_source(source);
+    }
 }

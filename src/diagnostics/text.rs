@@ -43,27 +43,6 @@ pub(super) fn matching_close_paren(expression: &str, open_index: usize) -> Optio
     None
 }
 
-pub(super) fn split_top_level_args(args: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut start = 0;
-    let mut depth = 0usize;
-
-    for (index, byte) in args.as_bytes().iter().enumerate() {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            b',' if depth == 0 => {
-                result.push(&args[start..index]);
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-
-    result.push(&args[start..]);
-    result
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ArgumentSpan {
     pub(super) text: String,
@@ -207,6 +186,18 @@ pub(super) fn is_ident_char(ch: char) -> bool {
 /// found in the raw line must be counted against the raw line.
 pub(super) fn column_from_byte(line: &str, byte_index: usize) -> usize {
     line[..byte_index.min(line.len())].chars().count() + 1
+}
+
+/// 1-based (line, char-column) of an absolute byte offset in a source text.
+pub(super) fn source_position_at(source: &str, offset: usize) -> (usize, usize) {
+    let offset = offset.min(source.len());
+    let before = &source[..offset];
+    let line_start = before.rfind('\n').map(|index| index + 1).unwrap_or(0);
+    let line = before.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    (
+        line,
+        column_from_byte(&source[line_start..], offset - line_start),
+    )
 }
 
 /// Maps a byte offset found in `mask_non_code` output to the byte offset of

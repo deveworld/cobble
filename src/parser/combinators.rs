@@ -87,16 +87,140 @@ pub struct LocatedProgram {
     pub spans: ProgramSpanTable,
 }
 
+impl LocatedProgram {
+    /// AST-shaped statement span tree aligned 1:1 with `program.statements`.
+    ///
+    /// `None` means the tree could not be aligned with the parsed program;
+    /// consumers must fall back to other position sources instead of zipping
+    /// the header-shaped `spans.statements` table positionally.
+    pub fn statement_spans(&self) -> Option<&StatementSpanTree> {
+        self.spans.statement_tree.as_ref()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProgramSpanTable {
     pub imports: Vec<SourceSpan>,
     pub statements: Vec<StatementSpan>,
+    /// AST-shaped statement span tree (see [`StatementSpanTree`]). Only the
+    /// top-level table returned by [`parse_located_with_diagnostics`] carries
+    /// it; the header-shaped `statements` tree above is left untouched for
+    /// its existing text-keyed consumers.
+    pub statement_tree: Option<StatementSpanTree>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatementSpan {
     pub span: SourceSpan,
     pub children: Vec<StatementSpan>,
+}
+
+/// Statement span tree mirroring `Program.statements` exactly: one node per
+/// AST [`Statement`], in the same order and nesting. Unlike the header-shaped
+/// [`StatementSpan`] table, `elif`/`else` headers are folded into their `If`
+/// node and `case` headers into their `Match` node, so a consumer can walk
+/// `Program.statements` and `StatementSpanTree.statements` in lockstep.
+///
+/// Top-level `import`/`from` headers are not part of the tree because
+/// `Program.statements` excludes top-level imports; those spans stay in
+/// `ProgramSpanTable.imports`, aligned 1:1 with `Program.imports`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StatementSpanTree {
+    pub statements: Vec<StatementSpanNode>,
+}
+
+/// Tag naming the [`Statement`] variant a span node mirrors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StatementSpanKind {
+    Import,
+    FunctionDef,
+    Assignment,
+    ConstAssignment,
+    Expression,
+    If,
+    For,
+    While,
+    Match,
+    Return,
+    Pass,
+    MinecraftCommand,
+    Global,
+    Execute,
+    SelectorDef,
+    EntityDef,
+    CreateEntity,
+}
+
+impl StatementSpanKind {
+    /// The tag for an AST statement, for lockstep walks and alignment checks.
+    pub fn of(statement: &Statement) -> Self {
+        match statement {
+            Statement::Import(_) => Self::Import,
+            Statement::FunctionDef(_) => Self::FunctionDef,
+            Statement::Assignment(_) => Self::Assignment,
+            Statement::ConstAssignment(_) => Self::ConstAssignment,
+            Statement::Expression(_) => Self::Expression,
+            Statement::If(_) => Self::If,
+            Statement::For(_) => Self::For,
+            Statement::While(_) => Self::While,
+            Statement::Match(_) => Self::Match,
+            Statement::Return(_) => Self::Return,
+            Statement::Pass => Self::Pass,
+            Statement::MinecraftCommand(_) => Self::MinecraftCommand,
+            Statement::Global(_) => Self::Global,
+            Statement::Execute(_) => Self::Execute,
+            Statement::SelectorDef(_) => Self::SelectorDef,
+            Statement::EntityDef(_) => Self::EntityDef,
+            Statement::CreateEntity(_) => Self::CreateEntity,
+        }
+    }
+}
+
+/// One span node per AST statement.
+///
+/// `span` covers the statement's header tokens: first through last token of
+/// the header (for a multiline, bracket-continued header that is the whole
+/// call; for `define ... create ... end` it is the whole construct). `span`'s
+/// `line`/`column` are the header's first token position; `end_line` is the
+/// line of the last header token. Body statements live in `children`
+/// (`FunctionDef`/`For`/`While`/`Execute` bodies and an `If`'s then-branch);
+/// an `If` additionally carries `elif_branches`/`else_branch`, and a `Match`
+/// carries its arms exclusively in `cases` (its `children` stay empty). All
+/// other kinds are leaves with every list empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementSpanNode {
+    pub kind: StatementSpanKind,
+    pub span: SourceSpan,
+    pub end_line: usize,
+    pub children: Vec<StatementSpanNode>,
+    pub elif_branches: Vec<StatementSpanBranch>,
+    pub else_branch: Option<StatementSpanBranch>,
+    pub cases: Vec<StatementSpanBranch>,
+}
+
+impl StatementSpanNode {
+    fn leaf(kind: StatementSpanKind, span: SourceSpan, end_line: usize) -> Self {
+        Self {
+            kind,
+            span,
+            end_line,
+            children: Vec::new(),
+            elif_branches: Vec::new(),
+            else_branch: None,
+            cases: Vec::new(),
+        }
+    }
+}
+
+/// An `elif`/`else`/`case` arm folded into its owning statement node.
+/// `header` covers the arm's header tokens (`elif cond:` / `else:` /
+/// `case pattern:`), `end_line` is the last header token's line, and
+/// `children` mirrors the arm's body statements.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementSpanBranch {
+    pub header: SourceSpan,
+    pub end_line: usize,
+    pub children: Vec<StatementSpanNode>,
 }
 
 /// Token parser using chumsky
@@ -929,10 +1053,17 @@ pub fn parse_located_with_diagnostics(
     let result = token_parser().parse(&tokens);
 
     match result.into_result() {
-        Ok(program) => Ok(LocatedProgram {
-            program,
-            spans: collect_program_span_table(&spanned_tokens),
-        }),
+        Ok(program) => {
+            let mut spans = collect_program_span_table(&spanned_tokens);
+            // Alignment contract: the tree must mirror the parsed program
+            // exactly. `build_statement_span_tree` returns `None` on any
+            // token-cursor desync, and `verify_span_tree_alignment` re-checks
+            // the shape independently; on mismatch the tree is dropped so
+            // consumers fall back instead of misattributing positions.
+            spans.statement_tree = build_statement_span_tree(&program, &spanned_tokens)
+                .filter(|tree| verify_span_tree_alignment(&program, tree).is_ok());
+            Ok(LocatedProgram { program, spans })
+        }
         Err(errors) => Err(errors
             .into_iter()
             .map(|error| ParseDiagnostic {
@@ -1034,6 +1165,612 @@ fn collect_statement_header_span(tokens: &[SpannedToken], index: &mut usize) -> 
     }
 
     SourceSpan::new(start.start, end.end, start.line, start.column)
+}
+
+/// Build the AST-shaped statement span tree from the spanned token stream.
+///
+/// The walk is guided by the parsed `Program` so the tree has exactly one
+/// node per AST statement by construction: the token cursor advances over
+/// each statement's tokens using the same segmentation the grammar applies
+/// (greedy expression extents, `elif`/`else` headers folded into their `if`,
+/// `case` headers folded into their `match`, `define ... create ... end` as
+/// one header, top-level `import`/`from` headers skipped because
+/// `Program.statements` excludes them). Comments and blank lines produce no
+/// tokens and need no handling; bracket-suppressed newlines make a multiline
+/// call one header. Returns `None` if the cursor ever desyncs from the AST
+/// (a builder bug or an unmodeled grammar shape) so callers degrade instead
+/// of misattributing spans.
+fn build_statement_span_tree(
+    program: &Program,
+    tokens: &[SpannedToken],
+) -> Option<StatementSpanTree> {
+    let mut builder = SpanTreeBuilder { tokens, index: 0 };
+    let statements = builder.build_block(&program.statements, true)?;
+    builder.skip_newlines();
+    match builder.peek() {
+        Some(Token::Eof) | None => Some(StatementSpanTree { statements }),
+        Some(_) => None,
+    }
+}
+
+/// Check that a statement span tree has exactly the shape of the parsed
+/// program: same statement count at every level, same variant tag per node,
+/// same `elif`/`else` branch counts per `If`, same case count per `Match`.
+/// Returns the first mismatch as a path-annotated message. Mismatches are
+/// builder bugs; `parse_located_with_diagnostics` drops the tree when this
+/// fails so consumers fall back gracefully.
+pub fn verify_span_tree_alignment(
+    program: &Program,
+    tree: &StatementSpanTree,
+) -> Result<(), String> {
+    verify_span_nodes(&program.statements, &tree.statements, "program")
+}
+
+fn verify_span_nodes(
+    statements: &[Statement],
+    nodes: &[StatementSpanNode],
+    path: &str,
+) -> Result<(), String> {
+    if statements.len() != nodes.len() {
+        return Err(format!(
+            "{path}: {} statements but {} span nodes",
+            statements.len(),
+            nodes.len()
+        ));
+    }
+
+    for (index, (statement, node)) in statements.iter().zip(nodes).enumerate() {
+        let path = format!("{path}[{index}]");
+        let kind = StatementSpanKind::of(statement);
+        if node.kind != kind {
+            return Err(format!(
+                "{path}: statement is {kind:?} but span node is {:?}",
+                node.kind
+            ));
+        }
+
+        match statement {
+            Statement::If(if_statement) => {
+                if node.elif_branches.len() != if_statement.elif_branches.len() {
+                    return Err(format!(
+                        "{path}: {} elif branches but {} span branches",
+                        if_statement.elif_branches.len(),
+                        node.elif_branches.len()
+                    ));
+                }
+                if node.else_branch.is_some() != if_statement.else_branch.is_some() {
+                    return Err(format!("{path}: else branch presence mismatch"));
+                }
+                if !node.cases.is_empty() {
+                    return Err(format!("{path}: If span node carries match cases"));
+                }
+                verify_span_nodes(
+                    &if_statement.then_branch,
+                    &node.children,
+                    &format!("{path}.then"),
+                )?;
+                for (branch_index, ((_, body), branch)) in if_statement
+                    .elif_branches
+                    .iter()
+                    .zip(&node.elif_branches)
+                    .enumerate()
+                {
+                    verify_span_nodes(
+                        body,
+                        &branch.children,
+                        &format!("{path}.elif[{branch_index}]"),
+                    )?;
+                }
+                if let (Some(body), Some(branch)) = (&if_statement.else_branch, &node.else_branch) {
+                    verify_span_nodes(body, &branch.children, &format!("{path}.else"))?;
+                }
+            }
+            Statement::Match(match_statement) => {
+                if node.cases.len() != match_statement.cases.len() {
+                    return Err(format!(
+                        "{path}: {} match cases but {} span cases",
+                        match_statement.cases.len(),
+                        node.cases.len()
+                    ));
+                }
+                verify_leaf_shape(node, &path, true)?;
+                for (case_index, (case, branch)) in
+                    match_statement.cases.iter().zip(&node.cases).enumerate()
+                {
+                    verify_span_nodes(
+                        &case.body,
+                        &branch.children,
+                        &format!("{path}.case[{case_index}]"),
+                    )?;
+                }
+            }
+            Statement::FunctionDef(function) => {
+                verify_body_shape(&function.body, node, &path)?;
+            }
+            Statement::For(for_loop) => verify_body_shape(&for_loop.body, node, &path)?,
+            Statement::While(while_loop) => verify_body_shape(&while_loop.body, node, &path)?,
+            Statement::Execute(execute) => verify_body_shape(&execute.body, node, &path)?,
+            _ => {
+                verify_leaf_shape(node, &path, false)?;
+                if !node.children.is_empty() {
+                    return Err(format!("{path}: leaf span node has children"));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn verify_body_shape(
+    body: &[Statement],
+    node: &StatementSpanNode,
+    path: &str,
+) -> Result<(), String> {
+    verify_leaf_shape(node, path, false)?;
+    verify_span_nodes(body, &node.children, path)
+}
+
+fn verify_leaf_shape(
+    node: &StatementSpanNode,
+    path: &str,
+    allow_cases: bool,
+) -> Result<(), String> {
+    if !node.elif_branches.is_empty() || node.else_branch.is_some() {
+        return Err(format!("{path}: span node carries stray if branches"));
+    }
+    if !allow_cases && !node.cases.is_empty() {
+        return Err(format!("{path}: span node carries stray match cases"));
+    }
+    if allow_cases && !node.children.is_empty() {
+        return Err(format!("{path}: Match span node has direct children"));
+    }
+    Ok(())
+}
+
+struct SpanTreeBuilder<'a> {
+    tokens: &'a [SpannedToken],
+    index: usize,
+}
+
+impl<'a> SpanTreeBuilder<'a> {
+    fn peek(&self) -> Option<&'a Token> {
+        self.tokens.get(self.index).map(|token| &token.token)
+    }
+
+    fn peek_at(&self, offset: usize) -> Option<&'a Token> {
+        self.tokens
+            .get(self.index + offset)
+            .map(|token| &token.token)
+    }
+
+    fn expect(&mut self, predicate: impl Fn(&Token) -> bool) -> Option<&'a SpannedToken> {
+        let token = self.tokens.get(self.index)?;
+        if predicate(&token.token) {
+            self.index += 1;
+            Some(token)
+        } else {
+            None
+        }
+    }
+
+    fn bump_if(&mut self, predicate: impl Fn(&Token) -> bool) {
+        if self.peek().is_some_and(predicate) {
+            self.index += 1;
+        }
+    }
+
+    fn skip_newlines(&mut self) {
+        while matches!(self.peek(), Some(Token::Newline)) {
+            self.index += 1;
+        }
+    }
+
+    /// Span covering `tokens[start_index..self.index]`, plus the last
+    /// token's line. `line`/`column` come from the first token.
+    fn span_from(&self, start_index: usize) -> Option<(SourceSpan, usize)> {
+        if self.index <= start_index {
+            return None;
+        }
+        let first = self.tokens.get(start_index)?;
+        let last = self.tokens.get(self.index - 1)?;
+        Some((
+            SourceSpan::new(
+                first.span.start,
+                last.span.end,
+                first.span.line,
+                first.span.column,
+            ),
+            last.span.line,
+        ))
+    }
+
+    /// Consume header tokens up to (not including) the next
+    /// `Newline`/`Indent`/`Dedent`/`Eof`. Bracket-suppressed newlines keep a
+    /// multiline call inside one header.
+    fn header_span_to_newline(&mut self) -> Option<(SourceSpan, usize)> {
+        let start_index = self.index;
+        while let Some(token) = self.peek() {
+            match token {
+                Token::Newline | Token::Indent | Token::Dedent | Token::Eof => break,
+                _ => self.index += 1,
+            }
+        }
+        self.span_from(start_index)
+    }
+
+    fn build_block(
+        &mut self,
+        statements: &[Statement],
+        top_level: bool,
+    ) -> Option<Vec<StatementSpanNode>> {
+        let mut nodes = Vec::new();
+        let mut remaining = statements.iter();
+        loop {
+            self.skip_newlines();
+            match self.peek() {
+                None | Some(Token::Dedent | Token::Eof) => break,
+                // A block can only start after a header the caller consumed.
+                Some(Token::Indent) => return None,
+                Some(Token::Import | Token::From) if top_level => {
+                    // Top-level import headers live in
+                    // `ProgramSpanTable.imports` and have no counterpart in
+                    // `Program.statements` (token_parser filters them out).
+                    self.header_span_to_newline()?;
+                }
+                Some(_) => {
+                    let statement = remaining.next()?;
+                    nodes.push(self.build_statement(statement)?);
+                }
+            }
+        }
+        // Both sides must run out together.
+        if remaining.next().is_some() {
+            return None;
+        }
+        Some(nodes)
+    }
+
+    fn build_statement(&mut self, statement: &Statement) -> Option<StatementSpanNode> {
+        let kind = StatementSpanKind::of(statement);
+        let start_index = self.index;
+        match statement {
+            // A `Pass` comes from the `pass` keyword or from a docstring
+            // string token. One source line may hold several string tokens
+            // (`"""docs"""` tokenizes as three), each its own statement, so
+            // consume exactly one token instead of the rest of the line.
+            Statement::Pass => {
+                self.expect(|token| matches!(token, Token::Pass | Token::String(_)))?;
+                self.leaf_from(kind, start_index)
+            }
+            Statement::MinecraftCommand(_) => {
+                self.expect(|token| matches!(token, Token::MinecraftCommand(_)))?;
+                self.leaf_from(kind, start_index)
+            }
+            Statement::Expression(_) => {
+                self.scan_expression()?;
+                self.leaf_from(kind, start_index)
+            }
+            Statement::Assignment(_) => {
+                self.scan_assignment()?;
+                self.leaf_from(kind, start_index)
+            }
+            Statement::ConstAssignment(_) => {
+                self.expect(|token| matches!(token, Token::Const))?;
+                self.expect(|token| matches!(token, Token::Ident(_)))?;
+                self.expect(|token| matches!(token, Token::Equals))?;
+                self.scan_expression()?;
+                self.leaf_from(kind, start_index)
+            }
+            Statement::Return(value) => {
+                self.expect(|token| matches!(token, Token::Return))?;
+                if value.is_some() {
+                    self.scan_expression()?;
+                }
+                self.leaf_from(kind, start_index)
+            }
+            Statement::Global(_) => {
+                self.expect(|token| matches!(token, Token::Global))?;
+                self.scan_ident_list();
+                self.leaf_from(kind, start_index)
+            }
+            Statement::Import(_) => {
+                self.scan_import()?;
+                self.leaf_from(kind, start_index)
+            }
+            Statement::SelectorDef(_) => {
+                self.expect(|token| matches!(token, Token::Ident(name) if name.starts_with('@')))?;
+                self.expect(|token| matches!(token, Token::Equals))?;
+                self.expect(|token| matches!(token, Token::Ident(name) if name.starts_with('@')))?;
+                self.leaf_from(kind, start_index)
+            }
+            Statement::CreateEntity(_) => {
+                self.expect(|token| matches!(token, Token::Create))?;
+                self.expect(|token| matches!(token, Token::Ident(name) if name.starts_with('@')))?;
+                self.leaf_from(kind, start_index)
+            }
+            // `define @Name = @Sel [\n] create <expr> [\n] end` is one AST
+            // statement spanning several source lines; its header span covers
+            // `define` through `end`.
+            Statement::EntityDef(_) => {
+                self.expect(|token| matches!(token, Token::Define))?;
+                self.expect(|token| matches!(token, Token::Ident(name) if name.starts_with('@')))?;
+                self.expect(|token| matches!(token, Token::Equals))?;
+                self.expect(|token| matches!(token, Token::Ident(name) if name.starts_with('@')))?;
+                self.bump_if(|token| matches!(token, Token::Newline));
+                self.expect(|token| matches!(token, Token::Create))?;
+                self.scan_expression()?;
+                self.bump_if(|token| matches!(token, Token::Newline));
+                self.expect(|token| matches!(token, Token::End))?;
+                self.leaf_from(kind, start_index)
+            }
+            Statement::FunctionDef(function) => self.build_body_statement(kind, &function.body),
+            Statement::For(for_loop) => self.build_body_statement(kind, &for_loop.body),
+            Statement::While(while_loop) => self.build_body_statement(kind, &while_loop.body),
+            Statement::Execute(execute) => self.build_body_statement(kind, &execute.body),
+            Statement::If(if_statement) => self.build_if_statement(if_statement),
+            Statement::Match(match_statement) => self.build_match_statement(match_statement),
+        }
+    }
+
+    fn leaf_from(
+        &mut self,
+        kind: StatementSpanKind,
+        start_index: usize,
+    ) -> Option<StatementSpanNode> {
+        let (span, end_line) = self.span_from(start_index)?;
+        Some(StatementSpanNode::leaf(kind, span, end_line))
+    }
+
+    fn build_body_statement(
+        &mut self,
+        kind: StatementSpanKind,
+        body: &[Statement],
+    ) -> Option<StatementSpanNode> {
+        let (span, end_line) = self.header_span_to_newline()?;
+        let children = self.expect_indented_block(body)?;
+        let mut node = StatementSpanNode::leaf(kind, span, end_line);
+        node.children = children;
+        Some(node)
+    }
+
+    fn build_if_statement(&mut self, if_statement: &IfStatement) -> Option<StatementSpanNode> {
+        let (span, end_line) = self.header_span_to_newline()?;
+        let children = self.expect_indented_block(&if_statement.then_branch)?;
+        let mut elif_branches = Vec::new();
+        for (_, body) in &if_statement.elif_branches {
+            self.skip_newlines();
+            if !matches!(self.peek(), Some(Token::Elif)) {
+                return None;
+            }
+            elif_branches.push(self.build_branch(body)?);
+        }
+        let else_branch = if let Some(body) = &if_statement.else_branch {
+            self.skip_newlines();
+            if !matches!(self.peek(), Some(Token::Else)) {
+                return None;
+            }
+            Some(self.build_branch(body)?)
+        } else {
+            None
+        };
+        let mut node = StatementSpanNode::leaf(StatementSpanKind::If, span, end_line);
+        node.children = children;
+        node.elif_branches = elif_branches;
+        node.else_branch = else_branch;
+        Some(node)
+    }
+
+    fn build_match_statement(
+        &mut self,
+        match_statement: &MatchStatement,
+    ) -> Option<StatementSpanNode> {
+        let (span, end_line) = self.header_span_to_newline()?;
+        self.skip_newlines();
+        self.expect(|token| matches!(token, Token::Indent))?;
+        let mut cases = Vec::new();
+        for case in &match_statement.cases {
+            self.skip_newlines();
+            if !matches!(self.peek(), Some(Token::Case)) {
+                return None;
+            }
+            cases.push(self.build_branch(&case.body)?);
+        }
+        self.skip_newlines();
+        self.expect(|token| matches!(token, Token::Dedent))?;
+        let mut node = StatementSpanNode::leaf(StatementSpanKind::Match, span, end_line);
+        node.cases = cases;
+        Some(node)
+    }
+
+    /// One `elif`/`else`/`case` arm: header line plus indented body.
+    fn build_branch(&mut self, body: &[Statement]) -> Option<StatementSpanBranch> {
+        let (header, end_line) = self.header_span_to_newline()?;
+        let children = self.expect_indented_block(body)?;
+        Some(StatementSpanBranch {
+            header,
+            end_line,
+            children,
+        })
+    }
+
+    fn expect_indented_block(
+        &mut self,
+        statements: &[Statement],
+    ) -> Option<Vec<StatementSpanNode>> {
+        self.skip_newlines();
+        self.expect(|token| matches!(token, Token::Indent))?;
+        let children = self.build_block(statements, false)?;
+        self.expect(|token| matches!(token, Token::Dedent))?;
+        Some(children)
+    }
+
+    /// `import module` or `from module import a.b, c` (trailing comma
+    /// allowed), mirroring the grammar's import parsers.
+    fn scan_import(&mut self) -> Option<()> {
+        match self.peek() {
+            Some(Token::Import) => {
+                self.index += 1;
+                self.expect(|token| matches!(token, Token::Ident(_)))?;
+            }
+            Some(Token::From) => {
+                self.index += 1;
+                self.expect(|token| matches!(token, Token::Ident(_)))?;
+                self.expect(|token| matches!(token, Token::Import))?;
+                while matches!(self.peek(), Some(Token::Ident(_))) {
+                    self.index += 1;
+                    while matches!(self.peek(), Some(Token::Dot))
+                        && matches!(self.peek_at(1), Some(Token::Ident(_)))
+                    {
+                        self.index += 2;
+                    }
+                    if matches!(self.peek(), Some(Token::Comma)) {
+                        self.index += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            _ => return None,
+        }
+        Some(())
+    }
+
+    /// Comma-separated identifier list with optional trailing comma
+    /// (`global a, b,`). Zero items is grammatically valid.
+    fn scan_ident_list(&mut self) {
+        while matches!(self.peek(), Some(Token::Ident(_))) {
+            self.index += 1;
+            if matches!(self.peek(), Some(Token::Comma)) {
+                self.index += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// `target = expr` or `target <op>= expr`, mirroring the grammar's
+    /// assignment/compound-assignment parsers.
+    fn scan_assignment(&mut self) -> Option<()> {
+        self.scan_assignment_target()?;
+        match self.peek() {
+            Some(Token::Equals) => self.index += 1,
+            Some(
+                Token::Plus
+                | Token::Minus
+                | Token::Star
+                | Token::Slash
+                | Token::Percent
+                | Token::Caret,
+            ) if matches!(self.peek_at(1), Some(Token::Equals)) => self.index += 2,
+            _ => return None,
+        }
+        self.scan_expression()
+    }
+
+    /// Assignment target: identifier plus `.ident` / `[index]` accessor
+    /// chains (no call groups, matching the grammar's `assignment_target`).
+    fn scan_assignment_target(&mut self) -> Option<()> {
+        self.expect(|token| matches!(token, Token::Ident(_)))?;
+        self.scan_postfix_accessors()
+    }
+
+    /// Greedy expression extent mirroring the grammar's precedence chain.
+    /// Correct for token streams that parsed successfully: chumsky's
+    /// combinators are greedy, so after a binary operator a valid operand
+    /// always follows, and expressions never cross `Newline` tokens.
+    fn scan_expression(&mut self) -> Option<()> {
+        self.scan_operand()?;
+        while matches!(
+            self.peek(),
+            Some(
+                Token::Plus
+                    | Token::Minus
+                    | Token::Star
+                    | Token::Slash
+                    | Token::Percent
+                    | Token::Caret
+                    | Token::EqEq
+                    | Token::NotEq
+                    | Token::Lt
+                    | Token::LtEq
+                    | Token::Gt
+                    | Token::GtEq
+                    | Token::And
+                    | Token::Or
+            )
+        ) {
+            self.index += 1;
+            self.scan_operand()?;
+        }
+        Some(())
+    }
+
+    /// One operand: unary prefixes, an atom, `.ident`/`[index]` accessor
+    /// chains, then at most one call-argument group — the grammar's `call`
+    /// rule allows a single parenthesized group after the postfix chain.
+    fn scan_operand(&mut self) -> Option<()> {
+        while matches!(self.peek(), Some(Token::Not | Token::Minus | Token::Plus)) {
+            self.index += 1;
+        }
+        match self.peek() {
+            Some(
+                Token::Number(_)
+                | Token::String(_)
+                | Token::True_
+                | Token::False_
+                | Token::None_
+                | Token::Ident(_),
+            ) => self.index += 1,
+            Some(Token::LParen | Token::LBracket | Token::LBrace) => self.scan_balanced_group()?,
+            _ => return None,
+        }
+        self.scan_postfix_accessors()?;
+        if matches!(self.peek(), Some(Token::LParen)) {
+            self.scan_balanced_group()?;
+        }
+        Some(())
+    }
+
+    /// `.ident` and `[index]` accessor chains. A `.` not followed by an
+    /// identifier is not an accessor (the grammar's postfix choice fails
+    /// cleanly there), so it ends the chain without being consumed.
+    fn scan_postfix_accessors(&mut self) -> Option<()> {
+        loop {
+            match self.peek() {
+                Some(Token::Dot) if matches!(self.peek_at(1), Some(Token::Ident(_))) => {
+                    self.index += 2
+                }
+                Some(Token::LBracket) => self.scan_balanced_group()?,
+                _ => break,
+            }
+        }
+        Some(())
+    }
+
+    /// Consume a balanced `(...)`/`[...]`/`{...}` group. The tokenizer
+    /// suppresses `Newline`/`Indent`/`Dedent` inside open groups, so this
+    /// never crosses a statement boundary.
+    fn scan_balanced_group(&mut self) -> Option<()> {
+        let mut depth = 0usize;
+        loop {
+            match self.peek()? {
+                Token::LParen | Token::LBracket | Token::LBrace => {
+                    depth += 1;
+                    self.index += 1;
+                }
+                Token::RParen | Token::RBracket | Token::RBrace => {
+                    depth = depth.checked_sub(1)?;
+                    self.index += 1;
+                    if depth == 0 {
+                        return Some(());
+                    }
+                }
+                Token::Eof => return None,
+                _ => self.index += 1,
+            }
+        }
+    }
 }
 
 #[cfg(test)]

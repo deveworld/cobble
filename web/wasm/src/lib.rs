@@ -155,12 +155,13 @@ fn compile(
     experimental_resource_pack: bool,
     experimental_python_compat: bool,
 ) -> Result<CompileResponse, Vec<CompileDiagnostic>> {
-    let program = diagnostics::parse_source(source)
+    let located = diagnostics::parse_source_located(source)
         .map_err(|diagnostics| source_diagnostics("demo.cbl", source, diagnostics))?;
-    let import_diagnostics = diagnostics::analyze_in_memory_imports(source, &program.imports);
+    let import_diagnostics = diagnostics::analyze_in_memory_imports(source, &located);
     if !import_diagnostics.is_empty() {
         return Err(source_diagnostics("demo.cbl", source, import_diagnostics));
     }
+    let program = located.program;
 
     let mut transpiler = Transpiler::new(namespace.to_string(), PathBuf::from("cobble-web-demo"));
     transpiler.set_description(description.to_string());
