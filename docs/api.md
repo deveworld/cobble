@@ -34,6 +34,34 @@ Manual tokenizer that handles indentation with INDENT/DEDENT tokens and distingu
 
 The main parser built with chumsky combinator library that handles Python-style indented syntax.
 
+#### Function: `parse_located_with_diagnostics(source: &str) -> Result<LocatedProgram, Vec<SourceDiagnostic>>`
+
+Parses source and additionally returns provenance sidecars, leaving `parse`,
+`parse_with_diagnostics`, and the AST shape untouched.
+
+`LocatedProgram` holds the parsed `program` plus a `spans: ProgramSpanTable`
+with:
+
+- `imports: Vec<SourceSpan>` — aligned one-to-one with `Program.imports`.
+- `statements: Vec<StatementSpan>` — the original header-shaped table used by
+  source maps.
+- `statement_tree: Option<StatementSpanTree>` — an AST-shaped tree with exactly
+  one `StatementSpanNode` per parsed statement. `if` statements carry their
+  `elif_branches` and `else_branch`; `match` statements carry their `cases`;
+  bodies are `children`. Reach it through
+  `LocatedProgram::statement_spans() -> Option<&StatementSpanTree>`.
+
+Each node records the statement header's `span` (byte range plus 1-based line
+and column) and its `end_line`, along with a `StatementSpanKind` tag naming the
+`Statement` variant. Because the tree mirrors the AST, consumers can walk
+statements and spans in lockstep; `verify_span_tree_alignment(&Program,
+&StatementSpanTree)` checks that invariant, and the parser publishes `None`
+rather than a mismatched tree, so callers should treat `None` as "fall back to
+other position sources".
+
+The semantic diagnostics engine (`src/diagnostics/semantic.rs`) is the primary
+consumer.
+
 #### Function: `parse(source: &str) -> Result<Program, Vec<String>>`
 
 Parses Cobble source code into an AST using chumsky parser combinators.
@@ -99,12 +127,13 @@ selector aliases, and entity templates are rejected across independent root
 files as well as imported files before one generated function can overwrite
 another.
 
-#### Function: `analyze_in_memory_imports(source: &str, imports: &[Import]) -> Vec<SourceDiagnostic>`
+#### Function: `analyze_in_memory_imports(source: &str, located: &LocatedProgram) -> Vec<SourceDiagnostic>`
 
 Reports non-stdlib imports for browser or editor entry points that compile a
-single in-memory source file. The CLI resolves local import files from disk,
-but the web compiler intentionally returns a structured `missing-import`
-diagnostic unless the import is `stdlib`.
+single in-memory source file, anchoring each `missing-import` diagnostic on
+the import header span recorded in `located.spans.imports`. The CLI resolves
+local import files from disk, but the web compiler intentionally returns a
+structured `missing-import` diagnostic unless the import is `stdlib`.
 
 #### Function: `analyze_source(source: &str) -> Vec<SourceDiagnostic>`
 

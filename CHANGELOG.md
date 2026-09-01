@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `{var}` substitution inside `tellraw`/`title` JSON array components.
 
 ### Changed
+- The diagnostics engine now parses each source once and runs every
+  post-parse semantic check as a span-anchored AST pass in
+  `src/diagnostics/semantic.rs`, replacing the line-by-line text heuristics.
+  Only structural, indentation, and unsupported-Python checks — the ones that
+  must guard the parser — still scan raw lines. Diagnostic kinds, messages,
+  and the `check --json` shape are unchanged.
+- The parser exposes the statement provenance sidecar publicly:
+  `ProgramSpanTable` gained a `statement_tree` field, and the parser exports
+  `StatementSpanTree`, `StatementSpanNode`, `StatementSpanBranch`,
+  `StatementSpanKind`, and `verify_span_tree_alignment`, plus
+  `LocatedProgram::statement_spans()`. The tree holds one node per parsed
+  statement, so consumers can walk statements and positions in lockstep.
 - Generated code: functions containing `return` start with a
   `#return_flag_<id>` prologue and generated control-flow helper calls
   propagate pending returns; user-function calls stage arguments through
@@ -81,6 +93,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message prefixes. CLI, `check --json`, and web/wasm output are unchanged.
 
 ### Fixed
+- Compiler panic on non-ASCII identifiers: the compound-assignment and
+  top-level-operator scanners walked raw byte positions but sliced the source
+  as text, so a name such as `val한e` or an expression containing multi-byte
+  characters aborted the process instead of reporting a diagnostic.
+- Errors inside multi-line constructs are reported where they occur. Argument
+  counts and unsupported value calls written across several lines (including
+  inside docstring bodies) now point at the call site instead of surfacing
+  later as a generic transpiler error at line 1, and multi-line `def` headers
+  now bind their parameters (removing a false "undefined" class) and are
+  checked for duplicate parameters like their single-line spelling.
+- Nested `def`s no longer leak parameter scope into the enclosing function,
+  and placeholder scoping under bracket-continued headers is fixed.
+- `no-op-expression` also covers parenthesized and call-containing statements,
+  which the previous scanner skipped.
+- Missing-import diagnostics in the browser compiler point at the import site
+  instead of falling back to line 1 for irregular spellings.
+- A source that fails to parse now reports its parse error (plus any
+  pre-parse findings) instead of additionally co-reporting text-scan findings
+  on lines the parser rejected.
 - Recursive function calls (direct or through a cycle) are now rejected at
   compile time with a diagnostic suggesting a loop rewrite. Previously
   recursion compiled but mis-executed: per-call-site argument staging was

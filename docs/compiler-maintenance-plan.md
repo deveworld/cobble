@@ -35,7 +35,9 @@ Target contract:
   `source: { file, line, column }`. Ranges or file ids in serialized metadata
   should be optional or schema-versioned.
 
-Migration phases:
+Migration phases (status as of the diagnostics span migration: phases 1-4 and
+6 are delivered; phase 5 — transpiler command/resource metadata preferring
+located spans — and phase 7 remain):
 
 1. Add span-capable token/parser plumbing while keeping existing AST fields.
    `SourceSpan`, `SpannedToken`, and `tokenize_spanned` now provide byte
@@ -45,7 +47,11 @@ Migration phases:
    line/column diagnostic JSON and display shape.
 3. Add additive located parser APIs that return `Program` plus statement/import
    provenance sidecars. Keep `parse`, `parse_with_diagnostics`, and
-   `token_parser` behavior unchanged.
+   `token_parser` behavior unchanged. Delivered: `parse_located_with_diagnostics`
+   returns a `ProgramSpanTable` whose `statement_tree` mirrors the parsed
+   `Program` one node per statement (`elif`/`else` folded into their `if`,
+   `case` headers into their `match`), checked by `verify_span_tree_alignment`
+   and dropped rather than published when a shape mismatch is detected.
 4. Add source-map provenance regression tests before changing behavior:
    imported files, compile-time unrolling, raw commands, CRLF, Unicode, and
    multiline calls.
@@ -53,7 +59,9 @@ Migration phases:
    existing line-scan/source-key fallbacks.
 6. Migrate post-parse semantic diagnostics to consume spans where available.
    Keep pre-parse line-scan checks for indentation, structural syntax, and
-   unsupported Python constructs.
+   unsupported Python constructs. Delivered: `src/diagnostics/semantic.rs`
+   walks statements and span nodes in lockstep, and the pre-parse layer keeps
+   only the checks that must guard the parser.
 7. Remove obsolete line-scan fallbacks only after source-map regression
    snapshots cover imports, unrolling, resource JSON, and raw commands.
 
@@ -123,15 +131,18 @@ Deliberately left in place by the 2026-08 hardening pass; recorded here so
 the scope decision is explicit. Entries retired by later structural rounds
 stay listed with one-line resolution notes.
 
-- Text-heuristic diagnostics engine — remaining. `src/diagnostics.rs` (~6.4k
-  lines including tests) scans source line-by-line without an AST, and the
-  expression/keyword skip lists are replicated across several scan helpers,
-  so each new syntax form must be registered in multiple places (the shared
-  line-text helpers such as `mask_non_code` now live in
-  `src/diagnostics/text.rs`, but the heuristic scans themselves are
-  unchanged). Extraction plan: move post-parse semantic checks onto the
-  span-backed AST checker described under Source Provenance And Spans,
-  keeping only the pre-parse structural/indentation scans as text passes.
+- Text-heuristic diagnostics engine — resolved in a later round. Every
+  post-parse semantic check now runs as a span-anchored AST pass in
+  `src/diagnostics/semantic.rs`; `src/diagnostics.rs` keeps only the
+  pre-parse structural, indentation, and unsupported-Python scans plus the
+  staged orchestration, and each source is parsed exactly once per analysis.
+  End state: `src/diagnostics.rs` 6,391 → 3,148 lines,
+  `src/diagnostics/semantic.rs` 4,066 (new), `src/diagnostics/imports.rs`
+  1,045 → 951. Verified against a 195-fixture diagnostic corpus captured
+  before the migration: byte-identical output except three reviewed deltas
+  (one position improvement, two redundant co-reports dropped on sources that
+  never parse). Remaining follow-up is listed under Source Provenance And
+  Spans phase 5.
 - Assignment decision ladder — resolved in this round: `process_assignment`
   now classifies the target (`AssignTargetKind`: storage expression,
   module-level, local variable) and dispatches to per-kind lowering
