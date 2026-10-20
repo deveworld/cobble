@@ -16,14 +16,13 @@ pub enum TranslatedCondition {
     /// ("if score x temp matches 1 unless score y temp matches 2").
     Simple(String),
     /// Logical AND whose sides could not be joined into one `Simple` chain
-    /// because at least one side contains an OR.
+    /// because at least one side contains an OR. `not` never survives
+    /// translation: it is pushed down to single clauses with De Morgan's laws,
+    /// so negation is always expressed through `Simple`, `AllOf`, and `AnyOf`.
     AllOf(Box<TranslatedCondition>, Box<TranslatedCondition>),
     /// Logical OR of two alternatives; lowered to a flag variable at the
     /// emission site.
     AnyOf(Box<TranslatedCondition>, Box<TranslatedCondition>),
-    /// Logical negation of a structured (OR-carrying) condition. Simple
-    /// conditions are negated inline by the translator and never appear here.
-    Negated(Box<TranslatedCondition>),
     /// A condition that can never succeed (e.g. `x > i32::MAX`), folded from
     /// the translator's inline always-false spelling for raw execute
     /// conditions.
@@ -31,15 +30,6 @@ pub enum TranslatedCondition {
 }
 
 impl TranslatedCondition {
-    /// True for shapes that need deferred lowering and therefore cannot be
-    /// joined into a single `Simple` chain.
-    fn is_structured(&self) -> bool {
-        matches!(
-            self,
-            Self::AllOf(..) | Self::AnyOf(..) | Self::Negated(..) | Self::AlwaysFalse
-        )
-    }
-
     /// Visit every `Simple` fragment, left to right.
     pub fn for_each_simple(&self, visit: &mut impl FnMut(&str)) {
         match self {
@@ -48,7 +38,6 @@ impl TranslatedCondition {
                 left.for_each_simple(visit);
                 right.for_each_simple(visit);
             }
-            Self::Negated(inner) => inner.for_each_simple(visit),
             Self::AlwaysFalse => {}
         }
     }
@@ -61,7 +50,6 @@ impl TranslatedCondition {
                 left.map_simple(rewrite);
                 right.map_simple(rewrite);
             }
-            Self::Negated(inner) => inner.map_simple(rewrite),
             Self::AlwaysFalse => {}
         }
     }
@@ -96,33 +84,7 @@ impl<'a> ConditionTranslator<'a> {
             Expression::Binary(left, op, right) => {
                 match op {
                     BinaryOp::And => {
-                        let left_cond = self.translate(left)?;
-                        let right_cond = self.translate(right)?;
-
-                        // If either side contains an OR the AND cannot be
-                        // rendered as one "if ... if ..." chain here; the
-                        // emission site lowers the OR side(s) first.
-                        if left_cond.is_structured() || right_cond.is_structured() {
-                            return Ok(TranslatedCondition::AllOf(
-                                Box::new(left_cond),
-                                Box::new(right_cond),
-                            ));
-                        }
-
-                        let (
-                            TranslatedCondition::Simple(left_cond),
-                            TranslatedCondition::Simple(right_cond),
-                        ) = (left_cond, right_cond)
-                        else {
-                            unreachable!("non-OR conditions are always Simple");
-                        };
-
-                        // And: chain the conditions with "if ... if ..."
-                        Ok(TranslatedCondition::Simple(format!(
-                            "{} {}",
-                            Transpiler::condition_execute_args(&left_cond),
-                            Transpiler::condition_execute_args(&right_cond)
-                        )))
+                        Ok(Self::conjoin(self.translate(left)?, self.translate(right)?))
                     }
                     BinaryOp::Or => {
                         // Or: requires setting a flag variable at the
@@ -141,6 +103,14 @@ impl<'a> ConditionTranslator<'a> {
             Expression::Identifier(var) => {
                 self.reject_storage_backed_operand(condition)?;
 
+                // A compile-time constant has no score; fold its truthiness
+                // with the same "value > 0" rule a score variable uses.
+                if let Some(value) = self.compile_time_constants.get(var) {
+                    return Ok(TranslatedCondition::Simple(Self::constant_condition(
+                        (*value as i32) >= 1,
+                    )));
+                }
+
                 // Simple boolean check: treat as "var > 0"
                 let objective = self
                     .variable_objectives
@@ -152,39 +122,13 @@ impl<'a> ConditionTranslator<'a> {
                     var, objective
                 )))
             }
-            Expression::Unary(op, expr) => {
-                match op {
-                    UnaryOp::Not => {
-                        let inner_cond = self.translate(expr)?;
-                        match inner_cond {
-                            TranslatedCondition::Simple(inner) => Ok(TranslatedCondition::Simple(
-                                Self::negate_simple_condition(inner),
-                            )),
-                            // Double negation cancels out.
-                            TranslatedCondition::Negated(inner) => Ok(*inner),
-                            // NOT around an OR-carrying condition is negated
-                            // at the emission site, after the OR is lowered.
-                            structured => Ok(TranslatedCondition::Negated(Box::new(structured))),
-                        }
-                    }
-                    _ => Err("Unsupported unary operator in condition".into()),
-                }
-            }
-            Expression::Boolean(b) => {
-                // Boolean literals - use a condition that always evaluates correctly
-                // regardless of execution context
-                if *b {
-                    // True: use a condition that always succeeds
-                    Ok(TranslatedCondition::Simple(
-                        "score #true_const __internal__ matches 1".to_string(),
-                    ))
-                } else {
-                    // False: use a condition that always fails
-                    Ok(TranslatedCondition::Simple(
-                        "score #false_const __internal__ matches 1".to_string(),
-                    ))
-                }
-            }
+            Expression::Unary(op, expr) => match op {
+                UnaryOp::Not => Ok(Self::negate(self.translate(expr)?)),
+                _ => Err("Unsupported unary operator in condition".into()),
+            },
+            // Boolean literals use internal constants so they evaluate the
+            // same regardless of execution context.
+            Expression::Boolean(b) => Ok(TranslatedCondition::Simple(Self::constant_condition(*b))),
             _ => Err(format!(
                 "Unsupported condition expression. Conditions must be:\n\
                  - Comparisons (x > y, x == 5, etc.)\n\
@@ -198,21 +142,62 @@ impl<'a> ConditionTranslator<'a> {
         }
     }
 
-    /// Negate a simple (marker-free) condition inline by flipping its
-    /// if/unless spelling.
-    fn negate_simple_condition(inner_cond: String) -> String {
-        if inner_cond.starts_with("unless ") {
-            // Double negative: "unless" becomes "if"
-            inner_cond.replace("unless ", "if ")
-        } else if inner_cond.starts_with("score ")
-            || inner_cond.starts_with("entity ")
-            || inner_cond.starts_with("block ")
-        {
-            // Add "unless" prefix
-            format!("unless {}", inner_cond)
+    /// Condition text that always (or never) passes, backed by the internal
+    /// `#true_const`/`#false_const` scores. Callers that emit it must make
+    /// sure the `__internal__` objective is registered.
+    fn constant_condition(value: bool) -> String {
+        if value {
+            "score #true_const __internal__ matches 1".to_string()
         } else {
-            // Already has "if", convert to "unless"
-            inner_cond.replace("if ", "unless ")
+            "score #false_const __internal__ matches 1".to_string()
+        }
+    }
+
+    /// Logical AND of two translated conditions: one "if ... if ..." chain
+    /// when both sides are simple, otherwise a structured `AllOf` that the
+    /// emission site lowers after materializing the OR side(s).
+    fn conjoin(left: TranslatedCondition, right: TranslatedCondition) -> TranslatedCondition {
+        match (left, right) {
+            (TranslatedCondition::Simple(left), TranslatedCondition::Simple(right)) => {
+                TranslatedCondition::Simple(format!(
+                    "{} {}",
+                    Transpiler::condition_execute_args(&left),
+                    Transpiler::condition_execute_args(&right)
+                ))
+            }
+            (left, right) => TranslatedCondition::AllOf(Box::new(left), Box::new(right)),
+        }
+    }
+
+    /// Logical NOT, pushed down to single clauses with De Morgan's laws. A
+    /// simple chain "if A if B" means A and B, so its negation is the OR of
+    /// the negated clauses, never the chain with every prefix flipped (which
+    /// would mean "not A and not B").
+    fn negate(condition: TranslatedCondition) -> TranslatedCondition {
+        match condition {
+            TranslatedCondition::Simple(text) => {
+                let mut negated = condition_clauses(&text)
+                    .into_iter()
+                    .map(|clause| TranslatedCondition::Simple(negate_clause(&clause)));
+                let first = negated
+                    .next()
+                    .expect("translated conditions have at least one clause");
+                negated.fold(first, |alternatives, next| {
+                    TranslatedCondition::AnyOf(Box::new(alternatives), Box::new(next))
+                })
+            }
+            TranslatedCondition::AnyOf(left, right) => {
+                Self::conjoin(Self::negate(*left), Self::negate(*right))
+            }
+            TranslatedCondition::AllOf(left, right) => TranslatedCondition::AnyOf(
+                Box::new(Self::negate(*left)),
+                Box::new(Self::negate(*right)),
+            ),
+            // The translator never produces AlwaysFalse (it is folded from raw
+            // execute conditions after translation); negating it always passes.
+            TranslatedCondition::AlwaysFalse => {
+                TranslatedCondition::Simple(Self::constant_condition(true))
+            }
         }
     }
 
@@ -447,5 +432,65 @@ impl<'a> ConditionTranslator<'a> {
         } else {
             Ok("score #false_const __internal__ matches 1".to_string())
         }
+    }
+}
+
+/// Split rendered execute-condition text into its `if`/`unless`-prefixed
+/// clauses. A bare leading condition ("score x temp matches 1..") is read as
+/// an `if` clause. Clause boundaries inside `[...]`, `{...}`, `(...)`, and
+/// quoted strings are ignored, so selector arguments and NBT never split.
+pub(in crate::transpiler) fn condition_clauses(text: &str) -> Vec<String> {
+    let text = text.trim();
+    let text = if text.starts_with("if ") || text.starts_with("unless ") {
+        text.to_string()
+    } else {
+        format!("if {}", text)
+    };
+
+    let mut clauses = Vec::new();
+    let mut start = 0;
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' | '{' | '(' => depth += 1,
+            ']' | '}' | ')' => depth -= 1,
+            ' ' if depth == 0 && index > start => {
+                let rest = &text[index + 1..];
+                if rest.starts_with("if ") || rest.starts_with("unless ") {
+                    clauses.push(text[start..index].trim().to_string());
+                    start = index + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    let last = text[start..].trim();
+    if !last.is_empty() {
+        clauses.push(last.to_string());
+    }
+    clauses
+}
+
+/// Flip one `if`/`unless`-prefixed clause (a bare clause counts as `if`).
+pub(in crate::transpiler) fn negate_clause(clause: &str) -> String {
+    if let Some(rest) = clause.strip_prefix("if ") {
+        format!("unless {}", rest)
+    } else if let Some(rest) = clause.strip_prefix("unless ") {
+        format!("if {}", rest)
+    } else {
+        format!("unless {}", clause)
     }
 }

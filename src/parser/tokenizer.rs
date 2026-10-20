@@ -316,7 +316,8 @@ fn source_end_line_column(source: &str) -> (usize, usize) {
 }
 
 /// Check if the minus sign should be treated as a binary operator
-/// based on the previous token context
+/// based on the previous token context. The same "previous token is an
+/// operand" rule decides whether `/` divides instead of starting a command.
 fn should_be_binary_minus(tokens: &[SpannedToken]) -> bool {
     // If previous token is one of these, minus is a binary operator:
     // Number, Ident, RParen, RBracket, True_, False_, None_
@@ -379,8 +380,10 @@ fn tokenize_line(
                 // or a division operator
                 chars.next();
                 if let Some(&(next_index, next_ch)) = chars.peek() {
-                    // Minecraft command only if followed immediately by a letter (no space)
-                    if next_ch.is_alphabetic() {
+                    // Minecraft command only if followed immediately by a letter (no
+                    // space) and not after an operand: `a/b` and `f(x)/y` divide,
+                    // while a statement-leading `/say` stays a raw command.
+                    if next_ch.is_alphabetic() && !should_be_binary_minus(tokens) {
                         // Minecraft command - consume rest of line
                         let rest = &line[next_index..];
                         let stripped = strip_minecraft_inline_comment(rest).trim_end();

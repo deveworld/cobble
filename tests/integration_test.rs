@@ -3621,18 +3621,22 @@ const x = -5 % 3
 
 def test():
     y = -5 % 3
-    # Both x and y should have the same value (-2)
+    z = x
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
 
-    // Both should produce the same result
-    // In Rust/integer arithmetic: -5 % 3 = -2
+    // Folding must match runtime scoreboard `%=`, which is Minecraft's
+    // `Mth.positiveModulo` (a floor modulus): -5 % 3 is 1, not Rust's -2.
     let test_content = read_function(&output_dir, "test");
-
-    // y = -5 % 3 should use modulo operation
-    // In integer arithmetic: -5 % 3 = -2
-    assert!(test_content.contains("modulus") || test_content.contains("-2"));
+    assert!(
+        test_content.contains("scoreboard players set y temp 1"),
+        "{test_content}"
+    );
+    assert!(
+        test_content.contains("scoreboard players set z temp 1"),
+        "{test_content}"
+    );
 }
 
 #[test]

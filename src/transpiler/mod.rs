@@ -33,6 +33,50 @@ pub(in crate::transpiler) const MAX_POWER_EXPONENT: i32 = 100;
 /// (`src/diagnostics/imports.rs` derives its copy from this constant).
 pub(crate) const MAX_IMPORT_DEPTH: usize = 50;
 
+/// Exact integer value of a compile-time number, if it has no fractional part.
+fn exact_integer(value: f64) -> Option<i64> {
+    (value.is_finite() && value.fract() == 0.0 && value.abs() < 9.0e15).then_some(value as i64)
+}
+
+/// `Mth.floorDiv`: integer division rounding toward negative infinity.
+fn floor_div_i64(left: i64, right: i64) -> i64 {
+    let quotient = left / right;
+    if left % right != 0 && ((left < 0) != (right < 0)) {
+        quotient - 1
+    } else {
+        quotient
+    }
+}
+
+/// Compile-time `/` with Minecraft semantics. Integer operands use
+/// `Mth.floorDiv`, exactly like scoreboard `/=` at runtime (`-7 / 2` is -4,
+/// `1 / 3 * 3` is 0). Fractional constants can never exist at runtime, so
+/// they keep real division and are truncated where the result is used.
+/// Returns `None` for a zero divisor.
+pub(in crate::transpiler) fn const_div(left: f64, right: f64) -> Option<f64> {
+    if right == 0.0 {
+        return None;
+    }
+    match (exact_integer(left), exact_integer(right)) {
+        (Some(left), Some(right)) => Some(floor_div_i64(left, right) as f64),
+        _ => Some(left / right),
+    }
+}
+
+/// Compile-time `%` with Minecraft semantics: `Mth.positiveModulo`, a floor
+/// modulus whose sign follows the divisor, like scoreboard `%=` at runtime
+/// (`-7 % 3` is 2). Fractional operands use the same floor-modulus rule.
+/// Returns `None` for a zero divisor.
+pub(in crate::transpiler) fn const_mod(left: f64, right: f64) -> Option<f64> {
+    if right == 0.0 {
+        return None;
+    }
+    match (exact_integer(left), exact_integer(right)) {
+        (Some(left), Some(right)) => Some((left - floor_div_i64(left, right) * right) as f64),
+        _ => Some(left - (left / right).floor() * right),
+    }
+}
+
 /// Context for tracking function parameters and scope
 #[derive(Clone)]
 struct FunctionContext {
@@ -373,20 +417,8 @@ impl Transpiler {
                     BinaryOp::Add => Some(left_val + right_val),
                     BinaryOp::Sub => Some(left_val - right_val),
                     BinaryOp::Mul => Some(left_val * right_val),
-                    BinaryOp::Div => {
-                        if right_val == 0.0 {
-                            None
-                        } else {
-                            Some(left_val / right_val)
-                        }
-                    }
-                    BinaryOp::Mod => {
-                        if right_val == 0.0 {
-                            None
-                        } else {
-                            Some((left_val as i32 % right_val as i32) as f64)
-                        }
-                    }
+                    BinaryOp::Div => const_div(left_val, right_val),
+                    BinaryOp::Mod => const_mod(left_val, right_val),
                     BinaryOp::Pow => {
                         let base = left_val as i32;
                         let exp = right_val as i32;
@@ -1345,13 +1377,6 @@ impl Transpiler {
             }
             _ => None,
         }
-    }
-
-    pub(in crate::transpiler) fn capture_statement(
-        &mut self,
-        statement: &Statement,
-    ) -> Result<FunctionCapture, TranspileError> {
-        self.capture_statements(std::slice::from_ref(statement))
     }
 
     pub(in crate::transpiler) fn capture_statements(
@@ -4061,8 +4086,9 @@ impl Transpiler {
         let mut commands = Vec::new();
 
         if let Some(param_names) = self.function_params.get(func_name).cloned() {
-            // Validate argument count matches parameter count
-            if !param_names.is_empty() && args.len() != param_names.len() {
+            // Validate argument count matches parameter count (a function
+            // without parameters takes no arguments either)
+            if args.len() != param_names.len() {
                 return Err(format!(
                     "Function '{}' expects {} argument(s), but {} provided.\n\
                     Expected parameters: ({})",
@@ -4145,6 +4171,18 @@ impl Transpiler {
                                         self.data_pack.namespace,
                                         var
                                     ));
+                                } else if let Some(source_path) =
+                                    self.variable_storage_paths.get(var).cloned()
+                                {
+                                    // Storage-backed string/list/map: pass its
+                                    // value, not the variable's name.
+                                    commands.push(format!(
+                                        "data modify storage {}:global {} set from storage {}:global {}",
+                                        self.data_pack.namespace,
+                                        target_path,
+                                        self.data_pack.namespace,
+                                        source_path
+                                    ));
                                 } else if self.scoreboard_variables.contains(var)
                                     || self.variable_objectives.contains_key(var)
                                 {
@@ -4196,8 +4234,11 @@ impl Transpiler {
                             | Expression::Call(_, _)
                             | Expression::Attribute(_, _)
                             | Expression::Subscript(_, _) => {
-                                // Arithmetic expression - evaluate to a temporary variable and store
-                                let temp_var = format!("_arg_temp_{}", i);
+                                // Arithmetic or condition expression: evaluate into a
+                                // per-call scratch score, then store it. The name is
+                                // unique so calls passing differently typed values
+                                // (`f(x + 1)`, then `f(a > b)`) never share a slot.
+                                let temp_var = format!("#arg_temp_{}", self.next_temp_id());
 
                                 // Track the temp variable
                                 self.data_pack.track_objective("temp");
@@ -4703,7 +4744,7 @@ impl Transpiler {
     }
 
     fn translate_condition(
-        &self,
+        &mut self,
         condition: &Expression,
     ) -> Result<TranslatedCondition, TranspileError> {
         let translator = ConditionTranslator::new(
@@ -4712,7 +4753,20 @@ impl Transpiler {
             &self.variable_storage_paths,
             &self.variable_types,
         );
-        translator.translate(condition)
+        let translated = translator.translate(condition)?;
+
+        // Literal comparisons, boolean literals, constants, and negated
+        // always-false conditions fold to the internal `#true_const` /
+        // `#false_const` scores; register their objective whenever the
+        // translated condition reads them.
+        let mut reads_internal = false;
+        translated.for_each_simple(&mut |text| {
+            reads_internal |= text.contains(" __internal__ ");
+        });
+        if reads_internal {
+            self.data_pack.track_objective("__internal__");
+        }
+        Ok(translated)
     }
 
     /// Lower a translated condition to final execute-condition text at this
@@ -4735,14 +4789,6 @@ impl Transpiler {
                     Self::condition_execute_args(&left),
                     Self::condition_execute_args(&right)
                 ))
-            }
-            TranslatedCondition::Negated(inner) => {
-                let condition_cmd = self.lower_translated_condition(*inner)?;
-                Ok(if condition_cmd.starts_with("score ") {
-                    format!("unless {}", condition_cmd)
-                } else {
-                    condition_cmd.replace("if ", "unless ")
-                })
             }
             TranslatedCondition::AlwaysFalse => {
                 self.data_pack.track_objective("temp");

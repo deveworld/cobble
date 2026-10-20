@@ -306,8 +306,16 @@ impl DataPack {
         let Ok(existing_content) = fs::read_to_string(file_path) else {
             return Ok(new_json.to_string());
         };
-        let Ok(mut merged_value) = serde_json::from_str::<serde_json::Value>(&existing_content)
-        else {
+        Self::merge_tag_json(&existing_content, new_json)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+
+    /// Merge a tag file written earlier in this build (`existing_json`) with
+    /// another declaration of the same tag. Shared by the CLI writer and the
+    /// in-memory web compiler so both produce identical tag files. Input that
+    /// is not tag-shaped JSON leaves `new_json` unchanged.
+    pub fn merge_tag_json(existing_json: &str, new_json: &str) -> Result<String, String> {
+        let Ok(mut merged_value) = serde_json::from_str::<serde_json::Value>(existing_json) else {
             return Ok(new_json.to_string());
         };
         let Ok(new_value) = serde_json::from_str::<serde_json::Value>(new_json) else {
@@ -346,8 +354,7 @@ impl DataPack {
             }
         }
 
-        serde_json::to_string_pretty(&merged_value)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+        serde_json::to_string_pretty(&merged_value).map_err(|error| error.to_string())
     }
 
     pub(in crate::transpiler::data_pack) fn write_function_tag(
@@ -460,8 +467,20 @@ impl DataPack {
 
     pub(in crate::transpiler::data_pack) fn write_pack_mcmeta(&self) -> std::io::Result<()> {
         let mcmeta_path = self.output_dir.join("pack.mcmeta");
+        write_file_atomic(
+            &mcmeta_path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&self.pack_mcmeta_json()).unwrap()
+            ),
+        )?;
+        Ok(())
+    }
 
-        let mcmeta_content = match self.pack_format {
+    /// `pack.mcmeta` contents for this pack's description and pack format.
+    /// Shared by the CLI writer and the in-memory web compiler.
+    pub fn pack_mcmeta_json(&self) -> serde_json::Value {
+        match self.pack_format {
             PackFormat::Decimal(major, minor) => {
                 json!({
                     "pack": {
@@ -479,15 +498,6 @@ impl DataPack {
                     }
                 })
             }
-        };
-
-        write_file_atomic(
-            &mcmeta_path,
-            format!(
-                "{}\n",
-                serde_json::to_string_pretty(&mcmeta_content).unwrap()
-            ),
-        )?;
-        Ok(())
+        }
     }
 }

@@ -100,7 +100,7 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     /// Whether `target` is read anywhere inside `expr` (as a bare identifier).
-    fn expression_reads_target(expr: &Expression, target: &str) -> bool {
+    pub(in crate::transpiler) fn expression_reads_target(expr: &Expression, target: &str) -> bool {
         match expr {
             Expression::Identifier(name) => name == target,
             Expression::Attribute(obj, _) => Self::expression_reads_target(obj, target),
@@ -1152,8 +1152,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                 BinaryOp::Div => {
                                     // Add runtime warning for potential division by zero
                                     eprintln!(
-                                        "⚠️  Warning: Runtime division by variable '{}' at line.\n\
-                                        If '{}' is 0 at runtime, Minecraft will silently return 0.\n\
+                                        "⚠️  Warning: Runtime division by variable '{}'.\n\
+                                        If '{}' is 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
                                         Consider adding a check: if {} != 0",
                                         var, var, var
                                     );
@@ -1165,8 +1165,8 @@ impl<'a> ExpressionEvaluator<'a> {
                                 BinaryOp::Mod => {
                                     // Add runtime warning for potential modulo by zero
                                     eprintln!(
-                                        "⚠️  Warning: Runtime modulo by variable '{}' at line.\n\
-                                        If '{}' is 0 at runtime, Minecraft will silently return 0.\n\
+                                        "⚠️  Warning: Runtime modulo by variable '{}'.\n\
+                                        If '{}' is 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
                                         Consider adding a check: if {} != 0",
                                         var, var, var
                                     );
@@ -1229,7 +1229,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                 // Add runtime warning for potential division by zero with complex expression
                                 eprintln!(
                                     "⚠️  Warning: Runtime division by expression result.\n\
-                                    If the expression evaluates to 0 at runtime, Minecraft will silently return 0.\n\
+                                    If the expression evaluates to 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
                                     Consider validating the divisor before division."
                                 );
                                 commands.push(format!(
@@ -1241,7 +1241,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                 // Add runtime warning for potential modulo by zero with complex expression
                                 eprintln!(
                                     "⚠️  Warning: Runtime modulo by expression result.\n\
-                                    If the expression evaluates to 0 at runtime, Minecraft will silently return 0.\n\
+                                    If the expression evaluates to 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
                                     Consider validating the divisor before modulo."
                                 );
                                 commands.push(format!(

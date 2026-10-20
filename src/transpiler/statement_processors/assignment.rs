@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::transpiler::expression_evaluator::ExpressionEvaluator;
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{GeneratedCommandKind, ModuleLevelAssignment};
 use crate::transpiler::{TranspileError, Transpiler};
@@ -276,7 +277,7 @@ impl Transpiler {
             self.variable_storage_paths.remove(&assign.target);
         }
 
-        match self.classify_assignment_value(&assign.value) {
+        match self.classify_assignment_value(&assign.target, &assign.value) {
             AssignValueKind::ConstFoldable(const_value) => {
                 self.lower_const_fold_assignment(assign, const_value);
                 Ok(())
@@ -308,7 +309,7 @@ impl Transpiler {
     /// Classify an in-function assignment *value*. The check order is
     /// load-bearing; see the decision-order comment on
     /// [`Self::process_assignment`].
-    fn classify_assignment_value(&self, value: &Expression) -> AssignValueKind {
+    fn classify_assignment_value(&self, target: &str, value: &Expression) -> AssignValueKind {
         // Try to evaluate constant expressions first
         if let Some(const_value) = self.try_eval_const(value) {
             return AssignValueKind::ConstFoldable(const_value);
@@ -326,6 +327,12 @@ impl Transpiler {
                 // optimized ladder below; nested expressions need the
                 // expression evaluator.
                 matches!(op, BinaryOp::Pow)
+                    // The ladder writes the left operand into the target
+                    // before applying the right one, so `x = 10 - x` or
+                    // `x = y - x` would read the clobbered target. The
+                    // evaluator routes self-referential right operands
+                    // through a scratch score.
+                    || matches!(&**right, Expression::Identifier(name) if name == target)
                     || Self::expr_contains_param(left, &self.current_context.params)
                     || Self::expr_contains_param(right, &self.current_context.params)
                     || !matches!(
@@ -441,16 +448,33 @@ impl Transpiler {
         self.scoreboard_variables.insert(assign.target.clone());
 
         let processed_condition = self.preprocess_condition(&assign.value)?;
-        let condition_cmd =
-            self.lower_translated_condition(self.translate_condition(&processed_condition)?)?;
+        let translated = self.translate_condition(&processed_condition)?;
+        let condition_cmd = self.lower_translated_condition(translated)?;
         let condition_execute_args = Self::condition_execute_args(&condition_cmd);
 
+        // The flag is reset before the condition is tested, so a condition
+        // that reads the target itself (`flag = not flag`) is computed into a
+        // scratch score first and copied over afterwards.
+        let reads_target =
+            ExpressionEvaluator::expression_reads_target(&assign.value, &assign.target);
+        let flag = if reads_target {
+            format!("#cond_flag_{}", self.next_temp_id())
+        } else {
+            assign.target.clone()
+        };
+
         if let Some(ref mut commands) = self.current_function {
-            commands.push(format!("scoreboard players set {} temp 0", assign.target));
+            commands.push(format!("scoreboard players set {} temp 0", flag));
             commands.push(format!(
                 "execute {} run scoreboard players set {} temp 1",
-                condition_execute_args, assign.target
+                condition_execute_args, flag
             ));
+            if reads_target {
+                commands.push(format!(
+                    "scoreboard players operation {} temp = {} temp",
+                    assign.target, flag
+                ));
+            }
         }
         Ok(())
     }

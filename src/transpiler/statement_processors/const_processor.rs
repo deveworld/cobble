@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::transpiler::{TranspileError, Transpiler};
+use crate::transpiler::{const_mod, TranspileError, Transpiler};
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_const_assignment(
@@ -55,6 +55,11 @@ impl Transpiler {
                     BinaryOp::Add => Ok(left_val + right_val),
                     BinaryOp::Sub => Ok(left_val - right_val),
                     BinaryOp::Mul => Ok(left_val * right_val),
+                    // A `const` is a compile-time value that raw commands may
+                    // substitute with a fraction (`~{HALF}` with
+                    // `const HALF = 1 / 2`), so `/` is real division here, like
+                    // Python's `/`. Integer semantics apply where an expression
+                    // is computed into a score (see `const_div`).
                     BinaryOp::Div => {
                         if right_val == 0.0 {
                             Err("Division by zero in const expression".into())
@@ -62,14 +67,9 @@ impl Transpiler {
                             Ok(left_val / right_val)
                         }
                     }
-                    BinaryOp::Mod => {
-                        if right_val == 0.0 {
-                            Err("Modulo by zero in const expression".into())
-                        } else {
-                            // Use integer modulo for consistency with runtime behavior
-                            Ok(((left_val as i32) % (right_val as i32)) as f64)
-                        }
-                    }
+                    // Floor modulus, matching runtime `%=` (and Python's `%`).
+                    BinaryOp::Mod => const_mod(left_val, right_val)
+                        .ok_or_else(|| "Modulo by zero in const expression".into()),
                     BinaryOp::Pow => {
                         let base = left_val as i32;
                         let exp = right_val as i32;

@@ -1,5 +1,7 @@
 use crate::ast::*;
-use crate::transpiler::condition_translator::TranslatedCondition;
+use crate::transpiler::condition_translator::{
+    condition_clauses, negate_clause, TranslatedCondition,
+};
 use crate::transpiler::{FunctionCapture, TranspileError, Transpiler};
 
 /// Execute conditions that cannot be spliced into the execute prefix
@@ -143,14 +145,10 @@ impl Transpiler {
                                 execute_parts.push(Self::condition_execute_args(&translated));
                             }
                             structured => {
-                                // AND/NOT around an OR: lower it to a flag
+                                // AND around an OR: lower it to a flag
                                 // condition right here.
-                                let (rendered, or_capture) =
-                                    self.capture_commands_with_result(|transpiler| {
-                                        transpiler.lower_translated_condition(structured)
-                                    })?;
-                                self.append_scoped_execute_capture(
-                                    or_capture,
+                                let rendered = self.lower_structured_execute_condition(
+                                    structured,
                                     &execute_parts,
                                     &mut has_macro_params,
                                 )?;
@@ -231,37 +229,35 @@ impl Transpiler {
                                     &mut has_macro_params,
                                 )?;
                                 for cond in alternatives {
-                                    execute_parts.push(Self::negate_execute_condition(&cond));
+                                    Self::push_negated_execute_condition(
+                                        cond,
+                                        &mut execute_parts,
+                                        &mut special_conditions,
+                                    );
                                 }
                             }
                             // `unless` an impossible condition always passes.
                             TranslatedCondition::AlwaysFalse => {}
                             TranslatedCondition::Simple(translated) => {
-                                if Self::is_prefixed_condition_chain(&translated) {
-                                    special_conditions
-                                        .push(DeferredExecuteCondition::UnlessAnd(translated));
-                                } else {
-                                    execute_parts.push(Self::negate_execute_condition(&translated));
-                                }
+                                Self::push_negated_execute_condition(
+                                    translated,
+                                    &mut execute_parts,
+                                    &mut special_conditions,
+                                );
                             }
                             structured => {
-                                // AND/NOT around an OR: lower it to a flag
+                                // AND around an OR: lower it to a flag
                                 // condition, then negate the result.
-                                let (rendered, or_capture) =
-                                    self.capture_commands_with_result(|transpiler| {
-                                        transpiler.lower_translated_condition(structured)
-                                    })?;
-                                self.append_scoped_execute_capture(
-                                    or_capture,
+                                let rendered = self.lower_structured_execute_condition(
+                                    structured,
                                     &execute_parts,
                                     &mut has_macro_params,
                                 )?;
-                                if Self::is_prefixed_condition_chain(&rendered) {
-                                    special_conditions
-                                        .push(DeferredExecuteCondition::UnlessAnd(rendered));
-                                } else {
-                                    execute_parts.push(Self::negate_execute_condition(&rendered));
-                                }
+                                Self::push_negated_execute_condition(
+                                    rendered,
+                                    &mut execute_parts,
+                                    &mut special_conditions,
+                                );
                             }
                         }
                         continue;
@@ -453,80 +449,211 @@ impl Transpiler {
 
             if let Some(ref mut commands) = self.current_function {
                 for command in setup_commands {
-                    if has_macro_params {
-                        commands.push(format!("${}", command));
-                    } else {
-                        commands.push(command);
-                    }
+                    commands.push(Self::mark_macro_line(command, has_macro_params));
                 }
             }
         }
 
         let execute_prefix = execute_parts.join(" ");
 
-        // Process body statements
-        for stmt in &exec_block.body {
-            let capture = self.capture_statement(stmt)?;
-            self.append_transformed_capture(capture, |cmd| {
-                let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
-                    has_macro_params = true;
-                    stripped
-                } else {
-                    cmd
-                };
+        // Capture the whole body first; like `if`, the number of commands it
+        // produced decides between inlining and routing through a helper.
+        // Prefixing several commands with the execute chain re-evaluates the
+        // conditions and re-forks the selector for every command: an earlier
+        // command that changes the condition cuts off the rest of the body,
+        // and under a multi-entity `as` every entity runs the first command
+        // before any entity runs the second, so shared state (loop counters,
+        // if/else flags, scratch scores) breaks. A helper runs the whole body
+        // once per execution context instead.
+        //
+        // `store` blocks keep the per-command form: storing a helper call
+        // would store the helper's return value rather than each command's
+        // result.
+        let saved_context = self.current_context.clone();
+        let capture = self.capture_statements(&exec_block.body)?;
+        self.current_context = saved_context;
 
-                let final_cmd = if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
-                    format!("{} {}", execute_prefix, inner_parts)
-                } else {
-                    format!("{} run {}", execute_prefix, inner_cmd)
-                };
+        let has_store_modifier = exec_block
+            .modifiers
+            .iter()
+            .any(|modifier| matches!(modifier, ExecuteModifier::Store(_)));
+        // A raw `/return` in the body must return from the enclosing
+        // function, which it only does when it runs in that function; inside
+        // a helper it would just end the helper. Such bodies keep the
+        // per-command form.
+        let has_raw_return = exec_block.body.iter().any(|statement| {
+            matches!(statement, Statement::MinecraftCommand(command) if Self::is_raw_return_command(command))
+        });
+        if capture.commands.len() > 1
+            && !has_store_modifier
+            && !has_raw_return
+            && self.current_function.is_some()
+        {
+            let helper_name = format!("execute_temp_{}", self.next_temp_id());
+            let needs_storage = capture.requires_macro_context();
+            self.add_captured_function(helper_name.clone(), capture);
 
-                if has_macro_params {
-                    format!("${}", final_cmd)
-                } else {
-                    final_cmd
+            let call_cmd = self.function_call_command(&helper_name, needs_storage);
+            let call = Self::mark_macro_line(
+                format!("{} run {}", execute_prefix, call_cmd),
+                has_macro_params,
+            );
+            let return_cmd = self.return_propagation_command();
+            if let Some(ref mut commands) = self.current_function {
+                commands.push(call);
+                if let Some(return_cmd) = return_cmd {
+                    commands.push(return_cmd);
                 }
-            })?;
+            }
+            return Ok(());
         }
 
+        self.append_transformed_capture(capture, |cmd| {
+            let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
+                has_macro_params = true;
+                stripped
+            } else {
+                cmd
+            };
+
+            let final_cmd = if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
+                format!("{} {}", execute_prefix, inner_parts)
+            } else {
+                format!("{} run {}", execute_prefix, inner_cmd)
+            };
+
+            Self::mark_macro_line(final_cmd, has_macro_params)
+        })?;
+
         Ok(())
+    }
+
+    /// Prefix `$` for a command in a macro context, but only when the line
+    /// actually carries a `$(variable)`: Minecraft refuses to load a function
+    /// with a macro line that has no variables ("No variables in macro").
+    fn mark_macro_line(command: String, in_macro_context: bool) -> String {
+        if in_macro_context && command.contains("$(") {
+            format!("${}", command)
+        } else {
+            command
+        }
+    }
+
+    /// Whether a raw command returns from the function it runs in
+    /// (`/return ...`, or an `execute ... run return ...` chain).
+    fn is_raw_return_command(command: &str) -> bool {
+        let command = command
+            .trim_start_matches('/')
+            .trim_start_matches('$')
+            .trim();
+        command == "return" || command.starts_with("return ") || command.contains(" run return")
     }
 
     fn scope_condition_capture_for_execute(
         &mut self,
         condition: TranslatedCondition,
-        mut capture: FunctionCapture,
+        capture: FunctionCapture,
         execute_parts: &[String],
     ) -> (TranslatedCondition, FunctionCapture) {
+        let (mut conditions, capture) =
+            self.scope_conditions_for_execute(vec![condition], capture, execute_parts);
+        (conditions.remove(0), capture)
+    }
+
+    /// Inside an `execute as` block, conditions are evaluated once per
+    /// entity, so the global fake players they are computed into
+    /// (`expr_cond_temp_N temp` operands and `or_temp_N temp` OR flags) are
+    /// rewritten to per-entity `@s` scores; otherwise one entity's result
+    /// would decide the condition for every entity.
+    fn scope_conditions_for_execute(
+        &mut self,
+        mut conditions: Vec<TranslatedCondition>,
+        mut capture: FunctionCapture,
+        execute_parts: &[String],
+    ) -> (Vec<TranslatedCondition>, FunctionCapture) {
         if !Self::has_as_modifier(execute_parts) {
-            return (condition, capture);
+            return (conditions, capture);
         }
 
-        let mut scoped_condition = condition;
         let mut holders: Vec<String> = Vec::new();
-        scoped_condition.for_each_simple(&mut |text| {
-            for holder in Self::condition_temp_holders(text) {
-                if !holders.contains(&holder) {
-                    holders.push(holder);
+        for condition in &conditions {
+            condition.for_each_simple(&mut |text| {
+                for holder in Self::condition_temp_holders(text) {
+                    if !holders.contains(&holder) {
+                        holders.push(holder);
+                    }
                 }
-            }
-        });
+            });
+        }
         for holder in holders {
             let objective = self.next_condition_scope_objective();
             self.data_pack.track_objective(&objective);
             let from = format!("{} temp", holder);
             let to = format!("@s {}", objective);
 
-            scoped_condition.map_simple(&|text| text.replace(&from, &to));
+            for condition in &mut conditions {
+                condition.map_simple(&|text| Self::replace_holder(text, &from, &to));
+            }
             for command in &mut capture.commands {
-                *command = command.replace(&from, &to);
+                *command = Self::replace_holder(command, &from, &to);
             }
             for generated in capture.metadata.values_mut() {
-                generated.text = generated.text.replace(&from, &to);
+                generated.text = Self::replace_holder(&generated.text, &from, &to);
             }
         }
 
-        (scoped_condition, capture)
+        (conditions, capture)
+    }
+
+    /// Replace `from` (a `holder objective` pair) only where it starts a
+    /// score holder, never inside a longer name (`xor_temp_1 temp`).
+    fn replace_holder(text: &str, from: &str, to: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(index) = rest.find(from) {
+            let at_boundary = rest[..index]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+            let end = index + from.len();
+            let ends_cleanly = rest[end..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+            result.push_str(&rest[..index]);
+            result.push_str(if at_boundary && ends_cleanly {
+                to
+            } else {
+                from
+            });
+            rest = &rest[end..];
+        }
+        result.push_str(rest);
+        result
+    }
+
+    /// Lower a structured (AND/NOT around OR) condition to flag-reading
+    /// condition text at this point of the execute chain, with its setup
+    /// commands run under the modifiers collected so far.
+    fn lower_structured_execute_condition(
+        &mut self,
+        structured: TranslatedCondition,
+        execute_parts: &[String],
+        has_macro_params: &mut bool,
+    ) -> Result<String, TranspileError> {
+        let (rendered, capture) = self.capture_commands_with_result(|transpiler| {
+            transpiler.lower_translated_condition(structured)
+        })?;
+        let (mut conditions, capture) = self.scope_conditions_for_execute(
+            vec![TranslatedCondition::Simple(rendered)],
+            capture,
+            execute_parts,
+        );
+        self.append_scoped_execute_capture(capture, execute_parts, has_macro_params)?;
+        let TranslatedCondition::Simple(rendered) = conditions.remove(0) else {
+            unreachable!("scoping keeps the condition shape");
+        };
+        Ok(rendered)
     }
 
     /// Flatten a translated OR into its renderable alternatives for an
@@ -544,6 +671,7 @@ impl Transpiler {
             transpiler.flatten_or_leaves(condition, &mut leaves)?;
             Ok(leaves)
         })?;
+        let (leaves, capture) = self.scope_conditions_for_execute(leaves, capture, execute_parts);
         self.append_scoped_execute_capture(capture, execute_parts, has_macro_params)?;
         Ok(leaves
             .into_iter()
@@ -608,20 +736,28 @@ impl Transpiler {
         }
     }
 
+    /// Global condition holders read by `text`: lowered operands
+    /// (`expr_cond_temp_N`) and materialized OR flags (`or_temp_N`).
     fn condition_temp_holders(text: &str) -> Vec<String> {
         let mut holders = Vec::new();
-        let mut start = 0;
-        while let Some(relative_index) = text[start..].find("expr_cond_temp_") {
-            let holder_start = start + relative_index;
-            let holder_end = text[holder_start..]
-                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                .map(|offset| holder_start + offset)
-                .unwrap_or(text.len());
-            let holder = text[holder_start..holder_end].to_string();
-            if !holders.contains(&holder) {
-                holders.push(holder);
+        for prefix in ["expr_cond_temp_", "or_temp_"] {
+            let mut start = 0;
+            while let Some(relative_index) = text[start..].find(prefix) {
+                let holder_start = start + relative_index;
+                let holder_end = text[holder_start..]
+                    .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .map(|offset| holder_start + offset)
+                    .unwrap_or(text.len());
+                let at_boundary = text[..holder_start]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+                let holder = text[holder_start..holder_end].to_string();
+                if at_boundary && !holders.contains(&holder) {
+                    holders.push(holder);
+                }
+                start = holder_end;
             }
-            start = holder_end;
         }
         holders
     }
@@ -664,11 +800,7 @@ impl Transpiler {
                 }
             }
 
-            if command_needs_macro || *has_macro_params {
-                format!("${}", final_cmd)
-            } else {
-                final_cmd
-            }
+            Self::mark_macro_line(final_cmd, command_needs_macro || *has_macro_params)
         })
     }
 
@@ -719,53 +851,12 @@ impl Transpiler {
             .collect()
     }
 
-    fn is_prefixed_condition_chain(condition: &str) -> bool {
-        Self::split_prefixed_execute_conditions(condition)
-            .is_some_and(|conditions| conditions.len() > 1)
-    }
-
     fn split_prefixed_execute_conditions(condition: &str) -> Option<Vec<String>> {
-        let mut rest = condition.trim();
-        let mut conditions = Vec::new();
-
-        while !rest.is_empty() {
-            let (prefix, after_prefix) = if let Some(after_prefix) = rest.strip_prefix("if ") {
-                ("if", after_prefix)
-            } else if let Some(after_prefix) = rest.strip_prefix("unless ") {
-                ("unless", after_prefix)
-            } else {
-                return if conditions.is_empty() {
-                    None
-                } else {
-                    Some(conditions)
-                };
-            };
-
-            let next_if = after_prefix.find(" if ");
-            let next_unless = after_prefix.find(" unless ");
-            let next = match (next_if, next_unless) {
-                (Some(if_index), Some(unless_index)) => Some(if_index.min(unless_index)),
-                (Some(index), None) | (None, Some(index)) => Some(index),
-                (None, None) => None,
-            };
-
-            if let Some(next) = next {
-                let condition = after_prefix[..next].trim();
-                conditions.push(format!("{} {}", prefix, condition));
-                rest = after_prefix[next + 1..].trim_start();
-            } else {
-                let condition = after_prefix.trim();
-                if !condition.is_empty() {
-                    conditions.push(format!("{} {}", prefix, condition));
-                }
-                break;
-            }
-        }
-
-        if conditions.is_empty() {
-            None
+        let condition = condition.trim();
+        if condition.starts_with("if ") || condition.starts_with("unless ") {
+            Some(condition_clauses(condition))
         } else {
-            Some(conditions)
+            None
         }
     }
 
@@ -779,13 +870,20 @@ impl Transpiler {
         }
     }
 
-    fn negate_execute_condition(condition: &str) -> String {
-        if let Some(stripped) = condition.strip_prefix("if ") {
-            format!("unless {}", stripped)
-        } else if let Some(stripped) = condition.strip_prefix("unless ") {
-            format!("if {}", stripped)
+    /// Add `unless <condition>` to the execute chain. A single clause is
+    /// flipped in place; a multi-clause chain ("if A if B", meaning A and B)
+    /// cannot be negated clause by clause, so it is deferred to an
+    /// `UnlessAnd` flag that is set under the whole chain.
+    fn push_negated_execute_condition(
+        condition: String,
+        execute_parts: &mut Vec<String>,
+        special_conditions: &mut Vec<DeferredExecuteCondition>,
+    ) {
+        let clauses = condition_clauses(&condition);
+        if clauses.len() > 1 {
+            special_conditions.push(DeferredExecuteCondition::UnlessAnd(clauses.join(" ")));
         } else {
-            format!("unless {}", condition)
+            execute_parts.push(negate_clause(&condition));
         }
     }
 }

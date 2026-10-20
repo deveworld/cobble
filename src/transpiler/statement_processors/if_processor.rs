@@ -9,8 +9,8 @@ impl Transpiler {
         // Preprocess condition to handle complex expressions
         let processed_condition = self.preprocess_condition(&if_stmt.condition)?;
 
-        let condition_cmd =
-            self.lower_translated_condition(self.translate_condition(&processed_condition)?)?;
+        let translated = self.translate_condition(&processed_condition)?;
+        let condition_cmd = self.lower_translated_condition(translated)?;
 
         let branch_var = if !if_stmt.elif_branches.is_empty() || if_stmt.else_branch.is_some() {
             let var = format!("if_branch_{}", self.next_temp_id());
@@ -70,21 +70,15 @@ impl Transpiler {
         } else {
             // At most one command: inline it under the condition
             self.append_transformed_capture(capture, |cmd| {
-                let clean_cmd = Self::strip_command_prefix(cmd);
-                let execute_prefix = format!("execute {}", condition_execute_args);
-                if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
-                    format!("{} {}", execute_prefix, inner_parts)
-                } else {
-                    format!("{} run {}", execute_prefix, clean_cmd)
-                }
+                Self::guard_command(&condition_execute_args, cmd)
             })?;
         }
 
         // Handle elif branches
         for (elif_condition, elif_branch) in &if_stmt.elif_branches {
             let processed_elif_condition = self.preprocess_condition(elif_condition)?;
-            let elif_condition_cmd = self
-                .lower_translated_condition(self.translate_condition(&processed_elif_condition)?)?;
+            let translated = self.translate_condition(&processed_elif_condition)?;
+            let elif_condition_cmd = self.lower_translated_condition(translated)?;
             let elif_execute_args = Self::condition_execute_args(&elif_condition_cmd);
             let compound_condition = if let Some(ref var) = branch_var {
                 format!("unless score {} temp matches 1 {}", var, elif_execute_args)
@@ -132,12 +126,7 @@ impl Transpiler {
                 }
             } else {
                 self.append_transformed_capture(capture, |cmd| {
-                    let clean_cmd = Self::strip_command_prefix(cmd);
-                    if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
-                        format!("execute {} {}", body_condition, inner_parts)
-                    } else {
-                        format!("execute {} run {}", body_condition, clean_cmd)
-                    }
+                    Self::guard_command(&body_condition, cmd)
                 })?;
             }
         }
@@ -172,17 +161,32 @@ impl Transpiler {
                 }
             } else {
                 self.append_transformed_capture(capture, |cmd| {
-                    let clean_cmd = Self::strip_command_prefix(cmd);
-                    if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
-                        format!("execute {} {}", else_condition, inner_parts)
-                    } else {
-                        format!("execute {} run {}", else_condition, clean_cmd)
-                    }
+                    Self::guard_command(&else_condition, cmd)
                 })?;
             }
         }
 
         Ok(())
+    }
+
+    /// Run one generated command under `execute <condition_args>`, merging
+    /// an inner `execute` chain. A macro line keeps its `$` at the very front
+    /// (`$execute if ... run tellraw $(p) ...`); `execute ... run $tellraw`
+    /// would be an unknown command.
+    pub(in crate::transpiler) fn guard_command(condition_args: &str, cmd: &str) -> String {
+        let (macro_marker, cmd) = match cmd.strip_prefix('$') {
+            Some(rest) => ("$", rest),
+            None => ("", cmd),
+        };
+        let clean_cmd = Self::strip_command_prefix(cmd);
+        if let Some(inner_parts) = clean_cmd.strip_prefix("execute ") {
+            format!("{}execute {} {}", macro_marker, condition_args, inner_parts)
+        } else {
+            format!(
+                "{}execute {} run {}",
+                macro_marker, condition_args, clean_cmd
+            )
+        }
     }
 
     pub(in crate::transpiler) fn condition_execute_args(condition_cmd: &str) -> String {

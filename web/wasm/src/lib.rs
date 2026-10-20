@@ -177,7 +177,7 @@ fn compile(
         .transpile(&program)
         .map_err(|error| transpile_error_diagnostics(&error, source))?;
 
-    let mut files = materialize_files(&transpiler, namespace, description)?;
+    let mut files = materialize_files(&transpiler, namespace)?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let function_count = transpiler.data_pack.functions.len();
     let command_count = transpiler
@@ -249,7 +249,6 @@ fn is_python_compat_diagnostic_kind(kind: &str) -> bool {
 fn materialize_files(
     transpiler: &Transpiler,
     namespace: &str,
-    description: &str,
 ) -> Result<Vec<CompileFile>, Vec<CompileDiagnostic>> {
     let pack = &transpiler.data_pack;
     let mut files = Vec::new();
@@ -257,14 +256,7 @@ fn materialize_files(
     files.push(CompileFile {
         path: "pack.mcmeta".to_string(),
         kind: "metadata".to_string(),
-        content: serde_json::to_string_pretty(&serde_json::json!({
-            "pack": {
-                "description": description,
-                "min_format": [101, 1],
-                "max_format": [101, 1]
-            }
-        }))
-        .map_err(to_diag)?,
+        content: serde_json::to_string_pretty(&pack.pack_mcmeta_json()).map_err(to_diag)?,
     });
 
     let mut source_map_entries = Vec::new();
@@ -533,44 +525,9 @@ fn is_tag_path(path: &str) -> bool {
 }
 
 fn merge_tag_json(existing_json: &str, new_json: &str) -> Result<String, Vec<CompileDiagnostic>> {
-    let Ok(mut merged_value) = serde_json::from_str::<serde_json::Value>(existing_json) else {
-        return Ok(new_json.to_string());
-    };
-    let Ok(new_value) = serde_json::from_str::<serde_json::Value>(new_json) else {
-        return Ok(new_json.to_string());
-    };
-
-    let Some(merged_values) = merged_value
-        .get_mut("values")
-        .and_then(|value| value.as_array_mut())
-    else {
-        return Ok(new_json.to_string());
-    };
-    let Some(new_values) = new_value.get("values").and_then(|value| value.as_array()) else {
-        return Ok(new_json.to_string());
-    };
-
-    for new_value in new_values {
-        if !merged_values.contains(new_value) {
-            merged_values.push(new_value.clone());
-        }
-    }
-
-    let replace = merged_value
-        .get("replace")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-        || new_value
-            .get("replace")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-    if replace {
-        if let Some(object) = merged_value.as_object_mut() {
-            object.insert("replace".to_string(), serde_json::Value::Bool(true));
-        }
-    }
-
-    serde_json::to_string_pretty(&merged_value).map_err(to_diag)
+    // Same normalize + sort + dedup merge as the CLI writer.
+    transpiler::DataPack::merge_tag_json(existing_json, new_json)
+        .map_err(|error| vec![generic_diagnostic("serialization", error)])
 }
 
 fn push_named_json_resources(
@@ -827,7 +784,8 @@ stdlib.addEventListener(event.LOAD, load)
         let tag: serde_json::Value = serde_json::from_str(&load_tag_files[0].content).unwrap();
         assert_eq!(
             tag["values"],
-            serde_json::json!(["web_test:load", "web_test:extra_load"])
+            // Same sorted, deduplicated merge as the CLI writer.
+            serde_json::json!(["web_test:extra_load", "web_test:load"])
         );
     }
 
@@ -860,7 +818,8 @@ stdlib.addEventListener(event.LOAD, load)
         assert_eq!(tag["replace"], true);
         assert_eq!(
             tag["values"],
-            serde_json::json!(["web_test:load", "web_test:extra_load"])
+            // Same sorted, deduplicated merge as the CLI writer.
+            serde_json::json!(["web_test:extra_load", "web_test:load"])
         );
     }
 

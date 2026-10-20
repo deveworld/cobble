@@ -240,12 +240,49 @@ impl Transpiler {
         &mut self,
         statement: &Statement,
     ) -> Option<SourceLocation> {
-        let key = Self::statement_source_key(statement)?;
+        let keys = Self::statement_source_keys(statement);
         let file_path = self.current_file_path.as_ref()?;
-        self.statement_locations
-            .get_mut(file_path)
-            .and_then(|statements| statements.get_mut(&key))
-            .and_then(VecDeque::pop_front)
+        let statements = self.statement_locations.get_mut(file_path)?;
+        // Statements are lowered in source order, so the earliest pending
+        // location among the candidate keys is this statement's. Taking the
+        // first key with any location could hand `asat @p:` the location of a
+        // later `as @p at @s:` (and the other way round).
+        let key = keys
+            .iter()
+            .filter_map(|key| {
+                let location = statements.get(key)?.front()?;
+                Some((key, location.line, location.column))
+            })
+            .min_by_key(|(_, line, column)| (*line, *column))
+            .map(|(key, _, _)| key.clone())?;
+        statements.get_mut(&key).and_then(VecDeque::pop_front)
+    }
+
+    /// Source keys a statement may be registered under, most specific first.
+    /// `asat @x:` parses to the same modifiers as `as @x at @s:`, so an
+    /// execute block starting with that pair also tries the `asat` spelling.
+    fn statement_source_keys(statement: &Statement) -> Vec<String> {
+        let Some(primary) = Self::statement_source_key(statement) else {
+            return Vec::new();
+        };
+        let mut keys = vec![primary];
+        if let Statement::Execute(exec_block) = statement {
+            if let [ExecuteModifier::As(selector), ExecuteModifier::At(at), rest @ ..] =
+                exec_block.modifiers.as_slice()
+            {
+                if at == "@s" {
+                    let rest = rest
+                        .iter()
+                        .map(Self::execute_modifier_source_key)
+                        .collect::<String>();
+                    keys.push(Self::normalize_source_key(&format!(
+                        "asat{}{}:",
+                        selector, rest
+                    )));
+                }
+            }
+        }
+        keys
     }
 
     fn strip_inline_comment(line: &str) -> Option<&str> {

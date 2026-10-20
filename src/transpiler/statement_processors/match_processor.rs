@@ -19,11 +19,15 @@ impl Transpiler {
         self.data_pack.track_objective("temp");
         match &match_stmt.value {
             Expression::Identifier(name) => {
+                // Macro params and compile-time constants have no score of
+                // their own to copy; the evaluator reads the param from the
+                // call arguments and inlines the constant's value.
                 if self
                     .current_context
                     .params
                     .iter()
                     .any(|param| param == name)
+                    || self.compile_time_constants.contains_key(name)
                 {
                     let commands =
                         self.evaluate_expression_to_target(&match_stmt.value, &temp_var)?;

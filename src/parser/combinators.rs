@@ -226,6 +226,24 @@ pub struct StatementSpanBranch {
 /// Token parser using chumsky
 pub fn token_parser<'a>(
 ) -> impl Parser<'a, &'a [Token], Program, extra::Err<Rich<'a, Token>>> + Clone {
+    token_parser_with_spans(&[])
+}
+
+/// Token parser that also knows each token's source span, so raw execute
+/// conditions can keep tokens glued that were glued in the source
+/// (`^1`, `stone[snowy=false]`, `ns:util/check`). With an empty `spans` slice
+/// the parser falls back to token-based spacing.
+fn token_parser_with_spans<'a>(
+    spans: &'a [SpannedToken],
+) -> impl Parser<'a, &'a [Token], Program, extra::Err<Rich<'a, Token>>> + Clone {
+    // Whether the token at input index `index` ends exactly where the next
+    // token starts (no whitespace between them in the source).
+    let glued_to_next = move |index: usize| {
+        spans
+            .get(index)
+            .zip(spans.get(index + 1))
+            .is_some_and(|(token, next)| token.span.end == next.span.start)
+    };
     recursive(|stmt| {
         // Expression parser
         let expr = recursive(|expr| {
@@ -794,7 +812,9 @@ pub fn token_parser<'a>(
             .repeated()
             .at_least(1)
             .collect::<Vec<Token>>()
-            .map(|tokens| {
+            .map_with(move |tokens, extra| {
+                let span: SimpleSpan = extra.span();
+                let first_index = span.start;
                 // Convert tokens to string, but be smart about spacing
                 let mut result = String::new();
                 let mut prev_token: Option<&Token> = None;
@@ -817,10 +837,30 @@ pub fn token_parser<'a>(
                     // Determine if we need a space before this token. Every arm
                     // is deliberate — raw conditions must survive
                     // re-stringification unchanged:
+                    let is_comparison = |token: &Token| {
+                        matches!(
+                            token,
+                            Token::EqEq
+                                | Token::NotEq
+                                | Token::Lt
+                                | Token::LtEq
+                                | Token::Gt
+                                | Token::GtEq
+                        )
+                    };
                     let need_space = if i == 0 {
                         false
                     } else if let Some(prev) = prev_token {
                         match (prev, token) {
+                            // Python comparisons stay spaced so the raw
+                            // condition is still recognized and re-parsed as
+                            // a Python expression (`x>1` -> `x > 1`).
+                            (prev, token) if is_comparison(prev) || is_comparison(token) => true,
+                            // Tokens glued in the source stay glued: local
+                            // coordinates (`^1`), block states and NBT paths
+                            // (`stone[snowy=false]`, `Items[0].id`), and
+                            // resource paths (`ns:util/check`).
+                            _ if glued_to_next(first_index + i - 1) => false,
                             // Range operator "..": both dots stay glued ("1..")
                             (Token::Dot, Token::Dot) => false,
                             // Range end hugs the dots ("..10", "1..5")
@@ -1022,7 +1062,7 @@ pub fn parse_with_diagnostics(source: &str) -> Result<Program, Vec<ParseDiagnost
         .iter()
         .map(|token| token.token.clone())
         .collect::<Vec<_>>();
-    let result = token_parser().parse(&tokens);
+    let result = token_parser_with_spans(&spanned_tokens).parse(&tokens);
 
     match result.into_result() {
         Ok(program) => Ok(program),
@@ -1050,7 +1090,7 @@ pub fn parse_located_with_diagnostics(
         .iter()
         .map(|token| token.token.clone())
         .collect::<Vec<_>>();
-    let result = token_parser().parse(&tokens);
+    let result = token_parser_with_spans(&spanned_tokens).parse(&tokens);
 
     match result.into_result() {
         Ok(program) => {

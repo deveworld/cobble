@@ -170,9 +170,15 @@ def tick():
         "the if condition must be evaluated exactly once:\n{tick}"
     );
 
+    // The single `as ... at ...` statement lowers to one helper call, so the
+    // branch may inline it under the condition or route it through an
+    // `if_temp_` helper; either way both commands live in one helper.
     let helper_line = tick
         .lines()
-        .find(|line| line.contains("run function cobble:if_temp_"))
+        .find(|line| {
+            line.contains("run function cobble:if_temp_")
+                || line.contains("run function cobble:execute_temp_")
+        })
         .unwrap_or_else(|| panic!("expected helper routing in tick:\n{tick}"));
     let helper_name = helper_line
         .rsplit_once(':')
