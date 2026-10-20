@@ -33,17 +33,59 @@ pub struct ValidationReport {
 
 pub struct CommandValidator {
     root: CommandNode,
+    /// Highest command permission level a validated command may use.
+    max_permission_level: u8,
 }
 
 impl CommandValidator {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         let root = CommandNode::from_file(path)?;
-        Ok(Self { root })
+        Ok(Self::new(root))
     }
 
     pub fn from_json_str(content: &str) -> Result<Self, String> {
         let root = CommandNode::from_json_str(content)?;
-        Ok(Self { root })
+        Ok(Self::new(root))
+    }
+
+    fn new(root: CommandNode) -> Self {
+        Self {
+            root,
+            max_permission_level: command_tree::DEFAULT_FUNCTION_PERMISSION_LEVEL,
+        }
+    }
+
+    /// Validate as if functions ran at `level` (a server whose
+    /// `function-permission-level` was raised from the default 2).
+    pub fn with_max_permission_level(mut self, level: u8) -> Self {
+        self.max_permission_level = level;
+        self
+    }
+
+    /// A command node above the function permission level is not available
+    /// to data pack functions: Minecraft refuses to load a function using it.
+    fn permission_error(
+        &self,
+        name: &str,
+        node: &CommandNode,
+        position: usize,
+    ) -> Option<CommandValidationError> {
+        let (level, level_name) = node.required_permission_level()?;
+        if level <= self.max_permission_level {
+            return None;
+        }
+        let level_label = if level_name.is_empty() {
+            level.to_string()
+        } else {
+            format!("{} ({})", level, level_name)
+        };
+        Some(CommandValidationError {
+            message: format!(
+                "`{}` requires permission level {}; data pack functions run at level {} (`function-permission-level`), so Minecraft rejects this command. If the server raised `function-permission-level`, set COBBLE_FUNCTION_PERMISSION_LEVEL to match",
+                name, level_label, self.max_permission_level
+            ),
+            position,
+        })
     }
 
     /// Validate a single command string.
@@ -184,6 +226,14 @@ impl CommandValidator {
             if child.node_type == "literal" {
                 let saved = reader.cursor();
                 if reader.try_read_literal(name) {
+                    if let Some(error) = self.permission_error(name, child, reader.cursor()) {
+                        if best_error.is_none() || error.position > best_error_pos {
+                            best_error_pos = error.position;
+                            best_error = Some(error);
+                        }
+                        reader.set_cursor(saved);
+                        continue;
+                    }
                     if child.executable && Self::is_at_end(reader) {
                         return Ok(());
                     }
@@ -212,11 +262,19 @@ impl CommandValidator {
         }
 
         // Then try argument children
-        for child in node.children.values() {
+        for (name, child) in &node.children {
             if child.node_type == "argument" {
                 if let Some(ref parser_type) = child.parser {
                     let saved = reader.cursor();
                     if arg_parsers::parse_argument(reader, parser_type, child.properties.as_ref()) {
+                        if let Some(error) = self.permission_error(name, child, reader.cursor()) {
+                            if best_error.is_none() || error.position > best_error_pos {
+                                best_error_pos = error.position;
+                                best_error = Some(error);
+                            }
+                            reader.set_cursor(saved);
+                            continue;
+                        }
                         if child.executable && Self::is_at_end(reader) {
                             return Ok(());
                         }
@@ -265,8 +323,18 @@ impl CommandValidator {
         !reader.can_read()
     }
 
+    /// Minecraft's macro line rules (`StringTemplate`): every `$(...)` must
+    /// be closed and name a valid variable (letters, digits, `_`), and a
+    /// macro line must contain at least one variable ("No variables in
+    /// macro"). Any violation stops the whole function from loading.
     fn validate_macro_placeholders(command: &str) -> Result<(), CommandValidationError> {
         let chars = command.chars().collect::<Vec<_>>();
+        if !command.contains("$(") {
+            return Err(CommandValidationError {
+                message: "Macro line has no `$(...)` variables; Minecraft rejects macro lines without variables".to_string(),
+                position: 0,
+            });
+        }
         let mut index = 0;
         while index + 1 < chars.len() {
             if chars[index] == '$' && chars[index + 1] == '(' {
@@ -285,6 +353,17 @@ impl CommandValidator {
                 if index == name_start {
                     return Err(CommandValidationError {
                         message: format!("Empty macro placeholder at position {}", start),
+                        position: start,
+                    });
+                }
+                let name = chars[name_start..index].iter().collect::<String>();
+                // `Character.isLetterOrDigit` or `_`, like `StringTemplate`.
+                if !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+                    return Err(CommandValidationError {
+                        message: format!(
+                            "Invalid macro variable name `{}` at position {}",
+                            name, start
+                        ),
                         position: start,
                     });
                 }
@@ -362,6 +441,140 @@ mod tests {
             }"#,
         )
         .unwrap()
+    }
+
+    /// A small tree mirroring the real report's shapes for permissions,
+    /// float ranges inside selectors, particles, and greedy messages.
+    fn permission_fixture_validator() -> CommandValidator {
+        let require = |level: &str| {
+            format!(
+                r#""permissions": {{"type": "minecraft:require", "permission": {{"type": "minecraft:command_level", "level": "{level}"}}}}"#
+            )
+        };
+        CommandValidator::from_json_str(&format!(
+            r#"{{
+                "type": "root",
+                "children": {{
+                    "stop": {{"type": "literal", "executable": true, {owners}}},
+                    "tick": {{
+                        "type": "literal",
+                        {admins},
+                        "children": {{"freeze": {{"type": "literal", "executable": true}}}}
+                    }},
+                    "say": {{
+                        "type": "literal",
+                        {gamemasters},
+                        "children": {{
+                            "message": {{"type": "argument", "parser": "minecraft:message", "executable": true}}
+                        }}
+                    }},
+                    "kill": {{
+                        "type": "literal",
+                        "children": {{
+                            "targets": {{"type": "argument", "parser": "minecraft:entity", "executable": true, "properties": {{"type": "entities", "amount": "multiple"}}}}
+                        }}
+                    }},
+                    "particle": {{
+                        "type": "literal",
+                        "children": {{
+                            "name": {{"type": "argument", "parser": "minecraft:particle", "executable": true}}
+                        }}
+                    }},
+                    "execute": {{
+                        "type": "literal",
+                        "children": {{"run": {{"type": "literal", "redirect": []}}}}
+                    }}
+                }}
+            }}"#,
+            owners = require("owners"),
+            admins = require("admins"),
+            gamemasters = require("gamemasters"),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn commands_above_function_permission_level_are_rejected() {
+        let validator = permission_fixture_validator();
+
+        let error = validator.validate_command_detailed("stop").unwrap_err();
+        assert!(
+            error
+                .message
+                .contains("`stop` requires permission level 4 (owners)"),
+            "{error:?}"
+        );
+        let error = validator
+            .validate_command_detailed("tick freeze")
+            .unwrap_err();
+        assert!(error.message.contains("level 3 (admins)"), "{error:?}");
+        let error = validator
+            .validate_command_detailed("execute run stop")
+            .unwrap_err();
+        assert!(error.message.contains("`stop`"), "{error:?}");
+
+        // Level-2 commands are fine, and a server with a raised
+        // function-permission-level accepts the rest.
+        assert!(validator.validate_command("say hi").is_ok());
+        let raised = permission_fixture_validator().with_max_permission_level(4);
+        assert!(raised.validate_command("stop").is_ok());
+        assert!(raised.validate_command("tick freeze").is_ok());
+    }
+
+    #[test]
+    fn selector_float_ranges_with_lower_bound_are_valid() {
+        let validator = permission_fixture_validator();
+        for command in [
+            "kill @e[distance=1..5]",
+            "kill @e[distance=1..]",
+            "kill @e[distance=..5]",
+            "kill @e[distance=1.5..2.5]",
+            "kill @e[x_rotation=-90..0]",
+        ] {
+            assert!(
+                validator.validate_command(command).is_ok(),
+                "{command}: {:?}",
+                validator.validate_command(command)
+            );
+        }
+    }
+
+    #[test]
+    fn particle_options_compound_is_valid() {
+        let validator = permission_fixture_validator();
+        assert!(validator
+            .validate_command("particle dust{color:[1.0,0.0,0.0],scale:1.0}")
+            .is_ok());
+        assert!(validator
+            .validate_command("particle minecraft:flame")
+            .is_ok());
+        assert!(validator
+            .validate_command("particle dust{color:[1.0,0.0,0.0]")
+            .is_err());
+    }
+
+    #[test]
+    fn macro_lines_follow_minecraft_template_rules() {
+        let validator = permission_fixture_validator();
+        let error = validator
+            .validate_command_detailed("$say plain")
+            .unwrap_err();
+        assert!(error.message.contains("no `$(...)` variables"), "{error:?}");
+        let error = validator
+            .validate_command_detailed("$say $(bad-name)")
+            .unwrap_err();
+        assert!(
+            error.message.contains("Invalid macro variable name"),
+            "{error:?}"
+        );
+        assert!(validator.validate_command("$say $(força)").is_ok());
+    }
+
+    #[test]
+    fn greedy_message_after_macro_placeholder_is_valid() {
+        let validator = permission_fixture_validator();
+        assert!(validator.validate_command("$say $(x) raw text").is_ok());
+        assert!(validator.validate_command("$say hello $(x)").is_ok());
     }
 
     #[test]

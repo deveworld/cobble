@@ -4505,3 +4505,188 @@ fn cli_inspect_malformed_manifest_reports_parse_error() {
     assert!(stderr.contains("Failed to parse"));
     assert!(stderr.contains("build_manifest.json"));
 }
+
+fn write_minimal_project(root: &Path, config: &str) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("cobble.toml"), config).unwrap();
+    fs::write(root.join("src/main.cbl"), "def f():\n    /say hi\n").unwrap();
+}
+
+fn manifest_project_id(output_dir: &Path) -> String {
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    manifest["project_id"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn cli_build_input_forms_share_one_project_identity() {
+    // `cobble build`, `cobble build src`, and `cobble build src/main.cbl` run
+    // from the project root are the same project. A relative input used to
+    // resolve the config as a bare `cobble.toml` with an empty directory,
+    // hashing a different project_id and refusing the owned output.
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let root = temp_dir.path();
+    write_minimal_project(
+        root,
+        "[project]\nname = \"ids\"\ndescription = \"d\"\nnamespace = \"ids\"\n\n[build]\nsource = \"src\"\noutput = \"out\"\n",
+    );
+
+    let mut ids = Vec::new();
+    for args in [
+        vec!["build", "--quiet"],
+        vec!["build", "src", "--quiet"],
+        vec!["build", "src/main.cbl", "--quiet"],
+        vec!["build", "--quiet"],
+    ] {
+        let output = cobble().current_dir(root).args(&args).output().unwrap();
+        let (stdout, stderr) = output_text(&output);
+        assert!(
+            output.status.success(),
+            "{args:?} failed:\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        ids.push(manifest_project_id(&root.join("out")));
+    }
+    assert!(ids.windows(2).all(|pair| pair[0] == pair[1]), "{ids:?}");
+    // SHA-1 of the empty string: the old empty-root identity.
+    assert_ne!(ids[0], "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+
+    let output = cobble()
+        .current_dir(root)
+        .args(["clean", "src", "--dry-run"])
+        .output()
+        .unwrap();
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_build_without_build_table_uses_default_source_and_output() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let root = temp_dir.path();
+    write_minimal_project(
+        root,
+        "[project]\nname = \"nobuild\"\ndescription = \"d\"\nnamespace = \"nobuild\"\n",
+    );
+
+    let output = cobble()
+        .current_dir(root)
+        .args(["build", "--quiet"])
+        .output()
+        .unwrap();
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(root
+        .join("output/data/nobuild/function/f.mcfunction")
+        .is_file());
+    assert!(
+        !root.join("data").exists(),
+        "must not build into the project root"
+    );
+}
+
+#[test]
+fn cli_init_keeps_existing_project_files() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project = temp_dir.path().join("existing");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.cbl"), "# my code\n").unwrap();
+    fs::write(project.join(".gitignore"), "keep-me\n").unwrap();
+
+    let output = cobble()
+        .current_dir(temp_dir.path())
+        .args(["init", "--name", "existing"])
+        .output()
+        .unwrap();
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("Kept existing src/main.cbl"), "{stdout}");
+    assert!(stdout.contains("Kept existing .gitignore"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(project.join("src/main.cbl")).unwrap(),
+        "# my code\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join(".gitignore")).unwrap(),
+        "keep-me\n"
+    );
+    assert!(project.join("cobble.toml").is_file());
+}
+
+#[test]
+fn cli_validate_honors_raised_function_permission_level() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let commands_json = temp_dir.path().join("commands-admin-say.json");
+    fs::write(
+        &commands_json,
+        r#"{
+            "type": "root",
+            "children": {
+                "say": {
+                    "type": "literal",
+                    "permissions": {"type": "minecraft:require", "permission": {"type": "minecraft:command_level", "level": "admins"}},
+                    "children": {
+                        "message": {"type": "argument", "parser": "minecraft:message", "executable": true}
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let input = write_source(temp_dir.path(), "def f():\n    /say hi\n");
+    let output_dir = temp_dir.path().join("out");
+    let build = cobble()
+        .current_dir(temp_dir.path())
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output_dir)
+        .arg("--quiet")
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{:?}", output_text(&build));
+
+    let validate = |level: Option<&str>| {
+        let mut command = cobble();
+        command
+            .current_dir(temp_dir.path())
+            .arg("validate")
+            .arg(&output_dir)
+            .arg("--commands-json")
+            .arg(&commands_json)
+            .env_remove("COBBLE_FUNCTION_PERMISSION_LEVEL");
+        if let Some(level) = level {
+            command.env("COBBLE_FUNCTION_PERMISSION_LEVEL", level);
+        }
+        command.output().unwrap()
+    };
+
+    let default_level = validate(None);
+    let (stdout, stderr) = output_text(&default_level);
+    assert!(!default_level.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        format!("{stdout}{stderr}").contains("requires permission level 3 (admins)"),
+        "{stdout}\n{stderr}"
+    );
+
+    let raised = validate(Some("3"));
+    assert!(raised.status.success(), "{:?}", output_text(&raised));
+
+    let invalid = validate(Some("9"));
+    let (stdout, stderr) = output_text(&invalid);
+    assert!(!invalid.status.success());
+    assert!(
+        format!("{stdout}{stderr}").contains("COBBLE_FUNCTION_PERMISSION_LEVEL must be"),
+        "{stdout}\n{stderr}"
+    );
+}

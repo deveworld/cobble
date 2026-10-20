@@ -2,7 +2,7 @@ use super::output_safety::ensure_no_symlink_components;
 use crate::config::CobbleConfig;
 use crate::fs_safety::write_file_atomic;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct InitOptions {
     pub name: Option<String>,
@@ -113,11 +113,10 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     // Create src directory
     fs::create_dir_all(&src_dir).map_err(|e| format!("Failed to create src directory: {}", e))?;
 
-    // Create main.cbl with sample code
-    write_file_atomic(&main_file, sample_code)
-        .map_err(|e| format!("Failed to create main.cbl: {}", e))?;
+    // Never overwrite existing files: `cobble init` in a directory that
+    // already holds sources only adds the missing scaffold around them.
+    let mut report = Vec::new();
 
-    // Create .gitignore
     let gitignore_content = r#"# Cobble output
 output/
 *.zip
@@ -134,9 +133,6 @@ output/
 Thumbs.db
 "#;
 
-    write_file_atomic(&gitignore, gitignore_content)
-        .map_err(|e| format!("Failed to create .gitignore: {}", e))?;
-
     for extra_file in template.extra_files {
         let path = project_dir.join(extra_file.path);
         if let Some(parent) = path.parent() {
@@ -144,14 +140,15 @@ Thumbs.db
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
         }
-        write_file_atomic(&path, extra_file.content)
-            .map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
-        println!("✓ Created {}", extra_file.path);
+        report.push(write_new_file(&path, extra_file.content, extra_file.path)?);
     }
+    report.push("✓ Created cobble.toml".to_string());
+    report.push(write_new_file(&main_file, sample_code, "src/main.cbl")?);
+    report.push(write_new_file(&gitignore, gitignore_content, ".gitignore")?);
 
-    println!("✓ Created cobble.toml");
-    println!("✓ Created src/main.cbl");
-    println!("✓ Created .gitignore");
+    for line in report {
+        println!("{}", line);
+    }
     println!();
     println!("Project initialized successfully!");
     println!("Next steps:");
@@ -378,6 +375,16 @@ emit_diagnostics = true
 "#,
         },
     ]
+}
+
+/// Create `path` with `content` unless a file already exists there, and
+/// return the line reporting what happened.
+fn write_new_file(path: &Path, content: &str, label: &str) -> Result<String, String> {
+    if path.exists() {
+        return Ok(format!("• Kept existing {}", label));
+    }
+    write_file_atomic(path, content).map_err(|e| format!("Failed to create {}: {}", label, e))?;
+    Ok(format!("✓ Created {}", label))
 }
 
 #[cfg(test)]

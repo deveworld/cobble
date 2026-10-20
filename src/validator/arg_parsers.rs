@@ -10,7 +10,12 @@ pub fn parse_argument(
     // Handle whole-argument macro placeholders. Multi-token parsers try their
     // native parse first so `$(x) $(y) $(z)` is treated as one vec3, not as a
     // single macro followed by stray tokens.
-    if reader.peek() == Some('$') && !is_multi_token_parser(parser_type) {
+    // Greedy parsers (`message`, greedy strings) take the rest of the line,
+    // macros included, so they skip the single-token shortcut.
+    if reader.peek() == Some('$')
+        && !is_multi_token_parser(parser_type)
+        && !is_greedy_parser(parser_type, properties)
+    {
         let saved = reader.cursor();
         if reader.try_read_macro() {
             if reader.at_token_boundary() {
@@ -144,6 +149,15 @@ pub fn parse_argument(
         // Unknown parser — accept any word liberally
         _ => parse_word(reader),
     }
+}
+
+fn is_greedy_parser(parser_type: &str, properties: Option<&serde_json::Value>) -> bool {
+    parser_type == "minecraft:message"
+        || (parser_type == "brigadier:string"
+            && properties
+                .and_then(|properties| properties.get("type"))
+                .and_then(|kind| kind.as_str())
+                == Some("greedy"))
 }
 
 fn is_multi_token_parser(parser_type: &str) -> bool {
@@ -1062,17 +1076,19 @@ fn parse_whole_macro(reader: &mut StringReader) -> bool {
 fn parse_particle(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
 
-    // Read the particle type (resource location)
-    if !parse_resource_location(reader) {
+    // Read the particle type (resource location); options may follow it
+    // without a space, so no token boundary is required here.
+    if !read_resource_location_chars(reader) {
         reader.set_cursor(saved);
         return false;
     }
 
-    // Some particles have extra parameters. We liberally accept remaining
-    // non-whitespace tokens until the next argument context would take over.
-    // For now, just accept the resource location part.
-    // Parameters like dust 1.0 0.0 0.0 1.0 would be handled by the
-    // tree structure having additional argument nodes.
+    // Since 1.20.5 particle options are an SNBT compound glued to the id:
+    // `dust{color:[1.0,0.0,0.0],scale:1.0}`.
+    if (reader.peek() == Some('{') && !reader.read_nbt()) || !reader.at_token_boundary() {
+        reader.set_cursor(saved);
+        return false;
+    }
     true
 }
 

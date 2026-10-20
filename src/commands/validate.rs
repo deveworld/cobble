@@ -46,10 +46,31 @@ pub fn validate(options: ValidateOptions) -> Result<(), String> {
 pub fn run_validation(input: &Path, commands_json: &Path) -> Result<ValidationReport, String> {
     ensure_commands_json(commands_json)?;
 
-    let validator = CommandValidator::from_file(commands_json)?;
+    let validator = CommandValidator::from_file(commands_json)?
+        .with_max_permission_level(function_permission_level()?);
     let mut report = validator.validate_datapack(input);
     report.source_map_errors = validate_source_map(input);
     Ok(report)
+}
+
+/// Permission level generated functions are validated against: the
+/// server's `function-permission-level`, 2 by default. Servers that raised it
+/// set `COBBLE_FUNCTION_PERMISSION_LEVEL` to the same value (0-4).
+fn function_permission_level() -> Result<u8, String> {
+    match std::env::var("COBBLE_FUNCTION_PERMISSION_LEVEL") {
+        Err(_) => Ok(crate::validator::command_tree::DEFAULT_FUNCTION_PERMISSION_LEVEL),
+        Ok(value) => value
+            .trim()
+            .parse::<u8>()
+            .ok()
+            .filter(|level| *level <= 4)
+            .ok_or_else(|| {
+                format!(
+                    "COBBLE_FUNCTION_PERMISSION_LEVEL must be a permission level from 0 to 4, got `{}`",
+                    value
+                )
+            }),
+    }
 }
 
 fn ensure_commands_json(commands_json: &Path) -> Result<(), String> {

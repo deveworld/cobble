@@ -1,6 +1,5 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 192
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -98,7 +97,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/admin_probe.mcfunction",
       "generated_line": 1,
-      "command": "$transfer example.org 25565 $(player)",
+      "command": "$waypoint modify $(player) color red",
       "source": {
         "file": "src/main.cbl",
         "line": 57,
@@ -696,7 +695,7 @@ expression: datapack_tree_snapshot(&output_dir)
 }
 
 ===== data/cobble_26_smoke/function/admin_probe.mcfunction =====
-$transfer example.org 25565 $(player)
+$waypoint modify $(player) color red
 $swing $(player) mainhand
 return run say nested return ok
 test run minecraft:always_pass 1 true

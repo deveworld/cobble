@@ -229,7 +229,6 @@ def test():
     /dialog show @a minecraft:notice
     /fetchprofile name Notch
     /fetchprofile id 123e4567-e89b-12d3-a456-426614174000
-    /transfer example.org 25565 @a
     /waypoint list
     /waypoint modify @s color red
     /waypoint modify @s color hex #ff00aa
@@ -247,6 +246,26 @@ def test():
         "Validation errors:\n{}",
         format_errors(&errors)
     );
+}
+
+#[test]
+fn test_validate_rejects_commands_above_function_permission_level() {
+    // `transfer` (admins) and `stop` (owners) parse in chat but not in a data
+    // pack function at the default function-permission-level of 2.
+    let errors = compile_and_validate(
+        r#"
+def test():
+    /transfer example.org 25565 @a
+    /stop
+"#,
+    );
+    if errors.is_empty() && !std::path::Path::new("data/commands.json").exists() {
+        return;
+    }
+    assert_eq!(errors.len(), 2, "{}", format_errors(&errors));
+    assert!(errors
+        .iter()
+        .all(|(_, error)| error.message.contains("requires permission level")));
 }
 
 #[test]

@@ -187,7 +187,10 @@ impl StringReader {
             self.cursor += 1;
         }
 
-        if self.can_read() && self.input[self.cursor] == '.' {
+        // A `..` is a range separator (`1..5`), never a decimal point.
+        let dot_starts_range =
+            self.cursor + 1 < self.input.len() && self.input[self.cursor + 1] == '.';
+        if self.can_read() && self.input[self.cursor] == '.' && !dot_starts_range {
             self.cursor += 1;
             let has_digits_after_dot = self.can_read() && self.input[self.cursor].is_ascii_digit();
             while self.can_read() && self.input[self.cursor].is_ascii_digit() {

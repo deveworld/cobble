@@ -1881,8 +1881,13 @@ fn is_ident_start_byte(byte: u8) -> bool {
     byte.is_ascii_alphabetic() || byte == b'_'
 }
 
+/// Identifier continuation bytes. Like the tokenizer, identifiers start with
+/// an ASCII letter or `_` but may continue with Unicode alphanumerics
+/// (`résultat`, `força`); every byte of a non-ASCII char is >= 0x80, and
+/// non-alphanumeric non-ASCII text is a tokenizer error before these passes
+/// run, so any such byte is part of an identifier.
 fn is_ident_continue_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
 }
 
 fn is_expression_keyword(name: &str) -> bool {
@@ -2062,7 +2067,7 @@ pub(super) fn check_storage_backed_access(
                             line,
                             column_from_byte(
                                 &masked,
-                                indent + assignment.value_offset + diagnostic.offset,
+                                indent + assignment.trimmed_offset(diagnostic.offset),
                             ),
                             diagnostic.message,
                         )
@@ -2669,6 +2674,39 @@ struct TypeAssignmentSpan {
     value_offset: usize,
     column: usize,
     is_const: bool,
+    /// Set for compound assignments, whose `value` is the synthesized
+    /// `target op (rhs)` text rather than a slice of the source line.
+    compound: Option<CompoundValueMapping>,
+}
+
+/// Where the parts of a synthesized `target op (rhs)` value sit in the
+/// trimmed source line `target op= rhs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CompoundValueMapping {
+    target_offset: usize,
+    target_len: usize,
+    /// Length of the synthesized `target op (` prefix.
+    prefix_len: usize,
+    rhs_offset: usize,
+}
+
+impl TypeAssignmentSpan {
+    /// Map a byte offset inside `value` back to a byte offset in the trimmed
+    /// source line. Plain assignments slice the line, so the mapping is a
+    /// shift; compound assignments map the synthesized target and rhs parts
+    /// back to where they were written (`x+=m[a]` has no `(` to point at).
+    fn trimmed_offset(&self, offset_in_value: usize) -> usize {
+        let Some(mapping) = self.compound else {
+            return self.value_offset + offset_in_value;
+        };
+        if offset_in_value < mapping.target_len {
+            mapping.target_offset + offset_in_value
+        } else if offset_in_value >= mapping.prefix_len {
+            mapping.rhs_offset + (offset_in_value - mapping.prefix_len)
+        } else {
+            mapping.target_offset + mapping.target_len
+        }
+    }
 }
 
 fn assignment_span_for_type_check(
@@ -2688,6 +2726,7 @@ fn assignment_span_for_type_check(
         let raw_trimmed = line.trim_start();
         let raw_rhs = raw_trimmed.get(compound.value_offset..)?;
         let stripped_rhs = strip_comment_preserving_strings(raw_rhs);
+        let rhs_trim_start = stripped_rhs.len() - stripped_rhs.trim_start().len();
         let value = stripped_rhs.trim();
         if value.is_empty() {
             return None;
@@ -2699,6 +2738,12 @@ fn assignment_span_for_type_check(
             value_offset: compound.target_offset,
             column: indent + column_from_byte(masked_trimmed, compound.target_offset),
             is_const: false,
+            compound: Some(CompoundValueMapping {
+                target_offset: compound.target_offset,
+                target_len: compound.target.len(),
+                prefix_len: compound.target.len() + compound.operator.len() + 3,
+                rhs_offset: compound.value_offset + rhs_trim_start,
+            }),
         });
     }
 
@@ -2728,6 +2773,7 @@ fn assignment_span_for_type_check(
         value_offset: equals_index + 1 + trim_start,
         column: indent + column_from_byte(masked_trimmed, raw_target.find(target).unwrap_or(0)),
         is_const,
+        compound: None,
     })
 }
 

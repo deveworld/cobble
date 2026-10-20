@@ -13,9 +13,36 @@ pub struct CommandNode {
     pub parser: Option<String>,
     pub properties: Option<serde_json::Value>,
     pub redirect: Option<Vec<String>>,
+    /// Permission requirement from the report, e.g.
+    /// `{"type":"minecraft:require","permission":{"type":"minecraft:command_level","level":"owners"}}`.
+    #[serde(default)]
+    pub permissions: Option<serde_json::Value>,
 }
 
+/// Permission level data pack functions run at by default
+/// (`function-permission-level` in `server.properties`): `gamemasters`.
+pub const DEFAULT_FUNCTION_PERMISSION_LEVEL: u8 = 2;
+
 impl CommandNode {
+    /// Command permission level this node requires, if the report lists one
+    /// (`all` 0, `moderators` 1, `gamemasters` 2, `admins` 3, `owners` 4).
+    pub fn required_permission_level(&self) -> Option<(u8, &str)> {
+        let level = self.permissions.as_ref()?.get("permission")?.get("level")?;
+        if let Some(number) = level.as_u64() {
+            return Some((number.min(4) as u8, ""));
+        }
+        let name = level.as_str()?;
+        let number = match name {
+            "all" => 0,
+            "moderators" => 1,
+            "gamemasters" => 2,
+            "admins" => 3,
+            "owners" => 4,
+            _ => return None,
+        };
+        Some((number, name))
+    }
+
     pub fn from_file(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read commands.json: {}", e))?;

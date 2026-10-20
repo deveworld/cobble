@@ -54,7 +54,7 @@ def tick():
 
 def admin_probe(player):
     """Exercise commands that require a player argument"""
-    /transfer example.org 25565 {player}
+    /waypoint modify {player} color red
     /swing {player} mainhand
     /return run say nested return ok
     /test run minecraft:always_pass 1 true

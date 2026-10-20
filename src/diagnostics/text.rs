@@ -175,8 +175,11 @@ pub(super) fn find_word(text: &str, word: &str) -> Option<usize> {
     None
 }
 
+/// Identifier characters, matching the tokenizer: identifiers may continue
+/// with Unicode alphanumerics (`força`, `résultat`), so a keyword followed by
+/// one is part of a longer name, not the keyword.
 pub(super) fn is_ident_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
+    ch.is_alphanumeric() || ch == '_'
 }
 
 /// Converts a byte index into a 1-based column by counting the chars before
@@ -185,7 +188,14 @@ pub(super) fn is_ident_char(ch: char) -> bool {
 /// (masking preserves char positions but not byte positions), while offsets
 /// found in the raw line must be counted against the raw line.
 pub(super) fn column_from_byte(line: &str, byte_index: usize) -> usize {
-    line[..byte_index.min(line.len())].chars().count() + 1
+    // Never slice inside a char: an offset computed against a different
+    // text (masked vs raw, synthesized vs source) must degrade to the
+    // char's column instead of panicking.
+    let mut end = byte_index.min(line.len());
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    line[..end].chars().count() + 1
 }
 
 /// 1-based (line, char-column) of an absolute byte offset in a source text.

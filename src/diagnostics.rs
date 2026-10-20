@@ -139,7 +139,10 @@ fn analyze_source_stages(source: &str) -> SourceAnalysis {
         }
 
         let masked = mask_non_code(line);
-        let trimmed = masked.trim_start();
+        // Comments are masked to spaces, so trim both ends: a header like
+        // `def main():  # entry` still ends with `:`.
+        let start_trimmed = masked.trim_start();
+        let trimmed = start_trimmed.trim_end();
         if trimmed.is_empty() {
             continue;
         }
@@ -151,7 +154,7 @@ fn analyze_source_stages(source: &str) -> SourceAnalysis {
             continue;
         }
 
-        let indent = masked.len() - trimmed.len();
+        let indent = masked.len() - start_trimmed.len();
         let trimmed_column = column_from_byte(line, indent);
         let is_for_else = starts_with_keyword(trimmed, "else")
             && active_for_blocks.last().copied() == Some(indent);
@@ -274,13 +277,16 @@ fn check_indentation_syntax(source: &str, diagnostics: &mut Vec<SourceDiagnostic
         }
 
         let masked = mask_non_code(line);
-        let trimmed = masked.trim_start();
+        // Comments are masked to spaces, so trim both ends: a header like
+        // `def main():  # entry` still ends with `:`.
+        let start_trimmed = masked.trim_start();
+        let trimmed = start_trimmed.trim_end();
         if trimmed.is_empty() {
             continue;
         }
 
         if delimiter_depth == 0 {
-            let indent = masked.len() - trimmed.len();
+            let indent = masked.len() - start_trimmed.len();
             let current_indent = *indent_stack.last().unwrap_or(&0);
 
             if indent > current_indent {
@@ -1391,11 +1397,7 @@ pub(super) fn looks_like_selector_definition(trimmed: &str) -> bool {
     };
     let left = trimmed[..index].trim();
     let right = trimmed[index + 1..].trim();
-    left.starts_with('@')
-        && left[1..]
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-        && right.starts_with('@')
+    left.starts_with('@') && left[1..].chars().all(is_ident_char) && right.starts_with('@')
 }
 
 fn is_simple_module_name(module: &str) -> bool {

@@ -369,3 +369,49 @@ fn multibyte_expressions_do_not_panic_the_top_level_operator_scanner() {
         let _ = analyze_source(source);
     }
 }
+
+#[test]
+fn block_header_with_trailing_comment_or_whitespace_is_not_missing_a_colon() {
+    for source in [
+        "def main():  # entry point\n    /say hi\n",
+        "def main():   \n    /say hi\n",
+        "def main():\n    x = 1\n    if x > 0:  # positive\n        /say yes\n    else:  # other\n        /say no\n",
+    ] {
+        let diagnostics = analyze_source(source);
+        assert!(diagnostics.is_empty(), "{source:?}: {diagnostics:?}");
+    }
+
+    // A header that really lacks its colon is still reported.
+    let diagnostics = analyze_source("def main()  # no colon\n    /say hi\n");
+    expect_kind(&diagnostics, "missing-block-colon");
+
+    // `for ... else` tracking still sees a commented loop header.
+    let diagnostics = analyze_source(
+        "def main():\n    for x in range(2):  # loop\n        /say a\n    else:\n        /say b\n",
+    );
+    expect_kind(&diagnostics, "unsupported-control-flow");
+}
+
+#[test]
+fn unicode_identifiers_are_single_names() {
+    // The tokenizer accepts Unicode alphanumerics after an ASCII start; the
+    // diagnostics scanners must not split `résultat` or read `força` as the
+    // `for` keyword.
+    let source = "@Größe = @a[tag=big]\n\ndef main():\n    força = 1\n    résultat = força + 1\n    /say {résultat}\n    as @Größe:\n        /say big\n";
+    let diagnostics = analyze_source(source);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+    // A misspelled Unicode name is still undefined, reported as one name.
+    let diagnostics = analyze_source("def main():\n    força = 1\n    y = forca + 1\n");
+    let diagnostic = expect_kind(&diagnostics, "undefined-variable");
+    assert!(diagnostic.message.contains("`forca`"), "{diagnostic:?}");
+}
+
+#[test]
+fn compound_assignment_with_non_ascii_operand_does_not_panic() {
+    // The type-check pass maps offsets from a synthesized `x + (rhs)` string
+    // back to the source line; with no spaces around `+=` that mapping used
+    // to land inside the multi-byte `한` and panic.
+    let source = "def main():\n    m = {\"k\": 1}\n    a = 1\n    x = 0\n    x+=m[a한 + 1]\n";
+    let _ = analyze_source(source);
+}

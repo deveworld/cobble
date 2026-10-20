@@ -28,7 +28,7 @@ pub struct ProjectConfig {
     pub pack_format: String, // Changed from u8 to String to support decimal formats
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildConfig {
     #[serde(default = "default_source")]
@@ -37,6 +37,19 @@ pub struct BuildConfig {
     pub output: String,
     #[serde(default)]
     pub entry_points: Vec<String>,
+}
+
+/// Used when `cobble.toml` has no `[build]` table at all; must agree with the
+/// per-field defaults above (a derived `Default` would leave `source` and
+/// `output` empty, pointing both at the project root).
+impl Default for BuildConfig {
+    fn default() -> Self {
+        Self {
+            source: default_source(),
+            output: default_output(),
+            entry_points: Vec::new(),
+        }
+    }
 }
 
 /// Standard library configuration.
@@ -187,11 +200,26 @@ impl CobbleConfig {
             return None;
         }
 
+        // The walk is lexical; the parent of a one-segment relative path
+        // (`src`) is the empty path, which means the current directory. Name
+        // it `.` so the config path is `./cobble.toml` and its directory can
+        // be canonicalized (an empty project root would hash to a different
+        // project identity than a plain `cobble build`).
         let path = path.as_ref();
+        let path = if path.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            path
+        };
         let config_file = path.join("cobble.toml");
 
         if config_file.exists() {
             return Some(config_file);
+        }
+
+        // A relative walk ends at the current directory.
+        if path == Path::new(".") {
+            return None;
         }
 
         // Search in parent directories
