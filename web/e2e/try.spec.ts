@@ -12,7 +12,7 @@ test("try page loads WASM compiler output and downloads a data pack ZIP", async 
   await expect(page.getByLabel("Cobble source")).toContainText("def on_load");
   await expect(page.getByText("2 functions")).toBeVisible();
   await expect(page.getByText("5 commands")).toBeVisible();
-  await expect(page.getByText("pack 101.1")).toBeVisible();
+  await expect(page.getByText("pack 121.0")).toBeVisible();
 
   await expect(
     page.getByRole("button", { name: "data/demo/function/on_load.mcfunction" })
@@ -23,7 +23,7 @@ test("try page loads WASM compiler output and downloads a data pack ZIP", async 
   await expect(
     page.getByRole("button", { name: ".cobble/build_manifest.json" })
   ).toBeVisible();
-  await expect(page.locator(".output-code")).toContainText('"minecraft_version": "26.1.2"');
+  await expect(page.locator(".output-code")).toContainText('"minecraft_version": "26.3"');
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "ZIP" }).click();

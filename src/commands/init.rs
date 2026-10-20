@@ -281,7 +281,7 @@ datapack.item_tag("reward_items", ["minecraft:diamond", "minecraft:emerald"])
 datapack.block_tag("building_blocks", ["minecraft:stone", "minecraft:deepslate"])
 datapack.entity_type_tag("hostile_targets", ["minecraft:zombie", "minecraft:skeleton"])
 datapack.predicate("always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 datapack.advancement("root", {"criteria": {"tick": {"trigger": "minecraft:tick"}}})
@@ -292,7 +292,7 @@ datapack.recipe("stonecutting/polished_granite", {
     "result": {"id": "minecraft:polished_granite"}
 })
 datapack.item_modifier("reward_name", {
-    "function": "minecraft:set_name",
+    "type": "minecraft:set_name",
     "name": {"text": "Cobble Reward"}
 })
 datapack.dialog("notice", {
@@ -352,11 +352,15 @@ def reward_player():
             experimental_plugins: true,
             extra_files: &[InitExtraFile {
                 path: "plugins/example_lints.toml",
-                content: r#"plugin_version = 1
+                // The manifest names the Cobble release that generated it.
+                content: concat!(
+                    r#"plugin_version = 1
 name = "example_lints"
 kind = "diagnostics"
 description = "Example diagnostics-only lint manifest"
-minimum_cobble_version = "0.9.0"
+minimum_cobble_version = ""#,
+                    env!("CARGO_PKG_VERSION"),
+                    r#""
 diagnostic_rules = [
     "example_lints.no_tellraw",
     "example_lints.no_raw_op",
@@ -368,7 +372,8 @@ diagnostic_rules = [
 read_project_metadata = true
 read_source_text = true
 emit_diagnostics = true
-"#,
+"#
+                ),
             }],
             source: r#"def main():
     /say plugin diagnostics manifest loaded

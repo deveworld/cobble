@@ -1,6 +1,5 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 201
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -25,7 +24,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "timer"
   ],
   "cobble_version": "<cobble-version>",
-  "description": "Cobble 26.1.2 feature matrix fixture",
+  "description": "Cobble 26.3 feature matrix fixture",
   "generated": {
     "advancements": 0,
     "commands": 277,
@@ -57,10 +56,10 @@ expression: datapack_tree_snapshot(&output_dir)
     ],
     "source": "src"
   },
-  "minecraft_version": "26.1.2",
+  "minecraft_version": "26.3",
   "namespace": "cobble_26_feature_matrix",
-  "pack_format": 101.1,
-  "pack_format_text": "101.1",
+  "pack_format": 121.0,
+  "pack_format_text": "121.0",
   "project_id": "<project-id>",
   "project_root": "<project-root>",
   "resources": [
@@ -2865,7 +2864,7 @@ execute if score energy temp matches 1.. run function cobble_26_feature_matrix:w
 ===== data/cobble_26_feature_matrix/predicate/always_true.json =====
 {
   "chance": 1,
-  "condition": "minecraft:random_chance"
+  "type": "minecraft:random_chance"
 }
 
 ===== data/cobble_26_feature_matrix/tags/function/utility.json =====
@@ -2892,20 +2891,20 @@ execute if score energy temp matches 1.. run function cobble_26_feature_matrix:w
 ===== data/other_matrix/predicate/checks/always_true.json =====
 {
   "chance": 1,
-  "condition": "minecraft:random_chance"
+  "type": "minecraft:random_chance"
 }
 
 ===== pack.mcmeta =====
 {
   "pack": {
-    "description": "Cobble 26.1.2 feature matrix fixture",
+    "description": "Cobble 26.3 feature matrix fixture",
     "max_format": [
-      101,
-      1
+      121,
+      0
     ],
     "min_format": [
-      101,
-      1
+      121,
+      0
     ]
   }
 }

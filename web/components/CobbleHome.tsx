@@ -34,7 +34,7 @@ stdlib.addEventListener(event.LOAD, on_load)`
     title: "Modern Items",
     code: `def reward(player):
     /give {player} minecraft:diamond_sword[
-        minecraft:custom_name='{"text":"Cobble Blade"}'
+        minecraft:custom_name={"text":"Cobble Blade"}
     ] 1`
   },
   {
@@ -43,7 +43,7 @@ stdlib.addEventListener(event.LOAD, on_load)`
 
 datapack.function_tag("minecraft:load", ["demo:on_load"])
 datapack.predicate("checks/always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })`
   }

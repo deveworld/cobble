@@ -231,7 +231,7 @@ fn item_component_value_helpers_follow_module_gating() {
 from stdlib import datapack, item_component
 
 datapack.item_modifier("test", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.components(item_component.unbreakable())
 })
 
@@ -246,7 +246,7 @@ def test():
 from stdlib import datapack
 
 datapack.item_modifier("test", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.components(item_component.unbreakable())
 })
 
@@ -265,7 +265,7 @@ fn nested_text_value_helpers_follow_text_module_gating() {
 from stdlib import datapack, item_component, text
 
 datapack.item_modifier("named", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.custom_name(text.plain("Name"))
 })
 
@@ -280,7 +280,7 @@ def test():
 from stdlib import datapack, item_component
 
 datapack.item_modifier("named", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.custom_name(text.plain("Name"))
 })
 
@@ -373,7 +373,7 @@ fn stdlib_version_1_activates_all_modules_without_import() {
 name = "v1"
 description = "v1 test"
 namespace = "stdlib_v2"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -407,7 +407,7 @@ fn stdlib_version_2_is_default_when_config_present() {
 name = "default"
 description = "default test"
 namespace = "stdlib_v2"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -435,7 +435,7 @@ fn datapack_module_gates_datapack_helpers() {
         r#"
 from stdlib import text
 
-datapack.predicate("test", {"condition": "minecraft:random_chance", "chance": 1})
+datapack.predicate("test", {"type": "minecraft:random_chance", "chance": 1})
 
 def main():
     /say hi

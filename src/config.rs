@@ -249,7 +249,7 @@ mod tests {
 name = "bad_stdlib"
 description = "Bad stdlib"
 namespace = "bad_stdlib"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [stdlib]
 version = 3

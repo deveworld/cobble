@@ -1,7 +1,7 @@
 from stdlib import datapack, entity, event, item_component, position, schedule, selector, storage, text
 
 datapack.item_modifier("items/reward_components", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.components(
         item_component.custom_name(text.colored("Cobble Reward", "gold")),
         item_component.lore([

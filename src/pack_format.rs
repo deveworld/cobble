@@ -4,8 +4,8 @@ pub const COBBLE_VERSION: &str = match option_env!("COBBLE_LANG_VERSION") {
     Some(version) => version,
     None => env!("CARGO_PKG_VERSION"),
 };
-pub const SUPPORTED_MINECRAFT_VERSION: &str = "26.1.2";
-pub const SUPPORTED_PACK_FORMAT: PackFormat = PackFormat::Decimal(101, 1);
+pub const SUPPORTED_MINECRAFT_VERSION: &str = "26.3";
+pub const SUPPORTED_PACK_FORMAT: PackFormat = PackFormat::Decimal(121, 0);
 
 /// Pack format representation that supports both integer and decimal formats
 /// Minecraft 1.21.9+ introduced decimal pack formats (e.g., 88.0).
@@ -65,15 +65,20 @@ impl PackFormat {
         }
     }
 
-    /// Whether this pack format is supported by this Cobble release.
+    /// Whether this pack format is supported by this Cobble release. An
+    /// integer names the same format as its `.0` decimal (`121` is `121.0`).
     pub fn is_supported(self) -> bool {
         self == SUPPORTED_PACK_FORMAT
+            || matches!(
+                (self, SUPPORTED_PACK_FORMAT),
+                (PackFormat::Integer(value), PackFormat::Decimal(major, 0)) if value == major
+            )
     }
 }
 
 impl Default for PackFormat {
     fn default() -> Self {
-        // Default to pack format 101.1 (Minecraft Java Edition 26.1.2)
+        // Default to pack format 121.0 (Minecraft Java Edition 26.3)
         SUPPORTED_PACK_FORMAT
     }
 }

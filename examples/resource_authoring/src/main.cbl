@@ -7,7 +7,7 @@ datapack.item_tag("reward_items", ["minecraft:diamond", "minecraft:emerald"])
 datapack.block_tag("building_blocks", ["minecraft:stone", "minecraft:deepslate"])
 datapack.entity_type_tag("hostile_targets", ["minecraft:zombie", "minecraft:skeleton"])
 datapack.predicate("checks/always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 datapack.advancement("story/root", {
@@ -20,7 +20,7 @@ datapack.recipe("stonecutting/polished_granite", {
     "result": {"id": "minecraft:polished_granite"}
 })
 datapack.item_modifier("items/reward_name", {
-    "function": "minecraft:set_name",
+    "type": "minecraft:set_name",
     "name": {"text": "Cobble Reward", "color": "gold"}
 })
 datapack.dialog("notice", {

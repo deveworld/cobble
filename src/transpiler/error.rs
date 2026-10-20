@@ -53,6 +53,9 @@ pub enum TranspileErrorKind {
     ResourcePackNonObject,
     /// Two `resource_pack.*` declarations target one path with different JSON.
     ResourcePackDuplicate,
+    /// A `datapack.*` JSON resource uses a shape the targeted Minecraft
+    /// version no longer loads (for example a predicate `condition` key).
+    DatapackResourceFormat,
 }
 
 impl TranspileErrorKind {
@@ -77,6 +80,7 @@ impl TranspileErrorKind {
             Self::ResourcePackBadId => "resource-pack-bad-id",
             Self::ResourcePackNonObject => "resource-pack-non-object",
             Self::ResourcePackDuplicate => "resource-pack-duplicate",
+            Self::DatapackResourceFormat => "datapack-resource-format",
         }
     }
 

@@ -1,6 +1,5 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 298
 expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json\")"
 ---
 {
@@ -53,10 +52,10 @@ expression: "normalized_file_snapshot(&output_dir, \".cobble/build_manifest.json
     "entry_points": [],
     "source": "main.cbl"
   },
-  "minecraft_version": "26.1.2",
+  "minecraft_version": "26.3",
   "namespace": "validated_snapshot",
-  "pack_format": 101.1,
-  "pack_format_text": "101.1",
+  "pack_format": 121.0,
+  "pack_format_text": "121.0",
   "project_id": "<project-id>",
   "project_root": "<project-root>",
   "resources": [],

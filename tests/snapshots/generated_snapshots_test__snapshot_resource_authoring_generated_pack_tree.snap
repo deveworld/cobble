@@ -1,6 +1,5 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 210
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -56,10 +55,10 @@ expression: datapack_tree_snapshot(&output_dir)
     ],
     "source": "src"
   },
-  "minecraft_version": "26.1.2",
+  "minecraft_version": "26.3",
   "namespace": "cobble_resource_authoring",
-  "pack_format": 101.1,
-  "pack_format_text": "101.1",
+  "pack_format": 121.0,
+  "pack_format_text": "121.0",
   "project_id": "<project-id>",
   "project_root": "<project-root>",
   "resources": [
@@ -420,11 +419,11 @@ data remove storage cobble_resource_authoring:global _call_args_0
 
 ===== data/cobble_resource_authoring/item_modifier/items/reward_name.json =====
 {
-  "function": "minecraft:set_name",
   "name": {
     "color": "gold",
     "text": "Cobble Reward"
-  }
+  },
+  "type": "minecraft:set_name"
 }
 
 ===== data/cobble_resource_authoring/loot_table/chests/empty_reward.json =====
@@ -435,7 +434,7 @@ data remove storage cobble_resource_authoring:global _call_args_0
 ===== data/cobble_resource_authoring/predicate/checks/always.json =====
 {
   "chance": 1,
-  "condition": "minecraft:random_chance"
+  "type": "minecraft:random_chance"
 }
 
 ===== data/cobble_resource_authoring/recipe/stonecutting/polished_granite.json =====
@@ -497,12 +496,12 @@ data remove storage cobble_resource_authoring:global _call_args_0
   "pack": {
     "description": "Cobble resource authoring fixture",
     "max_format": [
-      101,
-      1
+      121,
+      0
     ],
     "min_format": [
-      101,
-      1
+      121,
+      0
     ]
   }
 }

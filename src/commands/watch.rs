@@ -30,7 +30,7 @@ pub struct WatchOptions {
     #[arg(long)]
     pub namespace: Option<String>,
 
-    /// Pack format version (currently requires 101.1)
+    /// Pack format version (currently requires 121.0)
     #[arg(long)]
     pub pack_format: Option<String>,
 
@@ -765,7 +765,7 @@ name = "watch_project"
 description = "Watch project"
 namespace = "watch_project"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "missing_src"

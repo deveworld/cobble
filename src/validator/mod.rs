@@ -553,6 +553,99 @@ mod tests {
             .is_err());
     }
 
+    /// Minecraft 26.3 argument types: `slot_source`, `team_color`,
+    /// `swing_animation`, and the `ResourceOrIdArgument` family.
+    fn argument_types_26_3_fixture() -> CommandValidator {
+        let argument = |parser: &str, rest: &str| {
+            format!(r#"{{"type": "argument", "parser": "{parser}"{rest}}}"#)
+        };
+        let executable = r#", "executable": true"#;
+        CommandValidator::from_json_str(&format!(
+            r#"{{
+                "type": "root",
+                "children": {{
+                    "item": {{"type": "literal", "children": {{
+                        "modify": {{"type": "literal", "children": {{
+                            "entity": {{"type": "literal", "children": {{
+                                "targets": {{"type": "argument", "parser": "minecraft:entity", "properties": {{"type": "entities", "amount": "multiple"}}, "children": {{
+                                    "slot": {{"type": "argument", "parser": "minecraft:slot_source", "children": {{
+                                        "modifier": {modifier}
+                                    }}}}
+                                }}}}
+                            }}}}
+                        }}}}
+                    }}}},
+                    "compute": {{"type": "literal", "children": {{
+                        "default": {{"type": "literal", "children": {{
+                            "integer": {{"type": "literal", "children": {{"provider": {int_provider}}}}},
+                            "float": {{"type": "literal", "children": {{"provider": {float_provider}}}}}
+                        }}}}
+                    }}}},
+                    "place": {{"type": "literal", "children": {{
+                        "feature": {{"type": "literal", "children": {{"feature": {feature}}}}}
+                    }}}},
+                    "swing": {{"type": "literal", "children": {{"animation": {swing}}}}},
+                    "team": {{"type": "literal", "children": {{
+                        "color": {{"type": "literal", "children": {{
+                            "reset": {{"type": "literal", "executable": true}},
+                            "value": {team_color}
+                        }}}}
+                    }}}}
+                }}
+            }}"#,
+            modifier = argument("minecraft:loot_modifier", executable),
+            int_provider = argument("minecraft:context_int_provider", executable),
+            float_provider = argument("minecraft:context_float_provider", executable),
+            feature = argument("minecraft:feature", executable),
+            swing = argument("minecraft:swing_animation", executable),
+            team_color = argument("minecraft:team_color", executable),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn minecraft_26_3_argument_types() {
+        let validator = argument_types_26_3_fixture();
+        for command in [
+            "item modify entity @s container.0 ns:double",
+            "item modify entity @s container.* ns:double",
+            "item modify entity @s weapon ns:double",
+            "item modify entity @s ns:hands ns:double",
+            r#"item modify entity @s {type:"minecraft:slot_range",slots:"hotbar.4"} {type:"minecraft:set_count",count:2}"#,
+            "compute default integer 5",
+            "compute default integer -3",
+            r#"compute default integer {type:"minecraft:uniform",min_inclusive:1,max_inclusive:6}"#,
+            "compute default integer ns:dice",
+            "compute default float 2.5",
+            "place feature minecraft:oak",
+            r#"place feature {type:"minecraft:no_op"}"#,
+            "swing stab",
+            "swing whack",
+            "team color dark_purple",
+            "team color reset",
+        ] {
+            assert!(
+                validator.validate_command(command).is_ok(),
+                "{command}: {:?}",
+                validator.validate_command(command)
+            );
+        }
+        for command in [
+            "item modify entity @s Armor.Head ns:double",
+            "item modify entity @s {unclosed ns:double",
+            // Bare lowercase words are provider/feature IDs, so only
+            // malformed IDs and unclosed SNBT are syntax errors.
+            "compute default integer Five",
+            "compute default integer {type:\"minecraft:uniform\"",
+            "place feature Oak",
+            "swing slap",
+            "team color DarkPurple",
+            "team color darkpurple",
+        ] {
+            assert!(validator.validate_command(command).is_err(), "{command}");
+        }
+    }
+
     #[test]
     fn macro_lines_follow_minecraft_template_rules() {
         let validator = permission_fixture_validator();
@@ -886,8 +979,11 @@ mod tests {
             .validate_command("scoreboard objectives setdisplay sideways points")
             .is_err());
         assert!(v.validate_command("execute align xx run say hi").is_err());
+        // Since 26.3 a slot is a `slot_source`: an unknown lowercase name such
+        // as `armor.tail` is a syntactically valid slot source ID (resolved
+        // against the registry at load), but uppercase is never valid.
         assert!(v
-            .validate_command("item replace entity @s armor.tail with minecraft:stone")
+            .validate_command("item replace entity @s Armor.Head with minecraft:stone")
             .is_err());
         assert!(v
             .validate_command("give @s minecraft:diamond{Enchantments:[]}")

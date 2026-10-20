@@ -6,8 +6,8 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const MINECRAFT_VERSION: &str = "26.1.2";
-const PURPUR_BUILD: &str = "2589";
+const MINECRAFT_VERSION: &str = "26.3";
+const PURPUR_BUILD: &str = "2652";
 const NAMESPACE: &str = "cobble_server_smoke";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
@@ -103,15 +103,25 @@ fn write_project(project_dir: &Path) {
     .unwrap();
     fs::write(
         src_dir.join("main.cbl"),
-        r#"import stdlib
+        r##"import stdlib
 from helpers import imported_ready
 from stdlib import event
 
 counter = 0
 smoke_loop_flag = 0
 
+# Data pack resources in the target version's shapes: a server whose packs
+# fail to load refuses to start, so any format drift fails this test.
+datapack.predicate("checks/always", {"type": "minecraft:all_of", "terms": [{"type": "minecraft:random_chance", "chance": 1}, {"type": "minecraft:inverted", "term": {"type": "minecraft:random_chance", "chance": 0}}]})
+datapack.item_modifier("items/double", {"type": "minecraft:set_count", "count": 2, "condition": {"type": "minecraft:random_chance", "chance": 1}})
+datapack.loot_table("chests/smoke", {"type": "minecraft:chest", "pools": [{"rolls": 1, "condition": {"type": "minecraft:random_chance", "chance": 1}, "entries": [{"type": "minecraft:item", "name": "minecraft:diamond", "modifier": {"type": "minecraft:set_count", "count": 2}}, {"type": "minecraft:tag", "items": "#minecraft:logs", "expand": True}]}]})
+datapack.advancement("smoke/root", {"display": {"icon": {"id": "minecraft:diamond"}, "title": "Smoke", "description": "Smoke", "background": "minecraft:gui/advancements/backgrounds/stone"}, "criteria": {"tick": {"trigger": "minecraft:tick"}}})
+datapack.recipe("smoke_smelt", {"type": "minecraft:smelting", "ingredient": "minecraft:cobblestone", "result": {"id": "minecraft:stone"}, "cookingtime": 200})
+datapack.dialog("notice", {"type": "minecraft:notice", "title": {"text": "Smoke"}})
+
 def init():
     /say Cobble quiet load ok
+    /execute if predicate cobble_server_smoke:checks/always run say predicate ok
     /data modify storage cobble:server_smoke status set value "loaded"
     /version
     /waypoint list
@@ -266,7 +276,7 @@ def probe():
     /return run say return command ok
 
 stdlib.addEventListener(event.LOAD, init)
-"#,
+"##,
     )
     .unwrap();
 }
@@ -277,7 +287,7 @@ fn build_datapack(repo_root: &Path, project_dir: &Path, datapack_dir: &Path) {
         input: Some(project_dir.join("src/main.cbl")),
         output: Some(datapack_dir.to_path_buf()),
         namespace: Some(NAMESPACE.to_string()),
-        pack_format: Some("101.1".to_string()),
+        pack_format: Some("121.0".to_string()),
         description: Some("Cobble Purpur server smoke test".to_string()),
         verbose: false,
         quiet: false,
@@ -397,6 +407,7 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
     let log_path = server_dir.join("logs/latest.log");
     wait_for_log(child, &log_path, "Done (", STARTUP_TIMEOUT)?;
     wait_for_log(child, &log_path, "Cobble quiet load ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "predicate ok", COMMAND_TIMEOUT)?;
 
     send_command(child, "datapack list")?;
     wait_for_log(

@@ -193,8 +193,8 @@ mod tests {
             r#"{
                 "version": 1,
                 "cobble_version": "0.0.0-test",
-                "minecraft_version": "26.1.2",
-                "pack_format_text": "101.1",
+                "minecraft_version": "26.3",
+                "pack_format_text": "121.0",
                 "namespace": "inspect",
                 "generated": {"functions": 1, "commands": 1, "total_json_resources": 0, "function_tags": 0},
                 "resources": []

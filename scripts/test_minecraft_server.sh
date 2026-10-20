@@ -24,8 +24,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 if [[ ! -f data/commands.json ]]; then
-  echo "data/commands.json not found; generating the 26.1.2 command tree first."
-  scripts/setup_commands_json.sh 26.1.2
+  echo "data/commands.json not found; generating the 26.3 command tree first."
+  scripts/setup_commands_json.sh 26.3
 fi
 
 cargo test --locked --test minecraft_server_test -- --ignored --nocapture

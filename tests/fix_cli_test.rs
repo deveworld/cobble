@@ -304,7 +304,7 @@ name = "fix_dedup"
 description = "Entry dedup fixture"
 namespace = "fix_dedup"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -357,7 +357,7 @@ name = "migrate_fmt"
 description = "Migration formatting fixture"
 namespace = "migrate_fmt"
 version = "1.0.0"
-pack_format = "101.01"
+pack_format = "121"
 
 [build]
 source = "src"
@@ -382,8 +382,8 @@ entry_points = []
     );
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["changed"], false);
-    // "101.01" parses to the same pack format as "101.1", so no update is
-    // proposed even though the raw strings differ.
+    // "121" names the same pack format as "121.0", so no update is proposed
+    // even though the raw strings differ.
     assert!(
         value["config"]["changes"]
             .as_array()

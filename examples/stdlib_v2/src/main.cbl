@@ -2,7 +2,7 @@ from stdlib import datapack, event, score, storage, text
 
 datapack.function_tag("utility", ["cobble_stdlib_v2:announce"])
 datapack.predicate("checks/always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 

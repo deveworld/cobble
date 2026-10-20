@@ -13,7 +13,7 @@ datapack.dialog("notice", {"type": "minecraft:notice", "title": {"text": "Smoke 
 
 def init():
     """Initialize the smoke-test data pack"""
-    announce("Cobble 26.1.2 smoke test loaded")
+    announce("Cobble 26.3 smoke test loaded")
     reward("@a", 1)
     /scoreboard objectives add smoke dummy "Smoke Test"
     /tellraw @a {"text":"Smoke datapack initialized","color":"green"}

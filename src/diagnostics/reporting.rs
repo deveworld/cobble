@@ -149,7 +149,8 @@ impl SourceDiagnostic {
 
     /// Recovers a best-effort 1-based source location for a transpiler error:
     /// structured `location:`/`source-key:`/`loop:` trailers for unroll and
-    /// runtime-for errors, and a `module '<name>'` scan for stdlib errors.
+    /// runtime-for errors, a `location:` trailer on any other error, and a
+    /// `module '<name>'` scan for stdlib errors.
     pub fn recover_transpile_error_location(
         error: &TranspileError,
         source: &str,
@@ -167,6 +168,11 @@ impl SourceDiagnostic {
                         .and_then(|target| find_for_loop_location_for_target(source, target))
                 })
                 .or_else(|| find_for_loop_location(source));
+        }
+
+        // Any error may carry an explicit `location: <line>:<column>` trailer.
+        if let Some(location) = unroll_error_location(&error.message) {
+            return Some(location);
         }
 
         let module = error

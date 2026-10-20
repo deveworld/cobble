@@ -1,6 +1,5 @@
 ---
 source: tests/generated_snapshots_test.rs
-assertion_line: 237
 expression: datapack_tree_snapshot(&output_dir)
 ---
 ===== .cobble/build_manifest.json =====
@@ -46,10 +45,10 @@ expression: datapack_tree_snapshot(&output_dir)
     ],
     "source": "src"
   },
-  "minecraft_version": "26.1.2",
+  "minecraft_version": "26.3",
   "namespace": "cobble_resource_pack",
-  "pack_format": 101.1,
-  "pack_format_text": "101.1",
+  "pack_format": 121.0,
+  "pack_format_text": "121.0",
   "project_id": "<project-id>",
   "project_root": "<project-root>",
   "resources": [
@@ -193,12 +192,12 @@ tellraw @a {"text":"Resource-pack assets generated","color":"aqua"}
   "pack": {
     "description": "Cobble experimental resource-pack fixture",
     "max_format": [
-      101,
-      1
+      121,
+      0
     ],
     "min_format": [
-      101,
-      1
+      121,
+      0
     ]
   }
 }

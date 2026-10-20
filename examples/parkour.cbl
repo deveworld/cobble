@@ -8,7 +8,7 @@ player_time = 0
 
 def create_checkpoint(x, y, z, id):
     """Create a checkpoint at specific coordinates"""
-    /summon minecraft:armor_stand {x} {y} {z} {Invisible:1b,Marker:1b,CustomName:'{"text":"Checkpoint_{id}"}'}
+    /summon minecraft:armor_stand {x} {y} {z} {Invisible:1b,Marker:1b,CustomName:{"text":"Checkpoint_{id}"}}
     /particle minecraft:end_rod {x} {y} {z} 0.5 1 0.5 0.01 20
     /setblock {x} {y} {z} minecraft:light_weighted_pressure_plate
 

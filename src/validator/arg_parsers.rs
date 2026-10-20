@@ -43,7 +43,9 @@ pub fn parse_argument(
         "minecraft:item_slot" => parse_item_slot(reader),
         "minecraft:item_slots" => parse_item_slots(reader),
         "minecraft:hex_color" => parse_hex_color(reader),
-        "minecraft:color" => parse_literal_word(
+        // Team colors (`team modify <team> color`, `waypoint modify ... color`):
+        // lowercase names only; `reset` is its own literal since 26.2.
+        "minecraft:team_color" => parse_literal_word(
             reader,
             &[
                 "black",
@@ -62,7 +64,6 @@ pub fn parse_argument(
                 "light_purple",
                 "yellow",
                 "white",
-                "reset",
             ],
         ),
         "minecraft:gamemode" => {
@@ -112,10 +113,21 @@ pub fn parse_argument(
         | "minecraft:dimension"
         | "minecraft:mob_effect"
         | "minecraft:resource"
-        | "minecraft:resource_key"
-        | "minecraft:loot_modifier"
+        | "minecraft:resource_key" => parse_resource_location(reader),
+
+        // `ResourceOrIdArgument`s: a registry ID or an inline SNBT definition.
+        "minecraft:loot_modifier"
         | "minecraft:loot_predicate"
-        | "minecraft:loot_table" => parse_resource_location(reader),
+        | "minecraft:loot_table"
+        | "minecraft:feature" => parse_resource_or_inline(reader, false),
+        // Number providers also take a plain number as a constant provider.
+        "minecraft:context_int_provider" | "minecraft:context_float_provider" => {
+            parse_resource_or_inline(reader, true)
+        }
+        // Slot range string (`container.0`, `container.*`, `weapon`) or a
+        // `slot_source` ID / inline definition.
+        "minecraft:slot_source" => parse_slot_source(reader),
+        "minecraft:swing_animation" => parse_literal_word(reader, &["whack", "stab", "none"]),
 
         "minecraft:resource_or_tag"
         | "minecraft:resource_or_tag_key"
@@ -939,6 +951,43 @@ fn read_resource_location_chars(reader: &mut StringReader) -> bool {
         }
     }
     has_chars
+}
+
+/// A registry ID or an inline SNBT value (`{type:"minecraft:uniform",...}`),
+/// as accepted by Minecraft's `ResourceOrIdArgument`. Number providers also
+/// accept a bare number, which decodes as a constant provider.
+fn parse_resource_or_inline(reader: &mut StringReader, allow_number: bool) -> bool {
+    let saved = reader.cursor();
+    match reader.peek() {
+        Some('{') | Some('[') => {
+            if reader.read_nbt() && reader.at_token_boundary() {
+                return true;
+            }
+        }
+        Some('"') | Some('\'') => {
+            if reader.read_quoted_string() && reader.at_token_boundary() {
+                return true;
+            }
+        }
+        Some(ch) if allow_number && (ch.is_ascii_digit() || matches!(ch, '-' | '+' | '.')) => {
+            if reader.read_float().is_some() && reader.at_token_boundary() {
+                return true;
+            }
+        }
+        _ => {
+            if parse_resource_location(reader) {
+                return true;
+            }
+        }
+    }
+    reader.set_cursor(saved);
+    false
+}
+
+/// `minecraft:slot_source` tries a slot range first, like Minecraft's
+/// `SlotSourceArgument`, then falls back to a slot source ID or inline value.
+fn parse_slot_source(reader: &mut StringReader) -> bool {
+    parse_item_slots(reader) || parse_resource_or_inline(reader, false)
 }
 
 fn parse_resource_location(reader: &mut StringReader) -> bool {

@@ -78,7 +78,7 @@ stdlib.addEventListener(event.TICK, tick)`
     name: "Inventory Components",
     namespace: "inventory_demo",
     source: `def kit(player):
-    /give {player} minecraft:diamond_sword[minecraft:custom_name='{"text":"Cobble Blade","color":"aqua"}'] 1
+    /give {player} minecraft:diamond_sword[minecraft:custom_name={"text":"Cobble Blade","color":"aqua"}] 1
     /give {player} minecraft:apple 8
 
 def on_load():
@@ -91,7 +91,7 @@ def on_load():
 
 datapack.function_tag("minecraft:load", ["resource_demo:on_load"])
 datapack.predicate("checks/always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 datapack.dialog("notice", {

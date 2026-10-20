@@ -737,8 +737,8 @@ mod tests {
             serde_json::from_str(&file(&response, ".cobble/build_manifest.json").content).unwrap();
 
         assert_eq!(manifest["cobble_version"], env!("COBBLE_LANG_VERSION"));
-        assert_eq!(manifest["minecraft_version"], "26.1.2");
-        assert_eq!(manifest["pack_format_text"], "101.1");
+        assert_eq!(manifest["minecraft_version"], "26.3");
+        assert_eq!(manifest["pack_format_text"], "121.0");
         assert_eq!(manifest["namespace"], "web_test");
         assert_eq!(manifest["project_root"], "");
         assert_eq!(manifest["project_id"], "");

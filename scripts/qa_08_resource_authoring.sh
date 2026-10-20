@@ -95,8 +95,8 @@ duplicate_source="$work_dir/duplicate.cbl"
 cat >"$duplicate_source" <<'CBL'
 from stdlib import datapack
 
-datapack.predicate("dup", {"condition": "minecraft:random_chance", "chance": 1})
-datapack.predicate("dup", {"condition": "minecraft:random_chance", "chance": 0})
+datapack.predicate("dup", {"type": "minecraft:random_chance", "chance": 1})
+datapack.predicate("dup", {"type": "minecraft:random_chance", "chance": 0})
 
 def main():
     /say duplicate

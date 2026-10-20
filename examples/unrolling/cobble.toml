@@ -3,7 +3,7 @@ name = "cobble_unrolling"
 description = "Cobble compile-time unrolling fixture"
 namespace = "cobble_unrolling"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"

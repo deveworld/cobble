@@ -19,9 +19,9 @@ const VERSION_MANIFEST_URLS: &[&str] = &[
 ];
 
 const SUPPORTED_SERVER_JAR_URL: &str =
-    "https://piston-data.mojang.com/v1/objects/97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51/server.jar";
-const SUPPORTED_SERVER_JAR_SHA1: &str = "97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51";
-pub const SUPPORTED_COMMANDS_JSON_SHA1: &str = "18bb0eb6768838b2237821418aa5832d1c837d45";
+    "https://piston-data.mojang.com/v1/objects/33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c/server.jar";
+const SUPPORTED_SERVER_JAR_SHA1: &str = "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c";
+pub const SUPPORTED_COMMANDS_JSON_SHA1: &str = "d6e1c0ba339ad510056c31ea55c02aefca427dd1";
 
 pub struct ValidateOptions {
     pub input: PathBuf,

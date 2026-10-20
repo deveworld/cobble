@@ -28,7 +28,7 @@ enum Commands {
         #[arg(long)]
         description: Option<String>,
 
-        /// Set the pack format version (default: 101.1 for Minecraft Java Edition 26.1.2)
+        /// Set the pack format version (default: 121.0 for Minecraft Java Edition 26.3)
         #[arg(long)]
         pack_format: Option<String>,
 
@@ -54,7 +54,7 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
 
-        /// Override pack format version (default: 101.1 for Minecraft Java Edition 26.1.2)
+        /// Override pack format version (default: 121.0 for Minecraft Java Edition 26.3)
         #[arg(long)]
         pack_format: Option<String>,
 
@@ -149,12 +149,12 @@ enum Commands {
         /// Project path to inspect (defaults to current directory)
         path: Option<PathBuf>,
 
-        /// Cobble version to migrate from
-        #[arg(long, default_value = "0.8")]
+        /// Cobble version to migrate from (0.8 or 0.9)
+        #[arg(long, default_value = "0.9")]
         from: String,
 
         /// Cobble version to migrate to
-        #[arg(long, default_value = "0.9")]
+        #[arg(long, default_value = "0.10")]
         to: String,
 
         /// Print machine-readable JSON

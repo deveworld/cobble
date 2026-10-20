@@ -249,6 +249,37 @@ def test():
 }
 
 #[test]
+fn test_validate_minecraft_26_3_command_changes() {
+    // Commands whose syntax changed or appeared between 26.1.2 and 26.3.
+    let errors = compile_and_validate(
+        r#"
+def test():
+    /item replace entity @s container.0 with minecraft:stone
+    /item replace entity @s armor.head with minecraft:iron_helmet
+    /item fill entity @s container.* with minecraft:stone
+    /item override block ~ ~ ~ container.0 with minecraft:stone
+    /item modify entity @s weapon {type:"minecraft:set_count",count:2}
+    /execute if items entity @s weapon minecraft:diamond run say has diamond
+    /execute if slots entity @s container.* run say has slots
+    /compute default integer 5
+    /compute default float {type:"minecraft:uniform",min:0.0,max:1.0} 10
+    /data modify storage cobble:test value set compute default integer 3
+    /team modify red color dark_purple
+    /team modify red color reset
+    /waypoint modify @s color red
+    /waypoint modify @s color reset
+    /swing @a mainhand stab
+    /schedule clear cobble:tick
+"#,
+    );
+    assert!(
+        errors.is_empty(),
+        "Validation errors:\n{}",
+        format_errors(&errors)
+    );
+}
+
+#[test]
 fn test_validate_rejects_commands_above_function_permission_level() {
     // `transfer` (admins) and `stop` (owners) parse in chat but not in a data
     // pack function at the default function-permission-level of 2.

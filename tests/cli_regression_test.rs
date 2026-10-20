@@ -78,7 +78,7 @@ name = "doctor_project"
 description = "Doctor regression project"
 namespace = "doctor_project"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -144,7 +144,7 @@ name = "doctor_json_project"
 description = "Doctor JSON regression project"
 namespace = "doctor_json_project"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -179,7 +179,7 @@ entry_points = []
         value["status"].as_str(),
         Some("ok" | "warning" | "error")
     ));
-    assert_eq!(value["cobble"]["pack_format"], "101.1");
+    assert_eq!(value["cobble"]["pack_format"], "121.0");
     assert_eq!(value["config"]["id"], "config");
     assert_eq!(value["config"]["status"], "ok");
     assert_eq!(
@@ -278,8 +278,8 @@ fn cli_migrate_defaults_to_experimental_dry_run_report() {
         "migrate should keep stderr quiet on success: {stderr}"
     );
     assert!(stdout.contains("Cobble migrate (experimental)"));
-    assert!(stdout.contains("From: 0.8"));
-    assert!(stdout.contains("To: 0.9"));
+    assert!(stdout.contains("From: 0.9"));
+    assert!(stdout.contains("To: 0.10"));
     assert!(stdout.contains("Mode: dry-run/report"));
     assert!(stdout.contains("Changed: false"));
     assert!(stdout.contains("Source files scanned:"));
@@ -301,7 +301,7 @@ name = "migrate_project"
 description = "Migration fixture"
 namespace = "migrate_project"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "cobble_src"
@@ -335,7 +335,7 @@ python_compat = true
         .arg("--from")
         .arg("0.8")
         .arg("--to")
-        .arg("0.9")
+        .arg("0.10")
         .arg("--json")
         .output()
         .unwrap();
@@ -355,7 +355,7 @@ python_compat = true
     assert_eq!(value["ok"], true);
     assert_eq!(value["changed"], false);
     assert_eq!(value["from"], "0.8");
-    assert_eq!(value["to"], "0.9");
+    assert_eq!(value["to"], "0.10");
     assert_eq!(value["apply"], false);
     assert_eq!(
         value["project_path"],
@@ -367,7 +367,7 @@ python_compat = true
         project_dir.join("cobble.toml").to_string_lossy().as_ref()
     );
     assert_eq!(value["config"]["source"], "cobble_src");
-    assert_eq!(value["config"]["pack_format"], "101.1");
+    assert_eq!(value["config"]["pack_format"], "121.0");
     assert_eq!(value["config"]["stdlib_version"], 1);
     assert_eq!(value["config"]["experimental_resource_pack"], true);
     assert_eq!(value["config"]["experimental_python_compat"], true);
@@ -430,8 +430,8 @@ python_compat = true
         .iter()
         .any(|change| {
             change["field"] == "project.pack_format"
-                && change["before"] == "101.1"
-                && change["after"] == "101.1"
+                && change["before"] == "121.0"
+                && change["after"] == "121.0"
                 && change["status"] == "not_needed"
         }));
     assert!(value["diagnostics"]
@@ -462,8 +462,8 @@ python_compat = true
     assert!(value["actions"].as_array().unwrap().iter().any(|action| {
         action["id"] == "update_pack_format"
             && action["status"] == "not_needed"
-            && action["before"] == "101.1"
-            && action["after"] == "101.1"
+            && action["before"] == "121.0"
+            && action["after"] == "121.0"
     }));
     assert!(value["actions"].as_array().unwrap().iter().any(|action| {
         action["id"] == "candidate_resource_pack_config" && action["status"] == "configured"
@@ -499,7 +499,7 @@ fn cli_migrate_json_scans_src_when_config_is_missing() {
     assert_eq!(value["changed"], false);
     assert_eq!(value["config"]["status"], "missing");
     assert_eq!(value["config"]["source"], "src");
-    assert_eq!(value["config"]["pack_format"], "101.1");
+    assert_eq!(value["config"]["pack_format"], "121.0");
     assert_eq!(value["config"]["stdlib_version"], 2);
     assert_eq!(value["config"]["experimental_resource_pack"], false);
     assert_eq!(value["config"]["experimental_python_compat"], false);
@@ -521,7 +521,7 @@ name = "bad"
 description = "Bad"
 namespace = "bad"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = 123
@@ -578,7 +578,7 @@ name = "bad"
 description = "Bad"
 namespace = "bad"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -675,7 +675,7 @@ resource_pack = false
     assert_eq!(value["ok"], true);
     assert_eq!(value["changed"], true);
     assert_eq!(value["apply"], true);
-    assert_eq!(value["config"]["pack_format"], "101.1");
+    assert_eq!(value["config"]["pack_format"], "121.0");
     let backup_path = PathBuf::from(value["config"]["backup_path"].as_str().unwrap());
     assert!(backup_path.exists());
     let backup_config = fs::read_to_string(&backup_path).unwrap();
@@ -691,13 +691,13 @@ resource_pack = false
         action["id"] == "update_pack_format"
             && action["status"] == "candidate"
             && action["before"] == "81"
-            && action["after"] == "101.1"
+            && action["after"] == "121.0"
     }));
     assert!(value["actions"].as_array().unwrap().iter().any(|action| {
         action["id"] == "apply_config"
             && action["status"] == "applied"
             && action["before"] == "81"
-            && action["after"] == "101.1"
+            && action["after"] == "121.0"
     }));
     assert!(value["config"]["changes"]
         .as_array()
@@ -706,12 +706,12 @@ resource_pack = false
         .any(|change| {
             change["field"] == "project.pack_format"
                 && change["before"] == "81"
-                && change["after"] == "101.1"
+                && change["after"] == "121.0"
                 && change["status"] == "applied"
         }));
 
     let config = fs::read_to_string(project_dir.join("cobble.toml")).unwrap();
-    assert!(config.contains("pack_format = \"101.1\""));
+    assert!(config.contains("pack_format = \"121.0\""));
     assert!(config.contains("resource_pack = false"));
     assert!(config.contains("# preserve this project comment"));
     assert!(!config.contains("[stdlib]"));
@@ -738,7 +738,7 @@ fn cli_migrate_json_reports_unsupported_routes_without_changes() {
         .arg("--from")
         .arg("0.7")
         .arg("--to")
-        .arg("0.9")
+        .arg("0.10")
         .arg("--json")
         .output()
         .unwrap();
@@ -755,7 +755,7 @@ fn cli_migrate_json_reports_unsupported_routes_without_changes() {
     assert_eq!(value["ok"], false);
     assert_eq!(value["changed"], false);
     assert_eq!(value["from"], "0.7");
-    assert_eq!(value["to"], "0.9");
+    assert_eq!(value["to"], "0.10");
     assert_eq!(value["config"]["status"], "skipped");
     assert_eq!(value["source"]["status"], "skipped");
     assert!(value["diagnostics"]
@@ -2188,7 +2188,7 @@ define @Marker = @e[type=marker]
 create {"Tags": ["marker"]}
 end
 
-datapack.predicate("always", {"condition": "minecraft:random_chance", "chance": 1})
+datapack.predicate("always", {"type": "minecraft:random_chance", "chance": 1})
 
 def setup():
     /say ok
@@ -2382,7 +2382,7 @@ name = "python_compat_config"
 description = "Python compatibility config"
 namespace = "python_compat_config"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2466,7 +2466,7 @@ name = "plugin_config"
 description = "Plugin config"
 namespace = "plugin_config"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2515,7 +2515,7 @@ name = "plugin_manifest"
 description = "Plugin manifest"
 namespace = "plugin_manifest"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2609,7 +2609,7 @@ name = "plugin_rule"
 description = "Plugin rule"
 namespace = "plugin_rule"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2712,7 +2712,7 @@ name = "plugin_rule"
 description = "Plugin rule"
 namespace = "plugin_rule"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2790,7 +2790,7 @@ name = "plugin_symlink"
 description = "Plugin symlink"
 namespace = "plugin_symlink"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2854,7 +2854,7 @@ name = "plugin_manifest"
 description = "Plugin manifest"
 namespace = "plugin_manifest"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2926,7 +2926,7 @@ name = "plugin_manifest"
 description = "Plugin manifest"
 namespace = "plugin_manifest"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -3001,7 +3001,7 @@ name = "plugin_manifest"
 description = "Plugin manifest"
 namespace = "plugin_manifest"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -3090,7 +3090,7 @@ name = "plugin_manifest"
 description = "Plugin manifest"
 namespace = "plugin_manifest"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -3149,7 +3149,7 @@ name = "bad_config"
 description = "Bad config"
 namespace = "bad_config"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 typo = true
 
 [build]
@@ -3167,7 +3167,7 @@ name = "bad_config"
 description = "Bad config"
 namespace = "bad_config"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -3187,7 +3187,7 @@ name = "bad_config"
 description = "Bad config"
 namespace = "bad_config"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -3246,7 +3246,7 @@ name = "bad_config"
 description = "Bad config"
 namespace = "bad_config"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -3464,7 +3464,7 @@ fn cli_check_json_reports_semantic_stdlib_module_errors() {
 from stdlib import datapack, item_component
 
 datapack.item_modifier("named", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.custom_name(text.plain("Name"))
 })
 
@@ -3693,7 +3693,7 @@ fn cli_check_rejects_lowercase_null_in_json_resources() {
     let input = write_source(
         temp_dir.path(),
         r#"
-datapack.predicate("maybe", {"condition": "minecraft:random_chance", "chance": null})
+datapack.predicate("maybe", {"type": "minecraft:random_chance", "chance": null})
 "#,
     );
 
@@ -4171,7 +4171,7 @@ name = "entry_points"
 description = "entry point check parity"
 namespace = "entry_points"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -4410,7 +4410,7 @@ name = "inspect_static"
 description = "Inspect static assets"
 namespace = "inspect_static"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"

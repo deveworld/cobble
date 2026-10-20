@@ -219,8 +219,7 @@ fn build_migration_report(options: MigrateOptions) -> MigrationReport {
         diagnostics.push(MigrationDiagnostic {
             severity: "error",
             code: "unsupported_migration_route",
-            message: "This experimental skeleton only reports planned support for 0.8 -> 0.9."
-                .to_string(),
+            message: "Supported experimental routes are 0.8 -> 0.10 and 0.9 -> 0.10.".to_string(),
         });
         actions.push(MigrationAction {
             id: "migration_route",
@@ -581,8 +580,7 @@ fn apply_supported_migration(
         actions.push(MigrationAction {
             id: "apply_config",
             status: "skipped",
-            message: "No config changes were needed for the supported 0.8 -> 0.9 route."
-                .to_string(),
+            message: "No config changes were needed for this supported route.".to_string(),
             before: None,
             after: None,
         });
@@ -825,7 +823,7 @@ fn source_report_from_scan(
 
     if scan.legacy_stdlib_import_files > 0 {
         notes.push(format!(
-            "{} file(s) use legacy `import stdlib`; review per-module stdlib imports for 0.9.",
+            "{} file(s) use legacy `import stdlib`; review per-module stdlib imports (since 0.9).",
             scan.legacy_stdlib_import_files
         ));
         diagnostics.push(MigrationDiagnostic {
@@ -849,7 +847,7 @@ fn source_report_from_scan(
 
     if scan.resource_pack_references > 0 && !experimental_resource_pack {
         notes.push(format!(
-            "{} resource_pack.* reference(s) may need explicit 0.9 resource-pack review.",
+            "{} resource_pack.* reference(s) may need explicit resource-pack opt-in review (since 0.9).",
             scan.resource_pack_references
         ));
         diagnostics.push(MigrationDiagnostic {
@@ -1008,7 +1006,7 @@ fn analyze_source(source: &str, file: &str) -> SourceSignals {
                 column,
                 kind: "legacy-stdlib-import".to_string(),
                 message:
-                    "Legacy `import stdlib` should be reviewed for 0.9 per-module stdlib imports."
+                    "Legacy `import stdlib` should be reviewed for per-module stdlib imports (since 0.9)."
                         .to_string(),
                 suggested_cobble_alternative: Some(
                     "Use explicit imports such as `from stdlib import text, entity, schedule`."
@@ -1028,7 +1026,7 @@ fn analyze_source(source: &str, file: &str) -> SourceSignals {
                 column,
                 kind: "stdlib-module-import".to_string(),
                 message:
-                    "`from stdlib import ...` already matches the 0.9 per-module stdlib imports."
+                    "`from stdlib import ...` already matches the per-module stdlib imports (since 0.9)."
                         .to_string(),
                 suggested_cobble_alternative: None,
             });
@@ -1040,7 +1038,7 @@ fn analyze_source(source: &str, file: &str) -> SourceSignals {
                 line: line_number,
                 column,
                 kind: "resource-pack-reference".to_string(),
-                message: "resource_pack.* usage requires the 0.9 resource-pack opt-in."
+                message: "resource_pack.* usage requires the resource-pack opt-in (since 0.9)."
                     .to_string(),
                 suggested_cobble_alternative: Some(
                     "Keep `[experimental] resource_pack = true` or pass `--experimental-resource-pack`."
@@ -1148,7 +1146,7 @@ fn pack_format_needs_update(settings: &ConfigSettings) -> bool {
     // reported as migration candidates; fall back to the raw comparison only
     // when the configured value cannot be parsed.
     match PackFormat::parse_format(&settings.pack_format) {
-        Ok(pack_format) => pack_format != SUPPORTED_PACK_FORMAT,
+        Ok(pack_format) => !pack_format.is_supported(),
         Err(_) => settings.pack_format != SUPPORTED_PACK_FORMAT.to_string(),
     }
 }
@@ -1324,7 +1322,8 @@ fn print_human_report(report: &MigrationReport) {
 }
 
 fn is_supported_route(from: &str, to: &str) -> bool {
-    matches!(from, "0.8" | "0.8.0") && matches!(to, "0.9" | "0.9.0")
+    // 0.10 writes only its own pack format, so every route ends at 0.10.
+    matches!(from, "0.8" | "0.8.0" | "0.9" | "0.9.0") && matches!(to, "0.10" | "0.10.0")
 }
 
 fn is_cobble_file(path: &Path) -> bool {

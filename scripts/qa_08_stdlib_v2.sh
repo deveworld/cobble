@@ -101,7 +101,7 @@ cat >"$v1_project/cobble.toml" <<'TOML'
 name = "qa_stdlib_v1"
 description = "stdlib v1 compatibility"
 namespace = "qa_stdlib_v1"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"

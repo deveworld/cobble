@@ -4,8 +4,8 @@
 
 set -e
 
-VERSION="${1:-26.1.2}"
-PINNED_2612_SERVER_SHA1="97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51"
+VERSION="${1:-26.3}"
+PINNED_SERVER_SHA1="33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="$SCRIPT_DIR/../data"
 mkdir -p "$DATA_DIR"
@@ -104,13 +104,13 @@ print(server['sha1'])
     done
 fi
 
-if [ -z "$SERVER_URL" ] && [ "$VERSION" = "26.1.2" ]; then
-    echo "Warning: manifest download failed; using pinned 26.1.2 server.jar URL."
+if [ -z "$SERVER_URL" ] && [ "$VERSION" = "26.3" ]; then
+    echo "Warning: manifest download failed; using pinned 26.3 server.jar URL."
     if [ ${#RESOLVE_ERRORS[@]} -gt 0 ]; then
         printf '  - %s\n' "${RESOLVE_ERRORS[@]}"
     fi
-    SERVER_URL="https://piston-data.mojang.com/v1/objects/97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51/server.jar"
-    SERVER_SHA1="$PINNED_2612_SERVER_SHA1"
+    SERVER_URL="https://piston-data.mojang.com/v1/objects/33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c/server.jar"
+    SERVER_SHA1="$PINNED_SERVER_SHA1"
 fi
 
 if [ -z "$SERVER_URL" ]; then
@@ -121,13 +121,13 @@ fi
 echo "Downloading server.jar..."
 if [ -n "${COBBLE_MINECRAFT_SERVER_JAR:-}" ]; then
     cp "$COBBLE_MINECRAFT_SERVER_JAR" "$WORK_DIR/server.jar"
-    if [ -z "$SERVER_SHA1" ] && [ "$VERSION" = "26.1.2" ]; then
-        SERVER_SHA1="$PINNED_2612_SERVER_SHA1"
+    if [ -z "$SERVER_SHA1" ] && [ "$VERSION" = "26.3" ]; then
+        SERVER_SHA1="$PINNED_SERVER_SHA1"
     fi
 else
     curl -fsSL --retry 3 -o "$WORK_DIR/server.jar" "$SERVER_URL"
-    if [ -z "$SERVER_SHA1" ] && [ "$VERSION" = "26.1.2" ]; then
-        SERVER_SHA1="$PINNED_2612_SERVER_SHA1"
+    if [ -z "$SERVER_SHA1" ] && [ "$VERSION" = "26.3" ]; then
+        SERVER_SHA1="$PINNED_SERVER_SHA1"
     fi
 fi
 

@@ -1,3 +1,3 @@
-export const COBBLE_VERSION = "0.9.0";
-export const SUPPORTED_MINECRAFT_VERSION = "26.1.2";
-export const SUPPORTED_PACK_FORMAT = "101.1";
+export const COBBLE_VERSION = "0.10.0";
+export const SUPPORTED_MINECRAFT_VERSION = "26.3";
+export const SUPPORTED_PACK_FORMAT = "121.0";

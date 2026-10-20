@@ -53,10 +53,10 @@ expression: datapack_tree_snapshot(&output_dir)
     "entry_points": [],
     "source": "main.cbl"
   },
-  "minecraft_version": "26.1.2",
+  "minecraft_version": "26.3",
   "namespace": "inventory_snapshot",
-  "pack_format": 101.1,
-  "pack_format_text": "101.1",
+  "pack_format": 121.0,
+  "pack_format_text": "121.0",
   "project_id": "<project-id>",
   "project_root": "<project-root>",
   "resources": [],
@@ -111,7 +111,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/inventory_snapshot/function/create_custom_item.mcfunction",
       "generated_line": 1,
-      "command": "execute as @s at @s run give @s minecraft:diamond_sword[minecraft:custom_name='{\"text\":\"Excalibur\",\"color\":\"gold\",\"bold\":true,\"italic\":false}',minecraft:lore=['{\"text\":\"A legendary blade\",\"color\":\"gray\",\"italic\":true}','{\"text\":\"Forged by ancient smiths\",\"color\":\"gray\",\"italic\":true}'],minecraft:enchantments={levels:{\"minecraft:sharpness\":5,\"minecraft:unbreaking\":3,\"minecraft:mending\":1,\"minecraft:looting\":3}},minecraft:unbreakable={}]",
+      "command": "execute as @s at @s run give @s minecraft:diamond_sword[minecraft:custom_name={\"text\":\"Excalibur\",\"color\":\"gold\",\"bold\":true,\"italic\":false},minecraft:lore=[{\"text\":\"A legendary blade\",\"color\":\"gray\",\"italic\":true},{\"text\":\"Forged by ancient smiths\",\"color\":\"gray\",\"italic\":true}],minecraft:enchantments={\"minecraft:sharpness\":5,\"minecraft:unbreaking\":3,\"minecraft:mending\":1,\"minecraft:looting\":3},minecraft:unbreakable={}]",
       "source": {
         "file": "main.cbl",
         "line": 37,
@@ -133,7 +133,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/inventory_snapshot/function/create_shop.mcfunction",
       "generated_line": 1,
-      "command": "execute as @s at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{profession:\"minecraft:librarian\",level:5,type:\"minecraft:plains\"},CustomName:'{\"text\":\"Shop Keeper\",\"color\":\"gold\"}',PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}",
+      "command": "execute as @s at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{profession:\"minecraft:librarian\",level:5,type:\"minecraft:plains\"},CustomName:{\"text\":\"Shop Keeper\",\"color\":\"gold\"},PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}",
       "source": {
         "file": "main.cbl",
         "line": 8,
@@ -199,7 +199,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/inventory_snapshot/function/execute_temp_1.mcfunction",
       "generated_line": 1,
-      "command": "setblock ~ ~ ~ minecraft:chest{CustomName:'{\"text\":\"Storage\",\"color\":\"dark_green\"}'}",
+      "command": "setblock ~ ~ ~ minecraft:chest{CustomName:{\"text\":\"Storage\",\"color\":\"dark_green\"}}",
       "source": {
         "file": "main.cbl",
         "line": 60,
@@ -386,7 +386,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
       "generated_line": 6,
-      "command": "$give $(player) minecraft:iron_sword[minecraft:custom_name='{\"text\":\"Starter Sword\",\"color\":\"gray\"}']",
+      "command": "$give $(player) minecraft:iron_sword[minecraft:custom_name={\"text\":\"Starter Sword\",\"color\":\"gray\"}]",
       "source": {
         "file": "main.cbl",
         "line": 22,
@@ -397,7 +397,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/inventory_snapshot/function/give_starter_kit.mcfunction",
       "generated_line": 7,
-      "command": "$give $(player) minecraft:iron_pickaxe[minecraft:enchantments={levels:{\"minecraft:efficiency\":2}}]",
+      "command": "$give $(player) minecraft:iron_pickaxe[minecraft:enchantments={\"minecraft:efficiency\":2}]",
       "source": {
         "file": "main.cbl",
         "line": 23,
@@ -491,13 +491,13 @@ $execute store result score $(player) empty_slots run data get entity $(player) 
 $tellraw $(player) [{"text":"Inventory slots used: ","color":"gray"},{"score":{"name":"$(player)","objective":"empty_slots"},"color":"white"}]
 
 ===== data/inventory_snapshot/function/create_custom_item.mcfunction =====
-execute as @s at @s run give @s minecraft:diamond_sword[minecraft:custom_name='{"text":"Excalibur","color":"gold","bold":true,"italic":false}',minecraft:lore=['{"text":"A legendary blade","color":"gray","italic":true}','{"text":"Forged by ancient smiths","color":"gray","italic":true}'],minecraft:enchantments={levels:{"minecraft:sharpness":5,"minecraft:unbreaking":3,"minecraft:mending":1,"minecraft:looting":3}},minecraft:unbreakable={}]
+execute as @s at @s run give @s minecraft:diamond_sword[minecraft:custom_name={"text":"Excalibur","color":"gold","bold":true,"italic":false},minecraft:lore=[{"text":"A legendary blade","color":"gray","italic":true},{"text":"Forged by ancient smiths","color":"gray","italic":true}],minecraft:enchantments={"minecraft:sharpness":5,"minecraft:unbreaking":3,"minecraft:mending":1,"minecraft:looting":3},minecraft:unbreakable={}]
 
 ===== data/inventory_snapshot/function/create_potion_set.mcfunction =====
 execute as @s at @s run function inventory_snapshot:execute_temp_0
 
 ===== data/inventory_snapshot/function/create_shop.mcfunction =====
-execute as @s at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{profession:"minecraft:librarian",level:5,type:"minecraft:plains"},CustomName:'{"text":"Shop Keeper","color":"gold"}',PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}
+execute as @s at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{profession:"minecraft:librarian",level:5,type:"minecraft:plains"},CustomName:{"text":"Shop Keeper","color":"gold"},PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}
 
 ===== data/inventory_snapshot/function/execute_temp_0.mcfunction =====
 give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:strong_healing"}] 3
@@ -507,7 +507,7 @@ give @s minecraft:potion[minecraft:potion_contents={potion:"minecraft:fire_resis
 give @s minecraft:splash_potion[minecraft:potion_contents={potion:"minecraft:strong_harming"}] 3
 
 ===== data/inventory_snapshot/function/execute_temp_1.mcfunction =====
-setblock ~ ~ ~ minecraft:chest{CustomName:'{"text":"Storage","color":"dark_green"}'}
+setblock ~ ~ ~ minecraft:chest{CustomName:{"text":"Storage","color":"dark_green"}}
 item replace block ~ ~ ~ container.0 with minecraft:iron_ingot 64
 item replace block ~ ~ ~ container.1 with minecraft:gold_ingot 32
 item replace block ~ ~ ~ container.2 with minecraft:diamond 16
@@ -526,8 +526,8 @@ $item replace entity $(player) armor.head with minecraft:iron_helmet
 $item replace entity $(player) armor.chest with minecraft:iron_chestplate
 $item replace entity $(player) armor.legs with minecraft:iron_leggings
 $item replace entity $(player) armor.feet with minecraft:iron_boots
-$give $(player) minecraft:iron_sword[minecraft:custom_name='{"text":"Starter Sword","color":"gray"}']
-$give $(player) minecraft:iron_pickaxe[minecraft:enchantments={levels:{"minecraft:efficiency":2}}]
+$give $(player) minecraft:iron_sword[minecraft:custom_name={"text":"Starter Sword","color":"gray"}]
+$give $(player) minecraft:iron_pickaxe[minecraft:enchantments={"minecraft:efficiency":2}]
 $give $(player) minecraft:iron_axe
 $give $(player) minecraft:iron_shovel
 $give $(player) minecraft:bread 32
@@ -543,12 +543,12 @@ execute as @s at @s run function inventory_snapshot:execute_temp_1
   "pack": {
     "description": "Snapshot fixture",
     "max_format": [
-      101,
-      1
+      121,
+      0
     ],
     "min_format": [
-      101,
-      1
+      121,
+      0
     ]
   }
 }

@@ -4,6 +4,7 @@ mod condition_translator;
 mod data_pack;
 mod error;
 mod expression_evaluator;
+mod resource_format;
 mod source_map;
 mod statement_processors;
 mod storage_paths;
@@ -3855,6 +3856,7 @@ impl Transpiler {
                 format!("datapack.{}() JSON value must be an object", resource_type).into(),
             );
         }
+        self.check_datapack_resource_format(resource_type, &json)?;
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode resource JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
@@ -3866,6 +3868,45 @@ impl Transpiler {
                 self.current_statement_source.clone(),
             )
             .map_err(TranspileError::from)
+    }
+
+    /// Minecraft rejects data pack resources written in pre-26.3 shapes, and a
+    /// server whose packs fail to load refuses to start, so the common
+    /// renames are reported at compile time.
+    fn check_datapack_resource_format(
+        &self,
+        resource_type: &str,
+        json: &serde_json::Value,
+    ) -> Result<(), TranspileError> {
+        let mut problems = Vec::new();
+        match resource_type {
+            "predicate" => resource_format::check_predicate(json, "", &mut problems),
+            "item_modifier" => resource_format::check_item_modifier(json, "", &mut problems),
+            "loot_table" => resource_format::check_loot_table(json, &mut problems),
+            "advancement" => resource_format::check_advancement(json, &mut problems),
+            "recipe" => resource_format::check_recipe(json, &mut problems),
+            _ => {}
+        }
+        if problems.is_empty() {
+            return Ok(());
+        }
+        let mut message = format!(
+            "datapack.{}() uses fields Minecraft {} rejects or ignores (a server refuses to start when a pack fails to load):\n{}",
+            resource_type,
+            crate::pack_format::SUPPORTED_MINECRAFT_VERSION,
+            problems
+                .iter()
+                .map(|problem| format!("  - {}", problem))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        if let Some(source) = &self.current_statement_source {
+            message.push_str(&format!("\n  location: {}:{}", source.line, source.column));
+        }
+        Err(TranspileError::new(
+            TranspileErrorKind::DatapackResourceFormat,
+            message,
+        ))
     }
 
     fn expr_to_resource_id(

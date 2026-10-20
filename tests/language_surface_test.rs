@@ -67,7 +67,7 @@ end
 create @Marker
 
 datapack.function_tag("minecraft:load", ["cobble:setup"])
-datapack.predicate("always", {"condition": "minecraft:random_chance", "chance": 1})
+datapack.predicate("always", {"type": "minecraft:random_chance", "chance": 1})
 
 def setup():
     /say setup

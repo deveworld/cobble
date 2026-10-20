@@ -966,7 +966,7 @@ fn inspect_plugin_manifest(manifest_path: &Path, report: &mut CheckPluginReport)
         plugin_kind: "manifest-draft".to_string(),
         severity: "warning".to_string(),
         message: format!(
-            "Experimental plugin manifest {} was parsed, but plugin execution is disabled in 0.9; no plugin code was run.",
+            "Experimental plugin manifest {} was parsed, but plugin execution is disabled in this release; no plugin code was run.",
             manifest_path.display()
         ),
     });

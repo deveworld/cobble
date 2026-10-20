@@ -1,9 +1,9 @@
 [project]
 name = "cobble_26_feature_matrix"
-description = "Cobble 26.1.2 feature matrix fixture"
+description = "Cobble 26.3 feature matrix fixture"
 namespace = "cobble_26_feature_matrix"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"

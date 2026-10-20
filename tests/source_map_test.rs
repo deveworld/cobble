@@ -29,7 +29,7 @@ fn metadata_json_schema_shape_is_stable() {
         r#"
 import stdlib
 datapack.predicate("always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 
@@ -789,7 +789,7 @@ fn source_map_tracks_datapack_json_resource_entries() {
         r#"
 from stdlib import datapack
 datapack.predicate("always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 

@@ -51,7 +51,7 @@ datapack.block_tag("solid_blocks", ["minecraft:stone"])
 datapack.item_tag("reward_items", ["minecraft:diamond"])
 datapack.entity_type_tag("targets", ["minecraft:zombie"])
 datapack.predicate("is_sneaking", {
-    "condition": "minecraft:entity_properties",
+    "type": "minecraft:entity_properties",
     "entity": "this",
     "predicate": {"flags": {"is_sneaking": True}}
 })
@@ -62,7 +62,7 @@ datapack.recipe("stonecutting/test", {
     "ingredient": "minecraft:stone",
     "result": {"id": "minecraft:stone"}
 })
-datapack.item_modifier("set_name", {"function": "minecraft:set_name", "name": "Test"})
+datapack.item_modifier("set_name", {"type": "minecraft:set_name", "name": "Test"})
 datapack.dialog("notice", {"type": "minecraft:notice", "title": {"text": "Notice"}})
 
 def setup():
@@ -84,7 +84,7 @@ def setup():
     assert!(namespace_dir.join("dialog/notice.json").exists());
 
     let predicate = fs::read_to_string(namespace_dir.join("predicate/is_sneaking.json")).unwrap();
-    assert!(predicate.contains(r#""condition": "minecraft:entity_properties""#));
+    assert!(predicate.contains(r#""type": "minecraft:entity_properties""#));
     assert!(predicate.contains(r#""is_sneaking": true"#));
 
     let tag = fs::read_to_string(namespace_dir.join("tags/function/utility.json")).unwrap();
@@ -99,7 +99,7 @@ fn build_writes_cobble_manifest_metadata() {
 import stdlib
 datapack.function_tag("minecraft:load", ["resources:setup"])
 datapack.predicate("always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 
@@ -116,8 +116,8 @@ def setup():
 
     assert_eq!(manifest["version"], 1);
     assert_eq!(manifest["cobble_version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(manifest["minecraft_version"], "26.1.2");
-    assert_eq!(manifest["pack_format_text"], "101.1");
+    assert_eq!(manifest["minecraft_version"], "26.3");
+    assert_eq!(manifest["pack_format_text"], "121.0");
     assert_eq!(manifest["namespace"], "resources");
     assert_eq!(
         manifest["input"]["compiled_files"]
@@ -158,7 +158,7 @@ fn datapack_resource_declarations_support_explicit_namespaces() {
 import stdlib
 datapack.function_tag("minecraft:load", ["resources:setup"])
 datapack.predicate("other_ns:checks/is_ready", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 
@@ -182,7 +182,7 @@ fn datapack_json_resources_serialize_none_as_json_null() {
         r#"
 import stdlib
 datapack.predicate("maybe", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1,
     "comment": None
 })
@@ -301,8 +301,8 @@ fn duplicate_datapack_resource_ids_fail() {
     let error = compile_source(
         r#"
 import stdlib
-datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
-datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.25})
+datapack.predicate("same", {"type": "minecraft:random_chance", "chance": 0.5})
+datapack.predicate("same", {"type": "minecraft:random_chance", "chance": 0.25})
 "#,
     )
     .unwrap_err();
@@ -319,8 +319,8 @@ fn duplicate_identical_datapack_resource_ids_are_accepted_once() {
     let (_temp, output_dir) = compile_source(
         r#"
 import stdlib
-datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
-datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
+datapack.predicate("same", {"type": "minecraft:random_chance", "chance": 0.5})
+datapack.predicate("same", {"type": "minecraft:random_chance", "chance": 0.5})
 "#,
     )
     .unwrap();
@@ -561,7 +561,7 @@ fn duplicate_datapack_resources_across_imports_fail() {
         r#"
 import stdlib
 import extra
-datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.5})
+datapack.predicate("same", {"type": "minecraft:random_chance", "chance": 0.5})
 "#,
     )
     .unwrap();
@@ -569,7 +569,7 @@ datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.
         source_dir.join("extra.cbl"),
         r#"
 import stdlib
-datapack.predicate("same", {"condition": "minecraft:random_chance", "chance": 0.25})
+datapack.predicate("same", {"type": "minecraft:random_chance", "chance": 0.25})
 "#,
     )
     .unwrap();
@@ -602,7 +602,7 @@ fn datapack_resource_names_reject_invalid_paths() {
     let error = compile_source(
         r#"
 import stdlib
-datapack.predicate("Bad/Name", {"condition": "minecraft:random_chance", "chance": 1})
+datapack.predicate("Bad/Name", {"type": "minecraft:random_chance", "chance": 1})
 "#,
     )
     .unwrap_err();
@@ -654,7 +654,7 @@ fn removed_datapack_resources_do_not_survive_rebuilds() {
         &input_file,
         r#"
 import stdlib
-datapack.predicate("old", {"condition": "minecraft:random_chance", "chance": 1})
+datapack.predicate("old", {"type": "minecraft:random_chance", "chance": 1})
 
 def setup():
     /say first
@@ -932,7 +932,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1021,7 +1021,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1081,7 +1081,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1138,7 +1138,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1226,7 +1226,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1309,7 +1309,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1349,7 +1349,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1411,7 +1411,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1507,7 +1507,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1597,7 +1597,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1687,7 +1687,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1727,7 +1727,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1788,7 +1788,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -1953,7 +1953,7 @@ fn item_component_helpers_generate_item_modifier_component_json() {
 from stdlib import datapack, item_component, text
 
 datapack.item_modifier("items/reward_components", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.components(
         item_component.custom_name(text.colored("Cobble Reward", "gold")),
         item_component.lore([
@@ -1975,7 +1975,7 @@ def setup():
     let item_modifier: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(item_modifier_path).unwrap()).unwrap();
 
-    assert_eq!(item_modifier["function"], "minecraft:set_components");
+    assert_eq!(item_modifier["type"], "minecraft:set_components");
     assert_eq!(
         item_modifier["components"]["minecraft:custom_name"],
         serde_json::json!({"color": "gold", "text": "Cobble Reward"})
@@ -2014,7 +2014,7 @@ fn item_component_helpers_reject_duplicate_components_and_standalone_calls() {
 from stdlib import datapack, item_component
 
 datapack.item_modifier("duplicate", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.components(
         item_component.unbreakable(),
         item_component.unbreakable()
@@ -2116,7 +2116,7 @@ fn namespace_changes_clean_previous_function_dir_when_namespace_is_still_used_fo
         r#"
 import stdlib
 datapack.predicate("old:checks/ready", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 
@@ -2348,4 +2348,91 @@ fn resource_pack_failures_carry_their_documented_diagnostic_kinds() {
         ),
         TranspileErrorKind::ResourcePackDuplicate,
     );
+}
+
+// Minecraft 26.3 resource shapes. Each rejected case below was confirmed to
+// stop a 26.3 server from loading the pack; each ignored case was confirmed
+// to load with the field silently dropped.
+
+fn resource_format_error(declaration: &str) -> String {
+    compile_source(&format!("from stdlib import datapack\n{declaration}\n"))
+        .err()
+        .unwrap_or_else(|| panic!("expected a datapack-resource-format error for {declaration}"))
+}
+
+#[test]
+fn pre_26_3_resource_shapes_are_rejected_at_compile_time() {
+    for (declaration, expected) in [
+        (
+            r#"datapack.predicate("p", {"condition": "minecraft:random_chance", "chance": 1})"#,
+            "`condition` is now `type`",
+        ),
+        (
+            r#"datapack.predicate("p", {"type": "minecraft:all_of", "terms": [{"condition": "minecraft:random_chance", "chance": 1}]})"#,
+            "`terms[0].condition` is now `type`",
+        ),
+        (
+            r#"datapack.item_modifier("m", {"function": "minecraft:set_count", "count": 2})"#,
+            "`function` is now `type`",
+        ),
+        (
+            r#"datapack.item_modifier("m", {"type": "minecraft:set_count", "count": 2, "conditions": [{"type": "minecraft:random_chance", "chance": 1}]})"#,
+            "`conditions` is now a single `condition`",
+        ),
+        (
+            r#"datapack.loot_table("l", {"type": "minecraft:chest", "pools": [{"rolls": 1, "entries": [{"type": "minecraft:item", "name": "minecraft:diamond", "functions": [{"type": "minecraft:set_count", "count": 2}]}]}]})"#,
+            "`pools[0].entries[0].functions` is now `modifier`",
+        ),
+        (
+            r#"datapack.loot_table("l", {"type": "minecraft:chest", "pools": [{"rolls": 1, "conditions": [{"type": "minecraft:random_chance", "chance": 1}], "entries": []}]})"#,
+            "`pools[0].conditions` is now a single `condition`",
+        ),
+        (
+            r#"datapack.loot_table("l", {"type": "minecraft:chest", "pools": [{"rolls": 1, "entries": [{"type": "minecraft:tag", "name": "minecraft:logs", "expand": True}]}]})"#,
+            "`pools[0].entries[0].name` of a `minecraft:tag` entry is now `items`",
+        ),
+        (
+            r#"datapack.advancement("a", {"display": {"icon": {"id": "minecraft:diamond"}, "title": "T", "description": "D"}, "criteria": {"t": {"trigger": "minecraft:tick"}}})"#,
+            "must set `display.background`",
+        ),
+        (
+            r#"datapack.recipe("r", {"type": "minecraft:smelting", "ingredient": "minecraft:cobblestone", "result": {"id": "minecraft:stone"}})"#,
+            "recipes must set `cookingtime`",
+        ),
+    ] {
+        let error = resource_format_error(declaration);
+        assert!(
+            error.contains(expected),
+            "{declaration}\nexpected `{expected}` in:\n{error}"
+        );
+        assert!(error.contains("26.3"), "{error}");
+    }
+}
+
+#[test]
+fn minecraft_26_3_resource_shapes_compile() {
+    let (_temp, output_dir) = compile_source(
+        r##"from stdlib import datapack
+datapack.predicate("all", {"type": "minecraft:all_of", "terms": [{"type": "minecraft:random_chance", "chance": 1}, {"type": "minecraft:inverted", "term": {"type": "minecraft:random_chance", "chance": 0}}]})
+datapack.item_modifier("count", {"type": "minecraft:set_count", "count": 2, "condition": {"type": "minecraft:random_chance", "chance": 1}})
+datapack.loot_table("chest", {"type": "minecraft:chest", "pools": [{"rolls": 1, "condition": {"type": "minecraft:random_chance", "chance": 1}, "entries": [{"type": "minecraft:item", "name": "minecraft:diamond", "condition": {"type": "minecraft:random_chance", "chance": 1}, "modifier": {"type": "minecraft:set_count", "count": 2}}, {"type": "minecraft:tag", "items": "#minecraft:logs", "expand": True}]}]})
+datapack.advancement("root", {"display": {"icon": {"id": "minecraft:diamond"}, "title": "Root", "description": "Root", "background": "minecraft:gui/advancements/backgrounds/stone"}, "criteria": {"tick": {"trigger": "minecraft:tick"}}})
+datapack.advancement("child", {"parent": "resources:root", "display": {"icon": {"id": "minecraft:diamond"}, "title": "Child", "description": "Child"}, "criteria": {"tick": {"trigger": "minecraft:tick"}}})
+datapack.recipe("smelt", {"type": "minecraft:smelting", "ingredient": "minecraft:cobblestone", "result": {"id": "minecraft:stone"}, "cookingtime": 200})
+"##,
+    )
+    .unwrap();
+    for path in [
+        "predicate/all.json",
+        "item_modifier/count.json",
+        "loot_table/chest.json",
+        "advancement/root.json",
+        "advancement/child.json",
+        "recipe/smelt.json",
+    ] {
+        assert!(
+            output_dir.join("data/resources").join(path).is_file(),
+            "missing {path}"
+        );
+    }
 }

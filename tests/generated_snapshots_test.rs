@@ -276,7 +276,7 @@ datapack.recipe("stonecutting/test", {
     "ingredient": "minecraft:stone",
     "result": {"id": "minecraft:stone"}
 })
-datapack.item_modifier("set_name", {"function": "minecraft:set_name", "name": {"text": "Test"}})
+datapack.item_modifier("set_name", {"type": "minecraft:set_name", "name": {"text": "Test"}})
 datapack.dialog("notice", {"type": "minecraft:notice", "title": {"text": "Notice"}})
 "#,
         "resource_only",
@@ -310,7 +310,7 @@ from stdlib import event
 
 datapack.function_tag("minecraft:load", ["snapshot_merge:extra_load"])
 datapack.predicate("checks/ready", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 

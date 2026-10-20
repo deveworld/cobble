@@ -124,6 +124,8 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
             SUPPORTED_MINECRAFT_VERSION
         ));
     }
+    // Write the canonical spelling (`121` and `121.0` are the same format).
+    let pack_format = SUPPORTED_PACK_FORMAT;
 
     let configured_entry_points = if options.input.is_none() {
         config
@@ -1701,7 +1703,7 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("Command tree not found"));
-        assert!(error.contains("scripts/setup_commands_json.sh 26.1.2"));
+        assert!(error.contains("scripts/setup_commands_json.sh 26.3"));
         assert!(!temp_dir
             .path()
             .read_dir()
@@ -2165,7 +2167,7 @@ name = "malicious"
 description = "malicious"
 namespace = "../../victim"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2220,7 +2222,7 @@ name = "malicious"
 description = "malicious"
 namespace = "malicious"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2282,7 +2284,7 @@ name = "empty"
 description = "empty"
 namespace = "empty"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2337,7 +2339,7 @@ name = "malicious"
 description = "malicious"
 namespace = "malicious"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -2711,7 +2713,7 @@ output = "output"
             input: Some(source_dir),
             output: Some(output_dir.clone()),
             namespace: None,
-            pack_format: Some("101.1".to_string()),
+            pack_format: Some("121.0".to_string()),
             description: None,
             verbose: false,
             quiet: false,
@@ -2971,7 +2973,7 @@ name = "resources"
 description = "Resources"
 namespace = "resources"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"

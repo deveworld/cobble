@@ -3770,7 +3770,7 @@ def test():
 
 #[test]
 fn test_regression_decimal_pack_format() {
-    // Regression test: Pack format validation now requires exactly 101.1 (MC Java 26.1.2)
+    // Regression test: Pack format validation now requires exactly 121.0 (MC Java 26.3)
     // Old pack formats should be rejected
     use tempfile::TempDir;
 
@@ -3780,12 +3780,12 @@ fn test_regression_decimal_pack_format() {
 
     fs::write(&input_file, "def test():\n    x = 1").unwrap();
 
-    // Build with pack format 101.1 (required for MC Java 26.1.2)
+    // Build with pack format 121.0 (required for MC Java 26.3)
     let result = cobble::commands::build::build(cobble::commands::build::BuildOptions {
         input: Some(input_file.clone()),
         output: Some(output_dir.clone()),
         namespace: None,
-        pack_format: Some("101.1".to_string()),
+        pack_format: Some("121.0".to_string()),
         description: None,
         verbose: false,
         quiet: false,
@@ -3798,7 +3798,7 @@ fn test_regression_decimal_pack_format() {
 
     assert!(
         result.is_ok(),
-        "Pack format 101.1 should be accepted: {:?}",
+        "Pack format 121.0 should be accepted: {:?}",
         result.err()
     );
 
@@ -3812,10 +3812,9 @@ fn test_regression_decimal_pack_format() {
         pack_meta.contains("max_format"),
         "pack.mcmeta should use max_format for decimal pack formats"
     );
-    assert!(
-        pack_meta.contains("101"),
-        "pack.mcmeta should contain major version 101"
-    );
+    let pack_meta: serde_json::Value = serde_json::from_str(&pack_meta).unwrap();
+    assert_eq!(pack_meta["pack"]["min_format"], serde_json::json!([121, 0]));
+    assert_eq!(pack_meta["pack"]["max_format"], serde_json::json!([121, 0]));
 
     // Old pack formats should be rejected
     let temp_dir2 = TempDir::new().unwrap();

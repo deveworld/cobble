@@ -24,7 +24,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "timer"
   ],
   "cobble_version": "<cobble-version>",
-  "description": "Cobble 26.1.2 smoke fixture",
+  "description": "Cobble 26.3 smoke fixture",
   "generated": {
     "advancements": 0,
     "commands": 52,
@@ -55,10 +55,10 @@ expression: datapack_tree_snapshot(&output_dir)
     ],
     "source": "src"
   },
-  "minecraft_version": "26.1.2",
+  "minecraft_version": "26.3",
   "namespace": "cobble_26_smoke",
-  "pack_format": 101.1,
-  "pack_format_text": "101.1",
+  "pack_format": 121.0,
+  "pack_format_text": "121.0",
   "project_id": "<project-id>",
   "project_root": "<project-root>",
   "resources": [
@@ -210,7 +210,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 7,
-      "command": "data modify storage cobble_26_smoke:global _call_args_0.message set value \"Cobble 26.1.2 smoke test loaded\"",
+      "command": "data modify storage cobble_26_smoke:global _call_args_0.message set value \"Cobble 26.3 smoke test loaded\"",
       "source": {
         "file": "src/main.cbl",
         "line": 16,
@@ -710,7 +710,7 @@ scoreboard players set score temp 10
 scoreboard players set health temp 20
 scoreboard players set active temp 1
 data remove storage cobble_26_smoke:global _call_args_0
-data modify storage cobble_26_smoke:global _call_args_0.message set value "Cobble 26.1.2 smoke test loaded"
+data modify storage cobble_26_smoke:global _call_args_0.message set value "Cobble 26.3 smoke test loaded"
 data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_0
 function cobble_26_smoke:announce with storage cobble_26_smoke:global args
 data remove storage cobble_26_smoke:global _call_args_0
@@ -777,14 +777,14 @@ execute as @a[gamemode=creative] at @s run particle flame ~ ~1 ~
 ===== pack.mcmeta =====
 {
   "pack": {
-    "description": "Cobble 26.1.2 smoke fixture",
+    "description": "Cobble 26.3 smoke fixture",
     "max_format": [
-      101,
-      1
+      121,
+      0
     ],
     "min_format": [
-      101,
-      1
+      121,
+      0
     ]
   }
 }

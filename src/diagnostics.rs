@@ -1805,7 +1805,7 @@ def main():
     )
     datapack.predicate(
         "always",
-        {"condition": "minecraft:random_chance", "chance": 1}
+        {"type": "minecraft:random_chance", "chance": 1}
     )
 "#,
         );
@@ -2072,7 +2072,7 @@ datapack.item_tag("bad", [
         let diagnostics = analyze_source(
             r#"
 datapack.function_tag("minecraft/load", ["resources:setup"])
-datapack.predicate("Checks/Ready", {"condition": "minecraft:random_chance", "chance": 1})
+datapack.predicate("Checks/Ready", {"type": "minecraft:random_chance", "chance": 1})
 datapack.item_tag("rewards", ["minecraft/diamond"])
 "#,
         );
@@ -2607,7 +2607,7 @@ def main():
         let diagnostics = analyze_source(
             r#"
 datapack.predicate("maybe", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1,
     "comment": None
 })
@@ -2621,7 +2621,7 @@ datapack.predicate("maybe", {
     fn rejects_lowercase_null_and_none_outside_json_resource_values() {
         let diagnostics = analyze_source(
             r#"
-datapack.predicate("maybe", {"condition": "minecraft:random_chance", "chance": null})
+datapack.predicate("maybe", {"type": "minecraft:random_chance", "chance": null})
 "#,
         );
 
@@ -2633,7 +2633,7 @@ datapack.predicate("maybe", {"condition": "minecraft:random_chance", "chance": n
 
         let diagnostics = analyze_source(
             r#"
-datapack.predicate(None, {"condition": "minecraft:random_chance", "chance": 1})
+datapack.predicate(None, {"type": "minecraft:random_chance", "chance": 1})
 "#,
         );
 

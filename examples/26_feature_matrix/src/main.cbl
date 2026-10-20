@@ -18,11 +18,11 @@ status = "boot"
 datapack.function_tag("utility", ["cobble_26_feature_matrix:load"])
 datapack.function_tag("minecraft:load", ["cobble_26_feature_matrix:load"])
 datapack.predicate("always_true", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 datapack.predicate("other_matrix:checks/always_true", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1
 })
 datapack.dialog("notice", {

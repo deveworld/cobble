@@ -4,7 +4,7 @@
 def create_shop():
     """Create a villager shop"""
     asat @s:
-        /summon minecraft:villager ~ ~ ~ {VillagerData:{profession:"minecraft:librarian",level:5,type:"minecraft:plains"},CustomName:'{"text":"Shop Keeper","color":"gold"}',PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}
+        /summon minecraft:villager ~ ~ ~ {VillagerData:{profession:"minecraft:librarian",level:5,type:"minecraft:plains"},CustomName:{"text":"Shop Keeper","color":"gold"},PersistenceRequired:1b,NoAI:1b,Invulnerable:1b}
 
 def give_starter_kit(player):
     """Give starter items to a player"""
@@ -18,8 +18,8 @@ def give_starter_kit(player):
     /item replace entity {player} armor.feet with minecraft:iron_boots
 
     # Tools
-    /give {player} minecraft:iron_sword[minecraft:custom_name='{"text":"Starter Sword","color":"gray"}']
-    /give {player} minecraft:iron_pickaxe[minecraft:enchantments={levels:{"minecraft:efficiency":2}}]
+    /give {player} minecraft:iron_sword[minecraft:custom_name={"text":"Starter Sword","color":"gray"}]
+    /give {player} minecraft:iron_pickaxe[minecraft:enchantments={"minecraft:efficiency":2}]
     /give {player} minecraft:iron_axe
     /give {player} minecraft:iron_shovel
 
@@ -33,7 +33,7 @@ def give_starter_kit(player):
 def create_custom_item():
     """Create a custom enchanted item"""
     asat @s:
-        /give @s minecraft:diamond_sword[minecraft:custom_name='{"text":"Excalibur","color":"gold","bold":true,"italic":false}',minecraft:lore=['{"text":"A legendary blade","color":"gray","italic":true}','{"text":"Forged by ancient smiths","color":"gray","italic":true}'],minecraft:enchantments={levels:{"minecraft:sharpness":5,"minecraft:unbreaking":3,"minecraft:mending":1,"minecraft:looting":3}},minecraft:unbreakable={}]
+        /give @s minecraft:diamond_sword[minecraft:custom_name={"text":"Excalibur","color":"gold","bold":true,"italic":false},minecraft:lore=[{"text":"A legendary blade","color":"gray","italic":true},{"text":"Forged by ancient smiths","color":"gray","italic":true}],minecraft:enchantments={"minecraft:sharpness":5,"minecraft:unbreaking":3,"minecraft:mending":1,"minecraft:looting":3},minecraft:unbreakable={}]
 
 def create_potion_set():
     """Create a set of useful potions"""
@@ -56,7 +56,7 @@ def check_inventory(player):
 def organize_chest():
     """Create an organized storage chest"""
     asat @s:
-        /setblock ~ ~ ~ minecraft:chest{CustomName:'{"text":"Storage","color":"dark_green"}'}
+        /setblock ~ ~ ~ minecraft:chest{CustomName:{"text":"Storage","color":"dark_green"}}
 
         # Fill with categorized items
         /item replace block ~ ~ ~ container.0 with minecraft:iron_ingot 64

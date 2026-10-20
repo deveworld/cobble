@@ -188,7 +188,7 @@ fn cli_check_json_keeps_missing_stdlib_module_classification() {
         r#"from stdlib import datapack, item_component
 
 datapack.item_modifier("named", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.custom_name(text.plain("Name"))
 })
 
