@@ -71,7 +71,7 @@ Example:
 from stdlib import datapack, item_component, text
 
 datapack.item_modifier("items/reward_components", {
-    "function": "minecraft:set_components",
+    "type": "minecraft:set_components",
     "components": item_component.components(
         item_component.custom_name(text.colored("Cobble Reward", "gold")),
         item_component.lore([
@@ -87,7 +87,7 @@ generates an item modifier JSON resource with:
 
 ```json
 {
-  "function": "minecraft:set_components",
+  "type": "minecraft:set_components",
   "components": {
     "minecraft:custom_name": {"text": "Cobble Reward", "color": "gold"},
     "minecraft:lore": [

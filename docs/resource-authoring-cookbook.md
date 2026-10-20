@@ -37,7 +37,7 @@ normalized before writing.
 from stdlib import datapack
 
 datapack.predicate("always", {
-    "condition": "minecraft:random_chance",
+    "type": "minecraft:random_chance",
     "chance": 1,
 })
 

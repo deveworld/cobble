@@ -429,3 +429,33 @@ Cargo package dry-runs. Use `COBBLE_QA_ALLOW_DIRTY=1` only for local release
 candidate rehearsal before the final clean-tree run. After publishing and
 deploying 0.9.x, run `scripts/qa_post_release_smoke.sh` to verify the released
 crate and deployed web demo.
+
+## 0.10.0 QA Gate
+
+The 0.10.0 line moves the single supported target to Minecraft Java Edition
+26.3 (pack format 121.0) and ships the runtime-semantics fixes listed in the
+changelog. It keeps every 0.9 check and adds:
+
+- The pinned 26.3 command tree (`data/commands.json`, SHA-1
+  `d6e1c0ba339ad510056c31ea55c02aefca427dd1`, generated from the 26.3 server jar
+  `33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c`) for `--validate` and
+  `cobble validate`, including its permission levels and 26.3 argument types.
+- `cargo test --locked --test fix_runtime_semantics_test`, which executes the
+  generated packs in the command simulator (`tests/common/mcsim.rs`) and checks
+  runtime results instead of generated text.
+- `cobble migrate --json` reports the 0.9 to 0.10 dry-run schema by default;
+  `--apply` updates `project.pack_format` to `121.0`.
+- The optional server gate runs Purpur 26.3 (build 2652).
+
+### 0.10.0 Aggregate Release Gate
+
+```bash
+scripts/qa_10_release_gate.sh
+```
+
+This composes the same Rust, focused, tooling, validated-build, web, optional
+server, and package gates as 0.9.0 against the 26.3 target. Use
+`COBBLE_QA_ALLOW_DIRTY=1` only for local release candidate rehearsal before the
+final clean-tree run. After publishing and deploying 0.10.x, run
+`scripts/qa_post_release_smoke.sh` to verify the released crate and deployed
+web demo.

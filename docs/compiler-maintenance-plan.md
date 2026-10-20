@@ -123,7 +123,7 @@ Structural work should keep these gates green before merge:
 - `cargo clippy --locked --all-targets -- -D warnings`
 - `cargo test --manifest-path web/wasm/Cargo.toml --locked`
 - `node scripts/check_web_metadata.mjs`
-- `scripts/qa_09_release_gate.sh`
+- `scripts/qa_10_release_gate.sh`
 
 ## Known Debt
 

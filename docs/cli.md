@@ -28,7 +28,7 @@ cobble init [OPTIONS]
 **Options:**
 - `--name <NAME>` - Set the project name (default: current directory name)
 - `--description <DESC>` - Set the project description
-- `--pack-format <NUM>` - Set the pack format version (default: `101.1`; Cobble currently requires Minecraft Java Edition 26.1.2)
+- `--pack-format <NUM>` - Set the pack format version (default: `121.0`; Cobble currently requires Minecraft Java Edition 26.3)
 - `--template <NAME>` - Starter template: `minimal`, `stdlib`,
   `validation`, `resource-heavy`, `game-mechanic`, `web-demo`, or
   `plugin-diagnostics`
@@ -70,7 +70,7 @@ cobble build [SOURCE] [OPTIONS]
 **Options:**
 - `-o, --output <DIR>` - Output directory for the data pack (default: `./output`)
 - `--namespace <NAME>` - Override the namespace (default: from cobble.toml or directory name)
-- `--pack-format <NUM>` - Override pack format version (currently must be `101.1`)
+- `--pack-format <NUM>` - Override pack format version (currently must be `121.0`; `121` is accepted as the same format)
 - `--description <DESC>` - Override pack description
 - `-v, --verbose` - Show verbose output
 - `-q, --quiet` - Suppress successful build progress and summary output
@@ -110,10 +110,10 @@ cobble build --dry-run
 cobble build --dry-run --validate
 
 # Build with all options
-cobble build src/ -o output/ --namespace mypack --pack-format 101.1 --zip --validate --verbose
+cobble build src/ -o output/ --namespace mypack --pack-format 121.0 --zip --validate --verbose
 
 # Build with the supported pack format explicitly
-cobble build --pack-format 101.1
+cobble build --pack-format 121.0
 ```
 
 When a build would write files, Cobble refuses output paths that are existing
@@ -136,10 +136,10 @@ predicates, item modifiers, dialogs) of generated namespaces. Files Cobble
 does not generate elsewhere in the directory are left in place.
 
 When `--validate` is enabled, Cobble fails the build if any generated command is
-invalid for Minecraft Java Edition 26.1.2. If the default `data/commands.json`
+invalid for Minecraft Java Edition 26.3. If the default `data/commands.json`
 is missing, Cobble downloads the Minecraft server jar and generates it
 automatically. This requires `curl` and Java. Cobble tries Mojang's current
-Piston manifest host, the legacy launcher manifest host, and a pinned 26.1.2
+Piston manifest host, the legacy launcher manifest host, and a pinned 26.3
 server jar URL. The default `data/commands.json` path is refused if it would
 traverse an existing symlink component; use an explicit `--commands-json` path
 for a deliberate custom command tree.
@@ -167,7 +167,7 @@ COBBLE_MINECRAFT_SERVER_SHA1=<sha1> COBBLE_MINECRAFT_SERVER_URL=https://example.
 For custom command-tree paths, generate the file manually:
 
 ```bash
-scripts/setup_commands_json.sh 26.1.2
+scripts/setup_commands_json.sh 26.3
 cp data/commands.json /tmp/commands.json
 ```
 
@@ -220,7 +220,7 @@ human-oriented error text may be written to stderr while stdout remains valid
 JSON. `--symbols` adds an `experimental_symbols` array for editor prototypes;
 that field is explicitly experimental even though the top-level JSON report has
 a stable `schema_version`. `--experimental-plugins` adds an
-`experimental_plugins` object and prints a warning in human output. The 0.9.0
+`experimental_plugins` object and prints a warning in human output. The
 skeleton parses draft manifests from `plugins/*.toml` in read-only mode,
 reports their requested capabilities, evaluates Cobble-owned declarative
 diagnostics rules such as `example_lints.no_tellraw`,
@@ -228,7 +228,7 @@ diagnostics rules such as `example_lints.no_tellraw`,
 `example_lints.max_raw_command_length`, rejects unknown manifest fields or
 capabilities, and does not run project plugin code.
 `--experimental-python-compat` adds an `experimental_python_compat` object.
-The 0.9 report is diagnostics-only: it lists the small supported Python-like
+The report is diagnostics-only: it lists the small supported Python-like
 authoring surface, reports which supported constructs were observed in the
 checked sources, and echoes detected unsupported Python-like constructs while
 keeping those constructs as errors. Unsupported entries include a
@@ -312,8 +312,8 @@ metadata matches the project namespace and `project_id`.
 ### `cobble migrate`
 
 Report an experimental migration plan for moving Cobble projects between
-release tracks. This 0.9.0 experimental path supports 0.8 to 0.9 project
-inspection and a narrow config-only apply mode.
+release tracks. The experimental path supports 0.8 to 0.10 and 0.9 to 0.10
+project inspection and a narrow config-only apply mode.
 
 ```bash
 cobble migrate [PATH] [OPTIONS]
@@ -323,8 +323,8 @@ cobble migrate [PATH] [OPTIONS]
 - `PATH` - Project path or source file to inspect (default: current directory)
 
 **Options:**
-- `--from <VERSION>` - Cobble version to migrate from (default: `0.8`)
-- `--to <VERSION>` - Cobble version to migrate to (default: `0.9`)
+- `--from <VERSION>` - Cobble version to migrate from: `0.8` or `0.9` (default: `0.9`)
+- `--to <VERSION>` - Cobble version to migrate to (default: `0.10`)
 - `--json` - Print a machine-readable report with `schema_version`, `ok`,
   `changed`, `from`, `to`, `apply`, `project_path`, `config`, `source`,
   `diagnostics`, and `actions`
@@ -334,12 +334,12 @@ cobble migrate [PATH] [OPTIONS]
 ```bash
 cobble migrate
 cobble migrate path/to/project
-cobble migrate --from 0.8 --to 0.9 --json
-cobble migrate --from 0.8 --to 0.9 --apply
+cobble migrate --from 0.9 --to 0.10 --json
+cobble migrate --from 0.8 --to 0.10 --apply
 ```
 
 `migrate` is explicitly experimental. Dry-run/report mode is the default, and
-no files are changed unless `--apply` is supplied. In 0.9.0, `--apply` only
+no files are changed unless `--apply` is supplied. `--apply` only
 updates supported `cobble.toml` settings such as `project.pack_format`; it does
 not rewrite source files or automatically enable experimental feature flags.
 Before writing a migrated config, Cobble creates a timestamped backup next to
@@ -356,8 +356,8 @@ such as `resource_pack.*`, legacy `import stdlib`, and unsupported Python-like
 syntax. Unsupported routes skip inspection, leave `changed` as `false`, and
 exit non-zero.
 
-See [`migration-0.9.md`](migration-0.9.md) for the 0.8 to 0.9 upgrade flow and
-manual review checklist.
+See [`migration-0.10.md`](migration-0.10.md) for the 0.9 to 0.10 upgrade flow
+and [`migration-0.9.md`](migration-0.9.md) for the earlier 0.8 to 0.9 notes.
 
 ### `cobble clean`
 
@@ -485,12 +485,12 @@ The command reads `.cobble/build_manifest.json` and, when present,
 `.cobble/source_map.json`. ZIP archives created by `cobble build --zip` include
 pack files (`pack.mcmeta`, `data/**`, and resource-pack `assets/**` when
 present), so inspect a generated directory before or alongside ZIP packaging.
-JSON output is written to stdout and keeps `schema_version: 1` for the 0.9
+JSON output is written to stdout and keeps `schema_version: 1` for the
 inspection contract.
 
 ### `cobble validate`
 
-Validate generated `.mcfunction` files against Minecraft Java Edition 26.1.2's command tree.
+Validate generated `.mcfunction` files against Minecraft Java Edition 26.3's command tree.
 
 ```bash
 cobble validate <DATAPACK_DIR> [OPTIONS]
@@ -509,12 +509,12 @@ cobble build -o output
 cobble validate output
 
 # Use a custom command tree path
-scripts/setup_commands_json.sh 26.1.2
+scripts/setup_commands_json.sh 26.3
 cp data/commands.json /tmp/commands.json
 cobble validate output --commands-json /tmp/commands.json
 ```
 
-The validator uses Minecraft's exported Brigadier command tree, including 26.1.2 commands such as `dialog`, `fetchprofile`, `waypoint`, `stopwatch`, `version`, and `return run`.
+The validator uses Minecraft's exported Brigadier command tree, including 26.x commands such as `dialog`, `fetchprofile`, `waypoint`, `stopwatch`, `version`, and `return run`.
 It also applies the tree's permission levels: data pack functions run at level 2
 (`gamemasters`, the default `function-permission-level`), so commands that need
 a higher level, such as `transfer`, `tick`, `op`, or `stop`, are reported because
@@ -604,7 +604,7 @@ name = "my_datapack"
 description = "My awesome data pack"
 namespace = "mypack"
 version = "1.0.0"
-pack_format = "101.1"  # Minecraft Java Edition 26.1.2
+pack_format = "121.0"  # Minecraft Java Edition 26.3
 
 [build]
 source = "src"
@@ -637,11 +637,11 @@ Unknown keys, misplaced keys, and invalid experimental flag types are rejected.
 
 | Minecraft Version | Pack Format |
 |-------------------|-------------|
-| Java Edition 26.1.2 | 101.1 |
+| Java Edition 26.3 | 121.0 |
 
-Cobble currently targets Minecraft Java Edition 26.1.2 and rejects other pack formats. This keeps generated data packs on the command and data pack schema version the compiler is tested against.
+Cobble currently targets Minecraft Java Edition 26.3 and rejects other pack formats (`121` and `121.0` name the same format). This keeps generated data packs on the command and data pack schema version the compiler is tested against.
 
-**Note**: Pack format 101.1 is written to `pack.mcmeta` as `min_format` and `max_format` arrays: `[101, 1]`.
+**Note**: Pack format 121.0 is written to `pack.mcmeta` as `min_format` and `max_format` arrays: `[121, 0]`.
 
 ## Workflow
 
@@ -831,10 +831,10 @@ give {player} diamond 1
 **Solution:** Check pack format matches your Minecraft version
 
 ```bash
-cobble build --pack-format 101.1
+cobble build --pack-format 121.0
 ```
 
-Note: Cobble currently requires Minecraft Java Edition 26.1.2 and pack format 101.1.
+Note: Cobble currently requires Minecraft Java Edition 26.3 and pack format 121.0.
 
 ### Issue: Functions not found
 

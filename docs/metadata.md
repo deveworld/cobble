@@ -21,7 +21,7 @@ Stable top-level fields for schema version `1`:
 | `cobble_version` | string | Cobble package version that produced the build. |
 | `minecraft_version` | string | Supported Minecraft Java Edition target. |
 | `pack_format` | number or object | Serialized pack-format value. |
-| `pack_format_text` | string | Human-readable pack-format value such as `101.1`. |
+| `pack_format_text` | string | Human-readable pack-format value such as `121.0`. |
 | `namespace` | string | Generated data pack namespace. |
 | `description` | string | Pack description written to `pack.mcmeta`. |
 | `project_root` | string | Canonical project/source root used for ownership diagnostics. |

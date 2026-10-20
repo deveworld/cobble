@@ -83,9 +83,13 @@ output/
             └── ...
 ```
 
-`pack.mcmeta` is unchanged. Minecraft 1.20+ accepts a single pack containing
-both `data/` and `assets/` as long as `pack_format` is set. Cobble uses the
-same `pack_format` (101.1) for both halves.
+`pack.mcmeta` is unchanged: Cobble writes the data pack format (`121.0` for
+Minecraft 26.3) as `min_format`/`max_format` for both halves. Minecraft 26.3's
+resource pack format is `97.1`, so the client lists the combined pack as made
+for a newer version and asks for confirmation before using its assets. A range
+spanning both numbers would avoid the prompt but would also make older servers
+accept 26.3-format data, so separate data/resource pack outputs are the planned
+fix.
 
 When `--experimental-resource-pack` is not enabled, `assets/` is not created
 by Cobble and the output is identical to a data-pack-only build.

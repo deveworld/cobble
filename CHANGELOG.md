@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-20
+
+Cobble 0.10.0 targets Minecraft Java Edition 26.3 (data pack format 121.0)
+and ships the runtime-semantics fixes below. See
+[`docs/migration-0.10.md`](docs/migration-0.10.md) for the upgrade flow.
+
+### Minecraft 26.3
+- The single supported target moves from Minecraft Java Edition 26.1.2 (pack
+  format 101.1) to 26.3 (pack format 121.0). `pack.mcmeta` is written with
+  `min_format`/`max_format` `[121, 0]`, and `121` is accepted as the same
+  format as `121.0`.
+- `--validate` and `cobble validate` use the 26.3 command tree: the pinned
+  `data/commands.json` (SHA-1 `d6e1c0ba339ad510056c31ea55c02aefca427dd1`) is
+  generated from the 26.3 server jar
+  (`33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c`), and an existing 26.1.2 tree at
+  the default path is refused by the fingerprint check.
+- The validator understands the 26.2/26.3 argument types: `slot_source` (slot
+  strings such as `container.0`, slot source IDs, or inline SNBT), lowercase
+  `team_color` names with the separate `reset` literal, `swing_animation`,
+  and the ID-or-inline `feature`, `context_int_provider`, and
+  `context_float_provider` arguments (`/compute`, `data modify ... compute`).
+  Loot modifier, predicate, and table arguments now also accept inline SNBT.
+- `datapack.*` declarations that use pre-26.3 JSON shapes are reported as
+  `datapack-resource-format` errors: predicate `condition` (now `type`), item
+  modifier `function` (now `type`) and `conditions` lists (now a single
+  `condition`), loot table `functions`/`conditions` (now
+  `modifier`/`condition`) and tag entry `name` (now `items`), root
+  advancements without `display.background`, and cooking recipes without
+  `cookingtime`. A 26.3 server whose packs fail to load refuses to start;
+  every rule was confirmed against a 26.3 server.
+- `cobble migrate` supports 0.8 -> 0.10 and 0.9 -> 0.10 (default) and updates
+  `project.pack_format` to `121.0`; the 0.8 -> 0.9 route is gone because 0.10
+  can only write its own pack format.
+- `cobble init` templates, examples, docs, and the browser samples use the
+  26.3 JSON shapes, SNBT text components, and the plain-map `enchantments`
+  component. The `plugin-diagnostics` template's `minimum_cobble_version` now
+  follows the crate version.
+- The optional real-server gate runs Purpur 26.3 (build 2652) and now loads a
+  predicate, item modifier, loot table, advancement, recipe, and dialog in the
+  26.3 formats. `scripts/qa_10_release_gate.sh` is the 0.10 release gate.
+
 ### Added
 - Integer-returning user functions with `return`: `return expr` compiles to
   Minecraft's function return value, and integer-returning functions can be
@@ -280,11 +321,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another project's marked output.
 
 ### Versioning
-- This delta changes the public serde AST shape (`Assignment.target_expr`
+- This release changes the public serde AST shape (`Assignment.target_expr`
   added, `ExecuteModifier` expression variants removed), which
-  `docs/compiler-maintenance-plan.md` reserves for a minor release: the next
-  release must be 0.10.0, not a 0.9.x patch (`Cargo.toml` stays at 0.9.0
-  until that release is cut).
+  `docs/compiler-maintenance-plan.md` reserves for a minor release, so it is
+  0.10.0 rather than a 0.9.x patch.
 
 ## [0.9.0] - 2026-06-27
 

@@ -28,13 +28,13 @@ This directory contains example Cobble programs demonstrating various language f
 - **game_mechanics.cbl** - Minigame teams, scoring, coins, and death tracking
 - **inventory.cbl** - Villager shop and starter-kit inventory management
 - **boss.cbl** - Boss fight system (older NBT-heavy commands; compiles, but is
-  not part of the 26.1.2 `--validate` QA matrix)
+  not part of the 26.3 `--validate` QA matrix)
 - **parkour.cbl** - Parkour course system (older NBT-heavy commands; compiles,
-  but is not part of the 26.1.2 `--validate` QA matrix)
+  but is not part of the 26.3 `--validate` QA matrix)
 
 ## Project Fixtures
 
-- **26_smoke/** - Minecraft Java Edition 26.1.2 command smoke project with imports, events, macros, and latest commands.
+- **26_smoke/** - Minecraft Java Edition 26.3 command smoke project with imports, events, macros, and latest commands.
 - **26_feature_matrix/** - Full project fixture covering control flow, storage, stdlib v1.1 helpers, explicit namespaced JSON resources, and build validation.
 - **resource_authoring/** - Resource-heavy project fixture covering tags, predicates, advancements, loot tables, recipes, item modifiers, dialogs, imports, and generated-output snapshots.
 - **stdlib_v2/** - Stdlib v2 per-module opt-in fixture covering `datapack`, `event`, `score`, `storage`, and `text` helpers.

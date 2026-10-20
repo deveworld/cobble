@@ -543,7 +543,7 @@ pub struct DataPack {
     pub resource_pack_langs: HashMap<String, String>,
     pub resource_pack_static_assets: HashSet<String>,
     pub resource_pack_resource_origins: HashMap<String, Vec<SourceLocation>>,
-    pub pack_format: PackFormat,  // Cobble currently requires 101.1
+    pub pack_format: PackFormat,  // Cobble currently requires 121.0
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
     pub source_display_root: Option<PathBuf>,
@@ -559,7 +559,7 @@ pub struct DataPack {
 }
 ```
 
-**Note**: `pack_format` uses the `PackFormat` enum. Cobble currently targets Minecraft Java Edition 26.1.2 and requires `PackFormat::Decimal(101, 1)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
+**Note**: `pack_format` uses the `PackFormat` enum. Cobble currently targets Minecraft Java Edition 26.3 and requires `PackFormat::Decimal(121, 0)`, serialized into `pack.mcmeta` as `min_format` and `max_format` arrays.
 
 #### Methods
 
@@ -796,7 +796,7 @@ Handles the experimental migration report command.
 
 #### Function: `migrate(options: MigrateOptions) -> Result<(), String>`
 
-Reports the planned 0.8 to 0.9 migration surface without rewriting files.
+Reports the planned 0.8 or 0.9 to 0.10 migration surface without rewriting files.
 `MigrateOptions::path` selects the project path or source file to inspect and
 defaults to the current directory. For the supported route, the command reads
 `cobble.toml` when present, scans `.cbl` and `.cobble` files under configured
@@ -808,7 +808,7 @@ a machine-readable report with `schema_version`, `ok`, `changed`, `from`, `to`,
 `source.file_details[]` includes per-file source-location review hints for
 migration-sensitive constructs.
 `MigrateOptions::apply` permits supported config-only actions such as updating
-`project.pack_format` to the 0.9 target. It does not rewrite source files or
+`project.pack_format` to the 0.10 target. It does not rewrite source files or
 automatically enable experimental feature flags. Successful config writes create
 a timestamped backup next to `cobble.toml`; JSON reports the path as
 `config.backup_path`.
@@ -945,7 +945,7 @@ let mut transpiler = Transpiler::new(
 
 // Customize pack settings
 transpiler.set_description("My Custom Data Pack".to_string());
-transpiler.set_pack_format(PackFormat::Decimal(101, 1));  // Minecraft Java Edition 26.1.2
+transpiler.set_pack_format(PackFormat::Decimal(121, 0));  // Minecraft Java Edition 26.3
 
 transpiler.transpile(&program)?;
 transpiler.write_data_pack()?;

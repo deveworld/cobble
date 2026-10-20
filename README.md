@@ -3,8 +3,8 @@
 > A modern, Python-like language for creating Minecraft Data Packs
 
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange.svg)](https://www.rust-lang.org)
-[![Minecraft](https://img.shields.io/badge/minecraft-26.1.2-green.svg)](https://minecraft.net)
-[![Pack Format](https://img.shields.io/badge/pack%20format-101.1-blue.svg)](https://minecraft.wiki/w/Data_pack)
+[![Minecraft](https://img.shields.io/badge/minecraft-26.3-green.svg)](https://minecraft.net)
+[![Pack Format](https://img.shields.io/badge/pack%20format-121.0-blue.svg)](https://minecraft.wiki/w/Data_pack)
 [![Web Demo](https://img.shields.io/badge/web%20demo-live-7bd66f.svg)](https://deveworld.github.io/cobble/)
 
 ![Cobble web demo preview](https://raw.githubusercontent.com/deveworld/cobble/main/web/public/cobble-workshop.jpg)
@@ -14,8 +14,8 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Cobble 0.9.0** targets Minecraft Java Edition 26.1.2 and pack format
-101.1. It is the current stable crates.io release.
+**Cobble 0.10.0** targets Minecraft Java Edition 26.3 and pack format
+121.0. It is the current stable crates.io release.
 
 ## Website And Web Demo
 
@@ -59,7 +59,7 @@ cobble --version
 For an exact version:
 
 ```bash
-cargo install cobble-lang --version 0.9.0 --locked
+cargo install cobble-lang --version 0.10.0 --locked
 cobble --help
 ```
 
@@ -123,7 +123,7 @@ Copy the generated output to your world's `datapacks` directory:
 | `cobble fmt --diff` | Preview formatter changes without writing files |
 | `cobble doctor` | Inspect project and validation environment status |
 | `cobble doctor --json` | Emit machine-readable project health status |
-| `cobble migrate` | Scan a project and report/apply supported experimental 0.8 to 0.9 config migrations |
+| `cobble migrate` | Scan a project and report/apply supported experimental 0.8/0.9 to 0.10 config migrations |
 | `cobble clean` | Remove marked Cobble-generated output |
 | `cobble link` | Configure a local datapacks target |
 | `cobble inspect` | Summarize generated build metadata |
@@ -138,7 +138,7 @@ file counts. Use `cobble inspect output/` to summarize that metadata after a
 build. Use `cobble build --quiet` when a script only needs the exit code.
 
 `cobble build --validate` and `cobble validate` check generated `.mcfunction`
-files against Minecraft Java Edition 26.1.2 commands. The default
+files against Minecraft Java Edition 26.3 commands. The default
 `data/commands.json` file is generated automatically on first validation when
 missing; this requires `curl` and Java.
 
@@ -152,7 +152,7 @@ output directory, and entry points.
 name = "my-datapack"
 namespace = "my_namespace"
 version = "1.0.0"
-pack_format = "101.1"
+pack_format = "121.0"
 
 [build]
 source = "src"
@@ -175,6 +175,7 @@ npm run dev
 - [Language Reference](https://github.com/deveworld/cobble/blob/main/docs/language.md)
 - [CLI Documentation](https://github.com/deveworld/cobble/blob/main/docs/cli.md)
 - [API Reference](https://github.com/deveworld/cobble/blob/main/docs/api.md)
+- [0.9 to 0.10 Migration Notes](https://github.com/deveworld/cobble/blob/main/docs/migration-0.10.md)
 - [0.8 to 0.9 Migration Notes](https://github.com/deveworld/cobble/blob/main/docs/migration-0.9.md)
 - [Resource Authoring Cookbook](https://github.com/deveworld/cobble/blob/main/docs/resource-authoring-cookbook.md)
 - [Resource Pack Cookbook](https://github.com/deveworld/cobble/blob/main/docs/resource-pack-cookbook.md)

@@ -4,11 +4,11 @@
 
 - Planning date: 2026-06-16
 - Current stable release: `0.9.0`
-- Current development version: `0.9.0`
-- Next planned release: `1.0.0`
+- Current development version: `0.10.0`
+- Next planned release: `0.10.0` (then `1.0.0`)
 - Active pre-release: none
-- Current Minecraft target: Java Edition `26.1.2`
-- Current data pack format: `101.1`
+- Current Minecraft target: Java Edition `26.3`
+- Current data pack format: `121.0`
 - Package name: `cobble-lang`
 - CLI command: `cobble`
 - Website: <https://deveworld.github.io/cobble/>
