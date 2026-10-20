@@ -30,6 +30,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `{var}` substitution inside `tellraw`/`title` JSON array components.
 
 ### Changed
+- Execute blocks whose body compiles to more than one command now run that
+  body in a generated `execute_temp_<id>` helper, called once per execution
+  context. Previously every body command was prefixed with the full execute
+  chain, so the conditions were re-checked and the selector re-forked per
+  command: a body that changed its own condition score cut off its remaining
+  commands, and under a multi-entity `as` every entity ran the first command
+  before any ran the second (loops ran only for the first entity, `if`/`else`
+  flags and multi-step assignments mixed entities). Single-command bodies are
+  still inlined; `store` blocks and bodies containing a raw `/return` keep the
+  per-command form. Flags for `and`/`not` around an `or` in execute conditions
+  are per-entity `@s` scores under `as`.
+- Folding an expression into a score now matches runtime scoreboard
+  arithmetic (`Mth.floorDiv` / `Mth.positiveModulo`) for integer operands:
+  `x = -7 / 2` gives `-4` (was `-3`), `x = -7 % 3` gives `2` (was `-1`), and
+  `x = 1 / 3 * 3` gives `0` (was `1`); `range(N / D, 0)` with integer
+  constants no longer fails as a non-integer. `const` declarations keep real
+  `/` (so `const HALF = 1 / 2` still substitutes `0.5` into commands), and
+  `%` is a floor modulus everywhere.
+- `cobble build --validate` / `cobble validate` reject commands above the
+  data pack function permission level, such as `transfer`, `tick`, `op`, and
+  `stop`; Minecraft refuses to load a function that uses them. The level
+  defaults to 2 (`gamemasters`, the default `function-permission-level`); set
+  `COBBLE_FUNCTION_PERMISSION_LEVEL` (0-4) for a server that raised it.
+  `examples/26_smoke` now uses `waypoint` instead of `transfer`.
+- The validator applies Minecraft's macro line rules: a `$` line must contain
+  at least one `$(variable)` and variable names must be letters, digits, or
+  `_`. Generated packs no longer `$`-prefix execute lines without variables.
+- `cobble init` no longer overwrites an existing `src/main.cbl`, `.gitignore`,
+  or template file; it creates only the missing scaffold and reports the
+  files it kept.
+- The browser compiler builds `pack.mcmeta` and merges tags with the CLI
+  writer's code, so merged tag values are sorted and normalized exactly as in
+  CLI builds.
 - The diagnostics engine now parses each source once and runs every
   post-parse semantic check as a span-anchored AST pass in
   `src/diagnostics/semantic.rs`, replacing the line-by-line text heuristics.
@@ -93,6 +126,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message prefixes. CLI, `check --json`, and web/wasm output are unchanged.
 
 ### Fixed
+- `not (a and b)` compiled as `not a and not b`: negation flipped every
+  `if`/`unless` prefix of the AND chain. Negation now follows De Morgan's laws
+  in `if`, `elif`, `while`, condition assignments, and execute `if`/`unless`
+  conditions; an execute `unless` over a multi-clause chain goes through a
+  flag.
+- Self-referential assignments inside functions (`x = 10 - x`, `x = y - x`,
+  `x = C + x`) clobbered the target before reading it and produced `0` or a
+  doubled value; they now compute from the old value like module-level ones.
+- `flag = not flag` and `done = done and c` always produced `1` / `0`: the
+  flag was reset before the condition read it.
+- A bare `const` in a condition (`if DEBUG:`) or as a `match` value read a
+  score that was never written; constants now fold at compile time.
+  Literal-only conditions (`if 1 == 1:`, `if DEBUG > 0:`) now register the
+  `__internal__` objective they read.
+- A string, list, or map variable passed to a function call statement
+  (`greet(msg)`) passed the variable's name instead of its value.
+- Passing differently typed expressions to function call statements
+  (`show(a + 1)` then `show(a > b)`) failed with a type mismatch on an
+  internal `_arg_temp_0` variable; each call now uses its own scratch score.
+  Calling a parameterless function with arguments is an error instead of
+  silently dropping them.
+- A single macro command inside `if`/`elif`/`else` was emitted as
+  `execute ... run $tellraw ...`, which Minecraft cannot load; the `$` now
+  leads the line.
+- `a/b` written without spaces compiled as `a` followed by a raw command `b`.
+  A `/` after an operand is now always division; only a statement-leading `/`
+  starts a raw command.
+- Raw execute conditions and positions kept source-glued tokens apart:
+  `positioned ^1 ^ ^` became `^ 1 ^ ^`, `stone[snowy=false]` became
+  `stone [ snowy = false ]`, and `ns:util/check` was split. Tokens written
+  without whitespace now stay glued.
+- `x = 7 % 0.5` panicked the compiler; `cobble check` panicked on a compound
+  assignment such as `x+=m[a한 + 1]`.
+- `def main():  # comment` (or trailing whitespace after `:`) was reported as
+  a missing block colon.
+- Unicode identifiers (`força`, `résultat`, `@Größe`) were split into ASCII
+  fragments or read as keywords by the diagnostics scanners, producing false
+  `undefined-variable`, `missing-block-colon`, and `unsupported-decorator`
+  errors.
+- The validator rejected valid commands: selector float ranges with a lower
+  bound (`@e[distance=1..5]`), particle options (`dust{color:[...]}`), and
+  greedy messages after a macro placeholder (`$say $(x) text`).
+- `cobble build src` or `cobble build src/main.cbl` after a plain
+  `cobble build` refused the output as "owned by another Cobble project": a
+  relative input resolved the config directory to an empty path, hashing a
+  different (and shared) `project_id`. `cobble clean src` failed the same way.
+- A `cobble.toml` without a `[build]` table used the project root as both
+  source and output instead of `src` and `output`.
+- Runtime division warnings claimed Minecraft "silently returns 0" and ended
+  with an empty "at line."; they now describe the failed command.
 - `resource_pack.*` failures now report the diagnostic codes documented in
   `docs/resource-pack-design.md` (`resource-pack-not-enabled`,
   `resource-pack-bad-id`, `resource-pack-non-object`,

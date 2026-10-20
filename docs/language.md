@@ -490,6 +490,29 @@ def boss_logic(boss_health):
             /say Boss entered phase 2!
 ```
 
+### Execute Blocks
+
+Execute blocks run their body under Minecraft `execute` modifiers:
+
+```python
+def reward_new_players():
+    as @a if score @s level matches 0:
+        /scoreboard players set @s level 1
+        /tellraw @s {"text":"Welcome!"}
+```
+
+A body that compiles to a single command is inlined
+(`execute as @a if ... run tellraw ...`). A longer body is compiled into a
+helper function called once per execution context
+(`execute as @a if ... run function ns:execute_temp_N`), so the modifiers and
+conditions are evaluated once per entity and the whole body runs for that
+entity before the next one starts. Updating the condition's own score inside
+the body, loops, `if`/`else`, and multi-step assignments therefore behave per
+entity. Blocks with a `store` modifier keep one `execute store ...` command per
+body command, because storing a helper call would store the helper's return
+value instead of each command's result; bodies containing a raw `/return` also
+keep that form so the return still leaves the enclosing function.
+
 ### For Loops
 
 ```python
@@ -1210,6 +1233,26 @@ def calculate():
   For example, `x += y` lowers as `x = x + y`.
 - Literal loop variables are substituted at compile time during unrolling
 
+**Integer Division and Modulo:**
+
+`/` and `%` follow Minecraft's scoreboard `/=` and `%=`: division rounds
+toward negative infinity and modulo is a floor modulus whose sign follows the
+divisor. Compile-time constant folding uses the same rules for integer
+operands, so a folded expression and the same expression computed from
+variables always agree:
+
+```python
+a = -7 / 2      # -4 (not -3)
+b = -7 % 3      # 2  (not -1)
+c = 1 / 3 * 3   # 0: each step is integer arithmetic
+```
+
+`const` declarations are compile-time values that raw commands may
+substitute, so `/` in a `const` declaration is real division (`const HALF =
+1 / 2` substitutes `0.5` into `{HALF}`) while `%` is the same floor modulus.
+Fractional values are truncated where they are stored in a score (with a
+precision warning).
+
 **⚠️ Division and Modulo by Zero:**
 
 Division and modulo by zero are **only checked at compile-time for constants**:
@@ -1221,10 +1264,12 @@ Division/modulo by a **variable** that may be zero at runtime is **not checked**
 ```python
 a = 10
 b = 0  # Could come from earlier scoreboard/storage state at runtime
-c = a / b  # ⚠️ No compile-time check - undefined behavior in Minecraft
+c = a / b  # ⚠️ No compile-time check
 ```
 
-Runtime division by zero behavior is **undefined** and may vary by Minecraft version. Always validate divisors:
+At runtime Minecraft rejects a division or modulo by zero: the scoreboard
+command fails and the target keeps the left operand's value (`c` above ends up
+as `10`). Always validate divisors:
 ```python
 # ✅ Good practice: Validate before dividing
 if divisor != 0:

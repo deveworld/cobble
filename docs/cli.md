@@ -514,7 +514,14 @@ cp data/commands.json /tmp/commands.json
 cobble validate output --commands-json /tmp/commands.json
 ```
 
-The validator uses Minecraft's exported Brigadier command tree, including 26.1.2 commands such as `dialog`, `fetchprofile`, `transfer`, `waypoint`, `stopwatch`, `version`, and `return run`.
+The validator uses Minecraft's exported Brigadier command tree, including 26.1.2 commands such as `dialog`, `fetchprofile`, `waypoint`, `stopwatch`, `version`, and `return run`.
+It also applies the tree's permission levels: data pack functions run at level 2
+(`gamemasters`, the default `function-permission-level`), so commands that need
+a higher level, such as `transfer`, `tick`, `op`, or `stop`, are reported because
+Minecraft refuses to load a function that uses them. If your server raised
+`function-permission-level`, set `COBBLE_FUNCTION_PERMISSION_LEVEL` (0-4) to the
+same value. Macro lines follow Minecraft's template rules: each `$` line needs
+at least one `$(variable)`, and variable names are letters, digits, or `_`.
 Automatic generation for the default `data/commands.json` path refuses existing
 symlink components before creating temporary files or replacing the command
 tree.
