@@ -39,7 +39,7 @@ PY
 }
 
 echo "== resource_authoring example validates and reports resources =="
-run cargo run --locked --quiet -- build examples/resource_authoring --validate -o "$work_dir/example"
+run cargo run --locked --quiet -- build tests/fixtures/projects/resource_authoring --validate -o "$work_dir/example"
 cargo run --locked --quiet -- inspect "$work_dir/example" --json >"$work_dir/example.inspect.json"
 json_assert \
   "resource authoring manifest" \

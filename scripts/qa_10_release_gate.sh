@@ -125,8 +125,8 @@ assert_json_field \
   'any(resource["kind"] == "item_modifier" and resource["path"] == "items/reward_components" for resource in data["manifest"]["resources"])'
 
 check_json="$work_dir/check.plugins.json"
-echo "+ cargo run --locked --quiet -- check examples/26_smoke --json --symbols --experimental-plugins --experimental-python-compat"
-cargo run --locked --quiet -- check examples/26_smoke --json --symbols --experimental-plugins --experimental-python-compat >"$check_json"
+echo "+ cargo run --locked --quiet -- check tests/fixtures/projects/26_smoke --json --symbols --experimental-plugins --experimental-python-compat"
+cargo run --locked --quiet -- check tests/fixtures/projects/26_smoke --json --symbols --experimental-plugins --experimental-python-compat >"$check_json"
 assert_json_field \
   "check schema and experimental tooling skeletons" \
   "$check_json" \
@@ -179,8 +179,8 @@ assert_json_field \
   'data["schema_version"] == 1 and data["ok"] is True and data["experimental_plugins"]["manifests_checked"] == 1 and data["experimental_plugins"]["manifests"][0]["name"] == "example_lints" and data["experimental_plugins"]["manifests"][0]["minimum_cobble_version"] == "'"$VERSION"'" and "example_lints.no_tellraw" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "example_lints.no_raw_op" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "emit_diagnostics" in data["experimental_plugins"]["manifests"][0]["capabilities"] and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_tellraw" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"]) and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_raw_op" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"])'
 
 migrate_json="$work_dir/migrate.json"
-echo "+ cargo run --locked --quiet -- migrate examples/resource_pack --json"
-cargo run --locked --quiet -- migrate examples/resource_pack --json >"$migrate_json"
+echo "+ cargo run --locked --quiet -- migrate tests/fixtures/projects/resource_pack --json"
+cargo run --locked --quiet -- migrate tests/fixtures/projects/resource_pack --json >"$migrate_json"
 assert_json_field \
   "migrate schema" \
   "$migrate_json" \
@@ -227,11 +227,11 @@ fi
 
 echo
 echo "== 0.10 validated build matrix =="
-run cargo run --locked -- build examples/stdlib_v2 --validate -o "$work_dir/stdlib-v2"
-run cargo run --locked -- build examples/stdlib_v3 --validate -o "$work_dir/stdlib-v3-example"
-run cargo run --locked -- build examples/resource_authoring --validate -o "$work_dir/resource-authoring"
-run cargo run --locked -- build examples/unrolling --validate -o "$work_dir/unrolling"
-run cargo run --locked -- build examples/resource_pack --experimental-resource-pack --validate -o "$work_dir/resource-pack"
+run cargo run --locked -- build tests/fixtures/projects/stdlib_v2 --validate -o "$work_dir/stdlib-v2"
+run cargo run --locked -- build tests/fixtures/projects/stdlib_v3 --validate -o "$work_dir/stdlib-v3-example"
+run cargo run --locked -- build tests/fixtures/projects/resource_authoring --validate -o "$work_dir/resource-authoring"
+run cargo run --locked -- build tests/fixtures/projects/unrolling --validate -o "$work_dir/unrolling"
+run cargo run --locked -- build tests/fixtures/projects/resource_pack --experimental-resource-pack --validate -o "$work_dir/resource-pack"
 run cargo run --locked -- inspect "$work_dir/stdlib-v2" --json
 run cargo run --locked -- inspect "$work_dir/stdlib-v3-example" --json
 run cargo run --locked -- inspect "$work_dir/resource-authoring" --json

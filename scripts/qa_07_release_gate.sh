@@ -76,6 +76,7 @@ run scripts/qa_07_templates.sh
 run scripts/qa_07_link_clean_safety.sh
 run scripts/qa_07_watch_smoke.sh
 run cargo run --locked -- fmt --check examples
+run cargo run --locked -- fmt --check tests/fixtures/projects
 fmt_diff_file="$work_dir/fmt-diff.cbl"
 fmt_diff_expected="$work_dir/fmt-diff.expected"
 printf 'def main():  \r\n  /say diff  \r\n' > "$fmt_diff_file"
@@ -99,20 +100,20 @@ if ! cmp -s "$fmt_diff_expected" "$fmt_diff_file"; then
 fi
 
 check_smoke_json="$(
-  cargo run --locked --quiet -- check --json examples/26_smoke/src/main.cbl
+  cargo run --locked --quiet -- check --json tests/fixtures/projects/26_smoke/src/main.cbl
 )"
-json_ok "check --json examples/26_smoke" "$check_smoke_json"
+json_ok "check --json tests/fixtures/projects/26_smoke" "$check_smoke_json"
 assert_json_field \
-  "check --json examples/26_smoke" \
+  "check --json tests/fixtures/projects/26_smoke" \
   "$check_smoke_json" \
   'data["schema_version"] == 1 and data["ok"] is True and data["error_count"] == 0'
 
 check_symbols_json="$(
-  cargo run --locked --quiet -- check --json --symbols examples/resource_authoring/src/main.cbl
+  cargo run --locked --quiet -- check --json --symbols tests/fixtures/projects/resource_authoring/src/main.cbl
 )"
-json_ok "check --json --symbols examples/resource_authoring" "$check_symbols_json"
+json_ok "check --json --symbols tests/fixtures/projects/resource_authoring" "$check_symbols_json"
 assert_json_field \
-  "check --json --symbols examples/resource_authoring" \
+  "check --json --symbols tests/fixtures/projects/resource_authoring" \
   "$check_symbols_json" \
   'data["schema_version"] == 1 and data["ok"] is True and len(data["experimental_symbols"]) > 0'
 
@@ -129,17 +130,17 @@ done
 
 echo
 echo "== Validated example builds =="
-run cargo run --locked -- build examples/26_smoke --validate -o "$work_dir/26-smoke"
-run cargo run --locked -- build examples/26_feature_matrix --validate -o "$work_dir/26-feature-matrix"
-run cargo run --locked -- build examples/resource_authoring --validate -o "$work_dir/resource-authoring"
-run cargo run --locked -- build examples/inventory.cbl --validate -o "$work_dir/inventory"
-run cargo run --locked -- build examples/26_smoke --dry-run --validate
+run cargo run --locked -- build tests/fixtures/projects/26_smoke --validate -o "$work_dir/26-smoke"
+run cargo run --locked -- build tests/fixtures/projects/26_feature_matrix --validate -o "$work_dir/26-feature-matrix"
+run cargo run --locked -- build tests/fixtures/projects/resource_authoring --validate -o "$work_dir/resource-authoring"
+run cargo run --locked -- build tests/fixtures/projects/inventory.cbl --validate -o "$work_dir/inventory"
+run cargo run --locked -- build tests/fixtures/projects/26_smoke --dry-run --validate
 
 echo
 echo "== Validated full example gallery =="
 all_examples_dir="$work_dir/all-examples"
 mkdir -p "$all_examples_dir"
-example_sources=(examples/*.cbl examples/*/src/main.cbl)
+example_sources=(examples/*.cbl examples/*/src/main.cbl tests/fixtures/projects/*.cbl tests/fixtures/projects/*/src/main.cbl)
 for example in "${example_sources[@]}"; do
   example_output="${example#examples/}"
   example_output="${example_output//\//__}"

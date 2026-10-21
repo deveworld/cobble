@@ -145,8 +145,8 @@ datapack.dialog("welcome", {
 # ---- Game logic ----
 
 def on_load():
-    """Set up objectives, the arena chunk, and the HUD."""
-    /forceload add 0 0
+    """Set up objectives, the arena chunks, and the HUD."""
+    /forceload add -3 -3 3 3
     /scoreboard objectives add arena_score dummy {"text":"Arena","color":"gold"}
     score.objective.display("sidebar", "arena_score")
     team.add("arena_players", text.colored("Arena", "gold"))

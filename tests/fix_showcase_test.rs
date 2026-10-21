@@ -1,4 +1,4 @@
-//! Regression tests for bugs found by compiling `examples/showcase` and
+//! Regression tests for bugs found by compiling `tests/fixtures/projects/showcase` and
 //! running its self-test on a real server:
 //! - a comparison of two macro parameters lowered only the left side, so the
 //!   right side was compared as an unset score name

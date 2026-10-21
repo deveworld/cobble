@@ -1,0 +1,11 @@
+[project]
+name = "magic_items"
+description = "Custom right-click items: blink rod, healing staff, and frost wand"
+namespace = "magic_items"
+version = "1.0.0"
+pack_format = "121.0"
+
+[build]
+source = "src"
+output = "dist"
+entry_points = ["main.cbl"]

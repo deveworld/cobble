@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 const MINECRAFT_VERSION: &str = "26.3";
 const PURPUR_BUILD: &str = "2652";
 const NAMESPACE: &str = "cobble_server_smoke";
+const SHOWCASE_NAMESPACE: &str = "cobble_showcase";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -27,11 +28,24 @@ fn purpur_server_loads_and_runs_generated_datapack() {
     let temp = tempfile::TempDir::new().unwrap();
     let project_dir = temp.path().join("project");
     let server_dir = temp.path().join("server");
-    let datapack_dir = server_dir.join("world/datapacks").join(NAMESPACE);
+    let datapacks_dir = server_dir.join("world/datapacks");
 
     write_project(&project_dir);
-    fs::create_dir_all(datapack_dir.parent().unwrap()).unwrap();
-    build_datapack(&repo_root, &project_dir, &datapack_dir);
+    fs::create_dir_all(&datapacks_dir).unwrap();
+    build_datapack(
+        &repo_root,
+        &project_dir.join("src/main.cbl"),
+        NAMESPACE,
+        "Cobble Purpur server smoke test",
+        &datapacks_dir.join(NAMESPACE),
+    );
+    build_datapack(
+        &repo_root,
+        &repo_root.join("tests/fixtures/projects/showcase/src/main.cbl"),
+        SHOWCASE_NAMESPACE,
+        "Cobble language showcase with an in-game self-test suite",
+        &datapacks_dir.join(SHOWCASE_NAMESPACE),
+    );
 
     fs::write(
         server_dir.join("eula.txt"),
@@ -281,14 +295,20 @@ stdlib.addEventListener(event.LOAD, init)
     .unwrap();
 }
 
-fn build_datapack(repo_root: &Path, project_dir: &Path, datapack_dir: &Path) {
+fn build_datapack(
+    repo_root: &Path,
+    entry: &Path,
+    namespace: &str,
+    description: &str,
+    datapack_dir: &Path,
+) {
     let commands_json = repo_root.join("data/commands.json");
     cobble::commands::build::build(cobble::commands::build::BuildOptions {
-        input: Some(project_dir.join("src/main.cbl")),
+        input: Some(entry.to_path_buf()),
         output: Some(datapack_dir.to_path_buf()),
-        namespace: Some(NAMESPACE.to_string()),
+        namespace: Some(namespace.to_string()),
         pack_format: Some("121.0".to_string()),
-        description: Some("Cobble Purpur server smoke test".to_string()),
+        description: Some(description.to_string()),
         verbose: false,
         quiet: false,
         zip: false,
@@ -416,6 +436,12 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         &format!("file/{NAMESPACE}"),
         COMMAND_TIMEOUT,
     )?;
+    wait_for_log(
+        child,
+        &log_path,
+        &format!("file/{SHOWCASE_NAMESPACE}"),
+        COMMAND_TIMEOUT,
+    )?;
 
     send_command(child, &format!("function {NAMESPACE}:probe"))?;
     wait_for_log(
@@ -493,6 +519,8 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
     wait_for_log(child, &log_path, "compound assignment ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "return command ok", COMMAND_TIMEOUT)?;
 
+    run_showcase_selftest(child, &log_path)?;
+
     send_command(child, "reload")?;
     wait_for_log_count(child, &log_path, "Cobble quiet load ok", 2, COMMAND_TIMEOUT)?;
 
@@ -509,6 +537,56 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
     let console_log = read_log(&server_dir.join("server-console.log"));
     assert_no_server_errors(&console_log)?;
     Ok(())
+}
+
+/// Runs the showcase fixture's in-game self-test. Each check prints
+/// `PASS <label>` or `FAIL <label> expected <x> got <y>`; the totals use
+/// runtime values, which `/say` turns into `tellraw`, so they are read back as
+/// scores instead.
+fn run_showcase_selftest(child: &mut Child, log_path: &Path) -> Result<(), String> {
+    send_command(child, &format!("function {SHOWCASE_NAMESPACE}:selftest"))?;
+    // The last check is scheduled 2 ticks out; a cleared schedule would
+    // report a failure 4 ticks out, so give it time to show up.
+    wait_for_log(child, log_path, "PASS schedule_once", COMMAND_TIMEOUT)?;
+    thread::sleep(Duration::from_millis(500));
+
+    send_command(child, "scoreboard players get passed temp")?;
+    send_command(child, "scoreboard players get failed temp")?;
+    wait_for_log(child, log_path, "passed has ", COMMAND_TIMEOUT)?;
+    wait_for_log(child, log_path, "failed has ", COMMAND_TIMEOUT)?;
+
+    let log = read_log(log_path);
+    let failures = log
+        .lines()
+        .filter(|line| line.contains("] FAIL "))
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        return Err(format!(
+            "showcase self-test failed:\n{}",
+            failures.join("\n")
+        ));
+    }
+    let pass_lines = log.lines().filter(|line| line.contains("] PASS ")).count();
+    let passed = temp_score(&log, "passed")?;
+    let failed = temp_score(&log, "failed")?;
+    if failed != 0 || passed == 0 || passed != pass_lines {
+        return Err(format!(
+            "showcase self-test totals are off: passed={passed} failed={failed}, {pass_lines} PASS lines"
+        ));
+    }
+    eprintln!("showcase self-test: {passed} passed, 0 failed");
+    Ok(())
+}
+
+fn temp_score(log: &str, holder: &str) -> Result<usize, String> {
+    let needle = format!("{holder} has ");
+    log.lines()
+        .rev()
+        .find_map(|line| {
+            let (_, rest) = line.split_once(&needle)?;
+            rest.strip_suffix(" [temp]")?.parse().ok()
+        })
+        .ok_or_else(|| format!("no `{holder}` score in the server log"))
 }
 
 fn send_command(child: &mut Child, command: &str) -> Result<(), String> {

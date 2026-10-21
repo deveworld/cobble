@@ -204,7 +204,7 @@ Theme: make Cobble pleasant to use in larger projects.
   - `resource-heavy` init template with template build/check coverage
   - `game-mechanic` and `web-demo` init templates with template build/check
     coverage
-  - `examples/resource_authoring` with generated-output snapshot coverage
+  - `tests/fixtures/projects/resource_authoring` with generated-output snapshot coverage
   - `cobble check --json --symbols` with `schema_version` and experimental
     document-symbol metadata
   - focused 0.7.1 workflow QA scripts for templates, link/clean safety, and
@@ -703,10 +703,10 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- --version
 scripts/check_examples.sh
 cargo run --locked -- fmt --check examples
-cargo run --locked -- check --json examples/26_smoke/src/main.cbl
-cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
-cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
-cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
+cargo run --locked -- check --json tests/fixtures/projects/26_smoke/src/main.cbl
+cargo run --locked -- build tests/fixtures/projects/26_smoke --validate -o /tmp/cobble-qa-26-smoke
+cargo run --locked -- build tests/fixtures/projects/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
+cargo run --locked -- build tests/fixtures/projects/inventory.cbl --validate -o /tmp/cobble-qa-inventory
 cargo run --locked -- init --name /tmp/cobble-qa-init-resource --template resource-heavy
 cargo run --locked -- build /tmp/cobble-qa-init-resource --validate -o /tmp/cobble-qa-init-resource-output
 cargo run --locked -- init --list-templates
@@ -719,7 +719,7 @@ cargo run --locked -- clean --dry-run --output /tmp/cobble-qa-26-smoke
 cargo run --locked -- doctor --json
 cargo run --locked -- doctor
 cargo run --locked -- clean /tmp/cobble-qa-init-resource --linked --dry-run
-cargo run --locked -- build examples/26_smoke --dry-run --validate
+cargo run --locked -- build tests/fixtures/projects/26_smoke --dry-run --validate
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
 cargo package --locked
@@ -1201,8 +1201,8 @@ Exit criteria:
 
 Required work:
 
-- Add `examples/stdlib_v2` as the required stdlib-heavy release fixture.
-- Add `examples/resource_authoring` as the required resource-heavy release
+- Add `tests/fixtures/projects/stdlib_v2` as the required stdlib-heavy release fixture.
+- Add `tests/fixtures/projects/resource_authoring` as the required resource-heavy release
   fixture.
 - Update `/try` samples if new helpers are important to show.
 - Update README, language reference, stdlib docs, resource docs, and QA docs.
@@ -1224,11 +1224,11 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 scripts/check_examples.sh
-cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
-cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
-cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
-cargo run --locked -- build examples/stdlib_v2 --validate -o /tmp/cobble-qa-stdlib-v2
-cargo run --locked -- build examples/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
+cargo run --locked -- build tests/fixtures/projects/26_smoke --validate -o /tmp/cobble-qa-26-smoke
+cargo run --locked -- build tests/fixtures/projects/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
+cargo run --locked -- build tests/fixtures/projects/inventory.cbl --validate -o /tmp/cobble-qa-inventory
+cargo run --locked -- build tests/fixtures/projects/stdlib_v2 --validate -o /tmp/cobble-qa-stdlib-v2
+cargo run --locked -- build tests/fixtures/projects/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
 cargo run --locked -- inspect /tmp/cobble-qa-stdlib-v2 --json
 cargo run --locked -- inspect /tmp/cobble-qa-resource-authoring --json
 scripts/check_resource_snapshots.sh
@@ -1428,17 +1428,17 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- --version
 scripts/check_examples.sh
-cargo run --locked -- check --json examples/26_smoke/src/main.cbl
-cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
-cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
-cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
+cargo run --locked -- check --json tests/fixtures/projects/26_smoke/src/main.cbl
+cargo run --locked -- build tests/fixtures/projects/26_smoke --validate -o /tmp/cobble-qa-26-smoke
+cargo run --locked -- build tests/fixtures/projects/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
+cargo run --locked -- build tests/fixtures/projects/inventory.cbl --validate -o /tmp/cobble-qa-inventory
 cargo run --locked -- doctor
 cargo run --locked -- doctor --json
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
 cargo install --locked --path . --root /tmp/cobble-qa-install
 /tmp/cobble-qa-install/bin/cobble --version
-/tmp/cobble-qa-install/bin/cobble check examples/26_smoke/src/main.cbl
+/tmp/cobble-qa-install/bin/cobble check tests/fixtures/projects/26_smoke/src/main.cbl
 cargo package --locked
 cargo publish --dry-run --locked
 ```
@@ -1532,12 +1532,12 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- --version
 scripts/check_examples.sh
-cargo run --locked -- check --json examples/26_smoke/src/main.cbl
-cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
-cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
-cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
+cargo run --locked -- check --json tests/fixtures/projects/26_smoke/src/main.cbl
+cargo run --locked -- build tests/fixtures/projects/26_smoke --validate -o /tmp/cobble-qa-26-smoke
+cargo run --locked -- build tests/fixtures/projects/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
+cargo run --locked -- build tests/fixtures/projects/inventory.cbl --validate -o /tmp/cobble-qa-inventory
 cargo run --locked -- doctor
-cargo run --locked -- build examples/26_smoke --dry-run --validate
+cargo run --locked -- build tests/fixtures/projects/26_smoke --dry-run --validate
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
 cargo package --locked

@@ -230,4 +230,4 @@ iteration limit and diagnostics are the same.
 - [x] Add unit tests for range, range with step, literal array, limit, and
   diagnostics.
 - [x] Add a snapshot test covering generated commands and source-map entries.
-- [x] Add `examples/unrolling` with source and generated output.
+- [x] Add `tests/fixtures/projects/unrolling` with source and generated output.

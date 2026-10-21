@@ -125,7 +125,7 @@ assert_json_file \
 
 echo
 echo "== stdlib_v2 example builds =="
-run cargo run --locked --quiet -- build examples/stdlib_v2 --validate -o "$work_dir/example"
+run cargo run --locked --quiet -- build tests/fixtures/projects/stdlib_v2 --validate -o "$work_dir/example"
 cargo run --locked --quiet -- inspect "$work_dir/example" --json >"$work_dir/example.inspect.json"
 assert_json_file \
   "stdlib_v2 example manifest" \

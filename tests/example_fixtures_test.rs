@@ -48,21 +48,36 @@ fn build_fixture(project: &str) {
 }
 
 #[test]
-fn example_26_smoke_builds_and_validates_when_command_tree_exists() {
-    build_fixture("examples/26_smoke");
+fn fixture_26_smoke_builds_and_validates_when_command_tree_exists() {
+    build_fixture("tests/fixtures/projects/26_smoke");
 }
 
 #[test]
-fn example_26_feature_matrix_builds_and_validates_when_command_tree_exists() {
-    build_fixture("examples/26_feature_matrix");
+fn fixture_26_feature_matrix_builds_and_validates_when_command_tree_exists() {
+    build_fixture("tests/fixtures/projects/26_feature_matrix");
 }
 
 #[test]
-fn example_resource_authoring_builds_and_validates_when_command_tree_exists() {
-    build_fixture("examples/resource_authoring");
+fn fixture_resource_authoring_builds_and_validates_when_command_tree_exists() {
+    build_fixture("tests/fixtures/projects/resource_authoring");
 }
 
 #[test]
-fn example_showcase_builds_and_validates_when_command_tree_exists() {
-    build_fixture("examples/showcase");
+fn fixture_showcase_builds_and_validates_when_command_tree_exists() {
+    build_fixture("tests/fixtures/projects/showcase");
+}
+
+#[test]
+fn example_lobby_builds_and_validates_when_command_tree_exists() {
+    build_fixture("examples/lobby");
+}
+
+#[test]
+fn example_parkour_builds_and_validates_when_command_tree_exists() {
+    build_fixture("examples/parkour");
+}
+
+#[test]
+fn example_magic_items_builds_and_validates_when_command_tree_exists() {
+    build_fixture("examples/magic_items");
 }

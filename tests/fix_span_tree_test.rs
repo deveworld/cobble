@@ -19,8 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Diagnostics-migration corpus (session workspace). The vendored subset in
-/// `tests/fixtures/span_corpus` and the in-repo `examples/` tree are always
-/// swept, so the sweep stays meaningful when this directory is absent;
+/// `tests/fixtures/span_corpus`, the in-repo `examples/` tree, and the
+/// `tests/fixtures/projects` QA fixtures are always swept, so the sweep stays meaningful when this directory is absent;
 /// override with `COBBLE_SPAN_TREE_CORPUS` to sweep a relocated full corpus
 /// in addition.
 const DIAGMIG_CORPUS_DIR: &str = "/tmp/claude-1000/-home-world-coding-cobble/9633a053-dd4f-446b-bea5-ef21aa9633ec/scratchpad/diagmig/corpus";
@@ -137,7 +137,8 @@ const ALL_KINDS: &[&str] = &[
 
 #[test]
 fn every_parseable_fixture_yields_an_aligned_statement_span_tree() {
-    // Always swept: the vendored corpus subset and the in-repo examples.
+    // Always swept: the vendored corpus subset, the in-repo examples, and
+    // the QA fixture projects.
     let vendored = vendored_span_corpus();
     let mut files = Vec::new();
     collect_cbl_files(&vendored, &mut files);
@@ -147,8 +148,9 @@ fn every_parseable_fixture_yields_an_aligned_statement_span_tree() {
         "vendored span corpus at {} holds only {vendored_count} .cbl fixtures",
         vendored.display()
     );
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    collect_cbl_files(&examples, &mut files);
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    collect_cbl_files(&repo_root.join("examples"), &mut files);
+    collect_cbl_files(&repo_root.join("tests/fixtures/projects"), &mut files);
     // Swept in addition when present: the full session corpus (or any
     // directory named by COBBLE_SPAN_TREE_CORPUS).
     let corpus = std::env::var("COBBLE_SPAN_TREE_CORPUS")

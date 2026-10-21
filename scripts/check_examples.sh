@@ -5,7 +5,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 shopt -s nullglob
-examples=(examples/*.cbl examples/*/src/main.cbl)
+examples=(
+  examples/*.cbl
+  examples/*/src/main.cbl
+  tests/fixtures/projects/*.cbl
+  tests/fixtures/projects/*/src/main.cbl
+)
 
 for example in "${examples[@]}"; do
   echo "Checking ${example}"

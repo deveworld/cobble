@@ -291,7 +291,7 @@ cobble doctor [PROJECT_PATH] [OPTIONS]
 **Examples:**
 ```bash
 cobble doctor
-cobble doctor examples/26_smoke --commands-json data/commands.json
+cobble doctor examples/lobby --commands-json data/commands.json
 cobble doctor --json
 ```
 

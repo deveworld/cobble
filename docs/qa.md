@@ -42,8 +42,9 @@ scripts/qa_07_templates.sh
 scripts/qa_07_link_clean_safety.sh
 scripts/qa_07_watch_smoke.sh
 cargo run --locked -- fmt --check examples
-cargo run --locked -- check --json examples/26_smoke/src/main.cbl
-cargo run --locked -- check --json --symbols examples/resource_authoring/src/main.cbl
+cargo run --locked -- fmt --check tests/fixtures/projects
+cargo run --locked -- check --json tests/fixtures/projects/26_smoke/src/main.cbl
+cargo run --locked -- check --json --symbols tests/fixtures/projects/resource_authoring/src/main.cbl
 cargo run --locked -- init --list-templates
 cargo run --locked -- init --name /tmp/cobble-qa-init-resource --template resource-heavy
 cargo run --locked -- init --name /tmp/cobble-qa-init-game --template game-mechanic
@@ -51,11 +52,11 @@ cargo run --locked -- init --name /tmp/cobble-qa-init-web --template web-demo
 cargo run --locked -- build /tmp/cobble-qa-init-resource -o /tmp/cobble-qa-init-resource-output
 cargo run --locked -- build /tmp/cobble-qa-init-game -o /tmp/cobble-qa-init-game-output
 cargo run --locked -- build /tmp/cobble-qa-init-web -o /tmp/cobble-qa-init-web-output
-cargo run --locked -- build examples/26_smoke --validate -o /tmp/cobble-qa-26-smoke
-cargo run --locked -- build examples/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
-cargo run --locked -- build examples/stdlib_v3 --validate -o /tmp/cobble-qa-stdlib-v3
-cargo run --locked -- build examples/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
-cargo run --locked -- build examples/inventory.cbl --validate -o /tmp/cobble-qa-inventory
+cargo run --locked -- build tests/fixtures/projects/26_smoke --validate -o /tmp/cobble-qa-26-smoke
+cargo run --locked -- build tests/fixtures/projects/26_feature_matrix --validate -o /tmp/cobble-qa-26-feature-matrix
+cargo run --locked -- build tests/fixtures/projects/stdlib_v3 --validate -o /tmp/cobble-qa-stdlib-v3
+cargo run --locked -- build tests/fixtures/projects/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
+cargo run --locked -- build tests/fixtures/projects/inventory.cbl --validate -o /tmp/cobble-qa-inventory
 cargo run --locked -- doctor
 cargo run --locked -- doctor --json
 rm -rf /tmp/cobble-qa-linked /tmp/cobble-qa-linked-world
@@ -64,7 +65,7 @@ cargo run --locked -- link /tmp/cobble-qa-linked --datapacks /tmp/cobble-qa-link
 cargo run --locked -- build /tmp/cobble-qa-linked/src -o /tmp/cobble-qa-linked-world/datapacks/qa_linked
 cargo run --locked -- clean /tmp/cobble-qa-linked --linked --dry-run
 cargo run --locked -- clean /tmp/cobble-qa-linked --linked --yes
-cargo run --locked -- build examples/26_smoke --dry-run --validate
+cargo run --locked -- build tests/fixtures/projects/26_smoke --dry-run --validate
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke
 cargo run --locked -- inspect /tmp/cobble-qa-26-smoke --json
 cargo run --locked -- clean --dry-run --output /tmp/cobble-qa-26-smoke
@@ -91,10 +92,16 @@ against local changes:
 COBBLE_QA_ALLOW_DIRTY=1 scripts/qa_07_release_gate.sh
 ```
 
-`scripts/check_examples.sh` checks each standalone example independently.
-Running `cobble check examples` treats the whole gallery as one project and is
-expected to reject duplicate names such as `init` or `tick` across unrelated
-examples.
+`examples/` holds the user-facing example packs. The release fixtures the
+gates build and snapshot (`26_smoke`, `26_feature_matrix`,
+`resource_authoring`, `stdlib_v2`, `stdlib_v3`, `resource_pack`,
+`unrolling`, `showcase`, and `inventory.cbl`) live in
+`tests/fixtures/projects/`.
+
+`scripts/check_examples.sh` checks each standalone example and fixture
+independently. Running `cobble check examples` treats the whole gallery as one
+project and is expected to reject duplicate names such as `on_load` or
+`on_tick` across unrelated examples.
 
 ## Web Compiler Metadata
 
@@ -262,7 +269,7 @@ REPO=/path/to/cobble
 rm -rf /tmp/cobble-command-tree-e2e
 mkdir -p /tmp/cobble-command-tree-e2e
 cd /tmp/cobble-command-tree-e2e
-cargo run --locked --manifest-path "$REPO/Cargo.toml" -- build "$REPO/examples/inventory.cbl" --validate --output output
+cargo run --locked --manifest-path "$REPO/Cargo.toml" -- build "$REPO/tests/fixtures/projects/inventory.cbl" --validate --output output
 cargo run --locked --manifest-path "$REPO/Cargo.toml" -- doctor --commands-json data/commands.json
 ```
 
@@ -286,6 +293,12 @@ The server smoke requires Java, network/cache access, and EULA acceptance:
 ```bash
 COBBLE_MINECRAFT_EULA_ACCEPTED=1 scripts/test_minecraft_server.sh
 ```
+
+It loads a generated smoke pack and the `showcase` fixture, then runs
+`/function cobble_showcase:selftest`. The self-test prints `PASS <check>` or
+`FAIL <check> expected <x> got <y>` for each check; the gate fails on any
+`FAIL` line, a nonzero `failed` score, or a `passed` score that differs from
+the number of `PASS` lines.
 
 If this gate is skipped for a release candidate, record that in the release
 notes.
@@ -332,8 +345,8 @@ Coverage:
   `resource_pack_models`/`resource_pack_langs` counts, and `inspect --json`
   asset reporting.
 - `check_resource_snapshots.sh` regenerates resource snapshots for
-  `examples/stdlib_v2`, `examples/resource_authoring`,
-  `examples/resource_pack`, and `examples/unrolling` and fails on
+  `tests/fixtures/projects/stdlib_v2`, `tests/fixtures/projects/resource_authoring`,
+  `tests/fixtures/projects/resource_pack`, and `tests/fixtures/projects/unrolling` and fails on
   unintended diffs.
 - `check_resource_schemas.sh` validates typed tag JSON against the Cobble
   tag schema and rejects non-array `values`, non-string entries, and
@@ -342,10 +355,10 @@ Coverage:
 ### 0.8.0 Validated Build Matrix
 
 ```bash
-cargo run --locked -- build examples/stdlib_v2 --validate -o /tmp/cobble-qa-stdlib-v2
-cargo run --locked -- build examples/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
-cargo run --locked -- build examples/unrolling --validate -o /tmp/cobble-qa-unrolling
-cargo run --locked -- build examples/resource_pack --experimental-resource-pack --validate -o /tmp/cobble-qa-resource-pack
+cargo run --locked -- build tests/fixtures/projects/stdlib_v2 --validate -o /tmp/cobble-qa-stdlib-v2
+cargo run --locked -- build tests/fixtures/projects/resource_authoring --validate -o /tmp/cobble-qa-resource-authoring
+cargo run --locked -- build tests/fixtures/projects/unrolling --validate -o /tmp/cobble-qa-unrolling
+cargo run --locked -- build tests/fixtures/projects/resource_pack --experimental-resource-pack --validate -o /tmp/cobble-qa-resource-pack
 cargo run --locked -- inspect /tmp/cobble-qa-stdlib-v2 --json
 cargo run --locked -- inspect /tmp/cobble-qa-resource-authoring --json
 cargo run --locked -- inspect /tmp/cobble-qa-unrolling --json
@@ -406,13 +419,13 @@ Additional 0.9 checks are embedded in `scripts/qa_09_release_gate.sh`:
   writes a timestamped config backup, and preserves source files.
 - Stdlib v3 value helpers generate visible storage commands, teleport commands,
   and item modifier JSON resources without hidden load/tick behavior.
-- `examples/stdlib_v3` validates as a checked-in fixture for storage path,
+- `tests/fixtures/projects/stdlib_v3` validates as a checked-in fixture for storage path,
   item component, selector, position, entity teleport, and schedule helpers.
 
 The 0.9 validated build matrix adds the stdlib v3 fixture to the 0.8 matrix:
 
 ```bash
-cargo run --locked -- build examples/stdlib_v3 --validate -o /tmp/cobble-qa-stdlib-v3
+cargo run --locked -- build tests/fixtures/projects/stdlib_v3 --validate -o /tmp/cobble-qa-stdlib-v3
 cargo run --locked -- inspect /tmp/cobble-qa-stdlib-v3 --json
 ```
 

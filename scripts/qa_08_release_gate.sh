@@ -43,10 +43,10 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-run cargo run --locked -- build examples/stdlib_v2 --validate -o "$work_dir/stdlib-v2"
-run cargo run --locked -- build examples/resource_authoring --validate -o "$work_dir/resource-authoring"
-run cargo run --locked -- build examples/unrolling --validate -o "$work_dir/unrolling"
-run cargo run --locked -- build examples/resource_pack --experimental-resource-pack --validate -o "$work_dir/resource-pack"
+run cargo run --locked -- build tests/fixtures/projects/stdlib_v2 --validate -o "$work_dir/stdlib-v2"
+run cargo run --locked -- build tests/fixtures/projects/resource_authoring --validate -o "$work_dir/resource-authoring"
+run cargo run --locked -- build tests/fixtures/projects/unrolling --validate -o "$work_dir/unrolling"
+run cargo run --locked -- build tests/fixtures/projects/resource_pack --experimental-resource-pack --validate -o "$work_dir/resource-pack"
 run cargo run --locked -- inspect "$work_dir/stdlib-v2" --json
 run cargo run --locked -- inspect "$work_dir/resource-authoring" --json
 run cargo run --locked -- inspect "$work_dir/unrolling" --json

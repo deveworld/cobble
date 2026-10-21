@@ -14,8 +14,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "+ cargo run --locked --quiet -- build examples/resource_authoring -o $work_dir/resource-authoring"
-cargo run --locked --quiet -- build examples/resource_authoring -o "$work_dir/resource-authoring"
+echo "+ cargo run --locked --quiet -- build tests/fixtures/projects/resource_authoring -o $work_dir/resource-authoring"
+cargo run --locked --quiet -- build tests/fixtures/projects/resource_authoring -o "$work_dir/resource-authoring"
 
 python3 - "$work_dir/resource-authoring" <<'PY'
 import json

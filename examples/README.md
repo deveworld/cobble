@@ -1,85 +1,63 @@
 # Cobble Examples
 
-This directory contains example Cobble programs demonstrating various language features.
+Each folder is a complete data pack for Minecraft Java Edition 26.3 that you can
+build, drop into a world, and use as-is or adapt.
 
-## Basic Examples
+| Example | What it is | Players use | Operators run |
+|---|---|---|---|
+| [`lobby/`](lobby/) | Server essentials: first-join welcome and starter kit, spawn teleport with a cooldown, playtime/death/kill stats, a safe spawn zone, rotating tips, and a server menu dialog on the pause screen | `/trigger menu`, `/trigger spawn`, `/trigger stats` | `/function lobby:set_spawn` |
+| [`parkour/`](parkour/) | Parkour course kit: build a course in-game, then players get a timer, ordered checkpoints, fall and hazard resets, personal bests, a server record, and a first-clear advancement with a reward | `/trigger pk_restart`, `/trigger pk_leave` | `/function parkour:set_start`, `add_checkpoint`, `set_finish` |
+| [`magic_items/`](magic_items/) | Three craftable right-click items with cooldowns: a Blink Rod that dashes and stops at walls, a Healing Staff, and a Frost Wand ray | right-click | `/function magic_items:give_all` |
+| [`hello_world.cbl`](hello_world.cbl) | The smallest pack: a load message | | |
 
-- **hello_world.cbl** - Simple "Hello World" example
-- **hello.cbl** - Event-driven greeting and score tracking with the stdlib
-- **basics.cbl** - Small tour of variables, functions, and raw commands
-- **counter.cbl** - Tick counter with module-level variables
-- **functions.cbl** - Function parameters and macro system
+## Building
 
-## Control Flow
-
-- **conditionals.cbl** - If/elif/else and match statements
-- **loops.cbl** - For loops and while loops
-
-## Advanced Features
-
-- **execute_blocks.cbl** - Execute command modifiers
-- **selectors.cbl** - Custom selector definitions
-- **arithmetic.cbl** - Arithmetic operations and precedence
-- **type_system.cbl** - Static type system examples
-
-## Game Systems
-
-- **events.cbl** - Event listener registration with the stdlib `event` module
-- **game_mechanics.cbl** - Minigame teams, scoring, coins, and death tracking
-- **inventory.cbl** - Villager shop and starter-kit inventory management
-- **boss.cbl** - Boss fight system (older NBT-heavy commands; compiles, but is
-  not part of the 26.3 `--validate` QA matrix)
-- **parkour.cbl** - Parkour course system (older NBT-heavy commands; compiles,
-  but is not part of the 26.3 `--validate` QA matrix)
-
-## Project Fixtures
-
-- **26_smoke/** - Minecraft Java Edition 26.3 command smoke project with imports, events, macros, and latest commands.
-- **26_feature_matrix/** - Full project fixture covering control flow, storage, stdlib v1.1 helpers, explicit namespaced JSON resources, and build validation.
-- **resource_authoring/** - Resource-heavy project fixture covering tags, predicates, advancements, loot tables, recipes, item modifiers, dialogs, imports, and generated-output snapshots.
-- **stdlib_v2/** - Stdlib v2 per-module opt-in fixture covering `datapack`, `event`, `score`, `storage`, and `text` helpers.
-- **stdlib_v3/** - Stdlib v3 fixture covering storage path values, item component JSON, selector/position values, entity teleport, and schedule cancellation.
-- **unrolling/** - Compile-time loop unrolling fixture with literal `range(...)`/array loops and function tags.
-- **resource_pack/** - Resource-pack beta fixture covering generated models, lang files, and resource-pack ZIP/export metadata.
-- **showcase/** - Wave-arena minigame that exercises most of the language (imports, consts, selector aliases, entity templates, every control-flow form, storage, stdlib helpers, and all `datapack.*` resources) plus an in-game self-test: run `/function cobble_showcase:selftest` and every check prints `PASS <label>` or `FAIL <label> ...`.
-
-## Running Examples
-
-To compile an example:
+Project examples use `cobble.toml`; build from the example folder:
 
 ```bash
-# From the examples directory
-cobble build hello_world.cbl -o output/hello_world
-
-# Or with zip output
-cobble build counter.cbl -o output/counter --zip
-
-# Project fixtures use cobble.toml; run from the fixture directory
-cd 26_feature_matrix
-cobble build --validate
-
-cd ../resource_authoring
-cobble build --validate
-
-cd ../stdlib_v3
-cobble build --validate
+cd examples/lobby
+cobble build --validate          # writes dist/
+cobble build --zip               # also writes lobby.zip for a world's datapacks/
 ```
+
+`--validate` checks every generated command against the Minecraft 26.3 command
+tree. Single files build directly:
+
+```bash
+cobble build examples/hello_world.cbl -o output/hello_world
+```
+
+## What each example shows
+
+- **lobby**: trigger objectives for commands without operator permission,
+  statistic objectives (`play_time`, `leave_game`, `deathCount`), first-join
+  tags, cooldowns, a marker entity as a movable spawn point, `multi_action` and
+  `notice` dialogs, `datapack.dialog_tag` for the pause screen, loot tables, and
+  a self-rescheduling function.
+- **parkour**: operator builder functions that place markers and text displays,
+  per-player run state in scoreboards, reading entity scores and NBT into Cobble
+  variables with `store result`, `as` loops over markers, block tags for
+  hazards, advancements with rewards, and macro arguments (`label_checkpoint`).
+- **magic_items**: right-click detection with
+  `minecraft.used:minecraft.carrot_on_a_stick`, `custom_data` item predicates,
+  `item_model`/`item_name` components, compile-time unrolled ray casts,
+  int-returning functions, per-item cooldowns, entity type tags, and recipes.
+
+## Notes
+
+- Module-level Cobble variables are reset whenever the pack loads (`/reload` or
+  a server start). The examples keep anything that must persist, such as
+  records or player stats, in their own scoreboard objectives.
+- Function names are shared across a project's files, so each example uses
+  distinct names (`use_spawn`, `try_blink`, ...).
+- The release-gate fixtures that used to live here (`26_smoke`,
+  `26_feature_matrix`, `resource_authoring`, `stdlib_v2`, `stdlib_v3`,
+  `resource_pack`, `unrolling`, `inventory.cbl`) are in
+  [`tests/fixtures/projects/`](../tests/fixtures/projects/), along with
+  `showcase`, a feature tour whose in-game self-test runs in the server gate.
 
 To run the optional real-server QA path from the repository root:
 
 ```bash
 COBBLE_MINECRAFT_EULA_ACCEPTED=1 scripts/test_minecraft_server.sh
 ```
-
-## Learning Path
-
-Recommended order for learning:
-
-1. Start with **hello_world.cbl** - Basic syntax
-2. Try **functions.cbl** - Function parameters
-3. Explore **conditionals.cbl** - Control flow
-4. Practice with **loops.cbl** - Iteration
-5. Study **type_system.cbl** - Type safety
-6. Advanced: **execute_blocks.cbl** and **selectors.cbl**
-
-Each example is self-contained and demonstrates specific language features.

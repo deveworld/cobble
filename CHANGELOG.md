@@ -73,6 +73,14 @@ and ships the runtime-semantics fixes below. See
   `minecraft:pause_screen_additions` and `minecraft:quick_actions`.
 
 ### Changed
+- `examples/` now holds three practical packs: `lobby` (server essentials
+  with trigger commands and a pause-screen menu), `parkour` (a course kit with
+  checkpoints and records), and `magic_items` (right-click items with
+  cooldowns), plus `hello_world.cbl`. The release-gate fixtures moved to
+  `tests/fixtures/projects/`, and the small single-feature examples were
+  removed.
+- The optional Purpur server gate also loads the `showcase` fixture and runs
+  its in-game self-test, failing on any `FAIL` check.
 - Comparison operands made only of literals and constants (`step - 1` inside
   an unrolled loop) fold at compile time instead of going through a scratch
   score.

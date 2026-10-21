@@ -160,7 +160,7 @@ grep -q "unroll-non-literal" "$work_dir/nonliteral.err"
 
 echo
 echo "== unrolling example validates =="
-run cargo run --locked --quiet -- build examples/unrolling --validate -o "$work_dir/example"
+run cargo run --locked --quiet -- build tests/fixtures/projects/unrolling --validate -o "$work_dir/example"
 
 echo
 echo "0.8 unrolling QA passed"

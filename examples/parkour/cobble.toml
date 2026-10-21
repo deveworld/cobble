@@ -1,0 +1,11 @@
+[project]
+name = "parkour"
+description = "Parkour course kit: checkpoints, timer, personal bests, and records"
+namespace = "parkour"
+version = "1.0.0"
+pack_format = "121.0"
+
+[build]
+source = "src"
+output = "dist"
+entry_points = ["main.cbl"]

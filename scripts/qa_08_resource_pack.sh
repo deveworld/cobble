@@ -100,7 +100,7 @@ assert_json_field \
 
 echo
 echo "== Config opt-in works without CLI flag =="
-run cargo run --locked --quiet -- build examples/resource_pack -o "$work_dir/config-opt-in"
+run cargo run --locked --quiet -- build tests/fixtures/projects/resource_pack -o "$work_dir/config-opt-in"
 test -f "$work_dir/config-opt-in/assets/cobble_resource_pack/models/item/custom_sword.json"
 test -f "$work_dir/config-opt-in/assets/cobble_resource_pack/models/block/display_block.json"
 test -f "$work_dir/config-opt-in/assets/cobble_resource_pack/lang/en_us.json"

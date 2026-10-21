@@ -298,7 +298,7 @@ changelog for beta changes.
 - [x] Add beta model-field and lang-entry validation.
 - [x] Add unit tests for opt-in, JSON pass-through, manifest metadata, and ZIP
   inclusion.
-- [x] Add `examples/resource_pack` with source.
+- [x] Add `tests/fixtures/projects/resource_pack` with source.
 - [x] Document the feature in `docs/cli.md` and `docs/language.md`.
 - [x] Add bounded static `assets/` passthrough for native CLI builds.
 - [x] Add manifest and inspect entries for static passthrough asset counts.
