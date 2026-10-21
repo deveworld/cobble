@@ -61,3 +61,8 @@ fn example_26_feature_matrix_builds_and_validates_when_command_tree_exists() {
 fn example_resource_authoring_builds_and_validates_when_command_tree_exists() {
     build_fixture("examples/resource_authoring");
 }
+
+#[test]
+fn example_showcase_builds_and_validates_when_command_tree_exists() {
+    build_fixture("examples/showcase");
+}

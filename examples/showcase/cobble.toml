@@ -1,0 +1,11 @@
+[project]
+name = "cobble_showcase"
+description = "Cobble language showcase with an in-game self-test suite"
+namespace = "cobble_showcase"
+version = "1.0.0"
+pack_format = "121.0"
+
+[build]
+source = "src"
+output = "dist"
+entry_points = ["main.cbl"]

@@ -41,6 +41,7 @@ This directory contains example Cobble programs demonstrating various language f
 - **stdlib_v3/** - Stdlib v3 fixture covering storage path values, item component JSON, selector/position values, entity teleport, and schedule cancellation.
 - **unrolling/** - Compile-time loop unrolling fixture with literal `range(...)`/array loops and function tags.
 - **resource_pack/** - Resource-pack beta fixture covering generated models, lang files, and resource-pack ZIP/export metadata.
+- **showcase/** - Wave-arena minigame that exercises most of the language (imports, consts, selector aliases, entity templates, every control-flow form, storage, stdlib helpers, and all `datapack.*` resources) plus an in-game self-test: run `/function cobble_showcase:selftest` and every check prints `PASS <label>` or `FAIL <label> ...`.
 
 ## Running Examples
 
