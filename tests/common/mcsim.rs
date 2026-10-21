@@ -381,9 +381,8 @@ impl Sim {
     }
 
     fn apply_store(&mut self, store: &Store, value: Option<i32>, ctx: &Context) {
-        let Some(value) = value else {
-            return;
-        };
+        // A failed command still stores: `execute store result` writes 0.
+        let value = value.unwrap_or(0);
         match store {
             Store::Score { holder, objective } => {
                 self.require_objective(objective);
@@ -493,10 +492,23 @@ impl Sim {
             return Some(1);
         }
         if let Some(after) = rest.strip_prefix("get storage ") {
-            let (_, path) = after.split_once(' ').expect("storage path");
+            let (_, path_and_scale) = after.split_once(' ').expect("storage path");
+            let (path, scale) = match path_and_scale.trim().split_once(' ') {
+                Some((path, scale)) => (path, Some(scale.parse::<f64>().expect("data get scale"))),
+                None => (path_and_scale.trim(), None),
+            };
             let value = self
-                .storage_get(path.trim())
+                .storage_get(path)
                 .unwrap_or_else(|| panic!("data get of missing path {path}"));
+            // With a scale, `data get` only accepts numbers and fails on a
+            // list, compound, or string.
+            if let Some(scale) = scale {
+                return match value {
+                    Value::Number(n) => Some((n.as_f64().unwrap() * scale).floor() as i32),
+                    Value::Bool(b) => Some((*b as i32 as f64 * scale).floor() as i32),
+                    _ => None,
+                };
+            }
             return Some(match value {
                 Value::Number(n) => n.as_f64().unwrap() as i32,
                 Value::Bool(b) => *b as i32,

@@ -388,7 +388,10 @@ fn check_structural_syntax(source: &str, diagnostics: &mut Vec<SourceDiagnostic>
             let next_index = index + ch.len_utf8();
 
             match ch {
-                '#' => break,
+                '#' => match crate::parser::tokenizer::tag_reference_len(&line[next_index..]) {
+                    Some(len) => index = next_index + len,
+                    None => break,
+                },
                 '"' | '\'' => {
                     if line[index..].starts_with(triple_quote_pattern(ch)) {
                         let after_open = index + 3;
@@ -2225,12 +2228,10 @@ def helper():
     }
 
     #[test]
-    fn reports_call_arity_inside_multiline_docstring_bodies() {
-        // The parser treats code-shaped lines inside a `"""` block as real
-        // statements (the transpiler compiles them), so the AST-anchored
-        // arity check reports the call at its exact source position. The
-        // old per-line scan skipped docstring bodies and left the same error
-        // to the transpiler, which reported it as kind `semantic` at 1:1.
+    fn ignores_code_shaped_lines_inside_multiline_docstring_bodies() {
+        // A `"""` block is one string token, so code-shaped lines inside it
+        // are documentation: no arity, undefined-variable, or import checks
+        // (and the transpiler emits no commands for them).
         let diagnostics = analyze_source(
             r#"
 def main():
@@ -2246,12 +2247,7 @@ def helper(player, message):
 "#,
         );
 
-        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-        assert_eq!(diagnostics[0].kind, "function-argument-count");
-        assert_eq!((diagnostics[0].line, diagnostics[0].column), (5, 5));
-        assert!(diagnostics[0]
-            .message
-            .contains("Function `helper` expects 2 argument(s), but 1 provided"));
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]

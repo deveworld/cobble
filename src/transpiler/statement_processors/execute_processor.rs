@@ -29,6 +29,50 @@ impl DeferredExecuteCondition {
 }
 
 impl Transpiler {
+    /// Resolves an `as`/`at` target: a `{param}` macro placeholder, a
+    /// selector alias (`@Name -> @a[...]`), or a literal selector or name.
+    /// An `@Name` that is neither an alias nor a vanilla selector variable
+    /// would reach Minecraft as an unparsable command, so it is an error.
+    fn resolve_execute_selector(
+        &self,
+        selector: &str,
+        has_macro_params: &mut bool,
+    ) -> Result<String, TranspileError> {
+        if let Some(param_name) = selector
+            .strip_prefix('{')
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            if self.current_context.is_param(param_name) {
+                *has_macro_params = true;
+                return Ok(format!("$({})", param_name));
+            }
+            return Ok(selector.to_string());
+        }
+
+        let Some(selector_name) = selector.strip_prefix('@') else {
+            return Ok(selector.to_string());
+        };
+        if let Some(actual_selector) = self.selector_aliases.get(selector_name) {
+            return Ok(actual_selector.clone());
+        }
+        let variable = selector_name.split('[').next().unwrap_or("");
+        if !matches!(variable, "a" | "e" | "p" | "r" | "s" | "n") {
+            let hint = if self.entity_templates.contains_key(selector_name) {
+                format!(
+                    " `@{}` is an entity template, which only works with `create`; \
+                     add a selector alias `@Name = @e[...]` to target its entities.",
+                    selector_name
+                )
+            } else {
+                " Define it with `@Name = @selector[...]` or use a vanilla selector \
+                 (@a, @e, @p, @r, @s, @n)."
+                    .to_string()
+            };
+            return Err(format!("Unknown selector `{}`.{}", selector, hint).into());
+        }
+        Ok(selector.to_string())
+    }
+
     pub(in crate::transpiler) fn process_execute_block(
         &mut self,
         exec_block: &ExecuteBlock,
@@ -53,53 +97,13 @@ impl Transpiler {
         for modifier in &exec_block.modifiers {
             match modifier {
                 ExecuteModifier::As(selector) => {
-                    // Check if selector contains a variable interpolation pattern {param}
-                    let mut processed_selector =
-                        if selector.starts_with('{') && selector.ends_with('}') {
-                            let param_name = &selector[1..selector.len() - 1];
-                            if self.current_context.is_param(param_name) {
-                                has_macro_params = true;
-                                format!("$({})", param_name)
-                            } else {
-                                selector.clone()
-                            }
-                        } else {
-                            selector.clone()
-                        };
-
-                    // Replace selector aliases (@Name -> @a[...])
-                    if processed_selector.starts_with('@') {
-                        let selector_name = processed_selector.strip_prefix('@').unwrap_or("");
-                        if let Some(actual_selector) = self.selector_aliases.get(selector_name) {
-                            processed_selector = actual_selector.clone();
-                        }
-                    }
-
+                    let processed_selector =
+                        self.resolve_execute_selector(selector, &mut has_macro_params)?;
                     execute_parts.push(format!("as {}", processed_selector));
                 }
                 ExecuteModifier::At(selector) => {
-                    // Check if selector contains a variable interpolation pattern {param}
-                    let mut processed_selector =
-                        if selector.starts_with('{') && selector.ends_with('}') {
-                            let param_name = &selector[1..selector.len() - 1];
-                            if self.current_context.is_param(param_name) {
-                                has_macro_params = true;
-                                format!("$({})", param_name)
-                            } else {
-                                selector.clone()
-                            }
-                        } else {
-                            selector.clone()
-                        };
-
-                    // Replace selector aliases (@Name -> @a[...])
-                    if processed_selector.starts_with('@') {
-                        let selector_name = processed_selector.strip_prefix('@').unwrap_or("");
-                        if let Some(actual_selector) = self.selector_aliases.get(selector_name) {
-                            processed_selector = actual_selector.clone();
-                        }
-                    }
-
+                    let processed_selector =
+                        self.resolve_execute_selector(selector, &mut has_macro_params)?;
                     execute_parts.push(format!("at {}", processed_selector));
                 }
                 ExecuteModifier::IfRaw(condition) => {

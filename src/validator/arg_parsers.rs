@@ -109,7 +109,6 @@ pub fn parse_argument(
 
         // === Resource locations ===
         "minecraft:resource_location"
-        | "minecraft:function"
         | "minecraft:dimension"
         | "minecraft:mob_effect"
         | "minecraft:resource"
@@ -129,7 +128,9 @@ pub fn parse_argument(
         "minecraft:slot_source" => parse_slot_source(reader),
         "minecraft:swing_animation" => parse_literal_word(reader, &["whack", "stab", "none"]),
 
-        "minecraft:resource_or_tag"
+        // `FunctionArgument` takes a function ID or a `#` function tag.
+        "minecraft:function"
+        | "minecraft:resource_or_tag"
         | "minecraft:resource_or_tag_key"
         | "minecraft:resource_selector" => parse_resource_or_tag(reader),
 

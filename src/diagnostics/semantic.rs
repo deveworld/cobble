@@ -1687,6 +1687,13 @@ fn expression_spans_for_undefined_scan(trimmed: &str) -> Vec<ExpressionSpan> {
             let rest = trimmed[rest_offset..].trim_start();
             let trim_start = trimmed[rest_offset..].len() - rest.len();
             let expression = rest.trim_end_matches(':').trim_end();
+            // `if block ~ ~ ~ minecraft:stone:` is an execute block with a
+            // raw condition; its words are Minecraft syntax, not variables.
+            if keyword == "if"
+                && crate::transpiler::raw_minecraft_condition_verdict(expression) == Some(true)
+            {
+                return expressions;
+            }
             if !expression.is_empty() {
                 expressions.push(ExpressionSpan {
                     text: expression.to_string(),
@@ -2852,7 +2859,7 @@ fn strip_comment_preserving_strings(text: &str) -> String {
     let mut quote = None;
     let mut escaped = false;
 
-    for ch in text.chars() {
+    for (index, ch) in text.char_indices() {
         if let Some(active_quote) = quote {
             output.push(ch);
             if escaped {
@@ -2868,6 +2875,9 @@ fn strip_comment_preserving_strings(text: &str) -> String {
         match ch {
             '"' | '\'' => {
                 quote = Some(ch);
+                output.push(ch);
+            }
+            '#' if crate::parser::tokenizer::tag_reference_len(&text[index + 1..]).is_some() => {
                 output.push(ch);
             }
             '#' => break,

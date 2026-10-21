@@ -309,6 +309,8 @@ impl Transpiler {
 
             match ch {
                 '"' | '\'' => quote = Some(ch),
+                '#' if crate::parser::tokenizer::tag_reference_len(&line[index + 1..])
+                    .is_some() => {}
                 '#' => return Some(&line[..index]),
                 _ => {}
             }

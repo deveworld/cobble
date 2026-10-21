@@ -82,6 +82,9 @@ pub enum Token {
 pub struct SpannedToken {
     pub token: Token,
     pub span: SourceSpan,
+    /// Line the token ends on: `span.line` except for a triple-quoted
+    /// string that spans several lines.
+    pub end_line: usize,
 }
 
 impl SpannedToken {
@@ -89,7 +92,48 @@ impl SpannedToken {
         Self {
             token,
             span: SourceSpan::new(start, end, line, column),
+            end_line: line,
         }
+    }
+}
+
+/// A tokenizer failure anchored at the source position that caused it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenizeError {
+    pub message: String,
+    pub span: SourceSpan,
+}
+
+impl TokenizeError {
+    fn at(message: impl Into<String>, start: usize, line: usize, column: usize) -> Self {
+        Self {
+            message: message.into(),
+            span: SourceSpan::new(start, start, line, column),
+        }
+    }
+}
+
+impl std::fmt::Display for TokenizeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// A triple-quoted string still open at the end of a source line. Its text
+/// continues on the following raw lines up to the closing delimiter.
+struct OpenTripleQuote {
+    quote: char,
+    start: usize,
+    line: usize,
+    column: usize,
+    text: String,
+}
+
+fn triple_quote_pattern(quote: char) -> &'static str {
+    if quote == '\'' {
+        "'''"
+    } else {
+        "\"\"\""
     }
 }
 
@@ -174,15 +218,23 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
 
 /// Manual tokenizer that preserves source byte spans for each token.
 pub fn tokenize_spanned(source: &str) -> Result<Vec<SpannedToken>, String> {
+    tokenize_spanned_located(source).map_err(|error| error.message)
+}
+
+/// Like [`tokenize_spanned`], but a failure carries its source position.
+pub fn tokenize_spanned_located(source: &str) -> Result<Vec<SpannedToken>, TokenizeError> {
     let mut tokens = Vec::new();
     let mut indent_stack: Vec<usize> = vec![0];
     let mut paren_depth = 0;
+    let lines = source_lines_with_offsets(source);
+    let mut line_idx = 0;
 
-    for (line_idx, (line_start, line)) in source_lines_with_offsets(source).into_iter().enumerate()
-    {
+    while line_idx < lines.len() {
+        let (line_start, line) = lines[line_idx];
         // Skip empty lines and comments
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
+            line_idx += 1;
             continue;
         }
 
@@ -216,7 +268,12 @@ pub fn tokenize_spanned(source: &str) -> Result<Vec<SpannedToken>, String> {
                     );
                 }
                 if *indent_stack.last().unwrap() != indent_level {
-                    return Err(format!("Indentation error at line {}", line_idx + 1));
+                    return Err(TokenizeError::at(
+                        format!("Indentation error at line {}", line_idx + 1),
+                        line_start + indent_level,
+                        line_idx + 1,
+                        indent_level + 1,
+                    ));
                 }
             }
         }
@@ -224,7 +281,7 @@ pub fn tokenize_spanned(source: &str) -> Result<Vec<SpannedToken>, String> {
         // Tokenize the line content
         let line_content = line.trim();
         let content_offset = line.find(line_content).unwrap_or(0);
-        tokenize_line(
+        let mut open_quote = tokenize_line(
             line_content,
             line_start + content_offset,
             content_offset,
@@ -233,17 +290,75 @@ pub fn tokenize_spanned(source: &str) -> Result<Vec<SpannedToken>, String> {
             &mut paren_depth,
         )?;
 
+        // A triple-quoted string (usually a docstring) swallows whole raw
+        // lines, including blank, comment-like, and code-like ones, until its
+        // closing delimiter. Tokenizing resumes after the delimiter, and the
+        // logical line ends on the line that closed the string.
+        let mut end_line = (line_idx, line_start, line);
+        while let Some(mut open) = open_quote.take() {
+            let pattern = triple_quote_pattern(open.quote);
+            loop {
+                line_idx += 1;
+                let Some(&(next_start, next_line)) = lines.get(line_idx) else {
+                    return Err(TokenizeError::at(
+                        format!(
+                            "Unterminated triple-quoted string: add the closing {}",
+                            pattern
+                        ),
+                        open.start,
+                        open.line,
+                        open.column,
+                    ));
+                };
+                end_line = (line_idx, next_start, next_line);
+                open.text.push('\n');
+                let Some(close) = next_line.find(pattern) else {
+                    open.text.push_str(next_line);
+                    continue;
+                };
+                open.text.push_str(&next_line[..close]);
+                let after_close = close + pattern.len();
+                push_token(
+                    &mut tokens,
+                    Token::String(open.text),
+                    open.start,
+                    next_start + after_close,
+                    open.line,
+                    open.column,
+                );
+                if let Some(string_token) = tokens.last_mut() {
+                    string_token.end_line = line_idx + 1;
+                }
+                let rest = &next_line[after_close..];
+                let rest_content = rest.trim();
+                if !rest_content.is_empty() {
+                    let rest_offset = after_close + (rest.len() - rest.trim_start().len());
+                    open_quote = tokenize_line(
+                        rest_content,
+                        next_start + rest_offset,
+                        next_line[..rest_offset].chars().count(),
+                        line_idx + 1,
+                        &mut tokens,
+                        &mut paren_depth,
+                    )?;
+                }
+                break;
+            }
+        }
+
         // Only emit Newline if not inside parentheses/brackets/braces
         if paren_depth == 0 {
+            let (end_idx, end_start, end_text) = end_line;
             push_token(
                 &mut tokens,
                 Token::Newline,
-                line_start + line.len(),
-                line_start + line.len(),
-                line_idx + 1,
-                line.chars().count() + 1,
+                end_start + end_text.len(),
+                end_start + end_text.len(),
+                end_idx + 1,
+                end_text.chars().count() + 1,
             );
         }
+        line_idx += 1;
     }
 
     let (end_line, end_column) = source_end_line_column(source);
@@ -367,7 +482,15 @@ fn tokenize_line(
     line_number: usize,
     tokens: &mut Vec<SpannedToken>,
     paren_depth: &mut i32,
-) -> Result<(), String> {
+) -> Result<Option<OpenTripleQuote>, TokenizeError> {
+    let error_at = |start: usize, message: String| {
+        TokenizeError::at(
+            message,
+            line_offset + start,
+            line_number,
+            column_from_byte(line, start, column_offset),
+        )
+    };
     let mut chars = line.char_indices().peekable();
 
     while let Some(&(start, ch)) = chars.peek() {
@@ -418,6 +541,31 @@ fn tokenize_line(
                         column_from_byte(line, start, column_offset),
                     );
                 }
+            }
+            '"' | '\'' if line[start..].starts_with(triple_quote_pattern(ch)) => {
+                // Triple-quoted string: closed on this line, or continued
+                // over the following raw lines by the caller.
+                let pattern = triple_quote_pattern(ch);
+                let after_open = start + pattern.len();
+                let Some(close) = line[after_open..].find(pattern) else {
+                    return Ok(Some(OpenTripleQuote {
+                        quote: ch,
+                        start: line_offset + start,
+                        line: line_number,
+                        column: column_from_byte(line, start, column_offset),
+                        text: line[after_open..].to_string(),
+                    }));
+                };
+                let end = after_open + close + pattern.len();
+                push_token(
+                    tokens,
+                    Token::String(line[after_open..after_open + close].to_string()),
+                    line_offset + start,
+                    line_offset + end,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
+                while chars.next_if(|&(index, _)| index < end).is_some() {}
             }
             '"' | '\'' => {
                 // String literal
@@ -476,9 +624,9 @@ fn tokenize_line(
                 }
                 // Validate that the number can be parsed
                 if num.parse::<f64>().is_err() {
-                    return Err(format!(
-                        "Invalid number literal: '{}' at line {}",
-                        num, line
+                    return Err(error_at(
+                        start,
+                        format!("Invalid number literal: '{}' at line {}", num, line_number),
                     ));
                 }
                 push_token(
@@ -724,7 +872,7 @@ fn tokenize_line(
                         column_from_byte(line, start, column_offset),
                     );
                 } else {
-                    return Err("Unexpected '!' character".to_string());
+                    return Err(error_at(start, "Unexpected '!' character".to_string()));
                 }
             }
             '<' => {
@@ -917,9 +1065,12 @@ fn tokenize_line(
                         }
                         // Validate that the number can be parsed
                         if num.parse::<f64>().is_err() {
-                            return Err(format!(
-                                "Invalid number literal: '{}' at line {}",
-                                num, line
+                            return Err(error_at(
+                                start,
+                                format!(
+                                    "Invalid number literal: '{}' at line {}",
+                                    num, line_number
+                                ),
                             ));
                         }
                         push_token(
@@ -1002,16 +1153,49 @@ fn tokenize_line(
                 *paren_depth = (*paren_depth - 1).max(0);
             }
             '#' => {
-                // Comment - ignore rest of line
-                break;
+                // A namespaced tag reference (`#minecraft:logs`) in an execute
+                // header is a value; anything else starts a comment.
+                let Some(len) = tag_reference_len(&line[start + 1..]) else {
+                    break;
+                };
+                let end = start + 1 + len;
+                push_token(
+                    tokens,
+                    Token::Ident(line[start..end].to_string()),
+                    line_offset + start,
+                    line_offset + end,
+                    line_number,
+                    column_from_byte(line, start, column_offset),
+                );
+                while chars.next_if(|&(index, _)| index < end).is_some() {}
             }
             _ => {
-                return Err(format!("Unexpected character: {}", ch));
+                return Err(error_at(start, format!("Unexpected character: {}", ch)));
             }
         }
     }
 
-    Ok(())
+    Ok(None)
+}
+
+/// Byte length of the namespaced tag reference (`ns:path`) right after a
+/// `#`, so `#minecraft:logs` in an execute header (`if block ~ ~ ~
+/// #minecraft:logs:`) is a tag rather than a comment. The namespace is
+/// required: `# note`, `#todo`, and `#TODO: later` stay comments.
+pub(crate) fn tag_reference_len(after_hash: &str) -> Option<usize> {
+    let is_namespace_byte = |b: u8| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.');
+    let namespace_len = after_hash
+        .bytes()
+        .take_while(|&b| is_namespace_byte(b))
+        .count();
+    if namespace_len == 0 || after_hash.as_bytes().get(namespace_len) != Some(&b':') {
+        return None;
+    }
+    let path_len = after_hash[namespace_len + 1..]
+        .bytes()
+        .take_while(|&b| is_namespace_byte(b) || b == b'/')
+        .count();
+    (path_len > 0).then_some(namespace_len + 1 + path_len)
 }
 
 fn column_from_byte(line: &str, byte_index: usize, column_offset: usize) -> usize {

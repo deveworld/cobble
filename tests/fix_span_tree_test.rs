@@ -452,27 +452,19 @@ fn korean_strings_and_comments_keep_byte_offsets_and_char_columns() {
 }
 
 #[test]
-fn single_line_docstring_yields_one_pass_node_per_string_token() {
-    // `"""Spawn the boss"""` tokenizes as three string tokens, and the
-    // grammar turns each into its own `Statement::Pass` — the tree must
-    // carry three aligned leaf nodes, not one per source line.
+fn single_line_docstring_yields_one_pass_node() {
+    // `"""Spawn the boss"""` is one string token, so the grammar turns it
+    // into a single `Statement::Pass` spanning the whole literal.
     let source = "def spawn():\n    \"\"\"Spawn the boss\"\"\"\n    /say hi\n";
     let (located, tree) = parse_tree(source);
     let function = &tree.statements[0];
     assert_eq!(
         kinds(&function.children),
-        vec![
-            StatementSpanKind::Pass,
-            StatementSpanKind::Pass,
-            StatementSpanKind::Pass,
-            StatementSpanKind::MinecraftCommand,
-        ]
+        vec![StatementSpanKind::Pass, StatementSpanKind::MinecraftCommand]
     );
-    assert_eq!(function.children[0].span, SourceSpan::new(17, 19, 2, 5));
-    assert_eq!(function.children[1].span, SourceSpan::new(19, 35, 2, 7));
-    assert_eq!(function.children[2].span, SourceSpan::new(35, 37, 2, 23));
+    assert_eq!(function.children[0].span, SourceSpan::new(17, 37, 2, 5));
     if let cobble::ast::Statement::FunctionDef(function) = &located.program.statements[0] {
-        assert_eq!(function.body.len(), 4);
+        assert_eq!(function.body.len(), 2);
     } else {
         panic!("expected function def");
     }
@@ -480,6 +472,8 @@ fn single_line_docstring_yields_one_pass_node_per_string_token() {
 
 #[test]
 fn multi_line_docstring_bodies_stay_aligned() {
+    // The whole multi-line literal is one token: its body lines are not
+    // statements, and the next statement keeps its own source line.
     let source = "\
 def helper():
     \"\"\"
@@ -491,24 +485,17 @@ def helper():
     let function = &tree.statements[0];
     assert_eq!(
         kinds(&function.children),
-        vec![
-            StatementSpanKind::Pass,
-            StatementSpanKind::Pass,
-            StatementSpanKind::Expression,
-            StatementSpanKind::Expression,
-            StatementSpanKind::Expression,
-            StatementSpanKind::Pass,
-            StatementSpanKind::Pass,
-            StatementSpanKind::Pass,
-        ]
+        vec![StatementSpanKind::Pass, StatementSpanKind::Pass]
     );
-    // The three bare identifiers share one source line without newline
-    // tokens between them; each still gets its own aligned node.
-    let docs_line: Vec<_> = function.children[2..5]
-        .iter()
-        .map(|node| (node.span.line, node.span.column))
-        .collect();
-    assert_eq!(docs_line, vec![(3, 5), (3, 11), (3, 16)]);
+    assert_eq!(function.children[0].span, SourceSpan::new(18, 49, 2, 5));
+    assert_eq!(function.children[0].end_line, 4);
+    assert_eq!(
+        (
+            function.children[1].span.line,
+            function.children[1].span.column
+        ),
+        (5, 5)
+    );
 }
 
 #[test]

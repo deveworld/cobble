@@ -12,4 +12,6 @@ pub use combinators::{
     verify_span_tree_alignment, LocatedProgram, ParseDiagnostic, ProgramSpanTable, StatementSpan,
     StatementSpanBranch, StatementSpanKind, StatementSpanNode, StatementSpanTree,
 };
-pub use tokenizer::{tokenize, tokenize_spanned, SpannedToken, Token};
+pub use tokenizer::{
+    tokenize, tokenize_spanned, tokenize_spanned_located, SpannedToken, Token, TokenizeError,
+};

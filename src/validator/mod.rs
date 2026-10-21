@@ -742,6 +742,20 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_function_accepts_function_tags() {
+        let v = match get_validator() {
+            Some(v) => v,
+            None => return,
+        };
+        assert!(v.validate_command("function demo:hooks/start").is_ok());
+        assert!(v.validate_command("function #demo:hooks/start").is_ok());
+        assert!(v
+            .validate_command("execute if function #demo:checks run say ok")
+            .is_ok());
+        assert!(v.validate_command("function #").is_err());
+    }
+
+    #[test]
     fn test_validate_say() {
         let v = match get_validator() {
             Some(v) => v,

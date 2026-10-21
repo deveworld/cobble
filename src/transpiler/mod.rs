@@ -34,6 +34,38 @@ pub(in crate::transpiler) const MAX_POWER_EXPONENT: i32 = 100;
 /// (`src/diagnostics/imports.rs` derives its copy from this constant).
 pub(crate) const MAX_IMPORT_DEPTH: usize = 50;
 
+/// Execute-condition keywords that start a raw Minecraft condition
+/// (`entity @a[...]`, `score x temp matches 5`, `data storage ...`).
+const RAW_CONDITION_KEYWORDS: [&str; 11] = [
+    "score ",     // "score <target> <objective> matches/</>/>=/<=/= ..."
+    "entity ",    // "entity <selector>"
+    "block ",     // "block <pos> <block>"
+    "blocks ",    // "blocks <start> <end> <dest> <mode>"
+    "biome ",     // "biome <pos> <biome>"
+    "dimension ", // "dimension <dimension>"
+    "predicate ", // "predicate <predicate>"
+    "data ",      // "data <source> <path>"
+    "items ",     // "items <source> <slots> <item>"
+    "function ",  // "function <function/tag>"
+    "loaded ",    // "loaded <pos>"
+];
+
+/// `Some(true)` for a raw Minecraft condition, `Some(false)` for a Python
+/// expression that merely starts with a keyword-named variable
+/// (`score >= 10`), and `None` when the condition starts with no keyword.
+/// Shared with the diagnostics layer so both agree on which `if` headers
+/// carry raw syntax rather than variable references.
+pub(crate) fn raw_minecraft_condition_verdict(condition: &str) -> Option<bool> {
+    let rest = RAW_CONDITION_KEYWORDS
+        .iter()
+        .find_map(|keyword| condition.strip_prefix(keyword))?;
+    let next_token = rest.split_whitespace().next().unwrap_or("");
+    Some(!matches!(
+        next_token,
+        "==" | "!=" | ">=" | "<=" | ">" | "<" | "and" | "or" | "not" | "+" | "-" | "*" | "/" | "%"
+    ))
+}
+
 /// Exact integer value of a compile-time number, if it has no fractional part.
 fn exact_integer(value: f64) -> Option<i64> {
     (value.is_finite() && value.fract() == 0.0 && value.abs() < 9.0e15).then_some(value as i64)
@@ -3144,14 +3176,18 @@ impl Transpiler {
                 self.data_pack.track_objective("temp");
                 let score = self.expr_to_plain_arg(&args[0], "target score")?;
                 let path = self.expr_to_storage_path_plan(&args[1], "storage path")?;
+                // No default scale: `data get` with a scale accepts only
+                // numbers, while the bare form also yields a list's or
+                // compound's size and a string's length (numbers floor the
+                // same either way).
                 let scale = if args.len() == 3 {
-                    self.expr_to_plain_arg(&args[2], "data get scale")?
+                    format!(" {}", self.expr_to_plain_arg(&args[2], "data get scale")?)
                 } else {
-                    "1".to_string()
+                    String::new()
                 };
                 if let Some(static_path) = path.as_static() {
                     commands.push(format!(
-                        "execute store result score {} temp run data get storage {}:global {} {}",
+                        "execute store result score {} temp run data get storage {}:global {}{}",
                         score, namespace, static_path, scale
                     ));
                 } else {
@@ -3163,7 +3199,7 @@ impl Transpiler {
                             vec![
                                 format!("scoreboard players set {} temp 0", score),
                                 format!(
-                                    "$execute store result score {} temp run data get storage {}:global {} {}",
+                                    "$execute store result score {} temp run data get storage {}:global {}{}",
                                     score, ns, template, scale
                                 ),
                             ]
@@ -4446,65 +4482,26 @@ impl Transpiler {
                 );
 
                 if is_comparison {
-                    match &**left {
-                        expr if self.condition_operand_needs_temp(expr) => {
-                            // Left side is a binary expression, need to evaluate it first
-                            // Use unique temp variable name to avoid conflicts in AND/OR chains
-                            let temp_var = format!("expr_cond_temp_{}", self.next_temp_id());
-
-                            self.data_pack.track_objective("temp");
-                            self.variable_objectives
-                                .insert(temp_var.clone(), "temp".to_string());
-                            self.scoreboard_variables.insert(temp_var.clone());
-
-                            // Evaluate the left expression into the unique temp variable
-                            let eval_commands =
-                                self.evaluate_expression_to_target(left, &temp_var)?;
-
-                            if let Some(ref mut commands) = self.current_function {
-                                commands.extend(eval_commands);
-                            }
-
-                            // Return a simplified condition with the temporary variable
-                            Ok(Expression::Binary(
-                                Box::new(Expression::Identifier(temp_var)),
-                                op.clone(),
-                                right.clone(),
-                            ))
-                        }
-                        _ => {
-                            // Left side is simple, check if right side needs preprocessing
-                            match &**right {
-                                expr if self.condition_operand_needs_temp(expr) => {
-                                    // Right side is a binary expression
-                                    let temp_var =
-                                        format!("expr_cond_temp_{}", self.next_temp_id());
-
-                                    self.data_pack.track_objective("temp");
-                                    self.variable_objectives
-                                        .insert(temp_var.clone(), "temp".to_string());
-                                    self.scoreboard_variables.insert(temp_var.clone());
-
-                                    let eval_commands =
-                                        self.evaluate_expression_to_target(right, &temp_var)?;
-
-                                    if let Some(ref mut commands) = self.current_function {
-                                        commands.extend(eval_commands);
-                                    }
-
-                                    Ok(Expression::Binary(
-                                        left.clone(),
-                                        op.clone(),
-                                        Box::new(Expression::Identifier(temp_var)),
-                                    ))
-                                }
-                                _ => {
-                                    // Both sides are simple, return as is
-                                    Ok(condition.clone())
-                                }
-                            }
-                        }
-                    }
+                    // Evaluate each complex side (arithmetic, calls, storage
+                    // reads, macro parameters) into its own unique temp, left
+                    // first so side effects keep source order. Both sides are
+                    // checked: `actual == expected` with two parameters must
+                    // not leave the right one as an unset score name.
+                    let new_left = if self.condition_operand_needs_temp(left) {
+                        self.lower_condition_value_to_temp(left)?
+                    } else {
+                        (**left).clone()
+                    };
+                    let new_right = if self.condition_operand_needs_temp(right) {
+                        self.lower_condition_value_to_temp(right)?
+                    } else {
+                        (**right).clone()
+                    };
+                    Ok(Expression::Binary(
+                        Box::new(new_left),
+                        op.clone(),
+                        Box::new(new_right),
+                    ))
                 } else {
                     // Not a comparison, might be And/Or - recursively preprocess
                     match op {
@@ -4908,49 +4905,13 @@ impl Transpiler {
 
     /// Check if a condition string looks like a Python expression
     fn looks_like_python_expression(&self, condition: &str) -> bool {
-        // Raw Minecraft conditions start with an execute-condition keyword
-        // (e.g. "entity @a[...]", "score x temp matches 5", "data storage ...").
-        // This whitelist must be checked BEFORE the Python heuristics below:
-        // raw conditions may legitimately contain parentheses or operator-like
-        // text (selector `name="Bob (Admin)"`, SNBT strings), which would
-        // otherwise misroute them into Python translation.
-        let minecraft_raw_patterns = [
-            "score ",     // "score <target> <objective> matches/</>/>=/<=/= ..."
-            "entity ",    // "entity <selector>"
-            "block ",     // "block <pos> <block>"
-            "blocks ",    // "blocks <start> <end> <dest> <mode>"
-            "biome ",     // "biome <pos> <biome>"
-            "dimension ", // "dimension <dimension>"
-            "predicate ", // "predicate <predicate>"
-            "data ",      // "data <source> <path>"
-            "items ",     // "items <source> <slots> <item>"
-            "function ",  // "function <function/tag>"
-            "loaded ",    // "loaded <pos>"
-        ];
-
-        for pattern in &minecraft_raw_patterns {
-            if let Some(rest) = condition.strip_prefix(pattern) {
-                // A user variable may share a keyword's name (e.g. `score >= 10`).
-                // If the keyword is directly followed by a comparison or logical
-                // operator, this is a Python expression, not raw execute syntax.
-                let next_token = rest.split_whitespace().next().unwrap_or("");
-                return matches!(
-                    next_token,
-                    "==" | "!="
-                        | ">="
-                        | "<="
-                        | ">"
-                        | "<"
-                        | "and"
-                        | "or"
-                        | "not"
-                        | "+"
-                        | "-"
-                        | "*"
-                        | "/"
-                        | "%"
-                );
-            }
+        // The raw-condition whitelist must be checked BEFORE the Python
+        // heuristics below: raw conditions may legitimately contain
+        // parentheses or operator-like text (selector `name="Bob (Admin)"`,
+        // SNBT strings), which would otherwise misroute them into Python
+        // translation.
+        if let Some(is_raw) = raw_minecraft_condition_verdict(condition) {
+            return !is_raw;
         }
 
         // Check for Python expression indicators

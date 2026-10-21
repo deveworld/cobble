@@ -961,11 +961,15 @@ def save_status():
     storage.set(storage.path("players", "current"), "alex")
     storage.append("events", "loaded")
     storage.get(storage.index("events", 0))
-    storage.read_score("event_count", "events", 1)
+    storage.read_score("event_count", "events")
+    storage.read_score("ready_flag", "status.ready", 10)
     storage.remove("status.extra")
 ```
 
-Storage helpers write to `<namespace>:global`. `storage.path()`,
+Storage helpers write to `<namespace>:global`. `storage.read_score(score,
+path)` stores what `data get` returns: a number (floored), or the size of a
+list or compound, or the length of a string. With the optional third scale
+argument, the value at `path` must be a number. `storage.path()`,
 `storage.child()`, and `storage.index()` return storage path strings for use
 inside storage helpers; they do not emit commands when used by themselves.
 
@@ -1356,7 +1360,7 @@ Cobble currently requires **Minecraft Java Edition 26.3** and pack format **121.
 - **Macros**: Function parameters use Minecraft's function macro system
 - **Modern commands**: Uses latest command syntax
 - **Data packs**: Selected modern data pack resources through `datapack.*` helpers
-- **Decimal pack formats**: Emits `pack.mcmeta` with `min_format` and `max_format` set to `[101, 1]`
+- **Decimal pack formats**: Emits `pack.mcmeta` with `min_format` and `max_format` set to `[121, 0]`
 
 ## Unsupported Python-Like Constructs
 

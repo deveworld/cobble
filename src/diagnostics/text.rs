@@ -279,11 +279,11 @@ pub(super) fn find_string_end(line: &str, quote: char, start: usize) -> Option<u
 
 pub(super) fn mask_non_code(line: &str) -> String {
     let mut output = String::with_capacity(line.len());
-    let mut chars = line.chars().peekable();
+    let mut chars = line.char_indices().peekable();
     let mut quote = None;
     let mut escaped = false;
 
-    while let Some(ch) = chars.next() {
+    while let Some((index, ch)) = chars.next() {
         if let Some(active_quote) = quote {
             output.push(' ');
             if escaped {
@@ -300,6 +300,9 @@ pub(super) fn mask_non_code(line: &str) -> String {
             '"' | '\'' => {
                 quote = Some(ch);
                 output.push('_');
+            }
+            '#' if crate::parser::tokenizer::tag_reference_len(&line[index + 1..]).is_some() => {
+                output.push(ch);
             }
             '#' => {
                 output.push(' ');

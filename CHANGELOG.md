@@ -299,6 +299,30 @@ and ships the runtime-semantics fixes below. See
 - `datapack.*` resource ID diagnostics now report correct column and caret
   positions when a non-ASCII string literal or comment appears earlier on the
   same line.
+- Comparing two function parameters (`if actual == expected:`) lowered only
+  the left side, so the right side was read from an unset score and the
+  comparison was always false. Both sides are now evaluated.
+- Multi-line `"""` docstrings were tokenized line by line: their bodies
+  compiled as code (a `/kill @e` line inside a docstring became a real
+  command), and a backtick in a module docstring failed the build. A
+  triple-quoted string is now one token, and the rest of its closing line is
+  still tokenized.
+- Tokenizer errors (unexpected characters, bad numbers, indentation) were
+  reported at 1:1; they now point at the offending source position.
+- A `#ns:tag` in an execute header (`if block 0 99 0 #ns:floor:`,
+  `as @e[type=#ns:mobs]:`) was read as a comment start, and `cobble check`
+  or `build` hung on it. Tag references are now values everywhere, while
+  `# note` and `#TODO:` stay comments.
+- Statement-level raw conditions (`if score @s kills matches 1..:`,
+  `if predicate ns:check:`) reported their Minecraft words as undefined
+  variables.
+- An unknown `@Name` in `as`/`at` (a typo, or an entity template name) was
+  emitted verbatim and failed when the function loaded; it is now a compile
+  error that points templates at selector aliases.
+- `storage.read_score()` always passed a `data get` scale, which Minecraft
+  only accepts for numbers, so list sizes and string lengths read as 0. The
+  scale is now only added when given.
+- The validator rejected `function #ns:tag` function-tag calls.
 
 ### Removed
 - The unused `thiserror` dependency.

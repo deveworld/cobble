@@ -340,7 +340,7 @@ def test():
     assert!(content.contains("data modify storage cobble:global events set value [10,20,30]"));
     assert!(all_functions.contains("$data get storage cobble:global events[$(idx0)]"));
     assert!(all_functions.contains(
-        "$execute store result score picked_again temp run data get storage cobble:global events[$(idx0)] 1"
+        "$execute store result score picked_again temp run data get storage cobble:global events[$(idx0)]\n"
     ));
     assert!(all_functions.contains(
         "$data modify storage cobble:global events[$(idx0)] set from storage cobble:global _cobble_value_"

@@ -1,4 +1,4 @@
-use super::tokenizer::{tokenize_spanned, SpannedToken, Token};
+use super::tokenizer::{tokenize_spanned_located, SpannedToken, Token};
 use crate::ast::*;
 use chumsky::prelude::*;
 
@@ -1052,10 +1052,10 @@ pub fn parse(source: &str) -> Result<Program, Vec<String>> {
 
 /// Parse source code into AST with source spans for parser diagnostics.
 pub fn parse_with_diagnostics(source: &str) -> Result<Program, Vec<ParseDiagnostic>> {
-    let spanned_tokens = tokenize_spanned(source).map_err(|error| {
+    let spanned_tokens = tokenize_spanned_located(source).map_err(|error| {
         vec![ParseDiagnostic {
-            span: SourceSpan::new(0, 0, 1, 1),
-            message: error,
+            span: error.span,
+            message: error.message,
         }]
     })?;
     let tokens = spanned_tokens
@@ -1080,10 +1080,10 @@ pub fn parse_with_diagnostics(source: &str) -> Result<Program, Vec<ParseDiagnost
 pub fn parse_located_with_diagnostics(
     source: &str,
 ) -> Result<LocatedProgram, Vec<ParseDiagnostic>> {
-    let spanned_tokens = tokenize_spanned(source).map_err(|error| {
+    let spanned_tokens = tokenize_spanned_located(source).map_err(|error| {
         vec![ParseDiagnostic {
-            span: SourceSpan::new(0, 0, 1, 1),
-            message: error,
+            span: error.span,
+            message: error.message,
         }]
     })?;
     let tokens = spanned_tokens
@@ -1421,7 +1421,7 @@ impl<'a> SpanTreeBuilder<'a> {
                 first.span.line,
                 first.span.column,
             ),
-            last.span.line,
+            last.end_line,
         ))
     }
 
