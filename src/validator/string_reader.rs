@@ -359,8 +359,11 @@ impl StringReader {
 
         if ch == '~' || ch == '^' {
             self.cursor += 1;
-            // Optionally followed by a number (no space between)
-            let _ = self.read_float();
+            // Optionally followed by a number or a macro offset (`^$(dist)`),
+            // with no space between.
+            if !self.try_read_macro() {
+                let _ = self.read_float();
+            }
             return true;
         }
 

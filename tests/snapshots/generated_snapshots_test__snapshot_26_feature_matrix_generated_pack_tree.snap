@@ -2426,7 +2426,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 39,
-      "command": "tellraw @a [{\"color\":\"blue\",\"text\":\"Status: \"},{\"nbt\":\"vars.status\",\"storage\":\"cobble_26_feature_matrix:global\"}]",
+      "command": "tellraw @a {\"color\":\"blue\",\"extra\":[{\"nbt\":\"vars.status\",\"storage\":\"cobble_26_feature_matrix:global\"}],\"text\":\"Status: \"}",
       "source": {
         "file": "src/main.cbl",
         "line": 106,
@@ -2851,7 +2851,7 @@ say reverse loop 4
 say reverse loop 1
 execute as @a[gamemode=!spectator] at @s if entity @s[distance=..32] run particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 3
 execute positioned ~ ~2 ~ rotated ~ 0 run particle minecraft:flame ~ ~ ~ 0 0 0 0 1
-tellraw @a [{"color":"blue","text":"Status: "},{"nbt":"vars.status","storage":"cobble_26_feature_matrix:global"}]
+tellraw @a {"color":"blue","extra":[{"nbt":"vars.status","storage":"cobble_26_feature_matrix:global"}],"text":"Status: "}
 
 ===== data/cobble_26_feature_matrix/function/while_body_10.mcfunction =====
 tellraw @a [{"text":"draining "},{"score":{"name":"energy","objective":"temp"}}]

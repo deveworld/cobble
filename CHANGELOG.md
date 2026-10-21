@@ -69,8 +69,13 @@ and ships the runtime-semantics fixes below. See
 - Runtime power: `x ^ n` with a non-constant exponent compiles to a generated
   scoreboard helper function (runtime negative exponents produce `0`).
 - `{var}` substitution inside `tellraw`/`title` JSON array components.
+- `datapack.dialog_tag(name, values)` for dialog tags such as
+  `minecraft:pause_screen_additions` and `minecraft:quick_actions`.
 
 ### Changed
+- Comparison operands made only of literals and constants (`step - 1` inside
+  an unrolled loop) fold at compile time instead of going through a scratch
+  score.
 - Execute blocks whose body compiles to more than one command now run that
   body in a generated `execute_temp_<id>` helper, called once per execution
   context. Previously every body command was prefixed with the full execute
@@ -323,6 +328,21 @@ and ships the runtime-semantics fixes below. See
   only accepts for numbers, so list sizes and string lengths read as 0. The
   scale is now only added when given.
 - The validator rejected `function #ns:tag` function-tag calls.
+- A `{var}` inside a styled text component (`{"text":"{secs}s","color":"gold"}`)
+  dropped the styling from the variable's value. The value now inherits the
+  component's color and formatting.
+- A `:` inside SNBT in an execute header (`if data storage ns:x {flag:"on"}:`,
+  `if items entity @s weapon.mainhand *[minecraft:custom_data~{id:"x"}]:`)
+  ended the header and failed to parse. Only the `:` that ends the line does.
+- `{CONST}` and `{param}` placeholders inside execute selectors and positions
+  (`as @a[distance=..{RADIUS}]`, `positioned {x} 100 0`) were emitted
+  verbatim, and selector aliases were not expanded in execute conditions
+  (`if entity @Spawn:`). Alias expansion also matched name prefixes, so
+  `@Spawn` rewrote the start of `@SpawnPoint`.
+- Tag values could not reference other tags (`"#minecraft:skeletons"`).
+- The validator rejected the `*` item predicate (`clear @s *`,
+  `if items ... *[minecraft:custom_data~{...}]`) and macro offsets after a
+  relative coordinate prefix (`tp @s ^ ^ ^$(distance)`).
 
 ### Removed
 - The unused `thiserror` dependency.

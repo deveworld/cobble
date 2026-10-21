@@ -1295,6 +1295,7 @@ fn datapack_tag_type(helper: &str) -> Option<&str> {
         "block_tag" => Some("block"),
         "item_tag" => Some("item"),
         "entity_type_tag" => Some("entity_type"),
+        "dialog_tag" => Some("dialog"),
         _ => None,
     }
 }

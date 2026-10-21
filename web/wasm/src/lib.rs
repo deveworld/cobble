@@ -905,15 +905,16 @@ stdlib.addEventListener(event.TICK, tick)
             Err(diagnostics) => diagnostics,
         };
 
+        // Tokenizer errors point at the offending character.
         assert!(!diagnostics.is_empty());
         assert_eq!(diagnostics[0].file, "demo.cbl");
-        assert_eq!(diagnostics[0].line, 1);
-        assert_eq!(diagnostics[0].column, 1);
+        assert_eq!(diagnostics[0].line, 2);
+        assert_eq!(diagnostics[0].column, 5);
         assert_eq!(diagnostics[0].kind, "parse");
         assert!(diagnostics[0].message.contains("Parse error:"));
-        assert!(diagnostics[0].formatted.contains("demo.cbl:1:1"));
-        assert!(diagnostics[0].formatted.contains("1 | def broken():"));
-        assert!(diagnostics[0].formatted.contains("| ^"));
+        assert!(diagnostics[0].formatted.contains("demo.cbl:2:5"));
+        assert!(diagnostics[0].formatted.contains("2 |     ?"));
+        assert!(diagnostics[0].formatted.contains("|     ^"));
     }
 
     #[test]

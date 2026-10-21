@@ -756,6 +756,28 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_item_predicates_and_macro_offsets() {
+        let v = match get_validator() {
+            Some(v) => v,
+            None => return,
+        };
+        assert!(v
+            .validate_command(
+                r#"execute if items entity @s weapon.mainhand *[minecraft:custom_data~{id:"blink"}] run say ok"#
+            )
+            .is_ok());
+        assert!(v.validate_command("clear @s *").is_ok());
+        assert!(v
+            .validate_command("clear @s minecraft:stick[minecraft:damage=0]")
+            .is_ok());
+        assert!(v.validate_command("give @s *").is_err());
+        assert!(v
+            .validate_command("$execute rotated ~ 0 run tp @s ^ ^ ^$(distance)")
+            .is_ok());
+        assert!(v.validate_command("$tp @s ~$(dx) ~ ~$(dz)").is_ok());
+    }
+
+    #[test]
     fn test_validate_say() {
         let v = match get_validator() {
             Some(v) => v,

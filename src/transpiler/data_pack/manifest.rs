@@ -213,6 +213,8 @@ impl DataPack {
             ("item_tag", path)
         } else if let Some(path) = path.strip_prefix("tags/entity_type/") {
             ("entity_type_tag", path)
+        } else if let Some(path) = path.strip_prefix("tags/dialog/") {
+            ("dialog_tag", path)
         } else if let Some(path) = path.strip_prefix("advancement/") {
             ("advancement", path)
         } else if let Some(path) = path.strip_prefix("loot_table/") {

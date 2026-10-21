@@ -3580,6 +3580,7 @@ impl Transpiler {
             "block_tag" => self.add_datapack_tag_resource("block", args),
             "item_tag" => self.add_datapack_tag_resource("item", args),
             "entity_type_tag" => self.add_datapack_tag_resource("entity_type", args),
+            "dialog_tag" => self.add_datapack_tag_resource("dialog", args),
             "predicate" => self.add_datapack_json_resource("predicate", args),
             "advancement" => self.add_datapack_json_resource("advancement", args),
             "loot_table" => self.add_datapack_json_resource("loot_table", args),
@@ -3835,8 +3836,9 @@ impl Transpiler {
     }
 
     fn validate_datapack_tag_value(&self, value: &serde_json::Value) -> Result<(), TranspileError> {
+        // Tag values may reference another tag of the same type (`#minecraft:logs`).
         if let Some(id) = value.as_str() {
-            self.plain_resource_id_to_parts(id, "tag value")?;
+            self.plain_resource_id_to_parts(id.strip_prefix('#').unwrap_or(id), "tag value")?;
             return Ok(());
         }
 
@@ -3862,7 +3864,7 @@ impl Transpiler {
                 .to_string()
                 .into());
         };
-        self.plain_resource_id_to_parts(id, "tag value")?;
+        self.plain_resource_id_to_parts(id.strip_prefix('#').unwrap_or(id), "tag value")?;
 
         if object
             .get("required")
@@ -4487,12 +4489,16 @@ impl Transpiler {
                     // first so side effects keep source order. Both sides are
                     // checked: `actual == expected` with two parameters must
                     // not leave the right one as an unset score name.
-                    let new_left = if self.condition_operand_needs_temp(left) {
+                    let new_left = if let Some(folded) = self.fold_condition_operand(left) {
+                        folded
+                    } else if self.condition_operand_needs_temp(left) {
                         self.lower_condition_value_to_temp(left)?
                     } else {
                         (**left).clone()
                     };
-                    let new_right = if self.condition_operand_needs_temp(right) {
+                    let new_right = if let Some(folded) = self.fold_condition_operand(right) {
+                        folded
+                    } else if self.condition_operand_needs_temp(right) {
                         self.lower_condition_value_to_temp(right)?
                     } else {
                         (**right).clone()
@@ -4531,6 +4537,18 @@ impl Transpiler {
             }
             _ => Ok(condition.clone()),
         }
+    }
+
+    /// Folds a literal-only comparison operand, such as `step - 1` inside an
+    /// unrolled loop, so it needs no scratch score. Integer `/` and `%` fold
+    /// with the same floor semantics as the scoreboard.
+    fn fold_condition_operand(&self, expr: &Expression) -> Option<Expression> {
+        if !matches!(expr, Expression::Binary(..) | Expression::Unary(..)) {
+            return None;
+        }
+        let value = self.try_eval_const(expr)?;
+        (value.fract() == 0.0 && value.abs() <= f64::from(i32::MAX))
+            .then_some(Expression::Number(value))
     }
 
     fn lower_condition_value_to_temp(

@@ -1681,11 +1681,14 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    // Should generate JSON array with score component
-    assert!(content.contains("tellraw @a ["));
-    assert!(content.contains("\"score\""));
-    assert!(content.contains("\"name\":\"score\""));
-    assert!(content.contains("\"objective\":\"temp\""));
+    // The value becomes a score component inside the original component's
+    // `extra`, so it inherits the component's styling.
+    assert!(
+        content.contains(
+            r#"tellraw @a {"extra":[{"score":{"name":"score","objective":"temp"}}],"text":"Score: "}"#
+        ),
+        "{content}"
+    );
     // Should NOT have malformed JSON with escaped quotes
     assert!(!content.contains("{\\\"text\\\""));
 }
@@ -4423,24 +4426,20 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    assert!(content.contains(r#"tellraw @a ["#), "{content}");
+    // Each styled component keeps its style, and the variable values sit in
+    // its `extra` so they inherit that style.
     assert!(
-        content.contains(r#"{"color":"gold","text":"Score: "}"#),
+        content.contains(
+            r#"tellraw @a [{"color":"gold","extra":[{"score":{"name":"score","objective":"temp"}}],"text":"Score: "},{"extra":[{"nbt":"vars.message","storage":"cobble:global"}],"italic":true,"text":" Message: "}]"#
+        ),
         "{content}"
     );
     assert!(
-        content.contains(r#"{"score":{"name":"score","objective":"temp"}}"#),
+        content.contains(
+            r#"title @a actionbar [{"color":"aqua","extra":[{"score":{"name":"score","objective":"temp"}}],"text":"Action "}]"#
+        ),
         "{content}"
     );
-    assert!(
-        content.contains(r#"{"italic":true,"text":" Message: "}"#),
-        "{content}"
-    );
-    assert!(
-        content.contains(r#"{"nbt":"vars.message","storage":"cobble:global"}"#),
-        "{content}"
-    );
-    assert!(content.contains(r#"title @a actionbar ["#), "{content}");
 }
 
 #[test]

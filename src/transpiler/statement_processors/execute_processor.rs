@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::transpiler::command_processor::expand_selector_aliases;
 use crate::transpiler::condition_translator::{
     condition_clauses, negate_clause, TranslatedCondition,
 };
@@ -16,15 +17,19 @@ enum DeferredExecuteCondition {
 }
 
 impl DeferredExecuteCondition {
-    fn substitute_macro_param(&mut self, from: &str, to: &str) {
+    fn map_text(&mut self, f: impl Fn(&str) -> String) {
         match self {
             Self::Or(alternatives) => {
                 for alternative in alternatives {
-                    *alternative = alternative.replace(from, to);
+                    *alternative = f(alternative);
                 }
             }
-            Self::UnlessAnd(condition) => *condition = condition.replace(from, to),
+            Self::UnlessAnd(condition) => *condition = f(condition),
         }
+    }
+
+    fn substitute_macro_param(&mut self, from: &str, to: &str) {
+        self.map_text(|text| text.replace(from, to));
     }
 }
 
@@ -354,6 +359,37 @@ impl Transpiler {
                 }
             }
         }
+
+        // Selector aliases, `{CONST}`, and `{param}` placeholders may sit
+        // anywhere in the header, such as `if entity @Spawn`,
+        // `as @a[distance=..{RADIUS}]`, or `positioned {x} 100 0`.
+        let aliases = &self.selector_aliases;
+        for part in &mut execute_parts {
+            *part = expand_selector_aliases(part, aliases);
+        }
+        for special in &mut special_conditions {
+            special.map_text(|text| expand_selector_aliases(text, aliases));
+        }
+        for (name, value) in &self.compile_time_constants {
+            let from = format!("{{{}}}", name);
+            let to = if value.fract() == 0.0 {
+                format!("{}", *value as i64)
+            } else {
+                value.to_string()
+            };
+            for part in &mut execute_parts {
+                if part.contains(&from) {
+                    *part = part.replace(&from, &to);
+                }
+            }
+            for special in &mut special_conditions {
+                special.substitute_macro_param(&from, &to);
+            }
+        }
+        has_macro_params |= self.current_context.params.iter().any(|param| {
+            let placeholder = format!("{{{}}}", param);
+            execute_parts.iter().any(|part| part.contains(&placeholder))
+        });
 
         // If we have macro params, replace {param} with $(param) in execute parts
         if has_macro_params {

@@ -251,56 +251,7 @@ impl<'a> CommandProcessor<'a> {
             result = format!("${}", result);
         }
 
-        // Replace selector aliases (@Name -> @a[...])
-        // Only replace outside of string literals to avoid breaking JSON text
-        for (alias_name, selector) in self.selector_aliases {
-            let pattern = format!("@{}", alias_name);
-
-            // Find all occurrences of the pattern
-            let mut new_result = String::new();
-            let mut last_end = 0;
-
-            while let Some(pos) = result[last_end..].find(&pattern) {
-                let abs_pos = last_end + pos;
-
-                // Check if this occurrence is inside a string literal
-                // Count quotes before this position to determine if we're in a string
-                let before = &result[..abs_pos];
-                let mut in_string = false;
-                let mut escape_next = false;
-
-                for ch in before.chars() {
-                    if escape_next {
-                        escape_next = false;
-                        continue;
-                    }
-                    if ch == '\\' {
-                        escape_next = true;
-                        continue;
-                    }
-                    if ch == '"' {
-                        in_string = !in_string;
-                    }
-                }
-
-                // Only replace if not in a string
-                if !in_string {
-                    new_result.push_str(&result[last_end..abs_pos]);
-                    new_result.push_str(selector);
-                    last_end = abs_pos + pattern.len();
-                } else {
-                    // Keep the original @Name in strings
-                    new_result.push_str(&result[last_end..abs_pos + pattern.len()]);
-                    last_end = abs_pos + pattern.len();
-                }
-            }
-
-            // Add remaining part
-            new_result.push_str(&result[last_end..]);
-            result = new_result;
-        }
-
-        Ok(result)
+        Ok(expand_selector_aliases(&result, self.selector_aliases))
     }
 
     fn normalize_macro_text_component_command(&self, cmd: &str) -> Result<String, TranspileError> {
@@ -372,18 +323,6 @@ impl<'a> CommandProcessor<'a> {
         }
     }
 
-    fn text_component_with_text(base: Option<&serde_json::Value>, text: &str) -> serde_json::Value {
-        if let Some(base) = base {
-            if let serde_json::Value::Object(_) = base {
-                let mut text_component = base.clone();
-                text_component["text"] = serde_json::Value::String(text.to_string());
-                return text_component;
-            }
-        }
-
-        serde_json::json!({ "text": text })
-    }
-
     fn text_contains_any_var(text: &str, var_names: &[String]) -> bool {
         var_names
             .iter()
@@ -394,7 +333,6 @@ impl<'a> CommandProcessor<'a> {
         &self,
         text: &str,
         var_names: &[String],
-        base: Option<&serde_json::Value>,
     ) -> Vec<serde_json::Value> {
         let mut components = Vec::new();
         let mut remaining = text;
@@ -415,7 +353,7 @@ impl<'a> CommandProcessor<'a> {
 
             if let Some(pos) = next_var_pos {
                 if pos > 0 {
-                    components.push(Self::text_component_with_text(base, &remaining[..pos]));
+                    components.push(serde_json::json!({ "text": &remaining[..pos] }));
                 }
 
                 components.push(self.variable_text_component(&next_var_name));
@@ -424,13 +362,41 @@ impl<'a> CommandProcessor<'a> {
                 remaining = &remaining[pos + pattern.len()..];
             } else {
                 if !remaining.is_empty() {
-                    components.push(Self::text_component_with_text(base, remaining));
+                    components.push(serde_json::json!({ "text": remaining }));
                 }
                 break;
             }
         }
 
         components
+    }
+
+    /// Splits a styled object's `text` around `{var}` placeholders into one
+    /// component: the text before the first variable keeps the object's
+    /// styling and the rest goes into `extra`, so variable values inherit the
+    /// same color and formatting.
+    fn styled_component_with_vars(
+        &self,
+        base: &serde_json::Value,
+        text: &str,
+        var_names: &[String],
+    ) -> serde_json::Value {
+        let mut parts = self.split_text_component_with_vars(text, var_names);
+        let mut component = base.clone();
+        let leading_text = match parts.first() {
+            Some(serde_json::Value::Object(first))
+                if first.len() == 1 && first.get("text").is_some_and(|text| text.is_string()) =>
+            {
+                parts.remove(0)["text"].clone()
+            }
+            _ => serde_json::Value::String(String::new()),
+        };
+        component["text"] = leading_text;
+        if let Some(serde_json::Value::Array(existing)) = base.get("extra") {
+            parts.extend(existing.iter().cloned());
+        }
+        component["extra"] = serde_json::Value::Array(parts);
+        component
     }
 
     fn handle_scoreboard_vars_in_command(
@@ -551,11 +517,8 @@ impl<'a> CommandProcessor<'a> {
                     serde_json::Value::Object(object) => {
                         if let Some(text) = object.get("text").and_then(|value| value.as_str()) {
                             if Self::text_contains_any_var(text, &var_names) {
-                                converted_components.extend(self.split_text_component_with_vars(
-                                    text,
-                                    &var_names,
-                                    Some(&item),
-                                ));
+                                converted_components
+                                    .push(self.styled_component_with_vars(&item, text, &var_names));
                             } else {
                                 converted_components.push(item);
                             }
@@ -565,9 +528,8 @@ impl<'a> CommandProcessor<'a> {
                     }
                     serde_json::Value::String(text) => {
                         if Self::text_contains_any_var(text, &var_names) {
-                            converted_components.extend(
-                                self.split_text_component_with_vars(text, &var_names, None),
-                            );
+                            converted_components
+                                .extend(self.split_text_component_with_vars(text, &var_names));
                         } else {
                             converted_components.push(item);
                         }
@@ -612,77 +574,12 @@ impl<'a> CommandProcessor<'a> {
                         .any(|(_, _, name)| text_value.contains(&format!("{{{}}}", name)));
 
                     if has_vars {
-                        // Split the text field and create an array with preserved styling
-                        let mut json_components = Vec::new();
-                        let mut remaining = text_value;
-
-                        while !remaining.is_empty() {
-                            let mut next_var_pos = None;
-                            let mut next_var_name = String::new();
-
-                            for (_, _, var_name) in vars {
-                                let pattern = format!("{{{}}}", var_name);
-                                if let Some(pos) = remaining.find(&pattern) {
-                                    if next_var_pos.is_none() || pos < next_var_pos.unwrap() {
-                                        next_var_pos = Some(pos);
-                                        next_var_name = var_name.clone();
-                                    }
-                                }
-                            }
-
-                            if let Some(pos) = next_var_pos {
-                                // Add text before variable with original styling
-                                if pos > 0 {
-                                    let mut text_component = json_obj.clone();
-                                    text_component["text"] =
-                                        serde_json::Value::String(remaining[..pos].to_string());
-                                    json_components.push(text_component);
-                                }
-
-                                // Check if it's a storage variable
-                                if let Some(storage_path) =
-                                    self.variable_storage_paths.get(&next_var_name)
-                                {
-                                    let nbt_component = serde_json::json!({
-                                        "nbt": storage_path,
-                                        "storage": format!("{}:global", self.namespace)
-                                    });
-                                    json_components.push(nbt_component);
-                                } else {
-                                    // Add score component
-                                    let objective = self
-                                        .variable_objectives
-                                        .get(&next_var_name)
-                                        .map(|s| s.as_str())
-                                        .unwrap_or("temp");
-                                    let score_component = serde_json::json!({
-                                        "score": {
-                                            "name": next_var_name,
-                                            "objective": objective
-                                        }
-                                    });
-                                    json_components.push(score_component);
-                                }
-
-                                // Move past this variable
-                                let pattern = format!("{{{}}}", next_var_name);
-                                remaining = &remaining[pos + pattern.len()..];
-                            } else {
-                                // No more variables, add remaining text with original styling
-                                if !remaining.is_empty() {
-                                    let mut text_component = json_obj.clone();
-                                    text_component["text"] =
-                                        serde_json::Value::String(remaining.to_string());
-                                    json_components.push(text_component);
-                                }
-                                break;
-                            }
-                        }
-
-                        // Build the final command with the JSON array
-                        let json_array = serde_json::Value::Array(json_components);
+                        let var_names: Vec<String> =
+                            vars.iter().map(|(_, _, name)| name.clone()).collect();
+                        let component =
+                            self.styled_component_with_vars(&json_obj, text_value, &var_names);
                         let json_string =
-                            serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
+                            serde_json::to_string(&component).unwrap_or_else(|_| "{}".to_string());
 
                         if let Some(action_token) = action {
                             return Ok(format!(
@@ -821,6 +718,42 @@ impl<'a> CommandProcessor<'a> {
             value.to_string()
         }
     }
+}
+
+/// Replaces selector aliases (`@Name` -> `@a[...]`) outside of string
+/// literals, so JSON text such as `"@Name"` keeps the literal. An alias only
+/// matches a whole name: `@Spawn` leaves `@SpawnPoint` alone.
+pub(crate) fn expand_selector_aliases(text: &str, aliases: &HashMap<String, String>) -> String {
+    if aliases.is_empty() || !text.contains('@') {
+        return text.to_string();
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut escape_next = false;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if escape_next {
+            escape_next = false;
+        } else if ch == '\\' {
+            escape_next = true;
+        } else if ch == '"' {
+            in_string = !in_string;
+        } else if ch == '@' && !in_string {
+            let name_end = text[index + 1..]
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .map_or(text.len(), |offset| index + 1 + offset);
+            if let Some(selector) = aliases.get(&text[index + 1..name_end]) {
+                result.push_str(selector);
+                while chars.peek().is_some_and(|(next, _)| *next < name_end) {
+                    chars.next();
+                }
+                continue;
+            }
+        }
+        result.push(ch);
+    }
+    result
 }
 
 /// Whether the position right after `chars` falls inside an unterminated

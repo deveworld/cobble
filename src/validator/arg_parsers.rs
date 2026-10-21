@@ -154,7 +154,8 @@ pub fn parse_argument(
 
         // === Block/item with state/components ===
         "minecraft:block_state" | "minecraft:block_predicate" => parse_block_state(reader),
-        "minecraft:item_stack" | "minecraft:item_predicate" => parse_item_stack(reader),
+        "minecraft:item_stack" => parse_item_stack(reader),
+        "minecraft:item_predicate" => parse_item_predicate(reader),
 
         // === Message (greedy) ===
         "minecraft:message" => parse_message(reader),
@@ -1401,6 +1402,26 @@ fn parse_item_stack(reader: &mut StringReader) -> bool {
         return true;
     }
 
+    reader.set_cursor(saved);
+    false
+}
+
+/// Item predicates (`ItemPredicateArgument`) also accept the `*` wildcard
+/// before their optional `[...]` tests (`*[minecraft:custom_data~{id:"x"}]`).
+fn parse_item_predicate(reader: &mut StringReader) -> bool {
+    if reader.peek() != Some('*') {
+        return parse_item_stack(reader);
+    }
+
+    let saved = reader.cursor();
+    reader.read_char();
+    if reader.can_read() && reader.peek() == Some('[') && !reader.read_nbt() {
+        reader.set_cursor(saved);
+        return false;
+    }
+    if reader.at_token_boundary() {
+        return true;
+    }
     reader.set_cursor(saved);
     false
 }

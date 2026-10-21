@@ -3793,11 +3793,13 @@ fn check_datapack_tag_value_resource_ids(
         let Some(value) = quoted_string_literal_at(raw_argument, item.offset) else {
             continue;
         };
+        let (value, tag_offset) = strip_tag_reference(value);
         let Some(diagnostic) = validate_datapack_resource_id("tag value", value) else {
             continue;
         };
-        let (line, column) =
-            context.position_at(span.start + raw_offset + item.offset + 1 + diagnostic.offset);
+        let (line, column) = context.position_at(
+            span.start + raw_offset + item.offset + 1 + tag_offset + diagnostic.offset,
+        );
         diagnostics.push(
             SourceDiagnostic::error("datapack-resource-id", line, column, diagnostic.message)
                 .with_help(diagnostic.help),
@@ -3813,6 +3815,12 @@ struct ResourceIdDiagnostic {
     message: String,
     help: String,
     offset: usize,
+}
+
+/// Tag values may reference another tag of the same type (`#minecraft:logs`);
+/// returns the ID without the `#` and how many bytes were stripped.
+fn strip_tag_reference(value: &str) -> (&str, usize) {
+    value.strip_prefix('#').map_or((value, 0), |rest| (rest, 1))
 }
 
 fn validate_datapack_resource_id(label: &str, id: &str) -> Option<ResourceIdDiagnostic> {
@@ -3946,6 +3954,7 @@ fn datapack_tag_object_diagnostics(text: &str) -> Vec<TagObjectDiagnostic> {
 
     match id {
         Some(Expression::String(value)) => {
+            let (value, tag_offset) = strip_tag_reference(value);
             if let Some(diagnostic) = validate_datapack_resource_id("tag value", value) {
                 let value_offset = object_field_value_offset(text, "id").unwrap_or(0);
                 let quote_offset = text
@@ -3957,7 +3966,7 @@ fn datapack_tag_object_diagnostics(text: &str) -> Vec<TagObjectDiagnostic> {
                     kind: "datapack-resource-id",
                     message: diagnostic.message,
                     help: diagnostic.help,
-                    offset: value_offset + quote_offset + diagnostic.offset,
+                    offset: value_offset + quote_offset + tag_offset + diagnostic.offset,
                 });
             }
         }

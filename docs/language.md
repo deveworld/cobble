@@ -513,6 +513,23 @@ body command, because storing a helper call would store the helper's return
 value instead of each command's result; bodies containing a raw `/return` also
 keep that form so the return still leaves the enclosing function.
 
+Headers accept the same placeholders as raw commands: selector aliases,
+`{CONST}` values, and `{param}` macro arguments, anywhere in the header.
+SNBT and strings can appear in raw conditions too:
+
+```python
+const RADIUS = 24
+@Spawn = @e[type=minecraft:marker,tag=spawn,limit=1]
+
+def heal_near_spawn():
+    at @Spawn as @a[distance=..{RADIUS}]:
+        /effect give @s minecraft:regeneration 3 0 true
+
+def use_wand():
+    if items entity @s weapon.mainhand *[minecraft:custom_data~{wand:"frost"}]:
+        /say frost
+```
+
 ### For Loops
 
 ```python
@@ -796,8 +813,9 @@ def admin_command():
 
 **Key Points:**
 - Selector definitions use `@Name = @selector[...]` syntax
-- Aliases are replaced at compile time
-- Works in execute blocks and commands
+- Aliases are replaced at compile time, matching whole names only
+- Works in execute blocks (targets and conditions) and commands
+- Aliases are shared by every file in a project, so define each one once
 - Helps avoid repeating complex selectors
 
 ## Entity Templates
@@ -1028,6 +1046,8 @@ datapack.dialog("notice", {
     "type": "minecraft:notice",
     "title": {"text": "Notice"}
 })
+# Adds a button for the dialog to the pause screen.
+datapack.dialog_tag("minecraft:pause_screen_additions", ["mypack:notice"])
 ```
 
 Supported resource declarations:
@@ -1036,6 +1056,7 @@ Supported resource declarations:
 - `datapack.block_tag(name, values, replace=False?)`
 - `datapack.item_tag(name, values, replace=False?)`
 - `datapack.entity_type_tag(name, values, replace=False?)`
+- `datapack.dialog_tag(name, values, replace=False?)`
 - `datapack.predicate(name, json)`
 - `datapack.advancement(name, json)`
 - `datapack.loot_table(name, json)`

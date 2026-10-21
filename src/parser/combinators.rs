@@ -807,90 +807,100 @@ fn token_parser_with_spans<'a>(
                     )
             )
         };
-        let exec_condition = any()
-            .filter(move |t: &Token| !is_execute_modifier_boundary(t))
-            .repeated()
-            .at_least(1)
-            .collect::<Vec<Token>>()
-            .map_with(move |tokens, extra| {
-                let span: SimpleSpan = extra.span();
-                let first_index = span.start;
-                // Convert tokens to string, but be smart about spacing
-                let mut result = String::new();
-                let mut prev_token: Option<&Token> = None;
+        let exec_condition = choice((
+            any().filter(move |t: &Token| !is_execute_modifier_boundary(t)),
+            // Only the `:` that ends the header line is a boundary; a `:`
+            // inside SNBT (`{flag:"on"}`) belongs to the condition.
+            just(&Token::Colon)
+                .then(
+                    any()
+                        .filter(|t: &Token| !matches!(t, Token::Newline))
+                        .rewind(),
+                )
+                .map(|_| Token::Colon),
+        ))
+        .repeated()
+        .at_least(1)
+        .collect::<Vec<Token>>()
+        .map_with(move |tokens, extra| {
+            let span: SimpleSpan = extra.span();
+            let first_index = span.start;
+            // Convert tokens to string, but be smart about spacing
+            let mut result = String::new();
+            let mut prev_token: Option<&Token> = None;
 
-                for (i, token) in tokens.iter().enumerate() {
-                    // Raw conditions are re-stringified for Minecraft, so keyword
-                    // literals must render as SNBT literals here. This is scoped
-                    // to execute conditions on purpose: the global `Display` impl
-                    // keeps the Cobble spellings (`True`/`False`/`None`).
-                    // Identifiers may carry glued SNBT (e.g. `@s[nbt={x:True}]`,
-                    // `x:True`), which gets the same lowering.
-                    let token_str = match token {
-                        Token::True_ => "true".to_string(),
-                        Token::False_ => "false".to_string(),
-                        Token::None_ => "null".to_string(),
-                        Token::Ident(s) => normalize_snbt_booleans(s),
-                        _ => format!("{}", token),
-                    };
+            for (i, token) in tokens.iter().enumerate() {
+                // Raw conditions are re-stringified for Minecraft, so keyword
+                // literals must render as SNBT literals here. This is scoped
+                // to execute conditions on purpose: the global `Display` impl
+                // keeps the Cobble spellings (`True`/`False`/`None`).
+                // Identifiers may carry glued SNBT (e.g. `@s[nbt={x:True}]`,
+                // `x:True`), which gets the same lowering.
+                let token_str = match token {
+                    Token::True_ => "true".to_string(),
+                    Token::False_ => "false".to_string(),
+                    Token::None_ => "null".to_string(),
+                    Token::Ident(s) => normalize_snbt_booleans(s),
+                    _ => format!("{}", token),
+                };
 
-                    // Determine if we need a space before this token. Every arm
-                    // is deliberate — raw conditions must survive
-                    // re-stringification unchanged:
-                    let is_comparison = |token: &Token| {
-                        matches!(
-                            token,
-                            Token::EqEq
-                                | Token::NotEq
-                                | Token::Lt
-                                | Token::LtEq
-                                | Token::Gt
-                                | Token::GtEq
-                        )
-                    };
-                    let need_space = if i == 0 {
-                        false
-                    } else if let Some(prev) = prev_token {
-                        match (prev, token) {
-                            // Python comparisons stay spaced so the raw
-                            // condition is still recognized and re-parsed as
-                            // a Python expression (`x>1` -> `x > 1`).
-                            (prev, token) if is_comparison(prev) || is_comparison(token) => true,
-                            // Tokens glued in the source stay glued: local
-                            // coordinates (`^1`), block states and NBT paths
-                            // (`stone[snowy=false]`, `Items[0].id`), and
-                            // resource paths (`ns:util/check`).
-                            _ if glued_to_next(first_index + i - 1) => false,
-                            // Range operator "..": both dots stay glued ("1..")
-                            (Token::Dot, Token::Dot) => false,
-                            // Range end hugs the dots ("..10", "1..5")
-                            (Token::Dot, Token::Number(_)) => false,
-                            // A dot before an identifier is a path separator in
-                            // NBT/storage/resource paths ("path.sub",
-                            // "ns:foo.bar"), never a token break — no space.
-                            (Token::Dot, Token::Ident(_)) => false,
-                            // A dot before any other token (an operator, brace,
-                            // ...) is not part of a path or range; keep a space.
-                            (Token::Dot, _) => true,
-                            // Never a space before a dot ("path.", "1..")
-                            (_, Token::Dot) => false,
-                            // Negative numbers: minus glues to its number ("-5")
-                            (Token::Minus, Token::Number(_)) => false,
-                            // Default: separate tokens with a single space
-                            _ => true,
-                        }
-                    } else {
-                        true
-                    };
-
-                    if need_space {
-                        result.push(' ');
+                // Determine if we need a space before this token. Every arm
+                // is deliberate — raw conditions must survive
+                // re-stringification unchanged:
+                let is_comparison = |token: &Token| {
+                    matches!(
+                        token,
+                        Token::EqEq
+                            | Token::NotEq
+                            | Token::Lt
+                            | Token::LtEq
+                            | Token::Gt
+                            | Token::GtEq
+                    )
+                };
+                let need_space = if i == 0 {
+                    false
+                } else if let Some(prev) = prev_token {
+                    match (prev, token) {
+                        // Python comparisons stay spaced so the raw
+                        // condition is still recognized and re-parsed as
+                        // a Python expression (`x>1` -> `x > 1`).
+                        (prev, token) if is_comparison(prev) || is_comparison(token) => true,
+                        // Tokens glued in the source stay glued: local
+                        // coordinates (`^1`), block states and NBT paths
+                        // (`stone[snowy=false]`, `Items[0].id`), and
+                        // resource paths (`ns:util/check`).
+                        _ if glued_to_next(first_index + i - 1) => false,
+                        // Range operator "..": both dots stay glued ("1..")
+                        (Token::Dot, Token::Dot) => false,
+                        // Range end hugs the dots ("..10", "1..5")
+                        (Token::Dot, Token::Number(_)) => false,
+                        // A dot before an identifier is a path separator in
+                        // NBT/storage/resource paths ("path.sub",
+                        // "ns:foo.bar"), never a token break — no space.
+                        (Token::Dot, Token::Ident(_)) => false,
+                        // A dot before any other token (an operator, brace,
+                        // ...) is not part of a path or range; keep a space.
+                        (Token::Dot, _) => true,
+                        // Never a space before a dot ("path.", "1..")
+                        (_, Token::Dot) => false,
+                        // Negative numbers: minus glues to its number ("-5")
+                        (Token::Minus, Token::Number(_)) => false,
+                        // Default: separate tokens with a single space
+                        _ => true,
                     }
-                    result.push_str(&token_str);
-                    prev_token = Some(token);
+                } else {
+                    true
+                };
+
+                if need_space {
+                    result.push(' ');
                 }
-                result
-            });
+                result.push_str(&token_str);
+                prev_token = Some(token);
+            }
+            result
+        });
 
         // Helper: parse either an identifier or a macro parameter {name}
         let selector_or_macro = choice((
