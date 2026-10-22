@@ -1,6 +1,6 @@
 [book]
 title = "Cobble"
-description = "A Python-like language for Minecraft Java Edition data packs"
+description = "A Python-like language that compiles to Minecraft Java Edition data packs"
 language = "en"
 src = "src"
 

@@ -1,6 +1,7 @@
 # Installation
 
-Cobble is a Rust program published on crates.io as `cobble-lang`. The
+Cobble is a Rust program published on crates.io as `cobble-lang`. Install it
+with Cargo, which [rustup](https://rustup.rs) installs along with Rust. The
 installed command is `cobble`.
 
 ```bash
@@ -25,6 +26,7 @@ cargo build --release
 
 ## Requirements
 
+- A current stable Rust toolchain to install or build Cobble.
 - Minecraft Java Edition 26.3 to load the generated packs.
 - Java and `curl` for command validation (`cobble build --validate`). The first
   validated build downloads the Minecraft server jar and extracts its command

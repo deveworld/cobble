@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Cobble",
   description:
-    "A modern, Python-like language for creating Minecraft Java Edition data packs."
+    "A Python-like language that compiles to Minecraft Java Edition data packs."
 };
 
 export default function RootLayout({

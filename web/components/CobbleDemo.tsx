@@ -361,12 +361,12 @@ export function CobbleDemo() {
         <div className="hero-copy">
           <p className="eyebrow">
             {compilerMetadata
-              ? `Minecraft Java Edition ${compilerMetadata.minecraft_version} · Pack Format ${compilerMetadata.pack_format}`
+              ? `Nightly build · Minecraft Java Edition ${compilerMetadata.minecraft_version} · Pack Format ${compilerMetadata.pack_format}`
               : "Loading compiler metadata"}
           </p>
           <h1>Cobble</h1>
           <p>
-            A Python-like language that compiles into Minecraft data pack functions.
+            A Python-like language that compiles to Minecraft Java Edition data packs.
           </p>
         </div>
 

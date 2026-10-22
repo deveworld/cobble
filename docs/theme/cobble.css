@@ -11,3 +11,37 @@
     --links: #2f7d32;
     --sidebar-active: #2f7d32;
 }
+
+/* The book is built from `main`, so label every page as nightly. */
+.menu-title::after {
+    content: "nightly";
+    display: inline-block;
+    margin-left: 0.6em;
+    padding: 0 0.6em;
+    border: 1px solid var(--links);
+    border-radius: 999px;
+    color: var(--links);
+    font-size: 0.5em;
+    font-weight: 600;
+    line-height: 1.8;
+    vertical-align: middle;
+}
+
+/* Phones leave little room between the menu buttons: shrink the title and
+   the label, and drop the label where even the smaller one would be cut off. */
+@media (max-width: 400px) {
+    .menu-title {
+        font-size: 2rem;
+    }
+
+    .menu-title::after {
+        margin-left: 0.35em;
+        padding: 0 0.4em;
+    }
+}
+
+@media (max-width: 355px) {
+    .menu-title::after {
+        display: none;
+    }
+}

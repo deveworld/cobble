@@ -76,19 +76,36 @@ npm run test:web
 
 It runs the WASM tests and `cargo check`, the ZIP helper test, the metadata
 check and typecheck, the GitHub Pages build, the Playwright tests, and the link
-check. Install Chromium once with `npx playwright install chromium`.
+check. Install Chromium once with `npx playwright install chromium`. The build
+includes this documentation, so it also needs mdBook (see
+[Documentation](#documentation)).
 
-The build includes this documentation, so it needs
-[mdBook](https://rust-lang.github.io/mdBook/) on `PATH`. To preview only the
-docs:
+`web/lib/compilerMetadata.ts` is generated from `Cargo.toml` and
+`src/pack_format.rs`. After a version or target change, regenerate it with
+`npm --prefix web run sync:metadata`; the web gate fails when it is stale.
+
+## Documentation
+
+This documentation is an [mdBook](https://rust-lang.github.io/mdBook/) book.
+`docs/book.toml` configures it, `docs/src/SUMMARY.md` lists the pages, and
+`docs/theme/cobble.css` holds the theme overrides. The Pages workflow builds it
+with mdBook 0.5.4. Install the same version with Cargo, or download a binary
+from the [mdBook releases](https://github.com/rust-lang/mdBook/releases):
+
+```bash
+cargo install mdbook --version 0.5.4 --locked
+```
+
+`mdbook serve` previews the book at <http://localhost:3000> and rebuilds it on
+every save:
 
 ```bash
 mdbook serve docs
 ```
 
-`web/lib/compilerMetadata.ts` is generated from `Cargo.toml` and
-`src/pack_format.rs`. After a version or target change, regenerate it with
-`npm --prefix web run sync:metadata`; the web gate fails when it is stale.
+`npm run build` in `web/` runs `mdbook build` and writes the book to
+`web/public/docs/`, so the site serves it under `/docs/`. The link check in the
+web gate covers every page in `docs/src/`, including links to headings.
 
 ## Command Tree Check
 

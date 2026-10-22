@@ -83,8 +83,7 @@ export function CobbleHome() {
           </p>
           <h1>Cobble</h1>
           <p>
-            A modern, Python-like language for creating Minecraft data packs with
-            functions, events, resources, validation, and generated metadata.
+            A Python-like language that compiles to Minecraft Java Edition data packs.
           </p>
           <p className="release-install">
             {COBBLE_VERSION} stable · Minecraft Java Edition{" "}

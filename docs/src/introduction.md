@@ -1,9 +1,9 @@
 # Cobble
 
-Cobble is a Python-like language for Minecraft Java Edition data packs. You
-write functions, events, conditions, loops, and resources in `.cbl` files, and
-the compiler turns them into a data pack of `.mcfunction` files, function tags,
-and JSON resources.
+Cobble is a Python-like language that compiles to Minecraft Java Edition data
+packs. You write functions, events, conditions, loops, and resources in `.cbl`
+files, and the compiler turns them into `.mcfunction` files, function tags, and
+JSON resources.
 
 ```python
 from stdlib import event
@@ -18,10 +18,10 @@ stdlib.addEventListener(event.LOAD, on_load)
 ```
 
 Cobble targets Minecraft Java Edition 26.3 (pack format 121.0). The current
-crates.io release is 0.10.0. This documentation follows the `main` branch,
-where 0.11 is in development. What it says about 0.11, such as the per-pack
-`<namespace>.vars` objective and `persist` variables, may change before the
-release.
+crates.io release is 0.10.0. This is the nightly documentation, built from the
+`main` branch, where 0.11 is in development. What it says about 0.11, such as
+the per-pack `<namespace>.vars` objective and `persist` variables, may change
+before the release.
 
 ## Where To Start
 
