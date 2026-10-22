@@ -1,0 +1,13 @@
+/* Match the website's green accent in the dark themes. */
+.coal,
+.navy,
+.ayu {
+    --links: #7bd66f;
+    --sidebar-active: #7bd66f;
+}
+
+.light,
+.rust {
+    --links: #2f7d32;
+    --sidebar-active: #2f7d32;
+}

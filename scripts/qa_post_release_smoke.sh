@@ -123,15 +123,22 @@ else
   home_html="$work_dir/home.html"
   try_html="$work_dir/try.html"
   wasm_file="$work_dir/cobble_web_wasm_bg.wasm"
+  docs_html="$work_dir/docs.html"
 
   run curl -fsSL "$site_url/?verify=$version" -o "$home_html"
   run curl -fsSL "$site_url/try/?verify=$version" -o "$try_html"
   run curl -fsSL "$site_url/wasm/cobble_web_wasm_bg.wasm?verify=$version" -o "$wasm_file"
+  run curl -fsSL "$site_url/docs/?verify=$version" -o "$docs_html"
 
   normalized_home_html="$work_dir/home.normalized.html"
   perl -0pe 's/<!-- -->//g' "$home_html" > "$normalized_home_html"
   if ! grep -F "$version stable" "$normalized_home_html" >/dev/null; then
     echo "Deployed home page does not advertise $version stable" >&2
+    exit 1
+  fi
+
+  if ! grep -F "<title>Introduction - Cobble</title>" "$docs_html" >/dev/null; then
+    echo "Deployed docs page is missing the book title" >&2
     exit 1
   fi
 

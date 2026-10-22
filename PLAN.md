@@ -4,7 +4,7 @@
 
 - Last updated: 2026-10-22
 - Current stable release: `0.10.0` (2026-10-22)
-- Next release: `0.11.0` (planned)
+- Next release: `0.11.0` (in progress on `main`)
 - Planned after that: `1.0.0`
 - Active pre-release: none
 - Current Minecraft target: Java Edition `26.3`
@@ -122,8 +122,8 @@ QA when EULA acceptance is available.
 ### Release Sequence
 
 - `0.7.1` to `0.10.0`: released; see Shipped Releases below.
-- `0.11.0`: pack isolation and persistent state, the last planned change to
-  generated output before 1.0 locks it.
+- `0.11.0` (in progress): pack isolation and persistent state so far, with
+  more work planned; the last release before 1.0 locks generated output.
 - `1.0.0`: long-term compatibility contract for language behavior, CLI
   behavior, metadata schemas, and release gates.
 - Future 1.x: multi-target support, editor integration, plugin and tooling
@@ -133,9 +133,10 @@ QA when EULA acceptance is available.
 ### 0.x Compatibility Rule
 
 Until 1.0, a minor release (`0.N.0`) may change source behavior or generated
-output when it ships migration notes (`docs/migration-0.N.md`) and a
-`cobble migrate` report for the change. Patch releases (`0.N.x`) preserve the
-source language and generated output except for documented bug fixes.
+output when it ships migration notes (a section of
+`docs/src/upgrading.md`) and a `cobble migrate` report for the change. Patch
+releases (`0.N.x`) preserve the source language and generated output except
+for documented bug fixes.
 
 Rules for every 0.x release:
 
@@ -162,7 +163,7 @@ Rules for every 0.x release:
   plugins, Python-compatibility reports, and migrations.
 - `0.10.0` (2026-10-22): Minecraft Java Edition 26.3 target (pack format
   `121.0`) and runtime-semantics fixes, practical packs in `examples/`, and
-  the showcase self-test in the server gate (`docs/migration-0.10.md`).
+  the showcase self-test in the server gate.
 
 Carried forward from those plans and still open:
 
@@ -172,7 +173,8 @@ Carried forward from those plans and still open:
 
 ### 0.11.0: Pack Isolation And Persistent State
 
-Status: implemented on `main` (2026-10-22), not yet released.
+Status: in progress. Goals 1 to 3 below are implemented on `main`
+(2026-10-22); more work is planned for 0.11 before the release.
 
 Theme: fix the two generated-output behaviors that writing real packs exposed,
 while generated output can still change before 1.0 locks it. Both showed up in
@@ -208,10 +210,11 @@ ordinary pack code while building `examples/lobby`, `examples/parkour`, and
      storage-backed values. It covers scores, strings, lists, and maps.
    - Plain module variables keep the documented reset-on-load behavior.
 3. Migration.
-   - `docs/migration-0.11.md` explains the objective change. `cobble migrate`
-     only reports: it lists source references to `temp` (which keep working)
-     and reminds authors to update outside readers such as command blocks,
-     other packs, or chat commands that read `<var> temp`.
+   - The 0.10 to 0.11 section of `docs/src/upgrading.md` explains the
+     objective change. `cobble migrate` only reports: it lists source
+     references to `temp` (which keep working) and reminds authors to update
+     outside readers such as command blocks, other packs, or chat commands
+     that read `<var> temp`.
    - Old values under `temp` are not carried over. Module variables already
      reset on every load, so nothing meaningful lives there; once no other
      pack uses it, `/scoreboard objectives remove temp` clears it.
@@ -643,10 +646,10 @@ Decided for 0.11.0 (2026-10-22):
 
 ## Current Priority Order
 
-1. Release 0.11.0: per-pack objectives and `persist` are implemented with
-   snapshot, simulator, and server-gate tests and migration notes. Release
-   prep still needs the version bump, a 0.11 release gate script, and the
-   CHANGELOG date.
+1. Finish 0.11.0. Per-pack objectives and `persist` are done, with snapshot,
+   simulator, and server-gate tests and migration notes; more 0.11 work is
+   planned. The version bump, a 0.11 release gate script, and the CHANGELOG
+   date wait until the scope is final.
 2. Start the 1.0.0 compatibility audit on top of 0.11.0.
 3. Keep plugin APIs, package management, full resource-pack pipelines,
    arbitrary Python/eval, and multi-target behavior deferred until the

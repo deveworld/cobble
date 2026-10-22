@@ -8,6 +8,7 @@ on:
       - .github/workflows/deploy-pages.yml
       - Cargo.lock
       - Cargo.toml
+      - docs/**
       - src/**
       - web/**
   pull_request:
@@ -15,6 +16,7 @@ on:
       - .github/workflows/deploy-pages.yml
       - Cargo.lock
       - Cargo.toml
+      - docs/**
       - src/**
       - web/**
   workflow_dispatch:
@@ -51,6 +53,19 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: npm ci
+
+      - name: Install mdBook
+        env:
+          MDBOOK_VERSION: v0.5.4
+          MDBOOK_SHA256: 3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7
+        run: |
+          archive="mdbook-$MDBOOK_VERSION-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p "$RUNNER_TEMP/mdbook"
+          cd "$RUNNER_TEMP/mdbook"
+          curl -sSfLO "https://github.com/rust-lang/mdBook/releases/download/$MDBOOK_VERSION/$archive"
+          echo "$MDBOOK_SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive"
+          echo "$RUNNER_TEMP/mdbook" >> "$GITHUB_PATH"
 
       - name: Install browser dependencies
         working-directory: web

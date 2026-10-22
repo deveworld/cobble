@@ -28,14 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `temp` in raw commands, execute headers, `score.*` helpers, selector
   `scores={...}` filters, and score text components now compiles to
   `<namespace>.vars`; existing source keeps working. See
-  [`docs/migration-0.11.md`](docs/migration-0.11.md).
+  [Upgrading](https://deveworld.github.io/cobble/docs/upgrading.html).
 - The serde AST adds `Assignment.persist` (omitted when `false`).
+
+### Documentation
+- The documentation is now a book built with mdBook from `docs/src/` and
+  published with the website at <https://deveworld.github.io/cobble/docs/>.
+  The language reference is split into chapters, the migration notes are one
+  Upgrading page, and the cookbooks are folded into the chapters they cover.
+  The hand-written Rust API reference is replaced by
+  [docs.rs](https://docs.rs/cobble-lang).
 
 ## [0.10.0] - 2026-10-22
 
 Cobble 0.10.0 targets Minecraft Java Edition 26.3 (data pack format 121.0)
 and ships the runtime-semantics fixes below. See
-[`docs/migration-0.10.md`](docs/migration-0.10.md) for the upgrade flow.
+[Upgrading](https://deveworld.github.io/cobble/docs/upgrading.html#09-to-010)
+for the upgrade flow.
 
 ### Minecraft 26.3
 - The single supported target moves from Minecraft Java Edition 26.1.2 (pack

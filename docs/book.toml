@@ -1,0 +1,17 @@
+[book]
+title = "Cobble"
+description = "A Python-like language for Minecraft Java Edition data packs"
+language = "en"
+src = "src"
+
+[output.html]
+site-url = "/cobble/docs/"
+git-repository-url = "https://github.com/deveworld/cobble"
+edit-url-template = "https://github.com/deveworld/cobble/edit/main/docs/{path}"
+default-theme = "coal"
+preferred-dark-theme = "coal"
+additional-css = ["theme/cobble.css"]
+no-section-label = true
+
+[output.html.fold]
+enable = false

@@ -11,7 +11,7 @@ const markdownFiles = [
   "README.md",
   "CHANGELOG.md",
   "PLAN.md",
-  ...(await filesIn(path.join(repoRoot, "docs"), ".md"))
+  ...(await filesIn(path.join(repoRoot, "docs", "src"), ".md"))
 ].map((file) => path.resolve(repoRoot, file));
 
 const expectedStaticFiles = [
@@ -20,11 +20,14 @@ const expectedStaticFiles = [
   "out/404.html",
   "out/wasm/cobble_web_wasm_bg.wasm",
   "out/cobble-workshop.jpg",
-  "out/icon.svg"
+  "out/icon.svg",
+  "out/docs/index.html",
+  "out/docs/language/variables.html"
 ];
 const checkWebExport = process.env.COBBLE_LINK_CHECK_WEB_EXPORT !== "0";
 
 const errors = [];
+const anchorCache = new Map();
 
 for (const file of markdownFiles) {
   await checkMarkdownFile(file);
@@ -70,13 +73,13 @@ async function checkMarkdownFile(file) {
         continue;
       }
 
-      const [fileTarget] = target.split("#");
-      if (!fileTarget) {
-        continue;
-      }
-      const resolved = path.resolve(path.dirname(file), fileTarget);
+      const [fileTarget, anchor] = target.split("#");
+      const resolved = fileTarget ? path.resolve(path.dirname(file), fileTarget) : file;
+      const location = `${path.relative(repoRoot, file)}:${index + 1}`;
       if (!existsSync(resolved)) {
-        errors.push(`${path.relative(repoRoot, file)}:${index + 1}: missing link target ${target}`);
+        errors.push(`${location}: missing link target ${target}`);
+      } else if (anchor && resolved.endsWith(".md") && !(await anchorsOf(resolved)).has(anchor)) {
+        errors.push(`${location}: missing heading for ${target}`);
       }
     }
   }
@@ -87,11 +90,34 @@ function normalizeLinkTarget(target) {
 }
 
 function shouldSkipLink(target) {
-  return (
-    target.startsWith("#") ||
-    /^[a-z][a-z0-9+.-]*:/i.test(target) ||
-    target.startsWith("//")
-  );
+  return /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//");
+}
+
+// Heading ids as mdBook and GitHub generate them: lowercase, punctuation
+// dropped, spaces turned into hyphens.
+async function anchorsOf(file) {
+  if (!anchorCache.has(file)) {
+    const anchors = new Set();
+    let inCodeFence = false;
+    for (const line of (await readFile(file, "utf8")).split(/\r?\n/)) {
+      if (line.trimStart().startsWith("```")) {
+        inCodeFence = !inCodeFence;
+        continue;
+      }
+      const heading = !inCodeFence && /^#{1,6}\s+(.*)$/.exec(line);
+      if (heading) {
+        anchors.add(
+          heading[1]
+            .trim()
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+            .replace(/\s/g, "-")
+        );
+      }
+    }
+    anchorCache.set(file, anchors);
+  }
+  return anchorCache.get(file);
 }
 
 async function filesIn(directory, extension) {
@@ -100,7 +126,9 @@ async function filesIn(directory, extension) {
   for (const entry of entries) {
     const file = path.join(directory, entry);
     const metadata = await stat(file);
-    if (metadata.isFile() && file.endsWith(extension)) {
+    if (metadata.isDirectory()) {
+      files.push(...(await filesIn(file, extension)));
+    } else if (metadata.isFile() && file.endsWith(extension)) {
       files.push(path.relative(repoRoot, file));
     }
   }

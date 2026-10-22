@@ -39,3 +39,6 @@ desktop.ini
 /data/
 
 .serena/
+
+# mdBook output
+/docs/book/

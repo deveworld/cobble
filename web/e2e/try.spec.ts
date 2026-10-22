@@ -210,3 +210,18 @@ test("try page reports browser-only import diagnostics", async ({ page }) => {
     "The browser compiler accepts one in-memory Cobble file"
   );
 });
+
+test("home page links to the documentation book", async ({ page }) => {
+  await page.goto("/cobble/");
+  await page.getByRole("link", { name: "Docs" }).click();
+
+  await expect(page).toHaveURL(/\/cobble\/docs\/$/);
+  await expect(page.locator("main").getByRole("heading", { level: 1, name: "Cobble" })).toBeVisible();
+
+  await page
+    .getByRole("navigation", { name: "Table of contents" })
+    .getByRole("link", { name: "Variables", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/cobble\/docs\/language\/variables\.html$/);
+  await expect(page.getByRole("heading", { name: "Persistent Variables" })).toBeVisible();
+});

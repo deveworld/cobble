@@ -66,7 +66,7 @@ export function CobbleHome() {
               <Terminal size={16} />
               <span>Try</span>
             </Link>
-            <a className="nav-link" href="https://github.com/deveworld/cobble/tree/main/docs">
+            <a className="nav-link" href={`${basePath}/docs/`}>
               <BookOpen size={16} />
               <span>Docs</span>
             </a>
