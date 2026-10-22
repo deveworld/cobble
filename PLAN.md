@@ -3,9 +3,9 @@
 ## Status
 
 - Last updated: 2026-10-22
-- Current stable release: `0.9.0`
-- Next release: `0.10.0` (committed, not yet released)
-- Planned after that: `0.11.0`, then `1.0.0`
+- Current stable release: `0.10.0` (2026-10-22)
+- Next release: `0.11.0` (planned)
+- Planned after that: `1.0.0`
 - Active pre-release: none
 - Current Minecraft target: Java Edition `26.3`
 - Current data pack format: `121.0`
@@ -124,9 +124,7 @@ QA when EULA acceptance is available.
 
 ### Release Sequence
 
-- `0.7.1` to `0.9.0`: released; see Shipped Releases below.
-- `0.10.0`: Minecraft 26.3 target and runtime-semantics fixes. Committed,
-  waiting for the release steps.
+- `0.7.1` to `0.10.0`: released; see Shipped Releases below.
 - `0.11.0`: pack isolation and persistent state, the last planned change to
   generated output before 1.0 locks it.
 - `1.0.0`: long-term compatibility contract for language behavior, CLI
@@ -166,35 +164,15 @@ Rules for every 0.x release:
   resource-pack beta, stdlib v3, CLI and tooling contracts, and experimental
   plugins, Python-compatibility reports, and migrations
   (`docs/09-plan.md`).
+- `0.10.0` (2026-10-22): Minecraft Java Edition 26.3 target (pack format
+  `121.0`) and runtime-semantics fixes, practical packs in `examples/`, and
+  the showcase self-test in the server gate (`docs/migration-0.10.md`).
 
 Carried forward from those plans and still open:
 
 - Workflow profiles (`[profiles.<name>]`, `build --profile`,
   `watch --profile`). Profiles must never change language semantics, parser
   behavior, stdlib version, or Minecraft target.
-
-### 0.10.0: Minecraft 26.3
-
-Status: committed on `main`, not yet released. Contents are in the
-`[0.10.0]` section of `CHANGELOG.md`; the upgrade flow is in
-`docs/migration-0.10.md`.
-
-- Single supported target moves to Minecraft Java Edition 26.3 (pack format
-  `121.0`).
-- Runtime-semantics fixes found with the command simulator, the showcase
-  self-test, and the practical examples.
-- `examples/` now holds practical packs (`lobby`, `parkour`, `magic_items`);
-  release fixtures live in `tests/fixtures/projects/`.
-- The optional Purpur server gate runs the `showcase` fixture's in-game
-  self-test.
-
-Remaining release steps:
-
-- Run the 0.10.0 aggregate gate (`docs/qa.md`) and the server gate.
-- Set the release date in `CHANGELOG.md`.
-- Push `main` (this deploys the website), tag `v0.10.0`, publish
-  `cobble-lang` to crates.io, and write the GitHub release.
-- Check the website and `/try` against the released CLI.
 
 ### 0.11.0: Pack Isolation And Persistent State
 
@@ -652,13 +630,11 @@ Settled by shipped releases:
 
 ## Current Priority Order
 
-1. Release 0.10.0: run the aggregate and server gates, set the release date,
-   push, tag, publish to crates.io, and check the website and `/try`.
-2. Decide the 0.11.0 design questions in the Decision Backlog.
-3. Implement per-pack runtime state and persistent variables with snapshot,
+1. Decide the 0.11.0 design questions in the Decision Backlog.
+2. Implement per-pack runtime state and persistent variables with snapshot,
    simulator, and server-gate tests, plus migration notes.
-4. Release 0.11.0 and re-verify the practical examples on a real server.
-5. Start the 1.0.0 compatibility audit (Phase 0) on top of 0.11.0.
-6. Keep plugin APIs, package management, full resource-pack pipelines,
+3. Release 0.11.0 and re-verify the practical examples on a real server.
+4. Start the 1.0.0 compatibility audit (Phase 0) on top of 0.11.0.
+5. Keep plugin APIs, package management, full resource-pack pipelines,
    arbitrary Python/eval, and multi-target behavior deferred until the
    relevant 1.x design work exists.
