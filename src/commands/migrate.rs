@@ -1156,10 +1156,8 @@ fn temp_objective_column(raw_line: &str) -> Option<usize> {
     let line = raw_line.trim();
     let (command, offset_in_line) = if let Some(command) = line.strip_prefix('/') {
         (command.to_string(), 1)
-    } else if let Some(header) = line.strip_suffix(':') {
-        (format!("execute {header} run say"), 0)
     } else {
-        return None;
+        (format!("execute {} run say", line.strip_suffix(':')?), 0)
     };
     let mapped = vars_objective::map_command(&command, MARK);
     let index = mapped.find(MARK)?;
