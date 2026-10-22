@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-10-20
+## [0.10.0] - 2026-10-22
 
 Cobble 0.10.0 targets Minecraft Java Edition 26.3 (data pack format 121.0)
 and ships the runtime-semantics fixes below. See
@@ -371,6 +371,15 @@ and ships the runtime-semantics fixes below. See
 - `cobble clean --output <DIR>` now enforces the same project-ownership
   marker check as the default clean path, so one project can no longer clean
   another project's marked output.
+
+### Known Limitations
+- Numeric variables of every Cobble pack share the `temp` scoreboard
+  objective, so two Cobble packs on one server that use the same module
+  variable name overwrite each other. Per-pack objectives are planned for
+  0.11.0.
+- Module-level variables are reset whenever the pack loads (`/reload` or a
+  server start). Keep values that must persist in your own scoreboard
+  objectives; opt-in persistent variables are planned for 0.11.0.
 
 ### Versioning
 - This release changes the public serde AST shape (`Assignment.target_expr`
