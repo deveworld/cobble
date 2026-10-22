@@ -25,12 +25,15 @@ def announce():
 
 In `tellraw` and `title`, a `{variable}` inside a JSON `text` field or a JSON
 array string becomes a score or NBT text component. The styling of the
-surrounding text is kept.
+surrounding text is kept. A `/say` line with a `{variable}` becomes a
+`tellraw @a` command with the same components. Unlike `say`, that message has
+no `[name]` prefix, and selectors in it such as `@s` appear as plain text.
 
 ## Placeholders
 
-`{name}` inserts a function parameter, a loop variable, a constant, or a Cobble
-variable into a raw command:
+`{name}` inserts a function parameter, a constant, or the variable of a loop
+that Cobble expands at compile time (see
+[For Loops](control-flow.md#for-loops)) into a raw command:
 
 ```python
 def teleport_player(player, x, y, z):
@@ -39,8 +42,23 @@ def teleport_player(player, x, y, z):
 ```
 
 Function parameters become macro arguments, so that line compiles to a macro
-line such as `$tp $(player) $(x) $(y) $(z)`. Constants are substituted at
-compile time.
+line such as `$tp $(player) $(x) $(y) $(z)`. Constants and the values of those
+loops are substituted at compile time.
+
+A Cobble variable, including the variable of a runtime loop, works as a
+placeholder only in `say`, `tellraw`, and `title` text, as described under
+[JSON Text](#json-text). In any other command it is a compile error. To use a
+variable's value there, pass it to a function parameter:
+
+```python
+count = 3
+
+def give_diamonds(amount):
+    /give @a minecraft:diamond {amount}
+
+def reward():
+    give_diamonds(count)
+```
 
 Unknown, invalid, and unclosed placeholders are errors. Write `{{` and `}}` for
 literal braces:

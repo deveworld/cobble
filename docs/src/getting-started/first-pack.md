@@ -47,6 +47,10 @@ Copy or build the pack into a world's `datapacks/` folder:
 cobble build -o ~/.minecraft/saves/MyWorld/datapacks/my_datapack
 ```
 
+`~/.minecraft` is the Linux location. On Windows it is `%APPDATA%\.minecraft`
+(`$env:APPDATA\.minecraft` in PowerShell), and on macOS
+`~/Library/Application\ Support/minecraft`.
+
 Then, in the world:
 
 ```text
