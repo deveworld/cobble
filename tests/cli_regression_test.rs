@@ -1843,18 +1843,9 @@ fn cli_build_dry_run_does_not_write_final_output() {
 #[test]
 fn cli_build_dry_run_validate_reports_validation_summary() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let commands_json = PathBuf::from("data/commands.json");
-    if !commands_json.exists()
-        && std::env::var("COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD").as_deref() == Ok("0")
-    {
-        // Same skip convention as tests/validation_test.rs: without the real
-        // command tree, --validate would download a Mojang server.jar and run
-        // java --reports, which hermetic CI disables via this env variable.
-        eprintln!(
-            "Skipping cli_build_dry_run_validate_reports_validation_summary: data/commands.json not found and auto-download is disabled"
-        );
-        return;
-    }
+    // A fixture tree keeps this test off the real data/commands.json, which
+    // needs network access, curl, and Java to generate.
+    let commands_json = write_say_commands_json(temp_dir.path());
     let input = write_source(temp_dir.path(), "def main():\n    /say valid\n");
     let output_dir = temp_dir.path().join("output");
 

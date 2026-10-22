@@ -110,10 +110,11 @@ web gate covers every page in `docs/src/`, including links to headings.
 ## Command Tree Check
 
 `--validate` needs `data/commands.json`, which Cobble generates by downloading
-the Minecraft server jar and running `java --reports`. Tests use local
-fixtures, and CI sets `COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD=0` so tests that
-need the tree skip. Before a release, check the live download path from an
-empty directory:
+the Minecraft server jar and running `java --reports`. Tests that need the tree
+skip when `data/commands.json` is missing, so `cargo test` also runs on a fresh
+clone without Java. CI also sets `COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD=0`, so a
+`--validate` run without the tree fails instead of downloading the jar. Before a
+release, check the live download path from an empty directory:
 
 ```bash
 REPO=/path/to/cobble

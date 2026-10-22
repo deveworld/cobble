@@ -32,10 +32,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # data/commands.json is gitignored; without this, tests that pass
-      # --validate would download a Mojang server.jar and run `java --reports`
-      # to regenerate it (an undeclared network/Java dependency). Disabling
-      # auto-download makes those tests skip when the file is absent.
+      # data/commands.json is gitignored. Tests that need it skip when it is
+      # missing; this setting makes any other --validate run fail instead of
+      # downloading a Mojang server.jar and running `java --reports`.
       COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD: "0"
 
     steps:
