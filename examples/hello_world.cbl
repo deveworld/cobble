@@ -1,7 +1,6 @@
 # Hello World Example
 # A simple example showing basic Cobble syntax
 
-import stdlib
 from stdlib import event
 
 def hello():

@@ -222,8 +222,7 @@ fn templates() -> &'static [InitTemplate] {
             default: true,
             experimental_plugins: false,
             extra_files: &[],
-            source: r#"import stdlib
-from stdlib import event
+            source: r#"from stdlib import event
 
 def init():
     """Initialize the data pack"""
@@ -249,8 +248,7 @@ stdlib.addEventListener(event.TICK, tick)
             default: false,
             experimental_plugins: false,
             extra_files: &[],
-            source: r#"import stdlib
-from stdlib import event
+            source: r#"from stdlib import event, score, score.objective, bossbar
 
 def init():
     /tellraw @a {"text":"Cobble validation-ready pack loaded","color":"green"}
@@ -274,8 +272,7 @@ stdlib.addEventListener(event.TICK, tick)
             default: false,
             experimental_plugins: false,
             extra_files: &[],
-            source: r#"import stdlib
-from stdlib import event
+            source: r#"from stdlib import event, datapack
 
 datapack.item_tag("reward_items", ["minecraft:diamond", "minecraft:emerald"])
 datapack.block_tag("building_blocks", ["minecraft:stone", "minecraft:deepslate"])
@@ -312,8 +309,7 @@ stdlib.addEventListener(event.LOAD, init)
             default: false,
             experimental_plugins: false,
             extra_files: &[],
-            source: r#"import stdlib
-from stdlib import event
+            source: r#"from stdlib import event
 
 @Players = @a[gamemode=!spectator]
 
@@ -413,6 +409,21 @@ mod tests {
         let source = fs::read_to_string(project_dir.join("src/main.cbl")).unwrap();
         assert!(source.contains("def main():"));
         assert!(!source.contains("import stdlib"));
+    }
+
+    #[test]
+    fn templates_import_stdlib_modules_explicitly() {
+        // `cobble migrate` flags a bare `import stdlib` as a legacy import.
+        for template in templates() {
+            assert!(
+                !template
+                    .source
+                    .lines()
+                    .any(|line| line.trim() == "import stdlib"),
+                "template {} uses a bare `import stdlib`",
+                template.name
+            );
+        }
     }
 
     #[test]

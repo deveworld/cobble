@@ -14,7 +14,6 @@ Module-level Cobble variables are reset on every load, so they only hold
 per-session state such as the tick counter below.
 """
 
-import stdlib
 from stdlib import event, datapack, item_component, text
 from config import SAFE_RADIUS, TIP_INTERVAL_TICKS
 from commands import use_menu, use_spawn, use_stats

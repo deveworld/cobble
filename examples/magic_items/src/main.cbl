@@ -8,7 +8,6 @@ Craft them (see items.cbl for the recipes) or, as an operator, get all three
 with `/function magic_items:give_all`.
 """
 
-import stdlib
 from stdlib import event, datapack, text
 from config import BLINK_COOLDOWN_TICKS, HEAL_COOLDOWN_TICKS, FROST_COOLDOWN_TICKS
 from abilities import blink, heal, frost

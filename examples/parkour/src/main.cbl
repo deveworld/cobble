@@ -19,7 +19,6 @@ Running (everyone):
 Times and records are scoreboards, so they survive /reload and restarts.
 """
 
-import stdlib
 from stdlib import event, datapack
 from config import TOUCH_RADIUS
 from run import start_run, run_tick, use_restart, use_leave

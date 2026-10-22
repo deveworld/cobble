@@ -22,8 +22,7 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const examples = [
   {
     title: "Load Events",
-    code: `import stdlib
-from stdlib import event
+    code: `from stdlib import event, text
 
 def on_load():
     text.tellraw("@a", text.colored("Ready", "green"))

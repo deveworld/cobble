@@ -62,8 +62,7 @@ def reward_player():
   {
     name: "Stdlib Events",
     namespace: "events_demo",
-    source: `import stdlib
-from stdlib import event
+    source: `from stdlib import event
 
 def load():
     /tellraw @a {"text":"Events ready","color":"green"}
