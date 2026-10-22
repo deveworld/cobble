@@ -79,22 +79,28 @@ def use_stdlib():
     assert!(content.contains(r#"title @a title {"text":"Ready"}"#));
     assert!(content.contains(r#"title @a subtitle {"bold":true,"text":"Go"}"#));
     assert!(content.contains(r#"title @a actionbar {"text":"Running"}"#));
-    assert!(content.contains("scoreboard players set points temp 10"));
-    assert!(content.contains("scoreboard players add points temp 5"));
-    assert!(content.contains("scoreboard players remove points temp 2"));
-    assert!(content.contains("scoreboard players operation backup temp = points temp"));
-    assert!(content.contains("scoreboard players operation points temp += backup temp"));
-    assert!(content.contains("execute store result score roll temp run random value 1..6"));
-    assert!(content.contains("execute store result score coin temp run random value 0..1"));
-    assert!(content.contains("scoreboard players set cooldown temp 20"));
+    assert!(content.contains("scoreboard players set points stdlib_v1.vars 10"));
+    assert!(content.contains("scoreboard players add points stdlib_v1.vars 5"));
+    assert!(content.contains("scoreboard players remove points stdlib_v1.vars 2"));
+    assert!(content
+        .contains("scoreboard players operation backup stdlib_v1.vars = points stdlib_v1.vars"));
+    assert!(content
+        .contains("scoreboard players operation points stdlib_v1.vars += backup stdlib_v1.vars"));
+    assert!(
+        content.contains("execute store result score roll stdlib_v1.vars run random value 1..6")
+    );
+    assert!(
+        content.contains("execute store result score coin stdlib_v1.vars run random value 0..1")
+    );
+    assert!(content.contains("scoreboard players set cooldown stdlib_v1.vars 20"));
     assert!(content.contains(
-        "execute if score cooldown temp matches 1.. run scoreboard players remove cooldown temp 1"
+        "execute if score cooldown stdlib_v1.vars matches 1.. run scoreboard players remove cooldown stdlib_v1.vars 1"
     ));
-    assert!(content.contains("scoreboard players set cooldown_done temp 0"));
+    assert!(content.contains("scoreboard players set cooldown_done stdlib_v1.vars 0"));
     assert!(content.contains(
-        "execute if score cooldown temp matches ..0 run scoreboard players set cooldown_done temp 1"
+        "execute if score cooldown stdlib_v1.vars matches ..0 run scoreboard players set cooldown_done stdlib_v1.vars 1"
     ));
-    assert!(content.contains("scoreboard players reset cooldown temp"));
+    assert!(content.contains("scoreboard players reset cooldown stdlib_v1.vars"));
     assert!(content
         .contains("data modify storage stdlib_v1:global status set value {ready:1b,count:3}"));
     assert!(
@@ -165,7 +171,7 @@ def helpers():
         .contains(r#"data modify storage stdlib_v1:global items insert 1 value "gold_ingot""#));
     assert!(content.contains("data get storage stdlib_v1:global items"));
     assert!(content.contains(
-        "execute store result score item_count temp run data get storage stdlib_v1:global items 1"
+        "execute store result score item_count stdlib_v1.vars run data get storage stdlib_v1:global items 1"
     ));
     assert!(
         content.contains("data modify storage stdlib_v1:global health set from entity @s Health")
@@ -314,7 +320,7 @@ def fixed_random():
     .unwrap();
 
     let content = read_function(&output_dir, "fixed_random");
-    assert!(content.contains("scoreboard players set fixed temp 4"));
+    assert!(content.contains("scoreboard players set fixed stdlib_v1.vars 4"));
     assert!(!content.contains("random value 4..4"), "{content}");
 }
 
@@ -374,21 +380,30 @@ def use_math():
 
     let helper = read_function(&output_dir, "_cobble_math_sqrt");
     assert!(!helper.contains("implementation placeholder"));
-    assert!(helper.contains("scoreboard players operation #sqrt_square math *= #sqrt_mid math"));
+    assert!(helper.contains(
+        "scoreboard players operation #sqrt_square stdlib_v1.vars *= #sqrt_mid stdlib_v1.vars"
+    ));
 
     let content = read_function(&output_dir, "use_math");
-    assert!(content.contains("scoreboard players set #math_input math 100"));
-    assert!(!content.contains("scoreboard players set #math_input temp 100"));
+    assert!(content.contains("scoreboard players set #math_input stdlib_v1.vars 100"));
     assert!(content.contains("function stdlib_v1:_cobble_math_sqrt"));
-    assert!(content.contains("scoreboard players operation root temp = #math_result math"));
+    assert!(content.contains(
+        "scoreboard players operation root stdlib_v1.vars = #math_result stdlib_v1.vars"
+    ));
     // Binary math arguments are staged into unique scratches and copied into
     // the shared helper inputs right before the call.
-    assert!(content.contains("scoreboard players set #math_arg_0 math 3"));
-    assert!(content.contains("scoreboard players set #math_arg_1 math 4"));
-    assert!(content.contains("scoreboard players operation #math_input math = #math_arg_0 math"));
-    assert!(content.contains("scoreboard players operation #math_input2 math = #math_arg_1 math"));
+    assert!(content.contains("scoreboard players set #math_arg_0 stdlib_v1.vars 3"));
+    assert!(content.contains("scoreboard players set #math_arg_1 stdlib_v1.vars 4"));
+    assert!(content.contains(
+        "scoreboard players operation #math_input stdlib_v1.vars = #math_arg_0 stdlib_v1.vars"
+    ));
+    assert!(content.contains(
+        "scoreboard players operation #math_input2 stdlib_v1.vars = #math_arg_1 stdlib_v1.vars"
+    ));
     assert!(content.contains("function stdlib_v1:_cobble_math_min"));
-    assert!(content.contains("scoreboard players operation lower temp = #math_result math"));
+    assert!(content.contains(
+        "scoreboard players operation lower stdlib_v1.vars = #math_result stdlib_v1.vars"
+    ));
 }
 
 #[test]

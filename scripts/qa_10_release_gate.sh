@@ -179,8 +179,8 @@ assert_json_field \
   'data["schema_version"] == 1 and data["ok"] is True and data["experimental_plugins"]["manifests_checked"] == 1 and data["experimental_plugins"]["manifests"][0]["name"] == "example_lints" and data["experimental_plugins"]["manifests"][0]["minimum_cobble_version"] == "'"$VERSION"'" and "example_lints.no_tellraw" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "example_lints.no_raw_op" in data["experimental_plugins"]["manifests"][0]["diagnostic_rules"] and "emit_diagnostics" in data["experimental_plugins"]["manifests"][0]["capabilities"] and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_tellraw" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"]) and any(diagnostic["plugin"] == "example_lints" and diagnostic["plugin_kind"] == "declarative-rule" and "example_lints.no_raw_op" in diagnostic["message"] for diagnostic in data["experimental_plugins"]["diagnostics"])'
 
 migrate_json="$work_dir/migrate.json"
-echo "+ cargo run --locked --quiet -- migrate tests/fixtures/projects/resource_pack --json"
-cargo run --locked --quiet -- migrate tests/fixtures/projects/resource_pack --json >"$migrate_json"
+echo "+ cargo run --locked --quiet -- migrate tests/fixtures/projects/resource_pack --from 0.9 --to 0.10 --json"
+cargo run --locked --quiet -- migrate tests/fixtures/projects/resource_pack --from 0.9 --to 0.10 --json >"$migrate_json"
 assert_json_field \
   "migrate schema" \
   "$migrate_json" \

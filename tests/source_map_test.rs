@@ -574,19 +574,19 @@ def test():
         5,
     );
     assert_entry(
-        "scoreboard players set points temp 1",
+        "scoreboard players set points source_map.vars 1",
         GeneratedCommandKind::StdLib,
         7,
         5,
     );
     assert_entry(
-        "execute store result score roll temp run random value 1..6",
+        "execute store result score roll source_map.vars run random value 1..6",
         GeneratedCommandKind::StdLib,
         8,
         5,
     );
     assert_entry(
-        "scoreboard players set cooldown_done temp 0",
+        "scoreboard players set cooldown_done source_map.vars 0",
         GeneratedCommandKind::StdLib,
         9,
         5,
@@ -713,7 +713,7 @@ def test():
     let counter_entry = source_map
         .entries
         .iter()
-        .find(|entry| entry.command == "scoreboard players set counter temp 1")
+        .find(|entry| entry.command == "scoreboard players set counter source_map.vars 1")
         .expect("module-level counter init source map entry missing");
     assert_eq!(counter_entry.kind, GeneratedCommandKind::ControlFlow);
     let counter_source = counter_entry.source.as_ref().expect("source missing");

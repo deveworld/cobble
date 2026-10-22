@@ -28,7 +28,7 @@ def main():
     sim.call("main");
     assert_eq!(
         sim.function_text("main").lines().last().unwrap(),
-        r#"tellraw @a {"bold":true,"color":"red","extra":[{"score":{"name":"secs","objective":"temp"}},{"text":"s"}],"text":"Ready in "}"#
+        r#"tellraw @a {"bold":true,"color":"red","extra":[{"score":{"name":"secs","objective":"sim.vars"}},{"text":"s"}],"text":"Ready in "}"#
     );
 }
 
@@ -129,10 +129,10 @@ def main():
     assert_eq!(
         load_functions(&output_dir)["main"],
         [
-            "scoreboard players set reach temp 0",
-            "execute if score reach temp matches 0 run scoreboard players set reach temp 1",
-            "execute if score reach temp matches 1 run scoreboard players set reach temp 2",
-            "execute if score reach temp matches 2 run scoreboard players set reach temp 3",
+            "scoreboard players set reach sim.vars 0",
+            "execute if score reach sim.vars matches 0 run scoreboard players set reach sim.vars 1",
+            "execute if score reach sim.vars matches 1 run scoreboard players set reach sim.vars 2",
+            "execute if score reach sim.vars matches 2 run scoreboard players set reach sim.vars 3",
         ]
     );
 }

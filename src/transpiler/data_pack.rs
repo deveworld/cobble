@@ -169,6 +169,8 @@ pub struct DataPack {
     pub pack_format: PackFormat,
     pub stdlib: StdLib,
     pub used_objectives: HashSet<String>,
+    /// Whether `#true_const`/`#false_const` are set up in the init function.
+    pub uses_boolean_constants: bool,
     pub source_display_root: Option<PathBuf>,
     pub build_input: Option<BuildManifestInput>,
     pub project_root: Option<String>,
@@ -209,6 +211,7 @@ impl DataPack {
             pack_format: SUPPORTED_PACK_FORMAT,
             stdlib: StdLib::new(),
             used_objectives: HashSet::new(),
+            uses_boolean_constants: false,
             source_display_root: None,
             build_input: None,
             project_root: None,

@@ -1,9 +1,23 @@
 use super::{DataPack, GeneratedCommand, GeneratedCommandKind};
 use crate::stdlib::EventType;
+use crate::transpiler::vars_objective;
 
 impl DataPack {
+    /// Records an objective the init function must create. The source-level
+    /// `temp` objective is recorded as this pack's `<namespace>.vars`.
     pub fn track_objective(&mut self, objective: &str) {
-        self.used_objectives.insert(objective.to_string());
+        let objective = if objective == vars_objective::SOURCE_OBJECTIVE {
+            self.vars_objective()
+        } else {
+            objective.to_string()
+        };
+        self.used_objectives.insert(objective);
+    }
+
+    /// Records that the `#true_const`/`#false_const` holders are needed.
+    pub fn track_boolean_constants(&mut self) {
+        self.track_objective(vars_objective::SOURCE_OBJECTIVE);
+        self.uses_boolean_constants = true;
     }
 
     fn runtime_setup_commands(&self) -> Vec<String> {
@@ -15,25 +29,36 @@ impl DataPack {
             commands.push(format!("scoreboard objectives add {} dummy", objective));
         }
 
-        if self.used_objectives.contains("__internal__") {
-            commands.push("scoreboard players set #true_const __internal__ 1".to_string());
-            commands.push("scoreboard players set #false_const __internal__ 0".to_string());
+        if self.uses_boolean_constants {
+            commands.extend(self.boolean_constant_commands());
         }
 
         commands
     }
 
+    fn boolean_constant_commands(&self) -> [String; 2] {
+        let objective = self.vars_objective();
+        [
+            format!("scoreboard players set #true_const {objective} 1"),
+            format!("scoreboard players set #false_const {objective} 0"),
+        ]
+    }
+
     fn is_runtime_setup_command(&self, command: &str) -> bool {
-        Self::is_runtime_setup_command_for(&self.used_objectives, command)
+        Self::is_runtime_setup_command_for(
+            &self.used_objectives,
+            &self.boolean_constant_commands(),
+            command,
+        )
     }
 
     fn is_runtime_setup_command_for(
         used_objectives: &std::collections::HashSet<String>,
+        boolean_constants: &[String; 2],
         command: &str,
     ) -> bool {
         if command == "gamerule max_command_sequence_length 1000000000"
-            || command == "scoreboard players set #true_const __internal__ 1"
-            || command == "scoreboard players set #false_const __internal__ 0"
+            || boolean_constants.iter().any(|constant| constant == command)
         {
             return true;
         }
@@ -64,6 +89,7 @@ impl DataPack {
         if let Some(init_func_name) = load_handlers.first().cloned() {
             let setup_commands = self.runtime_setup_commands();
             let used_objectives = self.used_objectives.clone();
+            let boolean_constants = self.boolean_constant_commands();
             // Add objectives to the beginning of the load function
             if let Some(commands) = self.functions.get_mut(&init_func_name) {
                 let original_commands = commands.clone();
@@ -75,7 +101,11 @@ impl DataPack {
                 let mut updated_commands = setup_commands.clone();
                 let mut kept_entries = Vec::new();
                 for (old_index, command) in original_commands.into_iter().enumerate() {
-                    if Self::is_runtime_setup_command_for(&used_objectives, &command) {
+                    if Self::is_runtime_setup_command_for(
+                        &used_objectives,
+                        &boolean_constants,
+                        &command,
+                    ) {
                         continue;
                     }
                     kept_entries.push((old_index, command.clone()));
@@ -137,77 +167,77 @@ impl DataPack {
         match op {
             "abs" => {
                 commands.push(
-                    "scoreboard players operation #math_result math = #math_input math".to_string(),
+                    "scoreboard players operation #math_result temp = #math_input temp".to_string(),
                 );
-                commands.push("scoreboard players set #math_temp math -1".to_string());
-                commands.push("execute if score #math_result math matches ..-1 run scoreboard players operation #math_result math *= #math_temp math".to_string());
+                commands.push("scoreboard players set #math_temp temp -1".to_string());
+                commands.push("execute if score #math_result temp matches ..-1 run scoreboard players operation #math_result temp *= #math_temp temp".to_string());
             }
             "min" => {
                 commands.push(
-                    "scoreboard players operation #math_result math = #math_input math".to_string(),
+                    "scoreboard players operation #math_result temp = #math_input temp".to_string(),
                 );
-                commands.push("execute if score #math_input2 math < #math_result math run scoreboard players operation #math_result math = #math_input2 math".to_string());
+                commands.push("execute if score #math_input2 temp < #math_result temp run scoreboard players operation #math_result temp = #math_input2 temp".to_string());
             }
             "max" => {
                 commands.push(
-                    "scoreboard players operation #math_result math = #math_input math".to_string(),
+                    "scoreboard players operation #math_result temp = #math_input temp".to_string(),
                 );
-                commands.push("execute if score #math_input2 math > #math_result math run scoreboard players operation #math_result math = #math_input2 math".to_string());
+                commands.push("execute if score #math_input2 temp > #math_result temp run scoreboard players operation #math_result temp = #math_input2 temp".to_string());
             }
             "sqrt" => {
-                commands.push("scoreboard players set #math_result math 0".to_string());
+                commands.push("scoreboard players set #math_result temp 0".to_string());
                 commands.push(
-                    "scoreboard players operation #sqrt_high math = #math_input math".to_string(),
+                    "scoreboard players operation #sqrt_high temp = #math_input temp".to_string(),
                 );
-                commands.push("scoreboard players set #sqrt_low math 0".to_string());
-                commands.push("scoreboard players set #sqrt_limit math 46340".to_string());
-                commands.push("scoreboard players set #sqrt_two math 2".to_string());
+                commands.push("scoreboard players set #sqrt_low temp 0".to_string());
+                commands.push("scoreboard players set #sqrt_limit temp 46340".to_string());
+                commands.push("scoreboard players set #sqrt_two temp 2".to_string());
                 commands.push(
-                    "execute if score #sqrt_high math matches ..-1 run scoreboard players set #sqrt_high math 0"
+                    "execute if score #sqrt_high temp matches ..-1 run scoreboard players set #sqrt_high temp 0"
                         .to_string(),
                 );
                 commands.push(
-                    "execute if score #sqrt_high math > #sqrt_limit math run scoreboard players operation #sqrt_high math = #sqrt_limit math"
+                    "execute if score #sqrt_high temp > #sqrt_limit temp run scoreboard players operation #sqrt_high temp = #sqrt_limit temp"
                         .to_string(),
                 );
 
                 for _ in 0..16 {
                     commands.push(
-                        "scoreboard players operation #sqrt_mid math = #sqrt_low math".to_string(),
+                        "scoreboard players operation #sqrt_mid temp = #sqrt_low temp".to_string(),
                     );
                     commands.push(
-                        "scoreboard players operation #sqrt_mid math += #sqrt_high math"
+                        "scoreboard players operation #sqrt_mid temp += #sqrt_high temp"
                             .to_string(),
                     );
                     commands.push(
-                        "scoreboard players operation #sqrt_mid math /= #sqrt_two math".to_string(),
+                        "scoreboard players operation #sqrt_mid temp /= #sqrt_two temp".to_string(),
                     );
                     commands.push(
-                        "scoreboard players operation #sqrt_square math = #sqrt_mid math"
+                        "scoreboard players operation #sqrt_square temp = #sqrt_mid temp"
                             .to_string(),
                     );
                     commands.push(
-                        "scoreboard players operation #sqrt_square math *= #sqrt_mid math"
+                        "scoreboard players operation #sqrt_square temp *= #sqrt_mid temp"
                             .to_string(),
                     );
                     commands.push(
-                        "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #math_result math = #sqrt_mid math"
+                        "execute if score #sqrt_square temp <= #math_input temp run scoreboard players operation #math_result temp = #sqrt_mid temp"
                             .to_string(),
                     );
                     commands.push(
-                        "execute if score #sqrt_square math <= #math_input math run scoreboard players operation #sqrt_low math = #sqrt_mid math"
+                        "execute if score #sqrt_square temp <= #math_input temp run scoreboard players operation #sqrt_low temp = #sqrt_mid temp"
                             .to_string(),
                     );
                     commands.push(
-                        "execute if score #sqrt_square math <= #math_input math run scoreboard players add #sqrt_low math 1"
+                        "execute if score #sqrt_square temp <= #math_input temp run scoreboard players add #sqrt_low temp 1"
                             .to_string(),
                     );
                     commands.push(
-                        "execute if score #sqrt_square math > #math_input math run scoreboard players operation #sqrt_high math = #sqrt_mid math"
+                        "execute if score #sqrt_square temp > #math_input temp run scoreboard players operation #sqrt_high temp = #sqrt_mid temp"
                             .to_string(),
                     );
                     commands.push(
-                        "execute if score #sqrt_square math > #math_input math run scoreboard players remove #sqrt_high math 1"
+                        "execute if score #sqrt_square temp > #math_input temp run scoreboard players remove #sqrt_high temp 1"
                             .to_string(),
                     );
                 }

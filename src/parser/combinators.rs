@@ -550,6 +550,21 @@ fn token_parser_with_spans<'a>(
                     target: assignment_target_name(&target_expr),
                     target_expr: Some(target_expr),
                     value,
+                    persist: false,
+                })
+            });
+
+        // Persistent module variable: persist NAME = value
+        let persist_assignment = select_ref! { Token::Ident(s) if s == "persist" => () }
+            .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+            .then_ignore(just(&Token::Equals))
+            .then(expr.clone())
+            .map(|(target, value)| {
+                Statement::Assignment(Assignment {
+                    target: target.clone(),
+                    target_expr: Some(Expression::Identifier(target)),
+                    value,
+                    persist: true,
                 })
             });
 
@@ -584,6 +599,7 @@ fn token_parser_with_spans<'a>(
                     target,
                     target_expr: Some(target_expr.clone()),
                     value: Expression::Binary(Box::new(target_expr), op, Box::new(value)),
+                    persist: false,
                 })
             });
 
@@ -1011,6 +1027,7 @@ fn token_parser_with_spans<'a>(
             entity_def,
             create_entity,
             const_assignment,
+            persist_assignment,
             compound_assignment,
             assignment,
             expr_stmt,
@@ -1501,7 +1518,10 @@ impl<'a> SpanTreeBuilder<'a> {
                 self.scan_expression()?;
                 self.leaf_from(kind, start_index)
             }
-            Statement::Assignment(_) => {
+            Statement::Assignment(assignment) => {
+                if assignment.persist {
+                    self.expect(|token| matches!(token, Token::Ident(name) if name == "persist"))?;
+                }
                 self.scan_assignment()?;
                 self.leaf_from(kind, start_index)
             }

@@ -8,6 +8,7 @@ mod resource_format;
 mod source_map;
 mod statement_processors;
 mod storage_paths;
+pub mod vars_objective;
 
 // Public exports
 pub use data_pack::{
@@ -135,6 +136,7 @@ pub(in crate::transpiler) enum ModuleLevelAssignment {
         target: String,
         value: Expression,
         source: Option<SourceLocation>,
+        persist: bool,
     },
     StorageTarget {
         target_expr: Expression,
@@ -840,12 +842,16 @@ impl Transpiler {
                     target,
                     value,
                     source,
+                    persist,
                 } => {
                     let previous_source = self.current_statement_source.clone();
                     self.current_statement_source = source.clone();
                     let generated = self.module_variable_init_commands(&target, &value);
                     self.current_statement_source = previous_source;
-                    let generated = generated?;
+                    let mut generated = generated?;
+                    if persist {
+                        generated = self.guard_persistent_init(&target, generated, &source);
+                    }
                     Self::append_module_init_commands(
                         &mut init_commands,
                         &mut init_metadata,
@@ -874,6 +880,60 @@ impl Transpiler {
         }
 
         Ok((init_commands, init_metadata))
+    }
+
+    /// Wraps a `persist` variable's initializer so it only runs while the
+    /// value is unset. A multi-command initializer moves into a helper
+    /// function behind the same guard.
+    fn guard_persistent_init(
+        &mut self,
+        name: &str,
+        commands: Vec<String>,
+        source: &Option<SourceLocation>,
+    ) -> Vec<String> {
+        let namespace = self.data_pack.namespace.clone();
+        let guard = match self.variable_storage_paths.get(name) {
+            Some(path) => format!("unless data storage {namespace}:global {path}"),
+            None => format!("unless score {name} temp matches -2147483648.."),
+        };
+        if let [command] = commands.as_slice() {
+            return vec![format!("execute {guard} run {command}")];
+        }
+
+        let helper = format!("_cobble_persist_{}", self.next_temp_id());
+        let metadata = commands
+            .iter()
+            .enumerate()
+            .map(|(index, command)| {
+                (
+                    index,
+                    GeneratedCommand::new(
+                        command.clone(),
+                        source.clone(),
+                        GeneratedCommandKind::ControlFlow,
+                    ),
+                )
+            })
+            .collect();
+        self.data_pack
+            .add_function_with_metadata(helper.clone(), commands, metadata);
+        vec![format!("execute {guard} run function {namespace}:{helper}")]
+    }
+
+    /// Whether `value` can initialize a `persist` variable: a compile-time
+    /// number or boolean, or a string, list, or map literal of constants.
+    fn is_persist_initializer(&self, value: &Expression) -> bool {
+        if self.try_eval_const(value).is_some() {
+            return true;
+        }
+        match value {
+            Expression::String(_) => true,
+            Expression::Array(items) => items.iter().all(|item| self.is_persist_initializer(item)),
+            Expression::Map(entries) => entries
+                .iter()
+                .all(|(_, item)| self.is_persist_initializer(item)),
+            _ => false,
+        }
     }
 
     fn append_module_init_commands(
@@ -4084,9 +4144,9 @@ impl Transpiler {
         let input_var = "#math_input";
         // output_var is implied to be "#math_result" by convention in helpers
 
-        self.data_pack.track_objective("math");
+        self.data_pack.track_objective("temp");
         self.variable_objectives
-            .insert(input_var.to_string(), "math".to_string());
+            .insert(input_var.to_string(), "temp".to_string());
         self.scoreboard_variables.insert(input_var.to_string());
 
         // Evaluate argument
@@ -4113,11 +4173,11 @@ impl Transpiler {
         let input1 = "#math_input";
         let input2 = "#math_input2";
 
-        self.data_pack.track_objective("math");
+        self.data_pack.track_objective("temp");
         self.variable_objectives
-            .insert(input1.to_string(), "math".to_string());
+            .insert(input1.to_string(), "temp".to_string());
         self.variable_objectives
-            .insert(input2.to_string(), "math".to_string());
+            .insert(input2.to_string(), "temp".to_string());
         self.scoreboard_variables.insert(input1.to_string());
         self.scoreboard_variables.insert(input2.to_string());
 
@@ -4133,11 +4193,11 @@ impl Transpiler {
         cmds.extend(self.evaluate_expression_to_target(&args[0], &arg1_scratch)?);
         cmds.extend(self.evaluate_expression_to_target(&args[1], &arg2_scratch)?);
         cmds.push(format!(
-            "scoreboard players operation {} math = {} math",
+            "scoreboard players operation {} temp = {} temp",
             input1, arg1_scratch
         ));
         cmds.push(format!(
-            "scoreboard players operation {} math = {} math",
+            "scoreboard players operation {} temp = {} temp",
             input2, arg2_scratch
         ));
 
@@ -4331,6 +4391,7 @@ impl Transpiler {
                                     target: temp_var.clone(),
                                     target_expr: None,
                                     value: arg.clone(),
+                                    persist: false,
                                 };
                                 self.process_assignment(&assignment)?;
 
@@ -4464,9 +4525,9 @@ impl Transpiler {
         &mut self,
         condition: &Expression,
     ) -> Result<Expression, TranspileError> {
-        // Check if condition contains Boolean literals and track __internal__ objective
+        // Boolean literals read the `#true_const`/`#false_const` scores.
         if Self::contains_boolean_literal(condition) {
-            self.data_pack.track_objective("__internal__");
+            self.data_pack.track_boolean_constants();
         }
 
         // Check if the condition has a complex expression on the left side of a comparison
@@ -4816,12 +4877,12 @@ impl Transpiler {
         // always-false conditions fold to the internal `#true_const` /
         // `#false_const` scores; register their objective whenever the
         // translated condition reads them.
-        let mut reads_internal = false;
+        let mut reads_constants = false;
         translated.for_each_simple(&mut |text| {
-            reads_internal |= text.contains(" __internal__ ");
+            reads_constants |= text.contains("#true_const ") || text.contains("#false_const ");
         });
-        if reads_internal {
-            self.data_pack.track_objective("__internal__");
+        if reads_constants {
+            self.data_pack.track_boolean_constants();
         }
         Ok(translated)
     }

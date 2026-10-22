@@ -559,7 +559,7 @@ def util():
         "execute as @a if block ~ ~-1 ~ minecraft:stone[snowy=false] run say block",
         "execute as @a if function sim:util/check run say fn",
         "execute as @a if data storage sim:global vars.items[0] run say path",
-        "execute as @a if score x temp matches 2.. run say python",
+        "execute as @a if score x sim.vars matches 2.. run say python",
     ] {
         assert!(f.contains(expected), "missing `{expected}` in:\n{f}");
     }
@@ -778,8 +778,8 @@ def f():
 "#,
         &["alex", "steve"],
     );
-    sim.set_score("alex", "temp", 3);
-    sim.set_score("steve", "temp", 9);
+    sim.set_score("alex", "sim.vars", 3);
+    sim.set_score("steve", "sim.vars", 9);
     sim.call("f");
     assert_eq!(sim.log, vec!["steve: outside"]);
 }

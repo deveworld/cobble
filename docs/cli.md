@@ -312,8 +312,9 @@ metadata matches the project namespace and `project_id`.
 ### `cobble migrate`
 
 Report an experimental migration plan for moving Cobble projects between
-release tracks. The experimental path supports 0.8 to 0.10 and 0.9 to 0.10
-project inspection and a narrow config-only apply mode.
+release tracks. The experimental path inspects projects moving from 0.8, 0.9,
+or 0.10 to 0.11 (and from 0.8 or 0.9 to 0.10), with a narrow config-only apply
+mode.
 
 ```bash
 cobble migrate [PATH] [OPTIONS]
@@ -323,8 +324,10 @@ cobble migrate [PATH] [OPTIONS]
 - `PATH` - Project path or source file to inspect (default: current directory)
 
 **Options:**
-- `--from <VERSION>` - Cobble version to migrate from: `0.8` or `0.9` (default: `0.9`)
-- `--to <VERSION>` - Cobble version to migrate to (default: `0.10`)
+- `--from <VERSION>` - Cobble version to migrate from: `0.8`, `0.9`, or `0.10`
+  (default: `0.10`)
+- `--to <VERSION>` - Cobble version to migrate to: `0.10` or `0.11` (default:
+  `0.11`)
 - `--json` - Print a machine-readable report with `schema_version`, `ok`,
   `changed`, `from`, `to`, `apply`, `project_path`, `config`, `source`,
   `diagnostics`, and `actions`
@@ -334,8 +337,8 @@ cobble migrate [PATH] [OPTIONS]
 ```bash
 cobble migrate
 cobble migrate path/to/project
-cobble migrate --from 0.9 --to 0.10 --json
-cobble migrate --from 0.8 --to 0.10 --apply
+cobble migrate --json
+cobble migrate --from 0.9 --to 0.11 --apply
 ```
 
 `migrate` is explicitly experimental. Dry-run/report mode is the default, and
@@ -353,11 +356,14 @@ notes, resource-pack and Python compatibility experimental config notes, manual
 step reporting, and config-only apply. Reports also include config before/after
 change summaries and source-location details for migration-sensitive constructs
 such as `resource_pack.*`, legacy `import stdlib`, and unsupported Python-like
-syntax. Unsupported routes skip inspection, leave `changed` as `false`, and
-exit non-zero.
+syntax. Routes that end at 0.11 also list every raw command and execute header
+that names the `temp` objective (`temp-objective-reference`), with the total in
+`source.temp_objective_references`. Unsupported routes skip inspection, leave
+`changed` as `false`, and exit non-zero.
 
-See [`migration-0.10.md`](migration-0.10.md) for the 0.9 to 0.10 upgrade flow
-and [`migration-0.9.md`](migration-0.9.md) for the earlier 0.8 to 0.9 notes.
+See [`migration-0.11.md`](migration-0.11.md) for the 0.10 to 0.11 upgrade flow,
+[`migration-0.10.md`](migration-0.10.md) for 0.9 to 0.10, and
+[`migration-0.9.md`](migration-0.9.md) for the earlier 0.8 to 0.9 notes.
 
 ### `cobble clean`
 

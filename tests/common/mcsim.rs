@@ -125,9 +125,27 @@ impl Sim {
         sim
     }
 
+    /// Run the `minecraft:load` tag again, as `/reload` does.
+    pub fn reload(&mut self) {
+        for handler in self.load_tag.clone() {
+            self.call(&handler);
+        }
+    }
+
     /// Run a function by name with no executor and return its result.
     pub fn call(&mut self, name: &str) -> Option<i32> {
         self.run_function(name, &Context { executor: None }, None)
+    }
+
+    /// Run a function by name as `executor` and return its result.
+    pub fn call_as(&mut self, name: &str, executor: &str) -> Option<i32> {
+        self.run_function(
+            name,
+            &Context {
+                executor: Some(executor.to_string()),
+            },
+            None,
+        )
     }
 
     /// Set a score from test setup, creating its objective like a datapack
@@ -153,7 +171,7 @@ impl Sim {
     }
 
     pub fn var(&self, name: &str) -> i32 {
-        self.score(name, "temp")
+        self.score(name, "sim.vars")
     }
 
     pub fn try_score(&self, holder: &str, objective: &str) -> Option<i32> {
@@ -320,6 +338,17 @@ impl Sim {
                 "if" | "unless" => {
                     let negate = keyword == "unless";
                     let (kind, after) = after.split_once(' ').expect("condition kind");
+                    if kind == "data" {
+                        // `data storage <id> <path>`: passes when the path exists.
+                        let tokens: Vec<&str> = after.splitn(4, ' ').collect();
+                        assert_eq!(tokens[0], "storage", "only storage data conditions: {rest}");
+                        let present = self.storage_get(tokens[2]).is_some();
+                        if present == negate {
+                            contexts.clear();
+                        }
+                        rest = tokens.get(3).copied().expect("execute chain continues");
+                        continue;
+                    }
                     assert_eq!(kind, "score", "unsupported execute condition: {rest}");
                     let tokens: Vec<&str> = after.splitn(6, ' ').collect();
                     self.require_objective(tokens[1]);

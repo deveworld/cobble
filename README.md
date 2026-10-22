@@ -175,6 +175,7 @@ npm run dev
 - [Language Reference](https://github.com/deveworld/cobble/blob/main/docs/language.md)
 - [CLI Documentation](https://github.com/deveworld/cobble/blob/main/docs/cli.md)
 - [API Reference](https://github.com/deveworld/cobble/blob/main/docs/api.md)
+- [0.10 to 0.11 Migration Notes](https://github.com/deveworld/cobble/blob/main/docs/migration-0.11.md)
 - [0.9 to 0.10 Migration Notes](https://github.com/deveworld/cobble/blob/main/docs/migration-0.10.md)
 - [0.8 to 0.9 Migration Notes](https://github.com/deveworld/cobble/blob/main/docs/migration-0.9.md)
 - [Resource Authoring Cookbook](https://github.com/deveworld/cobble/blob/main/docs/resource-authoring-cookbook.md)

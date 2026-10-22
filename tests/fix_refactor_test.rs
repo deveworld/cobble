@@ -91,7 +91,7 @@ def check():
     );
     assert!(
         free.contains(
-            "execute as @a if score x temp matches 6.. if score y temp matches ..1 run say both"
+            "execute as @a if score x cobble.vars matches 6.. if score y cobble.vars matches ..1 run say both"
         ),
         "{free}"
     );
@@ -123,9 +123,11 @@ def check():
         "paren-free and parenthesized forms must match"
     );
     assert!(
-        free.contains("if score x temp matches 1 run scoreboard players set @s temp 1")
-            && free.contains("if score y temp matches 2 run scoreboard players set @s temp 1")
-            && free.contains("execute as @a if score @s temp matches 1 run say either"),
+        free.contains(
+            "if score x cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"
+        ) && free.contains(
+            "if score y cobble.vars matches 2 run scoreboard players set @s cobble.vars 1"
+        ) && free.contains("execute as @a if score @s cobble.vars matches 1 run say either"),
         "{free}"
     );
 }
@@ -154,7 +156,7 @@ def check():
         "paren-free and parenthesized forms must match"
     );
     assert!(
-        free.contains("execute as @a unless score done temp matches 1.. run say idle"),
+        free.contains("execute as @a unless score done cobble.vars matches 1.. run say idle"),
         "{free}"
     );
 }
@@ -183,7 +185,7 @@ def check():
         "paren-free and parenthesized forms must match"
     );
     assert!(
-        free.contains("execute as @a unless score x temp matches 3 run say differs"),
+        free.contains("execute as @a unless score x cobble.vars matches 3 run say differs"),
         "{free}"
     );
 }
@@ -201,7 +203,7 @@ def check():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "check");
     assert!(
-        content.contains("execute as @a if score @s temp matches 6.. run say high score"),
+        content.contains("execute as @a if score @s cobble.vars matches 6.. run say high score"),
         "{content}"
     );
 }
@@ -262,7 +264,7 @@ def lookup(key):
     );
     assert!(
         all_functions.contains(
-            "$execute store result score selected temp run data get storage cobble:global vars.config.$(key0)"
+            "$execute store result score selected cobble.vars run data get storage cobble:global vars.config.$(key0)"
         ),
         "{all_functions}"
     );
@@ -305,28 +307,28 @@ def main():
     let range_loop = read_function(&output, "for_range_temp_1");
     assert_eq!(
         range_loop,
-        "execute if score i temp < #for_range_stop_0 temp run function cobble:for_range_body_2\n\
-         execute if score i temp < #for_range_stop_0 temp run function cobble:for_range_temp_1\n"
+        "execute if score i cobble.vars < #for_range_stop_0 cobble.vars run function cobble:for_range_body_2\n\
+         execute if score i cobble.vars < #for_range_stop_0 cobble.vars run function cobble:for_range_temp_1\n"
     );
 
     let list_loop = read_function(&output, "for_list_temp_5");
     assert_eq!(
         list_loop,
-        "execute if score #for_list_index_3 temp < #for_list_len_4 temp run function cobble:for_list_body_6\n\
-         execute if score #for_list_index_3 temp < #for_list_len_4 temp run function cobble:for_list_temp_5\n"
+        "execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_body_6\n\
+         execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_temp_5\n"
     );
 
     let while_loop = read_function(&output, "while_temp_8");
     assert_eq!(
         while_loop,
-        "scoreboard players operation expr_cond_temp_9 temp = k temp\n\
-         scoreboard players set #multiplier temp 2\n\
-         scoreboard players operation expr_cond_temp_9 temp *= #multiplier temp\n\
-         execute if score expr_cond_temp_9 temp < n temp run function cobble:while_body_10\n\
-         scoreboard players operation expr_cond_temp_9 temp = k temp\n\
-         scoreboard players set #multiplier temp 2\n\
-         scoreboard players operation expr_cond_temp_9 temp *= #multiplier temp\n\
-         execute if score expr_cond_temp_9 temp < n temp run function cobble:while_temp_8\n"
+        "scoreboard players operation expr_cond_temp_9 cobble.vars = k cobble.vars\n\
+         scoreboard players set #multiplier cobble.vars 2\n\
+         scoreboard players operation expr_cond_temp_9 cobble.vars *= #multiplier cobble.vars\n\
+         execute if score expr_cond_temp_9 cobble.vars < n cobble.vars run function cobble:while_body_10\n\
+         scoreboard players operation expr_cond_temp_9 cobble.vars = k cobble.vars\n\
+         scoreboard players set #multiplier cobble.vars 2\n\
+         scoreboard players operation expr_cond_temp_9 cobble.vars *= #multiplier cobble.vars\n\
+         execute if score expr_cond_temp_9 cobble.vars < n cobble.vars run function cobble:while_temp_8\n"
     );
 
     let list_body = read_function(&output, "for_list_body_6");
@@ -334,7 +336,7 @@ def main():
     assert!(list_body.contains(
         "function cobble:_cobble_storage_dyn_7 with storage cobble:global _cobble_dyn_7"
     ));
-    assert!(list_body.ends_with("scoreboard players add #for_list_index_3 temp 1\n"));
+    assert!(list_body.ends_with("scoreboard players add #for_list_index_3 cobble.vars 1\n"));
 }
 
 #[test]
@@ -362,16 +364,16 @@ def check():
     let content = read_function(&output_dir, "check");
     assert_eq!(
         content,
-        "scoreboard players set folded temp 1\n\
-         scoreboard players set x temp 10\n\
-         scoreboard players set flag temp 0\n\
-         execute if score x temp matches 6.. run scoreboard players set flag temp 1\n\
-         scoreboard players add x temp 1\n\
-         scoreboard players set y temp 7\n\
-         scoreboard players operation y temp -= x temp\n\
+        "scoreboard players set folded cobble.vars 1\n\
+         scoreboard players set x cobble.vars 10\n\
+         scoreboard players set flag cobble.vars 0\n\
+         execute if score x cobble.vars matches 6.. run scoreboard players set flag cobble.vars 1\n\
+         scoreboard players add x cobble.vars 1\n\
+         scoreboard players set y cobble.vars 7\n\
+         scoreboard players operation y cobble.vars -= x cobble.vars\n\
          data modify storage cobble:global vars.items set value [1,2]\n\
          data modify storage cobble:global vars.copy set from storage cobble:global vars.items\n\
-         scoreboard players operation b temp = x temp\n"
+         scoreboard players operation b cobble.vars = x cobble.vars\n"
     );
 }
 
@@ -389,11 +391,11 @@ def take(p):
     let content = read_function(&output_dir, "take");
     assert_eq!(
         content,
-        "execute store result score q temp run data get storage cobble:global args.p\n\
-         execute store result score z temp run data get storage cobble:global args.p\n\
-         scoreboard players add z temp 1\n\
-         scoreboard players set #multiplier temp 2\n\
-         scoreboard players operation z temp *= #multiplier temp\n"
+        "execute store result score q cobble.vars run data get storage cobble:global args.p\n\
+         execute store result score z cobble.vars run data get storage cobble:global args.p\n\
+         scoreboard players add z cobble.vars 1\n\
+         scoreboard players set #multiplier cobble.vars 2\n\
+         scoreboard players operation z cobble.vars *= #multiplier cobble.vars\n"
     );
 }
 

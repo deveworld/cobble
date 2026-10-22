@@ -10,6 +10,9 @@ const MINECRAFT_VERSION: &str = "26.3";
 const PURPUR_BUILD: &str = "2652";
 const NAMESPACE: &str = "cobble_server_smoke";
 const SHOWCASE_NAMESPACE: &str = "cobble_showcase";
+/// Two packs built from the same source with different step sizes, so a
+/// shared objective would show up as mixed totals.
+const ISOLATION_PACKS: [(&str, usize); 2] = [("cobble_iso_a", 1), ("cobble_iso_b", 10)];
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -46,6 +49,18 @@ fn purpur_server_loads_and_runs_generated_datapack() {
         "Cobble language showcase with an in-game self-test suite",
         &datapacks_dir.join(SHOWCASE_NAMESPACE),
     );
+    for (namespace, step) in ISOLATION_PACKS {
+        let entry = temp.path().join(namespace).join("main.cbl");
+        fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        fs::write(&entry, isolation_source(step)).unwrap();
+        build_datapack(
+            &repo_root,
+            &entry,
+            namespace,
+            "Cobble pack isolation check",
+            &datapacks_dir.join(namespace),
+        );
+    }
 
     fs::write(
         server_dir.join("eula.txt"),
@@ -295,6 +310,23 @@ stdlib.addEventListener(event.LOAD, init)
     .unwrap();
 }
 
+/// Both isolation packs use the same variable names; `visits` persists across
+/// `/reload` and `round` resets.
+fn isolation_source(step: usize) -> String {
+    format!(
+        r#"persist visits = 0
+round = 0
+
+def bump():
+    """Adds this pack's step to both counters."""
+    global visits
+    global round
+    visits = visits + {step}
+    round = round + {step}
+"#
+    )
+}
+
 fn build_datapack(
     repo_root: &Path,
     entry: &Path,
@@ -442,6 +474,14 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         &format!("file/{SHOWCASE_NAMESPACE}"),
         COMMAND_TIMEOUT,
     )?;
+    for (namespace, _) in ISOLATION_PACKS {
+        wait_for_log(
+            child,
+            &log_path,
+            &format!("file/{namespace}"),
+            COMMAND_TIMEOUT,
+        )?;
+    }
 
     send_command(child, &format!("function {NAMESPACE}:probe"))?;
     wait_for_log(
@@ -521,8 +561,25 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
 
     run_showcase_selftest(child, &log_path)?;
 
+    for (namespace, _) in ISOLATION_PACKS {
+        send_command(child, &format!("function {namespace}:bump"))?;
+    }
+    for (namespace, step) in ISOLATION_PACKS {
+        let objective = format!("{namespace}.vars");
+        expect_score(child, &log_path, "round", &objective, step)?;
+        expect_score(child, &log_path, "visits", &objective, step)?;
+    }
+
     send_command(child, "reload")?;
     wait_for_log_count(child, &log_path, "Cobble quiet load ok", 2, COMMAND_TIMEOUT)?;
+
+    // After `/reload`, plain module variables are back at 0 and `persist`
+    // variables keep their values.
+    for (namespace, step) in ISOLATION_PACKS {
+        let objective = format!("{namespace}.vars");
+        expect_score(child, &log_path, "round", &objective, 0)?;
+        expect_score(child, &log_path, "visits", &objective, step)?;
+    }
 
     send_command(child, "data get storage cobble:server_smoke status")?;
     wait_for_log(
@@ -550,8 +607,9 @@ fn run_showcase_selftest(child: &mut Child, log_path: &Path) -> Result<(), Strin
     wait_for_log(child, log_path, "PASS schedule_once", COMMAND_TIMEOUT)?;
     thread::sleep(Duration::from_millis(500));
 
-    send_command(child, "scoreboard players get passed temp")?;
-    send_command(child, "scoreboard players get failed temp")?;
+    let objective = format!("{SHOWCASE_NAMESPACE}.vars");
+    send_command(child, &format!("scoreboard players get passed {objective}"))?;
+    send_command(child, &format!("scoreboard players get failed {objective}"))?;
     wait_for_log(child, log_path, "passed has ", COMMAND_TIMEOUT)?;
     wait_for_log(child, log_path, "failed has ", COMMAND_TIMEOUT)?;
 
@@ -567,8 +625,8 @@ fn run_showcase_selftest(child: &mut Child, log_path: &Path) -> Result<(), Strin
         ));
     }
     let pass_lines = log.lines().filter(|line| line.contains("] PASS ")).count();
-    let passed = temp_score(&log, "passed")?;
-    let failed = temp_score(&log, "failed")?;
+    let passed = logged_score(&log, "passed", &objective)?;
+    let failed = logged_score(&log, "failed", &objective)?;
     if failed != 0 || passed == 0 || passed != pass_lines {
         return Err(format!(
             "showcase self-test totals are off: passed={passed} failed={failed}, {pass_lines} PASS lines"
@@ -578,15 +636,41 @@ fn run_showcase_selftest(child: &mut Child, log_path: &Path) -> Result<(), Strin
     Ok(())
 }
 
-fn temp_score(log: &str, holder: &str) -> Result<usize, String> {
+/// The last `<holder> has <n> [<objective>]` value in the server log.
+fn logged_score(log: &str, holder: &str, objective: &str) -> Result<usize, String> {
     let needle = format!("{holder} has ");
+    let suffix = format!(" [{objective}]");
     log.lines()
         .rev()
         .find_map(|line| {
             let (_, rest) = line.split_once(&needle)?;
-            rest.strip_suffix(" [temp]")?.parse().ok()
+            rest.strip_suffix(&suffix)?.parse().ok()
         })
-        .ok_or_else(|| format!("no `{holder}` score in the server log"))
+        .ok_or_else(|| format!("no `{holder}` score on `{objective}` in the server log"))
+}
+
+/// Queries one score and fails unless the server reports `expected`.
+fn expect_score(
+    child: &mut Child,
+    log_path: &Path,
+    holder: &str,
+    objective: &str,
+    expected: usize,
+) -> Result<(), String> {
+    let needle = format!("{holder} has ");
+    let before = read_log(log_path).matches(&needle).count();
+    send_command(
+        child,
+        &format!("scoreboard players get {holder} {objective}"),
+    )?;
+    wait_for_log_count(child, log_path, &needle, before + 1, COMMAND_TIMEOUT)?;
+    let actual = logged_score(&read_log(log_path), holder, objective)?;
+    if actual != expected {
+        return Err(format!(
+            "{holder} on {objective} is {actual}, expected {expected}"
+        ));
+    }
+    Ok(())
 }
 
 fn send_command(child: &mut Child, command: &str) -> Result<(), String> {

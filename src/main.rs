@@ -149,12 +149,12 @@ enum Commands {
         /// Project path to inspect (defaults to current directory)
         path: Option<PathBuf>,
 
-        /// Cobble version to migrate from (0.8 or 0.9)
-        #[arg(long, default_value = "0.9")]
+        /// Cobble version to migrate from (0.8, 0.9, or 0.10)
+        #[arg(long, default_value = "0.10")]
         from: String,
 
-        /// Cobble version to migrate to
-        #[arg(long, default_value = "0.10")]
+        /// Cobble version to migrate to (0.10 or 0.11)
+        #[arg(long, default_value = "0.11")]
         to: String,
 
         /// Print machine-readable JSON

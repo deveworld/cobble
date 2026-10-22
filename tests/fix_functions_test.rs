@@ -163,7 +163,7 @@ def tick():
     let tick = read_function(&output_dir, "tick");
     let condition_lines = tick
         .lines()
-        .filter(|line| line.starts_with("execute if score x temp"))
+        .filter(|line| line.starts_with("execute if score x cobble.vars"))
         .count();
     assert_eq!(
         condition_lines, 1,
@@ -190,7 +190,7 @@ def tick():
         "helper must contain the branch commands:\n{helper}"
     );
     assert!(
-        helper.contains("scoreboard players set x temp 0"),
+        helper.contains("scoreboard players set x cobble.vars 0"),
         "helper must contain the branch commands:\n{helper}"
     );
 }

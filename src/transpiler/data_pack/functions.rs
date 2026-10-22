@@ -1,7 +1,45 @@
 use super::{DataPack, GeneratedCommand, GeneratedCommandKind};
+use crate::transpiler::vars_objective;
 use std::collections::HashMap;
 
 impl DataPack {
+    /// The objective that holds this pack's variables (`<namespace>.vars`).
+    pub fn vars_objective(&self) -> String {
+        vars_objective::vars_objective(&self.namespace)
+    }
+
+    /// Maps source-level `temp` objective references to this pack's objective.
+    pub(super) fn map_objectives(&self, commands: Vec<String>) -> Vec<String> {
+        let target = self.vars_objective();
+        commands
+            .into_iter()
+            .map(
+                |command| match vars_objective::map_command(&command, &target) {
+                    std::borrow::Cow::Borrowed(_) => command,
+                    std::borrow::Cow::Owned(mapped) => mapped,
+                },
+            )
+            .collect()
+    }
+
+    fn map_metadata_objectives(
+        &self,
+        metadata: HashMap<usize, GeneratedCommand>,
+    ) -> HashMap<usize, GeneratedCommand> {
+        let target = self.vars_objective();
+        metadata
+            .into_iter()
+            .map(|(index, mut generated)| {
+                if let std::borrow::Cow::Owned(mapped) =
+                    vars_objective::map_command(&generated.text, &target)
+                {
+                    generated.text = mapped;
+                }
+                (index, generated)
+            })
+            .collect()
+    }
+
     pub(super) fn metadata_for_commands(
         commands: &[String],
         kind: GeneratedCommandKind,
@@ -41,6 +79,7 @@ impl DataPack {
         commands: Vec<String>,
         kind: GeneratedCommandKind,
     ) {
+        let commands = self.map_objectives(commands);
         let metadata = Self::metadata_for_commands(&commands, kind);
         self.command_metadata.insert(name.clone(), metadata);
         self.functions.insert(name, commands);
@@ -52,6 +91,8 @@ impl DataPack {
         commands: Vec<String>,
         metadata: HashMap<usize, GeneratedCommand>,
     ) {
+        let commands = self.map_objectives(commands);
+        let metadata = self.map_metadata_objectives(metadata);
         let metadata =
             Self::complete_metadata(&commands, metadata, GeneratedCommandKind::ControlFlow);
         self.command_metadata.insert(name.clone(), metadata);
@@ -68,6 +109,8 @@ impl DataPack {
         if new_commands.is_empty() {
             return;
         }
+        let new_commands = self.map_objectives(new_commands.to_vec());
+        let new_metadata = self.map_metadata_objectives(new_metadata);
 
         let Some(commands) = self.functions.get_mut(name) else {
             return;

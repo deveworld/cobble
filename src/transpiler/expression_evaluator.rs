@@ -136,13 +136,7 @@ impl<'a> ExpressionEvaluator<'a> {
         self.variable_objectives
             .get(target)
             .map(String::as_str)
-            .unwrap_or_else(|| {
-                if target.starts_with("#math_") {
-                    "math"
-                } else {
-                    "temp"
-                }
-            })
+            .unwrap_or("temp")
     }
 
     fn static_power_exponent(&self, expr: &Expression) -> Option<i32> {
@@ -609,7 +603,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                             );
                                         }
                                         let input_var = "#math_input";
-                                        self.data_pack.track_objective("math");
+                                        self.data_pack.track_objective("temp");
 
                                         let eval_cmds = self
                                             .evaluate_expression_to_target(&args[0], input_var)?;
@@ -623,7 +617,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
                                         self.data_pack.track_objective("temp");
                                         commands.push(format!(
-                                            "scoreboard players operation {} {} = #math_result math",
+                                            "scoreboard players operation {} {} = #math_result temp",
                                             target, target_obj
                                         ));
                                         return Ok(commands);
@@ -636,7 +630,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                         }
                                         let input1 = "#math_input";
                                         let input2 = "#math_input2";
-                                        self.data_pack.track_objective("math");
+                                        self.data_pack.track_objective("temp");
 
                                         // Evaluating an argument can itself run a math
                                         // helper (a nested math.* call), which stages
@@ -657,11 +651,11 @@ impl<'a> ExpressionEvaluator<'a> {
                                             &arg2_scratch,
                                         )?);
                                         eval_cmds.push(format!(
-                                            "scoreboard players operation {} math = {} math",
+                                            "scoreboard players operation {} temp = {} temp",
                                             input1, arg1_scratch
                                         ));
                                         eval_cmds.push(format!(
-                                            "scoreboard players operation {} math = {} math",
+                                            "scoreboard players operation {} temp = {} temp",
                                             input2, arg2_scratch
                                         ));
                                         commands.extend(eval_cmds);
@@ -674,7 +668,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
                                         self.data_pack.track_objective("temp");
                                         commands.push(format!(
-                                            "scoreboard players operation {} {} = #math_result math",
+                                            "scoreboard players operation {} {} = #math_result temp",
                                             target, target_obj
                                         ));
                                         return Ok(commands);

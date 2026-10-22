@@ -308,6 +308,7 @@ impl Transpiler {
                 statements.push(Statement::Assignment(Assignment {
                     target: for_loop.target.clone(),
                     target_expr: None,
+                    persist: false,
                     value: transpiler.runtime_range_increment_expression(
                         &for_loop.target,
                         &plan.step,
@@ -435,6 +436,7 @@ impl Transpiler {
                 statements.push(Statement::Assignment(Assignment {
                     target: index_var.clone(),
                     target_expr: None,
+                    persist: false,
                     value: transpiler.runtime_range_increment_expression(
                         &index_var,
                         &step,
@@ -1550,6 +1552,7 @@ fn substitute_statement(
             }
             Statement::Assignment(Assignment {
                 target: assign.target.clone(),
+                persist: assign.persist,
                 target_expr: assign
                     .target_expr
                     .as_ref()

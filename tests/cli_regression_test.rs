@@ -278,8 +278,8 @@ fn cli_migrate_defaults_to_experimental_dry_run_report() {
         "migrate should keep stderr quiet on success: {stderr}"
     );
     assert!(stdout.contains("Cobble migrate (experimental)"));
-    assert!(stdout.contains("From: 0.9"));
-    assert!(stdout.contains("To: 0.10"));
+    assert!(stdout.contains("From: 0.10"));
+    assert!(stdout.contains("To: 0.11"));
     assert!(stdout.contains("Mode: dry-run/report"));
     assert!(stdout.contains("Changed: false"));
     assert!(stdout.contains("Source files scanned:"));

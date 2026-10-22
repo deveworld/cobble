@@ -293,6 +293,11 @@ It loads a generated smoke pack and the `showcase` fixture, then runs
 `FAIL` line, a nonzero `failed` score, or a `passed` score that differs from
 the number of `PASS` lines.
 
+It also loads two packs built from the same source under different namespaces
+and step sizes, and checks that their `round` and `visits` scores stay
+separate. After `/reload`, `round` must be back at 0 and the `persist`
+variable `visits` must keep its value.
+
 If this gate is skipped for a release candidate, record that in the release
 notes.
 

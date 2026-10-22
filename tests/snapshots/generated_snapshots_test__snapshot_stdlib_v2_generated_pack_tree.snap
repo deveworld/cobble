@@ -102,14 +102,14 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
       "generated_line": 2,
-      "command": "scoreboard objectives add temp dummy",
+      "command": "scoreboard objectives add cobble_stdlib_v2.vars dummy",
       "source": null,
       "kind": "RuntimeSetup"
     },
     {
       "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
       "generated_line": 3,
-      "command": "scoreboard players set points temp 10",
+      "command": "scoreboard players set points cobble_stdlib_v2.vars 10",
       "source": {
         "file": "src/main.cbl",
         "line": 10,
@@ -187,8 +187,8 @@ say stdlib v2 utility tag
 
 ===== data/cobble_stdlib_v2/function/load.mcfunction =====
 gamerule max_command_sequence_length 1000000000
-scoreboard objectives add temp dummy
-scoreboard players set points temp 10
+scoreboard objectives add cobble_stdlib_v2.vars dummy
+scoreboard players set points cobble_stdlib_v2.vars 10
 data modify storage cobble_stdlib_v2:global state set value {ready:1b}
 tellraw @a {"text":"Stdlib v2 modules ready"}
 function cobble_stdlib_v2:announce

@@ -46,8 +46,8 @@ cobble build examples/hello_world.cbl -o output/hello_world
 ## Notes
 
 - Module-level Cobble variables are reset whenever the pack loads (`/reload` or
-  a server start). The examples keep anything that must persist, such as
-  records or player stats, in their own scoreboard objectives.
+  a server start) unless they are declared with `persist`. The examples keep
+  per-player records and stats in their own scoreboard objectives.
 - Function names are shared across a project's files, so each example uses
   distinct names (`use_spawn`, `try_blink`, ...).
 - The release test fixtures that used to live here (`26_smoke`,

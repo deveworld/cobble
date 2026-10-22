@@ -155,18 +155,67 @@ huge = 9999999999  # ⚠️  Warning: Value exceeds range, clamped to 2147483647
 
 ## Variables
 
-Variables are automatically managed as scoreboard objectives.
+Numbers and booleans are fake players on the pack's variable objective,
+`<namespace>.vars`. Strings, lists, and maps live in the storage
+`<namespace>:global`. Each pack gets its own objective and storage, so two
+Cobble packs can use the same variable names on one server. The examples in
+this section use the namespace `mypack`.
 
 ### Module-level Variables
 
-Variables defined at the top level (outside functions) are automatically initialized when the data pack loads:
+Variables defined at the top level (outside functions) are set in the
+`_cobble_init` function every time the data pack loads, which includes
+`/reload` and server starts:
 
 ```python
-# These are initialized in the _cobble_init function automatically
 score = 0
 lives = 3
 max_health = 20
 ```
+
+### Persistent Variables
+
+Declare a module-level variable with `persist` to keep its value across
+`/reload` and server restarts:
+
+```python
+persist best_time = 0
+persist champion = "nobody"
+round = 1  # back to 1 on every load
+```
+
+The initializer only runs while the value is unset:
+
+```mcfunction
+execute unless score best_time mypack.vars matches -2147483648.. run scoreboard players set best_time mypack.vars 0
+execute unless data storage mypack:global vars.champion run data modify storage mypack:global vars.champion set value "nobody"
+```
+
+`persist` is only allowed at module level, and its initializer must be a
+constant: a number, boolean, string, list, or map literal, or a `const`
+expression. Assign the variable in a function to change it; the new value
+stays until something changes it again.
+
+### The `temp` Objective In Raw Commands
+
+Raw commands and execute headers name the variable objective `temp`. Cobble
+rewrites `temp` to `<namespace>.vars` wherever a command expects an objective:
+`scoreboard` arguments, `if score` and `unless score`, `store result score`,
+`scores={...}` selector filters, and score text components.
+
+```python
+def read_level():
+    level = 0
+    store result score level temp:
+        /scoreboard players get @s lvl
+    /execute if score level temp matches 10.. run say high level
+```
+
+This compiles to `execute store result score level mypack.vars run scoreboard
+players get @s lvl` and `execute if score level mypack.vars matches 10.. run
+say high level`. Other text, such as a chat message that contains the word
+`temp`, stays unchanged. Commands typed in chat or in command blocks use the
+real objective name, for example `/scoreboard players get level mypack.vars`.
 
 ### Local Variables
 
@@ -175,8 +224,8 @@ Variables inside functions are initialized when the function is called:
 ```python
 def my_function():
     score = 0
-    score = score + 10  # Compiles to: scoreboard players add score temp 10
-    score = score - 5   # Compiles to: scoreboard players remove score temp 5
+    score = score + 10  # Compiles to: scoreboard players add score mypack.vars 10
+    score = score - 5   # Compiles to: scoreboard players remove score mypack.vars 5
     config = {"count": 1}
     values = [1, 2, 3]
     i = 1
@@ -207,7 +256,7 @@ def reset_score():
 
 **Important Note About Scope:**
 
-Unlike Python, Minecraft scoreboards don't support true local scope. All scoreboard variables are stored in global objectives and are accessible from any function.
+Unlike Python, Minecraft scoreboards don't support true local scope. All of a pack's variables share its variable objective and are accessible from any function.
 
 The `global` keyword in Cobble serves as **documentation** to clarify your intent, but due to Minecraft's architecture, all variables effectively behave as global regardless of whether you use the keyword.
 
@@ -415,7 +464,7 @@ def check_conditions():
 - `and` operator chains conditions using `execute if ... if ...`
 - `or` operator uses a temporary scoreboard variable (`or_result`) to track if any condition is true
 - `not` operator converts `if` to `unless` (or vice versa)
-- Double negatives are automatically simplified (`not not x == 5` → `if score x temp matches 5`)
+- Double negatives are automatically simplified (`not not x == 5` → `if score x mypack.vars matches 5`)
 
 **Examples:**
 
@@ -426,7 +475,7 @@ if x > 0 and y < 15:
 ```
 Transpiles to:
 ```mcfunction
-execute if score x temp matches 1.. if score y temp matches ..14 run say test
+execute if score x mypack.vars matches 1.. if score y mypack.vars matches ..14 run say test
 ```
 
 OR operator:
@@ -436,10 +485,10 @@ if x == 5 or y == 10:
 ```
 Transpiles to:
 ```mcfunction
-scoreboard players set or_result temp 0
-execute if score x temp matches 5 run scoreboard players set or_result temp 1
-execute if score y temp matches 10 run scoreboard players set or_result temp 1
-execute if score or_result temp matches 1 run say test
+scoreboard players set or_result mypack.vars 0
+execute if score x mypack.vars matches 5 run scoreboard players set or_result mypack.vars 1
+execute if score y mypack.vars matches 10 run scoreboard players set or_result mypack.vars 1
+execute if score or_result mypack.vars matches 1 run say test
 ```
 
 **Note:** Boolean operators also work in execute-block (`as`, `at`, `asat`) `if`/`unless` modifiers. A condition that starts with a Minecraft condition keyword (`score `, `entity `, `block `, `data `, `predicate `, ...) is treated as raw Minecraft syntax; other conditions that look like Python expressions are translated through the same condition pipeline as regular `if` statements:
@@ -981,7 +1030,7 @@ def update_score():
     score.objective.display("sidebar", "points")
 ```
 
-Score helpers use the default Cobble `temp` objective.
+Score helpers use the pack's variable objective, `<namespace>.vars`.
 
 ### Random Helpers
 
@@ -1307,7 +1356,7 @@ def calculate():
 
 **Important Notes**:
 - Operators follow standard mathematical precedence
-- Multiplication, division, and modulo use temporary fake players such as `#multiplier`, `#divisor`, and `#modulus` in the `temp` objective
+- Multiplication, division, and modulo use temporary fake players such as `#multiplier`, `#divisor`, and `#modulus` on the pack's `<namespace>.vars` objective
 - Power operator (`^`) with a constant exponent uses compile-time expansion:
   `x^3` becomes `x*x*x`
 - Power with a runtime exponent uses a scoreboard-backed recursive helper.

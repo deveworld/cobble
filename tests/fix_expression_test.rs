@@ -234,17 +234,25 @@ z = 5
 z = 3 * z + z
 "#;
     let (scores, init) = run_init(source);
-    assert_eq!(get_score(&scores, "x", "temp"), -3, "x = 2 - x with x=5");
-    assert_eq!(get_score(&scores, "y", "temp"), 2, "y = 10 / y with y=5");
     assert_eq!(
-        get_score(&scores, "z", "temp"),
+        get_score(&scores, "x", "cobble.vars"),
+        -3,
+        "x = 2 - x with x=5"
+    );
+    assert_eq!(
+        get_score(&scores, "y", "cobble.vars"),
+        2,
+        "y = 10 / y with y=5"
+    );
+    assert_eq!(
+        get_score(&scores, "z", "cobble.vars"),
         20,
         "z = 3 * z + z with z=5"
     );
     // The self-referential RHS must be routed through a scratch score that is
     // copied into the target at the end.
     assert!(
-        init.contains("scoreboard players operation x temp = #expr_result_"),
+        init.contains("scoreboard players operation x cobble.vars = #expr_result_"),
         "expected scratch copy for x in init:\n{init}"
     );
 }
@@ -265,7 +273,7 @@ def compute():
     // Inside a function, `w = w - 2` keeps the optimized single-command form.
     let body = read_function(&output_dir, "compute");
     assert!(
-        body.contains("scoreboard players remove w temp 2"),
+        body.contains("scoreboard players remove w cobble.vars 2"),
         "fast path lost in function body:\n{body}"
     );
     assert!(
@@ -275,9 +283,17 @@ def compute():
 
     let mut scores = Scores::new();
     run_pack_function(&functions, "_cobble_init", &mut scores);
-    assert_eq!(get_score(&scores, "v", "temp"), 3, "v = v - 2 with v=5");
+    assert_eq!(
+        get_score(&scores, "v", "cobble.vars"),
+        3,
+        "v = v - 2 with v=5"
+    );
     run_pack_function(&functions, "compute", &mut scores);
-    assert_eq!(get_score(&scores, "w", "temp"), 3, "w = w - 2 with w=5");
+    assert_eq!(
+        get_score(&scores, "w", "cobble.vars"),
+        3,
+        "w = w - 2 with w=5"
+    );
 }
 
 #[test]
@@ -292,9 +308,17 @@ r5 = a * (b * (c * d))
 r6 = a - (b - (c - d))
 "#;
     let (scores, init) = run_init(source);
-    assert_eq!(get_score(&scores, "r4", "temp"), 108, "a * (b * c)");
-    assert_eq!(get_score(&scores, "r5", "temp"), 324, "a * (b * (c * d))");
-    assert_eq!(get_score(&scores, "r6", "temp"), -4, "a - (b - (c - d))");
+    assert_eq!(get_score(&scores, "r4", "cobble.vars"), 108, "a * (b * c)");
+    assert_eq!(
+        get_score(&scores, "r5", "cobble.vars"),
+        324,
+        "a * (b * (c * d))"
+    );
+    assert_eq!(
+        get_score(&scores, "r6", "cobble.vars"),
+        -4,
+        "a - (b - (c - d))"
+    );
     // Every right-operand scratch is suffixed; the shared bare name is gone.
     assert!(
         !init.contains("#expr_temp "),
@@ -303,7 +327,7 @@ r6 = a - (b - (c - d))
 }
 
 #[test]
-fn nested_math_calls_use_math_objective_for_intermediate_targets() {
+fn nested_math_calls_copy_results_back_into_math_inputs() {
     let source = r#"
 def compute():
     a = math.sqrt(16)
@@ -313,23 +337,25 @@ def compute():
     let (_temp, output_dir) = compile_source(source).expect("build failed");
     let functions = load_pack_functions(&output_dir);
     let body = read_function(&output_dir, "compute");
-    // The nested call result must be copied back into `#math_input math`,
-    // not into the hardcoded `temp` objective.
+    // The nested call result is copied back into `#math_input` on the pack's
+    // variable objective.
     assert!(
-        body.contains("scoreboard players operation #math_input math = #math_result math"),
-        "nested math result copy should target the math objective:\n{body}"
+        body.contains(
+            "scoreboard players operation #math_input cobble.vars = #math_result cobble.vars"
+        ),
+        "nested math result copy should target #math_input:\n{body}"
     );
 
     let mut scores = Scores::new();
     run_pack_function(&functions, "compute", &mut scores);
-    assert_eq!(get_score(&scores, "a", "temp"), 4, "math.sqrt(16)");
+    assert_eq!(get_score(&scores, "a", "cobble.vars"), 4, "math.sqrt(16)");
     assert_eq!(
-        get_score(&scores, "b", "temp"),
+        get_score(&scores, "b", "cobble.vars"),
         4,
         "math.sqrt(math.sqrt(256))"
     );
     assert_eq!(
-        get_score(&scores, "c", "temp"),
+        get_score(&scores, "c", "cobble.vars"),
         5,
         "math.max(math.abs(-5), 3)"
     );
@@ -347,7 +373,7 @@ r = math.max(a, b) - (c - (d - 1))
     let (scores, _init) = run_init(source);
     // max(6, 9) - (2 - (3 - 1)) = 9 - 0 = 9
     assert_eq!(
-        get_score(&scores, "r", "temp"),
+        get_score(&scores, "r", "cobble.vars"),
         9,
         "math.max(a, b) - (c - (d - 1))"
     );
@@ -375,7 +401,7 @@ def compute():
     let input1_copy = lines
         .iter()
         .position(|line| {
-            line.starts_with("scoreboard players operation #math_input math = #math_arg_")
+            line.starts_with("scoreboard players operation #math_input cobble.vars = #math_arg_")
         })
         .expect("staged copy into #math_input present");
     let max_call = lines
@@ -390,12 +416,12 @@ def compute():
     let mut scores = Scores::new();
     run_pack_function(&functions, "compute", &mut scores);
     assert_eq!(
-        get_score(&scores, "r", "temp"),
+        get_score(&scores, "r", "cobble.vars"),
         9,
         "math.max(2, math.abs(-9))"
     );
     assert_eq!(
-        get_score(&scores, "s", "temp"),
+        get_score(&scores, "s", "cobble.vars"),
         4,
         "math.min(math.abs(-4), math.max(1, 6))"
     );

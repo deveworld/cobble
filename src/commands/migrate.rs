@@ -4,6 +4,7 @@ use crate::config::CobbleConfig;
 use crate::diagnostics::{parse_source, python_compat_suggestion_for_kind};
 use crate::fs_safety::write_file_atomic_with_permissions;
 use crate::pack_format::{PackFormat, SUPPORTED_PACK_FORMAT};
+use crate::transpiler::vars_objective;
 use serde::Serialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -86,6 +87,7 @@ struct MigrationSourceReport {
     legacy_stdlib_import_files: usize,
     stdlib_module_import_files: usize,
     unsupported_python_constructs: usize,
+    temp_objective_references: usize,
     file_details: Vec<MigrationSourceFileReport>,
     language_support_notes: Vec<String>,
     message: String,
@@ -98,6 +100,7 @@ struct MigrationSourceFileReport {
     legacy_stdlib_import: bool,
     stdlib_module_import: bool,
     unsupported_python_constructs: usize,
+    temp_objective_references: usize,
     locations: Vec<MigrationSourceLocation>,
 }
 
@@ -135,6 +138,7 @@ struct SourceScan {
     legacy_stdlib_import_files: usize,
     stdlib_module_import_files: usize,
     unsupported_python_constructs: usize,
+    temp_objective_references: usize,
     read_errors: Vec<String>,
 }
 
@@ -143,6 +147,7 @@ struct SourceSignals {
     legacy_stdlib_import: bool,
     stdlib_module_import: bool,
     unsupported_python_constructs: usize,
+    temp_objective_references: usize,
     locations: Vec<MigrationSourceLocation>,
 }
 
@@ -185,7 +190,9 @@ fn build_migration_report(options: MigrateOptions) -> MigrationReport {
     let mut changed = false;
 
     if supported_route {
-        let inspection = inspect_project(&project_path, &mut diagnostics, &mut actions);
+        let report_temp = matches!(options.to.as_str(), "0.11" | "0.11.0");
+        let inspection =
+            inspect_project(&project_path, report_temp, &mut diagnostics, &mut actions);
         config = inspection.config;
         source = inspection.source;
 
@@ -219,7 +226,8 @@ fn build_migration_report(options: MigrateOptions) -> MigrationReport {
         diagnostics.push(MigrationDiagnostic {
             severity: "error",
             code: "unsupported_migration_route",
-            message: "Supported experimental routes are 0.8 -> 0.10 and 0.9 -> 0.10.".to_string(),
+            message: "Supported experimental routes are 0.8, 0.9, or 0.10 -> 0.11, and 0.8 or 0.9 -> 0.10."
+                .to_string(),
         });
         actions.push(MigrationAction {
             id: "migration_route",
@@ -252,6 +260,7 @@ fn build_migration_report(options: MigrateOptions) -> MigrationReport {
 
 fn inspect_project(
     project_path: &Path,
+    report_temp: bool,
     diagnostics: &mut Vec<MigrationDiagnostic>,
     actions: &mut Vec<MigrationAction>,
 ) -> ProjectInspection {
@@ -328,6 +337,7 @@ fn inspect_project(
     let source = inspect_sources(
         &source_path,
         settings.experimental_resource_pack,
+        report_temp,
         diagnostics,
     );
 
@@ -393,6 +403,27 @@ fn inspect_project(
         before: None,
         after: None,
     });
+
+    if report_temp {
+        actions.push(MigrationAction {
+            id: "report_temp_objective",
+            status: if source.temp_objective_references > 0 {
+                "noted"
+            } else {
+                "not_detected"
+            },
+            message: if source.temp_objective_references > 0 {
+                format!(
+                    "Report {} source line(s) that name the `temp` objective; they now compile to `<namespace>.vars`.",
+                    source.temp_objective_references
+                )
+            } else {
+                "No source lines name the `temp` objective.".to_string()
+            },
+            before: None,
+            after: None,
+        });
+    }
 
     actions.push(MigrationAction {
         id: "report_manual_steps",
@@ -752,6 +783,7 @@ fn migration_backup_path(config_path: &Path) -> Result<PathBuf, String> {
 fn inspect_sources(
     source_path: &Path,
     experimental_resource_pack: bool,
+    report_temp: bool,
     diagnostics: &mut Vec<MigrationDiagnostic>,
 ) -> MigrationSourceReport {
     if !source_path.exists() {
@@ -770,13 +802,14 @@ fn inspect_sources(
             legacy_stdlib_import_files: 0,
             stdlib_module_import_files: 0,
             unsupported_python_constructs: 0,
+            temp_objective_references: 0,
             file_details: Vec::new(),
             language_support_notes: Vec::new(),
             message,
         };
     }
 
-    match scan_source_files(source_path) {
+    match scan_source_files(source_path, report_temp) {
         Ok(scan) => {
             source_report_from_scan(source_path, scan, experimental_resource_pack, diagnostics)
         }
@@ -800,6 +833,7 @@ fn inspect_sources(
                 legacy_stdlib_import_files: 0,
                 stdlib_module_import_files: 0,
                 unsupported_python_constructs: 0,
+                temp_objective_references: 0,
                 file_details: Vec::new(),
                 language_support_notes: Vec::new(),
                 message,
@@ -857,6 +891,18 @@ fn source_report_from_scan(
         });
     }
 
+    if scan.temp_objective_references > 0 {
+        notes.push(format!(
+            "{} source line(s) name the `temp` objective, which now compiles to `<namespace>.vars` (since 0.11). Update command blocks, other packs, and chat commands that read `temp`.",
+            scan.temp_objective_references
+        ));
+        diagnostics.push(MigrationDiagnostic {
+            severity: "info",
+            code: "temp_objective_references",
+            message: notes.last().cloned().unwrap_or_default(),
+        });
+    }
+
     if scan.unsupported_python_constructs > 0 {
         notes.push(format!(
             "{} Python-like unsupported construct(s) should be reviewed with `cobble check --experimental-python-compat`.",
@@ -909,13 +955,14 @@ fn source_report_from_scan(
         legacy_stdlib_import_files: scan.legacy_stdlib_import_files,
         stdlib_module_import_files: scan.stdlib_module_import_files,
         unsupported_python_constructs: scan.unsupported_python_constructs,
+        temp_objective_references: scan.temp_objective_references,
         file_details: scan.file_reports,
         language_support_notes: notes,
         message,
     }
 }
 
-fn scan_source_files(source_path: &Path) -> Result<SourceScan, String> {
+fn scan_source_files(source_path: &Path, report_temp: bool) -> Result<SourceScan, String> {
     let mut files = collect_cobble_files(source_path)?;
     files.sort_by_key(|path| path_display(path));
 
@@ -926,6 +973,7 @@ fn scan_source_files(source_path: &Path) -> Result<SourceScan, String> {
         legacy_stdlib_import_files: 0,
         stdlib_module_import_files: 0,
         unsupported_python_constructs: 0,
+        temp_objective_references: 0,
         read_errors: Vec::new(),
     };
 
@@ -933,7 +981,7 @@ fn scan_source_files(source_path: &Path) -> Result<SourceScan, String> {
         match fs::read_to_string(&file) {
             Ok(contents) => {
                 let relative_file = path_display_relative(&file, source_path);
-                let signals = analyze_source(&contents, &relative_file);
+                let signals = analyze_source(&contents, &relative_file, report_temp);
                 scan.resource_pack_references += signals.resource_pack_references;
                 if signals.legacy_stdlib_import {
                     scan.legacy_stdlib_import_files += 1;
@@ -942,12 +990,14 @@ fn scan_source_files(source_path: &Path) -> Result<SourceScan, String> {
                     scan.stdlib_module_import_files += 1;
                 }
                 scan.unsupported_python_constructs += signals.unsupported_python_constructs;
+                scan.temp_objective_references += signals.temp_objective_references;
                 scan.file_reports.push(MigrationSourceFileReport {
                     file: relative_file,
                     resource_pack_references: signals.resource_pack_references,
                     legacy_stdlib_import: signals.legacy_stdlib_import,
                     stdlib_module_import: signals.stdlib_module_import,
                     unsupported_python_constructs: signals.unsupported_python_constructs,
+                    temp_objective_references: signals.temp_objective_references,
                     locations: signals.locations,
                 });
             }
@@ -985,10 +1035,11 @@ fn collect_cobble_files(source_path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-fn analyze_source(source: &str, file: &str) -> SourceSignals {
+fn analyze_source(source: &str, file: &str, report_temp: bool) -> SourceSignals {
     let mut legacy_stdlib_import = false;
     let mut stdlib_module_import = false;
     let mut resource_pack_references = 0;
+    let mut temp_objective_references = 0;
     let mut locations = Vec::new();
 
     for (line_index, raw_line) in source.lines().enumerate() {
@@ -1030,6 +1081,21 @@ fn analyze_source(source: &str, file: &str) -> SourceSignals {
                         .to_string(),
                 suggested_cobble_alternative: None,
             });
+        }
+        if report_temp {
+            if let Some(column) = temp_objective_column(raw_line) {
+                temp_objective_references += 1;
+                locations.push(MigrationSourceLocation {
+                    file: file.to_string(),
+                    line: line_number,
+                    column,
+                    kind: "temp-objective-reference".to_string(),
+                    message: "`temp` now names this pack's `<namespace>.vars` objective (since 0.11). \
+                        The source keeps working; update anything outside the pack that reads `temp`."
+                        .to_string(),
+                    suggested_cobble_alternative: None,
+                });
+            }
         }
         for column in match_columns(raw_line, "resource_pack.") {
             resource_pack_references += 1;
@@ -1077,8 +1143,32 @@ fn analyze_source(source: &str, file: &str) -> SourceSignals {
         legacy_stdlib_import,
         stdlib_module_import,
         unsupported_python_constructs,
+        temp_objective_references,
         locations,
     }
+}
+
+/// The 1-based column of the first `temp` objective reference in a raw
+/// command (`/...`) or an execute block header (`... temp:`).
+fn temp_objective_column(raw_line: &str) -> Option<usize> {
+    const MARK: &str = "\u{1}";
+    let leading = raw_line.len() - raw_line.trim_start().len();
+    let line = raw_line.trim();
+    let (command, offset_in_line) = if let Some(command) = line.strip_prefix('/') {
+        (command.to_string(), 1)
+    } else if let Some(header) = line.strip_suffix(':') {
+        (format!("execute {header} run say"), 0)
+    } else {
+        return None;
+    };
+    let mapped = vars_objective::map_command(&command, MARK);
+    let index = mapped.find(MARK)?;
+    let index = if line.starts_with('/') {
+        index
+    } else {
+        index - "execute ".len()
+    };
+    Some(leading + offset_in_line + index + 1)
 }
 
 fn match_columns(line: &str, needle: &str) -> Vec<usize> {
@@ -1199,6 +1289,7 @@ fn skipped_source_report() -> MigrationSourceReport {
         legacy_stdlib_import_files: 0,
         stdlib_module_import_files: 0,
         unsupported_python_constructs: 0,
+        temp_objective_references: 0,
         file_details: Vec::new(),
         language_support_notes: Vec::new(),
         message: "Source scanning was skipped for this migration route.".to_string(),
@@ -1322,8 +1413,12 @@ fn print_human_report(report: &MigrationReport) {
 }
 
 fn is_supported_route(from: &str, to: &str) -> bool {
-    // 0.10 writes only its own pack format, so every route ends at 0.10.
-    matches!(from, "0.8" | "0.8.0" | "0.9" | "0.9.0") && matches!(to, "0.10" | "0.10.0")
+    // 0.10 and 0.11 share pack format 121.0, so a route ends at either.
+    match to {
+        "0.11" | "0.11.0" => matches!(from, "0.8" | "0.8.0" | "0.9" | "0.9.0" | "0.10" | "0.10.0"),
+        "0.10" | "0.10.0" => matches!(from, "0.8" | "0.8.0" | "0.9" | "0.9.0"),
+        _ => false,
+    }
 }
 
 fn is_cobble_file(path: &Path) -> bool {

@@ -172,7 +172,7 @@ Carried forward from those plans and still open:
 
 ### 0.11.0: Pack Isolation And Persistent State
 
-Status: design decided, implementation not started.
+Status: implemented on `main` (2026-10-22), not yet released.
 
 Theme: fix the two generated-output behaviors that writing real packs exposed,
 while generated output can still change before 1.0 locks it. Both showed up in
@@ -187,24 +187,24 @@ ordinary pack code while building `examples/lobby`, `examples/parkour`, and
      (`<ns>:global`), so only scores collide. Two Cobble packs on one server
      that both use a module variable named `round` overwrite each other.
    - Each pack's variables and internal helper scores (`#multiplier`,
-     `or_temp_*`, `#cobble_value_*`, ...) move to the objective
+     `or_temp_*`, `#cobble_value_*`, the `math` helper scores, and the
+     `#true_const`/`#false_const` constants) move to the objective
      `<namespace>.vars` (for example `parkour.vars`). Every namespace
      character is valid in an objective name.
    - `temp` stays the source-level name for "this pack's variable objective".
-     The compiler maps it to `<namespace>.vars` in execute headers
-     (`store result score <var> temp:`), `score.*` helpers, and objective
-     arguments of raw commands, so existing source keeps compiling unchanged
-     and the generated output shows the real objective. Raw commands are
-     mapped at `minecraft:objective` argument positions found through the
-     command tree; decide the fallback for builds without a command tree
-     during implementation.
+     Every command that enters the data pack passes through one rewrite
+     (`src/transpiler/vars_objective.rs`) that maps `temp` to
+     `<namespace>.vars` at objective positions: `scoreboard` arguments,
+     `execute if|unless score` and `store ... score`, `scores={...}` filters,
+     and score text components. It reads the command structure directly, so it
+     needs no command tree and covers compiler output and raw commands alike.
 2. Persistent module variables.
    - Module-level variables are reset on every load (`/reload` or a server
      start), so records and settings have to live in hand-written objectives;
      all three practical examples do this.
    - Add `persist <name> = <constant>` at module level. Its initializer only
-     runs when the value is unset: `execute unless score <name> <obj> =
-     <name> <obj> run ...` for scores, `execute unless data storage ...` for
+     runs when the value is unset: `execute unless score <name> <obj> matches
+     -2147483648.. run ...` for scores, `execute unless data storage ...` for
      storage-backed values. It covers scores, strings, lists, and maps.
    - Plain module variables keep the documented reset-on-load behavior.
 3. Migration.
@@ -643,11 +643,11 @@ Decided for 0.11.0 (2026-10-22):
 
 ## Current Priority Order
 
-1. Implement per-pack runtime state and persistent variables with snapshot,
-   simulator, and server-gate tests, plus migration notes (design decided
-   2026-10-22, see the Decision Backlog).
-2. Release 0.11.0 and re-verify the practical examples on a real server.
-3. Start the 1.0.0 compatibility audit on top of 0.11.0.
-4. Keep plugin APIs, package management, full resource-pack pipelines,
+1. Release 0.11.0: per-pack objectives and `persist` are implemented with
+   snapshot, simulator, and server-gate tests and migration notes. Release
+   prep still needs the version bump, a 0.11 release gate script, and the
+   CHANGELOG date.
+2. Start the 1.0.0 compatibility audit on top of 0.11.0.
+3. Keep plugin APIs, package management, full resource-pack pipelines,
    arbitrary Python/eval, and multi-target behavior deferred until the
    relevant 1.x design work exists.

@@ -159,14 +159,14 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 2,
-      "command": "scoreboard objectives add temp dummy",
+      "command": "scoreboard objectives add cobble_26_smoke.vars dummy",
       "source": null,
       "kind": "RuntimeSetup"
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 3,
-      "command": "scoreboard players set score temp 10",
+      "command": "scoreboard players set score cobble_26_smoke.vars 10",
       "source": {
         "file": "src/main.cbl",
         "line": 6,
@@ -177,7 +177,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 4,
-      "command": "scoreboard players set health temp 20",
+      "command": "scoreboard players set health cobble_26_smoke.vars 20",
       "source": {
         "file": "src/main.cbl",
         "line": 7,
@@ -188,7 +188,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 5,
-      "command": "scoreboard players set active temp 1",
+      "command": "scoreboard players set active cobble_26_smoke.vars 1",
       "source": {
         "file": "src/main.cbl",
         "line": 8,
@@ -474,7 +474,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 1,
-      "command": "scoreboard players add score temp 1",
+      "command": "scoreboard players add score cobble_26_smoke.vars 1",
       "source": {
         "file": "src/main.cbl",
         "line": 32,
@@ -485,7 +485,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 2,
-      "command": "scoreboard players set if_branch_2 temp 0",
+      "command": "scoreboard players set if_branch_2 cobble_26_smoke.vars 0",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -496,7 +496,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 3,
-      "command": "execute if score score temp matches 15.. run scoreboard players set if_branch_2 temp 1",
+      "command": "execute if score score cobble_26_smoke.vars matches 15.. run scoreboard players set if_branch_2 cobble_26_smoke.vars 1",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -507,7 +507,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 4,
-      "command": "execute if score score temp matches 15.. run tellraw @a [{\"text\":\"score high \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
+      "command": "execute if score score cobble_26_smoke.vars matches 15.. run tellraw @a [{\"text\":\"score high \"},{\"score\":{\"name\":\"score\",\"objective\":\"cobble_26_smoke.vars\"}}]",
       "source": {
         "file": "src/main.cbl",
         "line": 35,
@@ -518,7 +518,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 5,
-      "command": "scoreboard players set elif_taken_3 temp 0",
+      "command": "scoreboard players set elif_taken_3 cobble_26_smoke.vars 0",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -529,7 +529,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 6,
-      "command": "execute unless score if_branch_2 temp matches 1 if score score temp matches 12.. run scoreboard players set elif_taken_3 temp 1",
+      "command": "execute unless score if_branch_2 cobble_26_smoke.vars matches 1 if score score cobble_26_smoke.vars matches 12.. run scoreboard players set elif_taken_3 cobble_26_smoke.vars 1",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -540,7 +540,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 7,
-      "command": "execute if score elif_taken_3 temp matches 1 run scoreboard players set if_branch_2 temp 1",
+      "command": "execute if score elif_taken_3 cobble_26_smoke.vars matches 1 run scoreboard players set if_branch_2 cobble_26_smoke.vars 1",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -551,7 +551,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 8,
-      "command": "execute if score elif_taken_3 temp matches 1 run tellraw @a [{\"text\":\"score medium \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
+      "command": "execute if score elif_taken_3 cobble_26_smoke.vars matches 1 run tellraw @a [{\"text\":\"score medium \"},{\"score\":{\"name\":\"score\",\"objective\":\"cobble_26_smoke.vars\"}}]",
       "source": {
         "file": "src/main.cbl",
         "line": 37,
@@ -562,7 +562,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 9,
-      "command": "execute unless score if_branch_2 temp matches 1 run tellraw @a [{\"text\":\"score low \"},{\"score\":{\"name\":\"score\",\"objective\":\"temp\"}}]",
+      "command": "execute unless score if_branch_2 cobble_26_smoke.vars matches 1 run tellraw @a [{\"text\":\"score low \"},{\"score\":{\"name\":\"score\",\"objective\":\"cobble_26_smoke.vars\"}}]",
       "source": {
         "file": "src/main.cbl",
         "line": 39,
@@ -573,7 +573,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 10,
-      "command": "scoreboard players operation match_temp_4 temp = score temp",
+      "command": "scoreboard players operation match_temp_4 cobble_26_smoke.vars = score cobble_26_smoke.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 41,
@@ -584,7 +584,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 11,
-      "command": "execute if score match_temp_4 temp matches 0..14 run say warming",
+      "command": "execute if score match_temp_4 cobble_26_smoke.vars matches 0..14 run say warming",
       "source": {
         "file": "src/main.cbl",
         "line": 43,
@@ -595,7 +595,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 12,
-      "command": "execute if score match_temp_4 temp matches 15..30 run say active",
+      "command": "execute if score match_temp_4 cobble_26_smoke.vars matches 15..30 run say active",
       "source": {
         "file": "src/main.cbl",
         "line": 45,
@@ -606,7 +606,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 13,
-      "command": "execute unless score match_temp_4 temp matches 0..14 unless score match_temp_4 temp matches 15..30 run say overflow",
+      "command": "execute unless score match_temp_4 cobble_26_smoke.vars matches 0..14 unless score match_temp_4 cobble_26_smoke.vars matches 15..30 run say overflow",
       "source": {
         "file": "src/main.cbl",
         "line": 47,
@@ -705,10 +705,10 @@ $tellraw @a {"text":"$(message)","color":"aqua"}
 
 ===== data/cobble_26_smoke/function/init.mcfunction =====
 gamerule max_command_sequence_length 1000000000
-scoreboard objectives add temp dummy
-scoreboard players set score temp 10
-scoreboard players set health temp 20
-scoreboard players set active temp 1
+scoreboard objectives add cobble_26_smoke.vars dummy
+scoreboard players set score cobble_26_smoke.vars 10
+scoreboard players set health cobble_26_smoke.vars 20
+scoreboard players set active cobble_26_smoke.vars 1
 data remove storage cobble_26_smoke:global _call_args_0
 data modify storage cobble_26_smoke:global _call_args_0.message set value "Cobble 26.3 smoke test loaded"
 data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_0
@@ -742,19 +742,19 @@ $say rewarded $(player) with $(amount) diamond
 execute as @a[gamemode=survival] run say survivor online
 
 ===== data/cobble_26_smoke/function/tick.mcfunction =====
-scoreboard players add score temp 1
-scoreboard players set if_branch_2 temp 0
-execute if score score temp matches 15.. run scoreboard players set if_branch_2 temp 1
-execute if score score temp matches 15.. run tellraw @a [{"text":"score high "},{"score":{"name":"score","objective":"temp"}}]
-scoreboard players set elif_taken_3 temp 0
-execute unless score if_branch_2 temp matches 1 if score score temp matches 12.. run scoreboard players set elif_taken_3 temp 1
-execute if score elif_taken_3 temp matches 1 run scoreboard players set if_branch_2 temp 1
-execute if score elif_taken_3 temp matches 1 run tellraw @a [{"text":"score medium "},{"score":{"name":"score","objective":"temp"}}]
-execute unless score if_branch_2 temp matches 1 run tellraw @a [{"text":"score low "},{"score":{"name":"score","objective":"temp"}}]
-scoreboard players operation match_temp_4 temp = score temp
-execute if score match_temp_4 temp matches 0..14 run say warming
-execute if score match_temp_4 temp matches 15..30 run say active
-execute unless score match_temp_4 temp matches 0..14 unless score match_temp_4 temp matches 15..30 run say overflow
+scoreboard players add score cobble_26_smoke.vars 1
+scoreboard players set if_branch_2 cobble_26_smoke.vars 0
+execute if score score cobble_26_smoke.vars matches 15.. run scoreboard players set if_branch_2 cobble_26_smoke.vars 1
+execute if score score cobble_26_smoke.vars matches 15.. run tellraw @a [{"text":"score high "},{"score":{"name":"score","objective":"cobble_26_smoke.vars"}}]
+scoreboard players set elif_taken_3 cobble_26_smoke.vars 0
+execute unless score if_branch_2 cobble_26_smoke.vars matches 1 if score score cobble_26_smoke.vars matches 12.. run scoreboard players set elif_taken_3 cobble_26_smoke.vars 1
+execute if score elif_taken_3 cobble_26_smoke.vars matches 1 run scoreboard players set if_branch_2 cobble_26_smoke.vars 1
+execute if score elif_taken_3 cobble_26_smoke.vars matches 1 run tellraw @a [{"text":"score medium "},{"score":{"name":"score","objective":"cobble_26_smoke.vars"}}]
+execute unless score if_branch_2 cobble_26_smoke.vars matches 1 run tellraw @a [{"text":"score low "},{"score":{"name":"score","objective":"cobble_26_smoke.vars"}}]
+scoreboard players operation match_temp_4 cobble_26_smoke.vars = score cobble_26_smoke.vars
+execute if score match_temp_4 cobble_26_smoke.vars matches 0..14 run say warming
+execute if score match_temp_4 cobble_26_smoke.vars matches 15..30 run say active
+execute unless score match_temp_4 cobble_26_smoke.vars matches 0..14 unless score match_temp_4 cobble_26_smoke.vars matches 15..30 run say overflow
 say loop 0
 say loop 1
 say loop 2

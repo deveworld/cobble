@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `persist name = value` declares a module-level variable that keeps its value
+  across `/reload` and server restarts. Its initializer only runs while the
+  score or storage value is unset. It works for numbers, booleans, strings,
+  lists, and maps, is only allowed at module level, and needs a constant
+  initializer.
+- `cobble migrate` supports routes to 0.11 and defaults to `--from 0.10 --to
+  0.11`. The report lists each raw command and execute header that names the
+  `temp` objective (`temp-objective-reference`).
+- The optional Purpur server gate loads two packs with the same variable names
+  and checks that their scores stay separate and that a `persist` variable
+  survives `/reload`.
+
+### Changed
+- Each pack keeps its numeric variables and internal helper scores on its own
+  objective, `<namespace>.vars`, so Cobble packs no longer overwrite each
+  other's variables. The shared `temp`, `math`, and `__internal__` objectives
+  are gone from generated output.
+- `temp` in raw commands, execute headers, `score.*` helpers, selector
+  `scores={...}` filters, and score text components now compiles to
+  `<namespace>.vars`; existing source keeps working. See
+  [`docs/migration-0.11.md`](docs/migration-0.11.md).
+- The serde AST adds `Assignment.persist` (omitted when `false`).
+
 ## [0.10.0] - 2026-10-22
 
 Cobble 0.10.0 targets Minecraft Java Edition 26.3 (data pack format 121.0)

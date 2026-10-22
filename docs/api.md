@@ -34,7 +34,7 @@ Manual tokenizer that handles indentation with INDENT/DEDENT tokens and distingu
 
 The main parser built with chumsky combinator library that handles Python-style indented syntax.
 
-#### Function: `parse_located_with_diagnostics(source: &str) -> Result<LocatedProgram, Vec<SourceDiagnostic>>`
+#### Function: `parse_located_with_diagnostics(source: &str) -> Result<LocatedProgram, Vec<ParseDiagnostic>>`
 
 Parses source like `parse_with_diagnostics` and also returns source span tables
 for the parsed program.
@@ -259,13 +259,16 @@ pub enum Statement {
 Assignments keep both the legacy string target and the parsed target
 expression. Simple assignments use `target_expr = None` or an identifier
 matching `target`; storage-backed field/index assignments use `target_expr`
-for paths such as `config.count` or `groups[i].value`.
+for paths such as `config.count` or `groups[i].value`. `persist` is `true`
+for a module-level `persist name = value` declaration and is omitted from JSON
+when `false`.
 
 ```rust
 pub struct Assignment {
     pub target: String,
     pub target_expr: Option<Expression>,
     pub value: Expression,
+    pub persist: bool,
 }
 ```
 
@@ -445,6 +448,8 @@ Manages data pack structure and file generation.
 
 **Key Features:**
 - Tracks objectives and functions
+- Rewrites the source-level `temp` objective in every command it receives to
+  the pack's `<namespace>.vars` objective (`transpiler/vars_objective.rs`)
 - Generates `pack.mcmeta` with the supported pack format
 - Creates modern `data/<namespace>/function` and `data/<namespace>/tags/function` files
 - Writes namespaced JSON resources such as predicates, recipes, dialogs, and tags
@@ -494,7 +499,8 @@ Transpiles a program into a data pack.
 
 **Returns:**
 - `Ok(())` - Successfully transpiled
-- `Err(String)` - Transpilation error
+- `Err(TranspileError)` - Transpilation error with a `kind`
+  (`TranspileErrorKind`) and a `message`; its `Display` output is the message
 
 ##### `write_data_pack(&self) -> std::io::Result<()>`
 
@@ -898,8 +904,9 @@ reload fails. `watch --link` resolves output from `.cobble/link_state.json`.
 
 Holds the ariadne-based renderers `report_source_diagnostics` and
 `report_file_source_diagnostics` for structured `SourceDiagnostic` values.
-Compiler errors are plain `Result<_, String>` values throughout the CLI and
-transpiler; the former `CobbleError` enum was unused and has been removed.
+The transpiler returns typed `TranspileError` values
+(`src/transpiler/error.rs`), and the CLI command functions return
+`Result<_, String>`, converting transpiler errors to strings at that edge.
 
 ## Usage Examples
 

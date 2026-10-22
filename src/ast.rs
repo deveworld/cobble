@@ -104,6 +104,10 @@ pub struct Assignment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_expr: Option<Expression>,
     pub value: Expression,
+    /// `persist name = value`: the initializer only runs while the value is
+    /// unset, so the value survives `/reload` and server restarts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub persist: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

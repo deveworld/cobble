@@ -245,6 +245,23 @@ impl Transpiler {
     ) -> Result<(), TranspileError> {
         let target_kind = self.classify_assignment_target(assign);
 
+        if assign.persist {
+            if !matches!(target_kind, AssignTargetKind::ModuleLevel) {
+                return Err(format!(
+                    "`persist {}` is only allowed at module level. Move it out of the function body.",
+                    assign.target
+                )
+                .into());
+            }
+            if !self.is_persist_initializer(&assign.value) {
+                return Err(format!(
+                    "`persist {}` needs a constant initializer: a number, boolean, string, list, or map literal.",
+                    assign.target
+                )
+                .into());
+            }
+        }
+
         if let AssignTargetKind::StorageExpr(target_expr) = target_kind {
             return self.process_storage_target_assignment(target_expr, &assign.value);
         }
@@ -391,6 +408,7 @@ impl Transpiler {
                 target: assign.target.clone(),
                 value: assign.value.clone(),
                 source: self.current_statement_source.clone(),
+                persist: assign.persist,
             });
     }
 

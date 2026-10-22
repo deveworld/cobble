@@ -144,12 +144,12 @@ impl<'a> ConditionTranslator<'a> {
 
     /// Condition text that always (or never) passes, backed by the internal
     /// `#true_const`/`#false_const` scores. Callers that emit it must make
-    /// sure the `__internal__` objective is registered.
+    /// sure the boolean constants are registered.
     fn constant_condition(value: bool) -> String {
         if value {
-            "score #true_const __internal__ matches 1".to_string()
+            "score #true_const temp matches 1".to_string()
         } else {
-            "score #false_const __internal__ matches 1".to_string()
+            "score #false_const temp matches 1".to_string()
         }
     }
 
@@ -428,9 +428,9 @@ impl<'a> ConditionTranslator<'a> {
 
         // Use internal scoreboard constants for compile-time boolean results
         if result {
-            Ok("score #true_const __internal__ matches 1".to_string())
+            Ok("score #true_const temp matches 1".to_string())
         } else {
-            Ok("score #false_const __internal__ matches 1".to_string())
+            Ok("score #false_const temp matches 1".to_string())
         }
     }
 }
