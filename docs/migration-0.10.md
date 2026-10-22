@@ -53,8 +53,8 @@ because a 26.3 server whose packs fail to load refuses to start):
 - Item modifiers: `function` is now `type`; `conditions` lists are a single
   `condition` (combine several with `minecraft:all_of`).
 - Loot tables: `functions` is now `modifier`, `conditions` is a single
-  `condition`, and a `minecraft:tag` entry uses `items` (`"#minecraft:logs"`)
-  instead of `name`.
+  `condition`, and a `minecraft:tag` entry's `name` is now `items`
+  (`"#minecraft:logs"`).
 - Root advancements with `display` need `display.background`.
 - Cooking recipes need `cookingtime` (it no longer defaults to 200).
 
@@ -68,7 +68,7 @@ Other resource changes Cobble does not check:
   shorthand.
 - Number providers need an explicit `type`, and several were renamed (`sum` to
   `add`, `product` to `mul`).
-- Block state SNBT uses `id`/`properties` instead of `Name`/`Properties`.
+- Block state SNBT: `Name`/`Properties` are now `id`/`properties`.
 
 Raw commands:
 
@@ -82,9 +82,9 @@ Raw commands:
 - `give` over the item limit, `tick step`, and a `gamerule` set to its current
   value now fail, which changes what `execute store success` records.
 
-Text components in item components and entity NBT are SNBT, not stringified
-JSON (`custom_name={"text":"Sword"}`, not `custom_name='{"text":"Sword"}'`),
-and the `enchantments` component is a plain map
+Text components in item components and entity NBT are SNBT (formerly
+stringified JSON), so `custom_name='{"text":"Sword"}'` becomes
+`custom_name={"text":"Sword"}`. The `enchantments` component is a plain map
 (`enchantments={"minecraft:sharpness":5}`). Both changed in 1.21.5; the 0.10
 examples were updated.
 

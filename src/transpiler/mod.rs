@@ -328,8 +328,9 @@ fn validate_text_color(color: &str) -> Result<(), TranspileError> {
 /// Stdlib module names that can be imported via `from stdlib import <name>`.
 ///
 /// `import stdlib` (without `from`) activates every module for backward
-/// compatibility with 0.7.x. See `docs/stdlib-v2-design.md`. The canonical
-/// table lives in `crate::stdlib::STDLIB_MODULES`.
+/// compatibility with 0.7.x. See the Standard Library section of
+/// `docs/language.md`. The canonical table lives in
+/// `crate::stdlib::STDLIB_MODULES`.
 pub(crate) use crate::stdlib::STDLIB_MODULES as ALL_STDLIB_MODULES;
 
 pub struct Transpiler {
@@ -1215,7 +1216,7 @@ impl Transpiler {
                 format!(
                     "module '{module}' not imported.\n\
                  Add `from stdlib import {module}` or use `import stdlib` to enable all modules.\n\
-                 See docs/stdlib-v2-design.md for the import and versioning model."
+                 See the Standard Library section of docs/language.md for the import and versioning model."
                 ),
             ))
         }
@@ -1228,7 +1229,7 @@ impl Transpiler {
             eprintln!(
                 "warning: [stdlib] version = 1 is deprecated.\n\
                  Migrate to version = 2 and use `from stdlib import ...` for per-module opt-in.\n\
-                 See docs/stdlib-v2-design.md for the migration guide."
+                 See the Standard Library section of docs/language.md for how to migrate."
             );
         }
     }

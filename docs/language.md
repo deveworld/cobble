@@ -1,15 +1,11 @@
 # Cobble Language Reference
 
 Cobble is a high-level, Python-inspired language that compiles to Minecraft
-data packs. Cobble is not Python-compatible; this reference describes the
-syntax and behavior that Cobble intentionally supports.
-
-For the implementation-facing support matrix, see
-[Language Support Matrix](language-support.md).
+data packs. This reference describes the syntax and behavior that Cobble
+intentionally supports.
 
 ## Table of Contents
 
-- [Language Support Matrix](language-support.md)
 - [Basic Syntax](#basic-syntax)
 - [Data Types](#data-types)
 - [Type System](#type-system)
@@ -27,10 +23,9 @@ For the implementation-facing support matrix, see
 
 ## Basic Syntax
 
-Cobble uses indentation-based blocks after `:`. No braces or semicolons are
-required.
-Unexpected indentation and dedents that do not match a previous block level are
-diagnostics before parser fallback.
+Cobble uses indentation-based blocks after `:` and needs no braces or
+semicolons. Unexpected indentation and dedents that do not match a previous
+block level are reported as diagnostics before parsing.
 
 ```python
 # This is a comment
@@ -85,9 +80,9 @@ runtime feature yet.
 storage-backed list, map, and string values. Storage-backed lengths compile to a
 Minecraft `data get storage ...` result stored in a scoreboard integer.
 
-`None` is supported where Cobble serializes data pack JSON resources. It is
-emitted as JSON `null`; it is not a scoreboard value and should not be used as a
-numeric or boolean expression. Minecraft NBT/SNBT storage has no null type, so
+`None` is supported where Cobble serializes data pack JSON resources and is
+emitted as JSON `null`. It has no scoreboard value, so keep it out of numeric
+and boolean expressions. Minecraft NBT/SNBT storage has no null type, so
 storage literals reject `None`; use an explicit sentinel value for storage.
 
 ## Type System
@@ -253,7 +248,7 @@ def apply_damage():
 **Key Points:**
 - Constants are evaluated at compile time when possible
 - Constants can be used in arithmetic expressions
-- Constants are stored as Expression values and used like variables in most contexts
+- Constants are stored as compile-time expressions and used like variables in most contexts
 
 **Example:**
 
@@ -324,7 +319,7 @@ storage or explicit output variables for non-integer data.
 through a cycle of other functions. Recursive calls are rejected at compile
 time with an error such as
 `Recursive call to 'fact' is not supported. Rewrite the recursion as a loop (while/for) instead.`
-Use a `while` or `for` loop with explicit state instead of recursive calls.
+Rewrite recursion as a `while` or `for` loop with explicit state.
 
 Parameterized functions can call other parameterized functions and forward their
 own parameters:
@@ -474,7 +469,8 @@ def loop_example():
         y = y + 1
 ```
 
-**Note:** The `or` operator is fully implemented with automatic temporary variable handling. Complex nested OR expressions and combinations with AND are supported.
+**Note:** The `or` operator manages its temporary variables automatically and
+supports nested OR expressions and combinations with AND.
 
 ### Nested If Statements
 
@@ -509,9 +505,9 @@ conditions are evaluated once per entity and the whole body runs for that
 entity before the next one starts. Updating the condition's own score inside
 the body, loops, `if`/`else`, and multi-step assignments therefore behave per
 entity. Blocks with a `store` modifier keep one `execute store ...` command per
-body command, because storing a helper call would store the helper's return
-value instead of each command's result; bodies containing a raw `/return` also
-keep that form so the return still leaves the enclosing function.
+body command, because storing a helper call would capture only the helper's
+return value; bodies containing a raw `/return` also keep that form so the
+return still leaves the enclosing function.
 
 Headers accept the same placeholders as raw commands: selector aliases,
 `{CONST}` values, and `{param}` macro arguments, anywhere in the header.
@@ -578,12 +574,11 @@ def runtime_literal_array():
 ```
 
 For loops over literal ranges and literal scalar arrays are expanded at compile
-time. They emit the repeated commands directly instead of runtime scoreboard
-loop counters or helper functions. `range(...)` loops with runtime start, stop,
-count, or step expressions compile to scoreboard-backed recursive helper
-functions. Runtime literal arrays such as `[first, first + 3]` are materialized
-into temporary storage and then iterated as runtime lists. Loops over
-storage-backed list expressions such as `for value in values:` or
+time and emit the repeated commands directly. `range(...)` loops with runtime
+start, stop, count, or step expressions compile to scoreboard-backed recursive
+helper functions. Runtime literal arrays such as `[first, first + 3]` are
+materialized into temporary storage and then iterated as runtime lists. Loops
+over storage-backed list expressions such as `for value in values:` or
 `for value in groups[row]:` compile to an index loop that reads the list length
 at runtime and copies each element into the loop variable before running the
 body. `by` steps also work for runtime list loops; negative steps start at the
@@ -611,6 +606,19 @@ last item.
 - A single loop may expand up to 1024 iterations. Expansions above 256 emit a warning.
 - Nested unrolling is capped at 65,536 aggregate iterations and one outer
   unroll may emit at most 65,536 generated commands.
+
+Loop problems are reported with these diagnostic kinds, located at the `for`
+statement:
+
+| Kind | Severity | Reported when |
+| --- | --- | --- |
+| `unroll-limit-exceeded` | error | a loop expands past 1024 iterations, nested loops past 65,536 iterations, or one outer loop past 65,536 commands |
+| `unroll-large-expansion` | warning | a loop expands past 256 iterations |
+| `unroll-non-literal` | error | the iterable is none of: a literal array, a literal or runtime `range`, a runtime literal array, or a storage-backed list |
+| `unroll-bad-step` | error | a `range` step is zero or non-integer |
+| `unroll-bad-range` | error | a `range` stops below its start with a positive step, or the array is empty |
+| `runtime-for-unsupported` | error | a runtime `range` has a non-integer bound or step, or a runtime list loop iterates something that is not a list |
+| `runtime-for-bad-step` | error | a static runtime step is zero, or a step is non-integer |
 
 ### While Loops
 
@@ -658,7 +666,7 @@ def check_score():
 - Match statements use a 4-way split algorithm for efficient branching
 - Single-statement cases are inlined when possible
 - Multi-statement cases create separate functions
-- Generates optimal `execute if score ... matches ...` commands
+- Generates `execute if score ... matches ...` commands
 - **Case ranges must not overlap** - The compiler validates that all cases have mutually exclusive ranges
 - Only the FIRST matching case executes (similar to C switch with implicit break)
 
@@ -761,7 +769,7 @@ def setup():
 
 ### JSON Commands
 
-JSON-based commands are fully supported:
+JSON-based commands are supported:
 
 ```python
 def announce():
@@ -899,12 +907,41 @@ def test():
 
 ## Standard Library
 
-Cobble includes compiler intrinsics for common data pack tasks. Event handling
-uses `stdlib`, while helper modules can be called directly from functions.
+Cobble includes compiler intrinsics for common data pack tasks, grouped into
+modules. Import a module before calling its helpers:
 
 ```python
-import stdlib
-from stdlib import event
+from stdlib import event, text, score
+```
+
+| Import | Effect |
+| --- | --- |
+| `from stdlib import text` | Activates the `text` module. |
+| `from stdlib import text, score` | Activates `text` and `score`. |
+| `from stdlib import score.objective` | Activates `score.objective`, which `from stdlib import score` leaves inactive. |
+| `import stdlib` | Activates every module, as in 0.7.x. |
+
+The modules are `text`, `score`, `score.objective`, `random`, `timer`,
+`storage`, `item_component`, `schedule`, `selector`, `position`, `bossbar`,
+`team`, `entity`, `math`, `event`, `datapack`, and the experimental
+`resource_pack`.
+
+Calling a helper from a module that isn't imported fails with the
+`missing-stdlib-module` diagnostic:
+
+```text
+error: module 'text' not imported.
+Add `from stdlib import text` or use `import stdlib` to enable all modules.
+```
+
+The `[stdlib] version` setting in `cobble.toml` controls this check.
+`version = 2` is the default and requires the imports above. `version = 1`
+keeps every module active as in 0.7.x and prints a deprecation warning once per
+build. Helper behavior and generated output are the same under both versions.
+
+```toml
+[stdlib]
+version = 2
 ```
 
 ### Event Types
@@ -1008,9 +1045,9 @@ def setup_ui():
 ```
 
 `selector.*` and `position.*` return plain selector or coordinate strings for
-use inside other helpers. They do not emit commands when used by themselves.
-These helpers are thin wrappers over Minecraft commands. Use raw commands when
-a specialized option is not covered yet.
+use inside other helpers and emit no commands when used by themselves. These
+helpers are thin wrappers over Minecraft commands, so use raw commands when a
+specialized option is not covered yet.
 
 ### Data Pack JSON Resources
 
@@ -1080,21 +1117,21 @@ JSON resources are written as given, in Minecraft 26.3's formats. Because a
 server whose packs fail to load refuses to start, Cobble reports the common
 pre-26.3 shapes as `datapack-resource-format` errors:
 
-- predicates use `type` instead of `condition` (also inside `all_of`,
-  `any_of`, and `inverted` terms);
-- item modifiers use `type` instead of `function`, and a single `condition`
-  instead of a `conditions` list;
-- loot tables use `modifier` instead of `functions` and a single `condition`
-  instead of `conditions` on tables, pools, and entries, and a
+- predicates use `type` (formerly `condition`), including inside `all_of`,
+  `any_of`, and `inverted` terms;
+- item modifiers use `type` (formerly `function`) and a single `condition`
+  (formerly a `conditions` list);
+- loot tables use `modifier` (formerly `functions`) and a single `condition`
+  (formerly `conditions`) on tables, pools, and entries, and a
   `minecraft:tag` entry names its tag in `items` (`"#minecraft:logs"`);
 - a root advancement with `display` sets `display.background`;
 - cooking recipes set `cookingtime`.
 
-Lists such as `conditions` and `functions` are not rejected by Minecraft but
-silently ignored, so they are reported too.
+Minecraft silently ignores lists such as `conditions` and `functions`, so
+Cobble reports them too.
 
-Item component helpers can build `minecraft:set_components` item modifiers
-without hiding generated JSON:
+Item component helpers build the component JSON for `minecraft:set_components`
+item modifiers:
 
 ```python
 from stdlib import datapack, item_component, text
@@ -1110,7 +1147,7 @@ datapack.item_modifier("items/reward_components", {
 ```
 
 `item_component.*` helpers return JSON component objects for resource
-declarations. They do not emit commands when used by themselves.
+declarations and emit no commands when used by themselves.
 
 ### Experimental Resource-Pack Assets
 
@@ -1157,6 +1194,15 @@ resource-pack files. Static asset paths must stay inside the project
 `assets/` tree, use lowercase Minecraft-safe path segments, and must not be
 symlinks.
 
+Resource-pack helpers report these diagnostic kinds:
+
+| Kind | Reported when |
+| --- | --- |
+| `resource-pack-not-enabled` | a `resource_pack.*` helper is called without the opt-in |
+| `resource-pack-bad-id` | a resource ID or locale name is malformed |
+| `resource-pack-non-object` | a model or lang payload is not a JSON object |
+| `resource-pack-duplicate` | two declarations write the same path with different JSON |
+
 ### Math Helpers
 
 ```python
@@ -1167,8 +1213,7 @@ def calculate():
     high = math.max(10, 20)
 ```
 
-`math.sqrt` uses a generated scoreboard helper and no longer emits placeholder
-runtime output.
+`math.sqrt` uses a generated scoreboard helper.
 
 ## Events
 
@@ -1213,7 +1258,7 @@ def complex_give(player, amount):
 
 ### Arithmetic Operations
 
-Cobble supports comprehensive arithmetic with proper operator precedence:
+Cobble supports arithmetic with standard operator precedence:
 
 ```python
 def calculate():
@@ -1385,8 +1430,7 @@ Cobble currently requires **Minecraft Java Edition 26.3** and pack format **121.
 
 ## Unsupported Python-Like Constructs
 
-Cobble is Python-inspired, but it is not a Python runtime. Unsupported
-constructs fail before transpilation when practical.
+Unsupported constructs fail before transpilation when practical.
 
 - Classes, decorators, `try`/`except`/`finally`, `with`, `lambda`, `yield`,
   `async`, `await`, `break`, `continue`, `raise`, `assert`, `del`, and

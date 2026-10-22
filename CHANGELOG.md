@@ -19,10 +19,8 @@ and ships the runtime-semantics fixes below. See
   `min_format`/`max_format` `[121, 0]`, and `121` is accepted as the same
   format as `121.0`.
 - `--validate` and `cobble validate` use the 26.3 command tree: the pinned
-  `data/commands.json` (SHA-1 `d6e1c0ba339ad510056c31ea55c02aefca427dd1`) is
-  generated from the 26.3 server jar
-  (`33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c`), and an existing 26.1.2 tree at
-  the default path is refused by the fingerprint check.
+  `data/commands.json` is generated from the 26.3 server jar, and an existing
+  26.1.2 tree at the default path is refused by the fingerprint check.
 - The validator understands the 26.2/26.3 argument types: `slot_source` (slot
   strings such as `container.0`, slot source IDs, or inline SNBT), lowercase
   `team_color` names with the separate `reset` literal, `swing_animation`,
@@ -82,8 +80,8 @@ and ships the runtime-semantics fixes below. See
 - The optional Purpur server gate also loads the `showcase` fixture and runs
   its in-game self-test, failing on any `FAIL` check.
 - Comparison operands made only of literals and constants (`step - 1` inside
-  an unrolled loop) fold at compile time instead of going through a scratch
-  score.
+  an unrolled loop) now fold at compile time; previously they went through a
+  scratch score.
 - Execute blocks whose body compiles to more than one command now run that
   body in a generated `execute_temp_<id>` helper, called once per execution
   context. Previously every body command was prefixed with the full execute
@@ -107,7 +105,7 @@ and ships the runtime-semantics fixes below. See
   `stop`; Minecraft refuses to load a function that uses them. The level
   defaults to 2 (`gamemasters`, the default `function-permission-level`); set
   `COBBLE_FUNCTION_PERMISSION_LEVEL` (0-4) for a server that raised it.
-  `examples/26_smoke` now uses `waypoint` instead of `transfer`.
+  `examples/26_smoke` replaces `transfer` with `waypoint`.
 - The validator applies Minecraft's macro line rules: a `$` line must contain
   at least one `$(variable)` and variable names must be letters, digits, or
   `_`. Generated packs no longer `$`-prefix execute lines without variables.
@@ -138,7 +136,7 @@ and ships the runtime-semantics fixes below. See
   in-memory typed tag merge, so merged tag values are canonical and sorted.
   Note: for merged `minecraft:load`/`minecraft:tick` function tags this can
   change handler order — packs relying on stdlib-registered handlers running
-  before their own tag entries now get sorted order instead.
+  before their own tag entries now get sorted order.
 - `cobble check` continues past the first failing file and reports every
   file's first semantic error (identical errors are de-duplicated).
 - `check --json` and the web compiler classify transpiler failures through
@@ -150,8 +148,8 @@ and ships the runtime-semantics fixes below. See
   `clean --linked`/`--output`, `watch --link`/`--output`, and the
   `link --datapacks`/`--world`/`--minecraft` targets) are now enforced by
   clap at argument-parse time.
-- `doctor` tool probes (`java`, `curl`) now time out after 10 seconds instead
-  of hanging on a stuck process.
+- `doctor` tool probes (`java`, `curl`) now time out after 10 seconds, so a
+  stuck process no longer hangs `doctor`.
 - `watch` caps the rebuild debounce window at 2 seconds so a busy event
   stream cannot postpone rebuilds forever, and a `cobble.toml` hot reload now
   re-resolves the linked output target and project identity.
@@ -161,23 +159,23 @@ and ships the runtime-semantics fixes below. See
   table (`STDLIB_MODULES` in `src/stdlib.rs`), one `MAX_IMPORT_DEPTH`
   constant, storage-path planning shared through
   `src/transpiler/storage_paths.rs`, one `find_config` shared by all CLI
-  commands, one `next_temp_id`, a `WatchOptions` struct instead of an
-  11-argument `watch` signature, a shared web zip test helper, and
-  `qa_09_release_gate.sh` reading the crate version from `Cargo.toml`.
+  commands, one `next_temp_id`, a `WatchOptions` struct replacing the
+  11-argument `watch` signature, a shared web zip test helper, and the
+  release gate reading the crate version from `Cargo.toml`.
 - Further internal consolidation with no behavior change: the storage-value
   lowering helpers now live beside storage-path planning in
   `src/transpiler/storage_paths.rs`; the three runtime loop shapes
   (`for` over runtime `range(...)`, `for` over storage-backed lists, and
   `while`) share one parameterized loop driver; condition translation
-  returns a structured condition value instead of marker strings patched
+  returns a structured condition value, replacing marker strings patched
   into rendered commands; assignment lowering classifies its target
   (storage expression, module-level, or local variable) up front and
   dispatches to per-case lowering; and the `watch` CLI flags are derived
   directly from the `WatchOptions` struct via clap `Args`.
 - Library API: transpiler errors are now typed — `TranspileError` carrying an
   error kind plus message — replacing the previous `Result<_, String>`
-  channel, and error classification reads the kind instead of matching
-  message prefixes. CLI, `check --json`, and web/wasm output are unchanged.
+  channel, and error classification reads the kind (it previously matched
+  message prefixes). CLI, `check --json`, and web/wasm output are unchanged.
 
 ### Fixed
 - `not (a and b)` compiled as `not a and not b`: negation flipped every
@@ -195,12 +193,12 @@ and ships the runtime-semantics fixes below. See
   Literal-only conditions (`if 1 == 1:`, `if DEBUG > 0:`) now register the
   `__internal__` objective they read.
 - A string, list, or map variable passed to a function call statement
-  (`greet(msg)`) passed the variable's name instead of its value.
+  (`greet(msg)`) passed the variable's name; it now passes the value.
 - Passing differently typed expressions to function call statements
   (`show(a + 1)` then `show(a > b)`) failed with a type mismatch on an
   internal `_arg_temp_0` variable; each call now uses its own scratch score.
-  Calling a parameterless function with arguments is an error instead of
-  silently dropping them.
+  Calling a parameterless function with arguments is now an error; the
+  arguments were previously dropped silently.
 - A single macro command inside `if`/`elif`/`else` was emitted as
   `execute ... run $tellraw ...`, which Minecraft cannot load; the `$` now
   leads the line.
@@ -227,55 +225,55 @@ and ships the runtime-semantics fixes below. See
   relative input resolved the config directory to an empty path, hashing a
   different (and shared) `project_id`. `cobble clean src` failed the same way.
 - A `cobble.toml` without a `[build]` table used the project root as both
-  source and output instead of `src` and `output`.
+  source and output; it now defaults to `src` and `output`.
 - Runtime division warnings claimed Minecraft "silently returns 0" and ended
   with an empty "at line."; they now describe the failed command.
-- `resource_pack.*` failures now report the diagnostic codes documented in
-  `docs/resource-pack-design.md` (`resource-pack-not-enabled`,
+- `resource_pack.*` failures in `cobble check --json` and the browser
+  compiler now report their own diagnostic codes (`resource-pack-not-enabled`,
   `resource-pack-bad-id`, `resource-pack-non-object`,
-  `resource-pack-duplicate`) instead of the generic `semantic` kind, in both
-  `cobble check --json` and the browser compiler. Message text is unchanged.
+  `resource-pack-duplicate`); previously they used the generic `semantic`
+  kind. Message text is unchanged.
 - A source file reachable both as its own entry point and through another
   entry point's imports no longer has its diagnostics reported twice.
 - Compiler panic on non-ASCII identifiers: the compound-assignment and
   top-level-operator scanners walked raw byte positions but sliced the source
   as text, so a name such as `val한e` or an expression containing multi-byte
-  characters aborted the process instead of reporting a diagnostic.
+  characters aborted the process; these now produce a diagnostic.
 - Errors inside multi-line constructs are reported where they occur. Argument
   counts and unsupported value calls written across several lines (including
-  inside docstring bodies) now point at the call site instead of surfacing
-  later as a generic transpiler error at line 1, and multi-line `def` headers
-  now bind their parameters (removing a false "undefined" class) and are
-  checked for duplicate parameters like their single-line spelling.
+  inside docstring bodies) now point at the call site; previously they
+  surfaced later as a generic transpiler error at line 1. Multi-line `def`
+  headers now bind their parameters (removing a false "undefined" class) and
+  are checked for duplicate parameters like their single-line spelling.
 - Nested `def`s no longer leak parameter scope into the enclosing function,
   and placeholder scoping under bracket-continued headers is fixed.
 - `no-op-expression` also covers parenthesized and call-containing statements,
   which the previous scanner skipped.
-- Missing-import diagnostics in the browser compiler point at the import site
-  instead of falling back to line 1 for irregular spellings.
-- A source that fails to parse now reports its parse error (plus any
-  pre-parse findings) instead of additionally co-reporting text-scan findings
-  on lines the parser rejected.
+- Missing-import diagnostics in the browser compiler now point at the import
+  site for irregular spellings (previously line 1).
+- A source that fails to parse now reports only its parse error (plus any
+  pre-parse findings); text-scan findings on lines the parser rejected are no
+  longer reported alongside it.
 - Recursive function calls (direct or through a cycle) are now rejected at
   compile time with a diagnostic suggesting a loop rewrite. Previously
   recursion compiled but mis-executed: per-call-site argument staging was
   overwritten and return flags were never reset across calls.
 - Self-referential assignments where the target appears on the right-hand
   side anywhere but the leftmost operand (`x = 2 - x`, `y = 10 / y`,
-  `z = 3 * z + z`) now compute correct values instead of clobbering the
+  `z = 3 * z + z`) now compute correct values; previously they clobbered the
   target mid-evaluation.
 - Right operands nested two or more levels deep (`a * (b * (c * d))`,
-  `a - (b - (c - d))`) now evaluate into unique `#expr_temp_<id>` temporaries
-  instead of overwriting one shared scratch score.
+  `a - (b - (c - d))`) now evaluate into unique `#expr_temp_<id>` temporaries;
+  previously they overwrote one shared scratch score.
 - Nested `math.*` calls (`math.sqrt(math.sqrt(256))`,
   `math.max(math.abs(-5), 3)`) now copy intermediate results using the actual
-  target objective instead of a hardcoded `temp` objective.
+  target objective (previously a hardcoded `temp` objective).
 - Storage-backed string/list/map variables are rejected with a compile error
   when used in scoreboard conditions (for example `if name:` where `name`
   holds a string) or as `match` scrutinees; both previously compiled to reads
   of a score that is never written.
 - Non-integer `match` case patterns such as `case 1.5:` now fail with a
-  parse error instead of panicking the compiler.
+  parse error; previously they panicked the compiler.
 - Raw execute conditions survive re-stringification: dotted NBT/storage/
   resource paths (`path.sub`, `ns:foo.bar`) keep their dots unspaced, and
   SNBT `True`/`False` values after `:` are lowered to `true`/`false`.
@@ -294,12 +292,12 @@ and ships the runtime-semantics fixes below. See
   functions that actually contain `return`, so simple packs no longer gain a
   `_cobble_init` function.
 - `link --world`/`--minecraft` now require the given base directory to
-  exist; a typo'd path fails instead of silently creating a directory tree.
+  exist, so a typo'd path fails and no longer silently creates a directory
+  tree.
 - Cleanup failures after a successful validated publish (backup or staging
-  directory removal) are downgraded to warnings instead of failing the
-  build.
+  directory removal) are now warnings and no longer fail the build.
 - Overlapping entry points (a directory plus a file inside it) are
-  de-duplicated instead of compiling the same file twice.
+  de-duplicated, so the same file is no longer compiled twice.
 - `init` validates the configuration (including `--pack-format`) before
   creating the project directory, so an invalid option no longer leaves an
   empty directory behind.
@@ -307,8 +305,8 @@ and ships the runtime-semantics fixes below. See
   the supported version are not reported as migration candidates, and it now
   records source locations for `from stdlib import ...` lines.
 - Raw execute conditions that fail Python translation now report the original
-  operand spelling (for example `@s` or `{count}`) in the error message
-  instead of leaking internal `__cobble_cond_operand_N__` placeholder names.
+  operand spelling (for example `@s` or `{count}`) in the error message;
+  previously it leaked internal `__cobble_cond_operand_N__` placeholder names.
 - `datapack.*` resource ID diagnostics now report correct column and caret
   positions when a non-ASCII string literal or comment appears earlier on the
   same line.
@@ -383,9 +381,8 @@ and ships the runtime-semantics fixes below. See
 
 ### Versioning
 - This release changes the public serde AST shape (`Assignment.target_expr`
-  added, `ExecuteModifier` expression variants removed), which
-  `docs/compiler-maintenance-plan.md` reserves for a minor release, so it is
-  0.10.0 rather than a 0.9.x patch.
+  added, `ExecuteModifier` expression variants removed), so it ships as the
+  minor release 0.10.0.
 
 ## [0.9.0] - 2026-06-27
 
@@ -467,7 +464,7 @@ and ships the runtime-semantics fixes below. See
 - Hardened `watch --link` linked-output preflight so existing linked packs with
   symlink descendants are refused before marker reads or rebuilds.
 - Hardened `doctor --json` linked-pack marker inspection so symlinked marker
-  components are reported as errors instead of being followed.
+  components are reported as errors and no longer followed.
 - Hardened default `data/commands.json` validation setup so automatic
   generation and default-tree fingerprint checks refuse symlink components.
 - Hardened `cobble fmt` and `cobble init` writes so source formatting and
@@ -499,8 +496,8 @@ and ships the runtime-semantics fixes below. See
   carry a matching Cobble build manifest before validated rebuilds write into
   them.
 - Reused normal data-pack writing for validated rebuilds into existing owned
-  outputs, preserving unrelated files instead of deleting and replacing the
-  whole output directory.
+  outputs, which preserves unrelated files; previously the whole output
+  directory was deleted and replaced.
 - Rejected unsafe namespace values before they can be used in build output
   paths or ZIP file names, preventing absolute, traversal, slash, and backslash
   namespace escapes.
@@ -563,11 +560,11 @@ and ships the runtime-semantics fixes below. See
 - Allowed numeric compile-time constants in storage-backed subscript diagnostics,
   so `items[INDEX]` now matches the transpiler when `INDEX` is a known const.
 - Preserved macro argument values when a parameterized Cobble function forwards
-  its own parameters to another parameterized function, instead of passing
-  parameter names as string literals.
+  its own parameters to another parameterized function; previously the
+  parameter names were passed as string literals.
 - Reported unknown or incorrectly-called `math.*` intrinsics during
-  `cobble check`, `cobble build`, and browser compilation instead of letting
-  `check` pass and failing later during transpilation.
+  `cobble check`, `cobble build`, and browser compilation; previously `check`
+  passed and the error surfaced later during transpilation.
 - Updated README installation commands for the final 0.7.0 stable release.
 - Pointed website documentation links to repository docs so users land on
   current 0.7.0 documentation while docs.rs catches up.
@@ -677,7 +674,7 @@ and ships the runtime-semantics fixes below. See
 - Verified the default `data/commands.json` fingerprint before validation so stale local command trees do not silently masquerade as the 26.1.2 tree.
 - Tightened command validation for nested NBT/JSON delimiters, scoreboard slots, execute swizzles, item slots, and legacy item-stack NBT.
 - Deduplicated build-manifest resource entries and function-tag counts when stdlib events and explicit data pack tags merge into the same generated tag file.
-- Corrected web-demo build manifests to report the root `cobble-lang` version instead of the internal WASM helper crate version.
+- Corrected web-demo build manifests to report the root `cobble-lang` version; they previously reported the internal WASM helper crate version.
 - Merged duplicate web-demo tag output paths so `/try` file downloads and ZIP output match CLI function-tag merging.
 - Fixed the `/try` runtime failure where the browser could report `can't access property "__wbindgen_externrefs", wasm is undefined`.
 - Removed a disabled GitHub Discussions link and clarified release documentation wording.
@@ -695,7 +692,7 @@ and ships the runtime-semantics fixes below. See
 ### Changed
 - Validation summaries now report checked macro commands separately from skipped commands.
 - Validation diagnostics now retain command cursor positions and print caret context when available.
-- Runtime pack-format diagnostics use the package version instead of hardcoded release text.
+- Runtime pack-format diagnostics now use the package version (previously hardcoded release text).
 - The 26.1.2 feature matrix example now exercises stdlib v1.1 and explicit resource namespaces.
 
 ### Fixed
@@ -713,7 +710,7 @@ and ships the runtime-semantics fixes below. See
 - Build-and-validate example fixture projects for Minecraft Java Edition 26.1.2.
 
 ### Changed
-- Circular imports now fail with a concrete import chain instead of being skipped.
+- Circular imports now fail with a concrete import chain; previously they were skipped.
 - Missing imports now report the importing file and expected path.
 - Generated functions use the modern singular `data/<namespace>/function` layout and pack format `101.1`.
 
@@ -726,11 +723,11 @@ and ships the runtime-semantics fixes below. See
 ### Changed
 - **Performance optimization**: Removed unnecessary scoreboard objectives creation
   - Previously created 5 unnecessary objectives: `multiplier`, `divisor`, `modulus`, `power_base`, `expr_temp`
-  - Now uses fake players within the `temp` objective instead (e.g., `multiplier temp`, `divisor temp`)
+  - Now uses fake players within the `temp` objective (e.g., `multiplier temp`, `divisor temp`)
   - Reduces clutter in `/scoreboard objectives list` command
   - No functional changes - arithmetic operations work identically
-  - Modified `src/transpiler/expression_evaluator.rs` (6 locations)
-  - Modified `src/transpiler/statement_processors/assignment.rs` (11 locations)
+  - Modified `src/transpiler/expression_evaluator.rs`
+  - Modified `src/transpiler/statement_processors/assignment.rs`
 
 - **Enhanced /say command**: Automatic conversion to tellraw with scoreboard variables
   - `/say Value is {x}` now automatically converts to `tellraw @a` with score component
@@ -738,21 +735,20 @@ and ships the runtime-semantics fixes below. See
   - Works with simple and complex expressions: `/say Result: {(x + y) * z}`
   - Plain /say without variables remains unchanged: `/say Hello world`
   - Macro parameters in /say still work as before (for loop variables, function parameters)
-  - Modified `src/transpiler/command_processor.rs:287-335`
+  - Modified `src/transpiler/command_processor.rs`
 
 ### Fixed
 - **Critical bug**: Complex expression assignments not tracked as scoreboard variables
   - Variables from complex expressions like `result = (x + y) * z` were not added to scoreboard_variables
-  - This caused `/say {result}` to fail with "Cannot interpolate" error instead of auto-converting
+  - This caused `/say {result}` to fail with "Cannot interpolate" error and skip the auto-conversion
   - Now all complex expression results are properly tracked and can be used in /say
-  - Modified `src/transpiler/statement_processors/assignment.rs:99`
+  - Modified `src/transpiler/statement_processors/assignment.rs`
 
 ### Technical Details
 - Fake players (`multiplier`, `divisor`, `modulus`, `power_base`, `expr_temp`) are player names in the `temp` objective
 - Commands like `scoreboard players set multiplier temp 5` work without a dedicated `multiplier` objective
 - The /say to tellraw conversion uses the same JSON generation logic as existing tellraw/title commands
 - Complex expressions now properly register variables in `scoreboard_variables` HashSet
-- All 109 tests passing - no regressions introduced
 
 ## [0.5.17] - 2025-01-19
 
@@ -761,26 +757,24 @@ and ships the runtime-semantics fixes below. See
   - Return statements now produce clear compile-time errors explaining Minecraft limitations
   - Error message provides helpful solutions and restructuring suggestions
   - Previously `return x` would be completely ignored, causing logic errors
-  - Modified `src/transpiler/mod.rs:547-571` to return error instead of no-op comment
+  - Modified `src/transpiler/mod.rs` to replace the no-op comment with an error
 
 - **CRITICAL: Function call assignment silent failure**: Fixed function call results being assigned to variables without error
   - Assignments like `x = helper()` now produce clear compile-time errors
   - Minecraft functions cannot return values, so this assignment was silently failing
   - Error message explains limitation and suggests alternatives (global variables, direct execution)
-  - Modified `src/transpiler/statement_processors/assignment.rs:778-814` to detect and reject function calls
+  - Modified `src/transpiler/statement_processors/assignment.rs` to detect and reject function calls
 
 - **Enhanced error handling**: Added explicit errors for unsupported assignment expressions
   - Attribute access assignments (`x = obj.attr`) now error with clear message
   - Subscript assignments (`x = arr[0]`) now error explaining arrays aren't supported yet
   - None/null assignments (`x = None`) now error explaining scoreboard requires numbers
-  - Modified `src/transpiler/statement_processors/assignment.rs:816-859` for comprehensive coverage
+  - Modified `src/transpiler/statement_processors/assignment.rs` for comprehensive coverage
 
 ### Verified
-- All 102 tests passing (7 unit + 95 integration tests)
 - String and Boolean variable functionality preserved and working correctly
 - Function-level String/Boolean variables work in tellraw/title commands
 - All generated Minecraft commands validated for 1.20.2+ compatibility
-- No regressions in existing features
 
 ### Added
 - **Regression tests**: Added 7 comprehensive tests to prevent future bugs
@@ -796,53 +790,51 @@ and ships the runtime-semantics fixes below. See
 - Return statements now return `Err()` with detailed error message and solutions
 - Function call detection checks `Expression::Call` and extracts function name for error message
 - Attribute/Subscript/None expressions now have explicit error handling with helpful messages
-- String/Boolean assignments preserved via early return before error checks (lines 111-117)
+- String/Boolean assignments preserved via early return before error checks
 - All error messages provide context, explanation, and suggested solutions
-- Test count increased from 95 to 102 integration tests (100% pass rate)
 
 ## [0.5.16] - 2025-01-09
 
 ### Fixed
 - **Tokenizer Range Syntax**: Fixed parsing of Minecraft range syntax (`1..`, `..5`, `1..5`)
   - Previously failed to parse `matches 1..` with "Invalid number literal" error
-  - Tokenizer now correctly identifies `..` as range operator, not part of decimal number
-  - Modified `src/parser/tokenizer.rs:326-336, 557-567` to check for double dots before consuming as decimal
+  - Tokenizer now correctly identifies `..` as a range operator and no longer reads it as part of a decimal number
+  - Modified `src/parser/tokenizer.rs` to check for double dots before consuming as decimal
 
 - **Circular Import Detection**: Fixed circular import detection being disabled by `import_stack.clear()`
   - Previously circular imports were silently ignored (e.g., a.cbl → b.cbl → a.cbl)
   - Now correctly maintains import stack to detect and warn about circular dependencies
-  - Modified `src/transpiler/mod.rs:242-247` to preserve main file in import stack
+  - Modified `src/transpiler/mod.rs` to preserve main file in import stack
 
 - **Execute Block Python Expressions**: Added translation of Python expressions in execute blocks
   - Previously `as @a if x > 5:` generated invalid `execute as @a if x > 5` command
   - Now detects and translates Python expressions to Minecraft conditions
-  - Added helper functions in `src/transpiler/mod.rs:1157-1266` for expression detection
-  - Modified `src/transpiler/statement_processors/execute_processor.rs:73-111` for smart translation
+  - Added helper functions in `src/transpiler/mod.rs` for expression detection
+  - Modified `src/transpiler/statement_processors/execute_processor.rs` for smart translation
 
 ## [0.5.15] - 2025-01-08
 
 ### Fixed
 - **Import Stack Management**: Fixed false circular dependency warnings when building multiple files in a directory
   - Cleared import stack at the start of each file's transpilation to prevent cross-file contamination
-  - Modified `src/transpiler/mod.rs:242` to add `self.import_stack.clear()` at transpile start
+  - Modified `src/transpiler/mod.rs` to add `self.import_stack.clear()` at transpile start
   - Real circular dependencies are still properly detected and warned about
   - Fixes issue where building directories would show false "main → main" circular import warnings
 
 - **Selector Alias Replacement**: Fixed selector aliases being incorrectly replaced inside JSON strings and NBT data
   - Selector aliases (e.g., `@Boss = @e[type=zombie,tag=boss]`) are now only replaced in command contexts
   - Preserved literal `@Boss` text in JSON components like `{"text":"The @Boss is here"}`
-  - Modified `src/transpiler/command_processor.rs:202-249` to check if replacement occurs inside quotes
+  - Modified `src/transpiler/command_processor.rs` to check if replacement occurs inside quotes
   - Prevents text corruption in tellraw messages and NBT display names
 
 - **Double Brace Escaping**: Implemented proper `{{variable}}` escape sequence handling
   - Double braces `{{var}}` now correctly output literal `{var}` text as documented
   - Single braces `{var}` continue to work as macro parameters with `$(var)` substitution
-  - Modified `src/transpiler/command_processor.rs:57-80` to detect and handle double brace patterns
+  - Modified `src/transpiler/command_processor.rs` to detect and handle double brace patterns
   - Enables literal player names: `{{Steve}}` → `{Steve}` and other literal brace content
-  - Fixes documented feature from `docs/cli.md:358` that was not working
+  - Fixes documented feature from `docs/cli.md` that was not working
 
 ### Verified
-- All 91 tests passing (7 unit + 86 integration + 5 negative steps)
 - Double brace escaping works correctly: `{{player}}` → `{player}` literal
 - Selector aliases preserved in JSON text but replaced in commands
 - No false circular dependency warnings when building directories
@@ -852,61 +844,59 @@ and ships the runtime-semantics fixes below. See
 
 ### Fixed
 - **CRITICAL: Decimal pack format serialization**
-  - Fixed `PackFormat::Decimal` to serialize as JSON number (float) instead of JSON string
+  - Fixed `PackFormat::Decimal` to serialize as a JSON number (float)
   - Previously `--pack-format 88.0` generated `"pack_format": "88.0"` (string) which Minecraft rejects
   - Now correctly generates `"pack_format": 88.0` (number) which Minecraft accepts
-  - Modified `src/pack_format.rs:82-87` to use `serialize_f64()` instead of `serialize_str()`
-  - Updated regression test `tests/integration_test.rs:2008` to verify JSON number format
+  - Modified `src/pack_format.rs` to replace `serialize_str()` with `serialize_f64()`
+  - Updated regression test `tests/integration_test.rs` to verify JSON number format
   - Decimal formats now work correctly: 88.0, 88.1, 90.0 all serialize as JSON numbers
   - Integer formats still work perfectly: 18 serializes as JSON integer
 
 ### Changed
 - **MAJOR: Documentation minimum version corrections**
   - Corrected minimum Minecraft version requirement from 1.21.7+ to 1.20.2+
-  - Updated `docs/language.md:829` to reflect correct minimum version (pack format 18)
-  - Updated `docs/cli.md:379` to reflect correct minimum version requirements
+  - Updated `docs/language.md` to reflect correct minimum version (pack format 18)
+  - Updated `docs/cli.md` to reflect correct minimum version requirements
   - Added clarification about decimal pack format support (Minecraft 1.21.9+)
-  - Updated `docs/api.md:366-383` with complete DataPack struct definition
+  - Updated `docs/api.md` with complete DataPack struct definition
   - Added missing fields in API documentation: advancements, loot_tables, recipes, predicates, item_modifiers, used_objectives
   - Updated pack_format field type from u8 to PackFormat enum in documentation
 
 ### Verified
-- All 110 tests passing (7 unit + 86 integration + 12 regression + 5 negative steps)
 - All generated commands validated against Minecraft specifications
 - Pack format serialization verified for both integer and decimal formats
-- No existing features broken by the fixes
 
 ## [0.5.13] - 2025-10-08
 
 ### Fixed
 - **CRITICAL: Context-aware tokenization for arithmetic operators**
   - Fixed minus operator being incorrectly parsed as unary negative in binary contexts
-  - Expression `10-5` was incorrectly tokenized as `[Number(10), Number(-5)]` instead of `[Number(10), Minus, Number(5)]`
-  - Expression `2^3` was incorrectly treated as coordinate marker instead of power operator
+  - Expression `10-5` was incorrectly tokenized as `[Number(10), Number(-5)]`; it now tokenizes as `[Number(10), Minus, Number(5)]`
+  - Expression `2^3` was incorrectly treated as a coordinate marker; it now parses as the power operator
   - Added `should_be_binary_minus()` and `should_be_power_operator()` context checking functions
-  - Modified `src/parser/tokenizer.rs:507-535` to check previous token before treating `-` as unary
-  - Modified `src/parser/tokenizer.rs:436-458` to distinguish power operator from coordinate syntax
+  - Modified `src/parser/tokenizer.rs` to check previous token before treating `-` as unary
+  - Modified `src/parser/tokenizer.rs` to distinguish power operator from coordinate syntax
   - All arithmetic expressions now parse correctly: `10-5 = 5`, `2^3 = 8`, `(5-3)*2 = 4`
 - **CRITICAL: Division and modulo by zero detection**
-  - Division/modulo by compile-time constant zero now produces compilation error instead of warning
+  - Division/modulo by compile-time constant zero now produces a compilation error
   - Previously only warned about division by zero, allowing undefined behavior in Minecraft
   - Added compile-time constant tracking for zero divisor detection
-  - Modified `src/transpiler/statement_processors/assignment.rs:675-716` to return error for zero divisors
+  - Modified `src/transpiler/statement_processors/assignment.rs` to return error for zero divisors
   - Added checks for both `var / const_zero` and `const / var_zero` patterns
   - Error messages include helpful suggestions for conditional checks
 - **CRITICAL: Boundary condition handling in comparisons**
   - Fixed incorrect condition generation for `x > i32::MAX` and `x < i32::MIN` comparisons
   - Previously used saturating arithmetic causing `2147483647 + 1` to remain `2147483647` (incorrect)
   - Comparisons like `max_val > 2147483647` should be always-false but generated invalid ranges
-  - Added explicit boundary checks in `src/transpiler/condition_translator.rs:232-282`
+  - Added explicit boundary checks in `src/transpiler/condition_translator.rs`
   - Boundary conditions now generate correct always-false patterns: `score ... matches 0 unless score ... matches 0`
   - Normal comparisons unaffected: `a > 5` still generates `matches 6..` correctly
 - **MAJOR: Power operator exponent limit**
   - Added maximum exponent limit of 100 to prevent excessive command generation
   - Previously `base ^ 500` would generate 499 multiplication commands (excessive)
   - Added constant `MAX_POWER_EXPONENT = 100` with validation
-  - Modified `src/transpiler/statement_processors/assignment.rs:293-307` to check exponent bounds
-  - Modified `src/transpiler/expression_evaluator.rs:149-159` for expression evaluation
+  - Modified `src/transpiler/statement_processors/assignment.rs` to check exponent bounds
+  - Modified `src/transpiler/expression_evaluator.rs` for expression evaluation
   - Error message suggests using loop-based multiplication for large exponents
   - Exponents ≤100 work correctly: `2^10 = 1024`, `base ^ 100` compiles successfully
 - **MAJOR: Decimal pack format support**
@@ -932,37 +922,33 @@ and ships the runtime-semantics fixes below. See
   - `test_regression_boundary_condition_gte_max` - Verifies `x >= i32::MAX` generates correct range
   - `test_regression_boundary_condition_lte_min` - Verifies `x <= i32::MIN` generates correct range
   - `test_regression_normal_comparisons_still_work` - Verifies `a > 5` generates `matches 6..`
-  - Total test count increased from 74 to 98 tests (7 unit + 86 integration + 5 negative steps)
 
 ### Technical Details
-- All 98 tests passing (100% pass rate)
 - Verified all generated Minecraft commands are valid and conform to Minecraft Wiki specifications
 - Scoreboard integer range: -2,147,483,648 to 2,147,483,647 (32-bit signed integer)
 - Tested edge cases: i32::MIN, i32::MAX, negative numbers, complex expressions, zero operations
 - Verified existing features still work: loops, conditionals, match statements, functions, execute blocks
 - Pack format compatibility: Supports both integer (18, 48, 88) and decimal (88.0, 61.1) formats
 - Generated commands tested: scoreboard operations, execute conditions, macro syntax, event tags
-- No regression in existing functionality
-- Performance unchanged: compilation time ~1s, test execution ~0.1s
 
 ## [0.5.12] - 2025-10-07
 
 ### Fixed
 - **CRITICAL: Negative-step range() initialization**: Fixed incorrect start value calculation for negative step loops
-  - Previously used `count + step` formula which generated wrong start values (e.g., `range(10) by -3` started at 7 instead of 9)
+  - Previously used `count + step` formula which generated wrong start values (e.g., `range(10) by -3` started at 7; the correct start is 9)
   - Now correctly uses `count - 1` for all negative steps, ensuring proper iteration counts
-  - Modified `src/transpiler/statement_processors/loop_processor.rs:79` to fix start value calculation
+  - Modified `src/transpiler/statement_processors/loop_processor.rs` to fix start value calculation
   - All negative step loops now iterate the correct number of times with correct starting values
 - **CRITICAL: Macro $ prefix detection**: Fixed missing `$` line prefix for functions using `$(param)` syntax directly
   - Functions with pre-existing `$(param)` syntax in commands weren't detected as macros
   - Only `{param}` → `$(param)` conversions were setting the macro flag
   - Added detection for existing `$()` syntax before parameter scanning
-  - Modified `src/transpiler/command_processor.rs:48-50` to check for `$()` in command strings
+  - Modified `src/transpiler/command_processor.rs` to check for `$()` in command strings
   - All macro functions now correctly generate `$command $(param)` format with proper line prefix
 - **CRITICAL: Stale files cleanup**: Fixed stale function files persisting across rebuilds
   - Deleted or renamed functions remained in output directory from previous builds
   - Now removes entire functions directory before regenerating files
-  - Modified `src/transpiler/data_pack.rs:161-165` to clean functions directory on each build
+  - Modified `src/transpiler/data_pack.rs` to clean functions directory on each build
   - Ensures output directory only contains current functions, preventing confusion
 
 ### Added
@@ -972,14 +958,11 @@ and ships the runtime-semantics fixes below. See
   - `test_for_loop_negative_step_minus_five` - Verifies range(20) by -5 starts at 19
   - `test_macro_dollar_syntax_direct` - Verifies $(param) syntax gets $ prefix
   - `test_macro_mixed_syntax` - Verifies mixed {param} and $(param) syntax works
-  - Total test count increased from 74 to 79 integration tests
 
 ### Technical Details
-- All 79 integration tests passing (100% pass rate)
 - Verified correct Minecraft command generation for all negative step scenarios
 - Macro functions now work correctly with both `{param}` and `$(param)` input syntax
 - Build process now ensures clean output with no stale files
-- No regression in existing functionality (positive steps, nested loops, all other features)
 
 ## [0.5.11] - 2025-10-06
 
@@ -988,7 +971,7 @@ and ships the runtime-semantics fixes below. See
   - Nested for loops generated wrapper functions with duplicate names, causing infinite loop execution and Minecraft server freezes
   - Inner loop's wrapper would overwrite outer loop's wrapper in HashMap, resulting in incorrect function calls
   - Changed wrapper function naming to use separate temp_counter increment for each loop level
-  - Modified `src/transpiler/statement_processors/loop_processor.rs:137-141` to ensure unique wrapper IDs
+  - Modified `src/transpiler/statement_processors/loop_processor.rs` to ensure unique wrapper IDs
   - Each nested loop level now has its own unique wrapper function (e.g., `loop_wrapper_2`, `loop_wrapper_3`)
   - Nested loops now execute correctly without infinite recursion
 
@@ -997,15 +980,12 @@ and ships the runtime-semantics fixes below. See
   - `test_nested_loops_no_infinite_loop` - Verifies wrapper functions are unique and no infinite loop occurs
   - `test_nested_loops_with_arithmetic` - Verifies nested loop variables work correctly in arithmetic expressions
   - `test_triple_nested_loops` - Verifies support for triple (and deeper) nested loops
-  - Total test count increased from 71 to 74 integration tests
 
 ### Technical Details
-- All 74 integration tests passing (100% pass rate)
 - Verified correct execution flow for 2-level and 3-level nested loops
 - Generated datapacks tested to ensure no infinite loops occur
 - Wrapper functions now uniquely named across all nesting levels
 - Loop control functions (loop_temp_N) call correct wrapper functions
-- No regression in existing loop functionality (single loops, while loops)
 - Minecraft execution verified: loops terminate correctly with expected iteration counts
 
 ## [0.5.10] - 2025-10-05
@@ -1014,38 +994,38 @@ and ships the runtime-semantics fixes below. See
 - **CRITICAL: Parser numeric literal validation**: Enhanced parser to properly validate number literals
   - Added validation to prevent invalid numbers from being silently converted to 0.0
   - Invalid number literals now produce clear error messages with line numbers
-  - Modified `src/parser/tokenizer.rs:276-290,485-502` to validate numbers using `parse::<f64>()`
+  - Modified `src/parser/tokenizer.rs` to validate numbers using `parse::<f64>()`
   - Prevents silent failures when malformed numeric tokens are encountered
 - **CRITICAL: Boolean literal objective tracking**: Fixed missing __internal__ objective initialization
   - Boolean literals (True/False) use __internal__ objective but weren't tracking it when no variables existed
   - Added `contains_boolean_literal()` helper to detect Boolean usage in conditions
-  - Modified `src/transpiler/mod.rs:885-1008` to track __internal__ objective when Boolean literals present
+  - Modified `src/transpiler/mod.rs` to track __internal__ objective when Boolean literals present
   - Ensures scoreboard constants #true_const and #false_const are properly initialized
 - **CRITICAL: Loop variable scope pollution**: Fixed variable scope leaking from loop bodies to outer scope
   - Loop variables were permanently added to global HashMaps without cleanup
   - Added save/restore mechanism for variable_objectives and scoreboard_variables
-  - Modified `src/transpiler/statement_processors/loop_processor.rs:65-121` to isolate loop scope
+  - Modified `src/transpiler/statement_processors/loop_processor.rs` to isolate loop scope
   - Outer scope variables are now protected from loop variable pollution
 - **CRITICAL: For loop type system bypass**: Fixed type checking bypass in loop bodies
   - variable_types HashMap wasn't saved/restored, allowing type changes to leak
   - Added save/restore for variable_types to maintain type system integrity across loops
-  - Modified `src/transpiler/statement_processors/loop_processor.rs:88-107` for type isolation
+  - Modified `src/transpiler/statement_processors/loop_processor.rs` for type isolation
   - Type checking now works correctly with variables used in both loop and outer scope
 - **CRITICAL: Float-to-int cast warnings**: Added comprehensive precision loss warnings
   - Binary operations with float values now warn about truncation
   - Clear warnings show original value and truncated result
-  - Modified `src/transpiler/statement_processors/assignment.rs:175-183,325-374,376-387`
-  - Modified `src/transpiler/expression_evaluator.rs:36-43,79-86`
+  - Modified `src/transpiler/statement_processors/assignment.rs`
+  - Modified `src/transpiler/expression_evaluator.rs`
   - Helps developers understand scoreboard integer-only limitations
 - **CRITICAL: Const modulo consistency**: Fixed const modulo to use integer arithmetic
   - Const expressions used float modulo which differs from runtime integer modulo for negative numbers
   - Changed to integer modulo: `(left_val as i32) % (right_val as i32)`
-  - Modified `src/transpiler/statement_processors/const_processor.rs:65-72`
+  - Modified `src/transpiler/statement_processors/const_processor.rs`
   - Ensures compile-time and runtime behavior match exactly
 - **Performance: __internal__ objective optimization**: Optimized initialization to only create when needed
   - __internal__ objective was being initialized unconditionally even when Boolean literals weren't used
   - Added conditional check: only initialize if `used_objectives.contains("__internal__")`
-  - Modified `src/transpiler/data_pack.rs:83-93,113-117`
+  - Modified `src/transpiler/data_pack.rs`
   - Reduces generated code size and improves datapack efficiency
 
 ### Added
@@ -1056,14 +1036,10 @@ and ships the runtime-semantics fixes below. See
   - `test_const_modulo_consistency` - Verifies const and runtime modulo match
   - `test_float_precision_warnings` - Verifies float warnings are displayed
   - `test_internal_objective_only_when_needed` - Verifies optimization works correctly
-  - Total test count increased from 65 to 71 integration tests
 
 ### Technical Details
-- All 71 integration tests passing (100% pass rate)
-- Generated 5 real datapacks for verification testing
 - All generated commands validated against Minecraft 1.20.2+ specifications
 - Verified datapack structure (pack.mcmeta, functions/, tags/, load.json)
-- No regression in existing functionality
 - Parser validation prevents malformed numeric tokens
 - Boolean literal tracking ensures proper initialization
 - Loop scope isolation maintains variable independence
@@ -1075,40 +1051,38 @@ and ships the runtime-semantics fixes below. See
 ## [0.5.9] - 2025-10-05
 
 ### Fixed
-- **CRITICAL: Zero-length loop execution**: Fixed bug where `range(0)` loops would execute once instead of zero times
+- **CRITICAL: Zero-length loop execution**: Fixed bug where `range(0)` loops would execute once; they now execute zero times
   - Previously used do-while structure that always executed body at least once
   - Now uses while structure with condition check BEFORE body execution
   - Changed loop generation to check condition first: `execute if score i loop_counter matches ..-1 run function ...`
   - For `range(0)`, condition `..-1` never matches (i starts at 0), so body never executes
-  - Modified `src/transpiler/statement_processors/loop_processor.rs:109-170` to implement while-style loops
+  - Modified `src/transpiler/statement_processors/loop_processor.rs` to implement while-style loops
   - Created separate loop_wrapper functions to store variables and call body with proper macro parameters
 - **CRITICAL: Boolean and Expression parameters**: Fixed bug where boolean and expression parameters were not stored to NBT storage
   - Function parameters that are booleans (True/False) or expressions (x+y) were not being stored, leaving macro variables undefined
   - Boolean parameters now stored as 1/0: `data modify storage namespace:global args.param set value 1`
   - Expression parameters evaluated to temp variables then stored: `execute store result storage ... run scoreboard players get _arg_temp_0 temp`
-  - Modified `src/transpiler/mod.rs:684-813` to handle Expression::Boolean, Expression::Binary, Expression::Unary
+  - Modified `src/transpiler/mod.rs` to handle Expression::Boolean, Expression::Binary, Expression::Unary
   - Function macros now receive correct values for all parameter types
 - **CRITICAL: JSON array handling**: Fixed bug where JSON arrays had their styling completely destroyed when variables were present
   - Previously rejected all JSON (both arrays and objects) with variables
   - Now preserves JSON arrays without variables as-is: `tellraw @a [{"text":"Success"},{"text":"!"}]`
   - JSON objects with variables correctly extract text and create macro-compatible format
-  - Modified `src/transpiler/command_processor.rs:287-347` to detect and preserve JSON arrays
+  - Modified `src/transpiler/command_processor.rs` to detect and preserve JSON arrays
   - Only JSON arrays with variables are rejected (with helpful error message suggesting score component syntax)
 - **CRITICAL: temp objective tracking**: Fixed bug where OR conditions used `temp` objective without tracking it
   - OR conditions generate `scoreboard players set or_result temp 0` but `temp` objective wasn't being created
   - Would cause "Unknown scoreboard objective 'temp'" error in Minecraft
-  - Modified `src/transpiler/mod.rs:999-1027` to call `track_objective("temp")` in handle_or_condition
+  - Modified `src/transpiler/mod.rs` to call `track_objective("temp")` in handle_or_condition
   - Init function now includes `scoreboard objectives add temp dummy` when OR conditions are used
 
 ### Technical Details
-- All 72 integration tests + parser tests passing (65 integration + 7 parser)
 - Comprehensive verification with real Minecraft command generation
 - Zero-length loops: `range(0)` generates condition check that never passes
 - Boolean parameters: True→1, False→0 in NBT storage
 - Expression parameters: Evaluated to temp scoreboard then stored to NBT
 - JSON arrays: Preserved without modification when no variables present
 - temp objective: Created in _cobble_init.mcfunction for OR conditions
-- No regression in existing functionality
 
 ## [0.5.8] - 2025-10-05
 
@@ -1117,34 +1091,32 @@ and ships the runtime-semantics fixes below. See
   - Previously, only `program.statements` were processed during import, but parser separates imports into `program.imports`
   - Now processes both `program.imports` and `program.statements` in correct order
   - Enables proper multi-level import chains (e.g., main.cbl imports utils.cbl which imports helpers.cbl)
-  - Modified `src/transpiler/mod.rs:464-472` to add nested import loop before statement processing
+  - Modified `src/transpiler/mod.rs` to add nested import loop before statement processing
 - **CRITICAL: Selector and item parameters**: Fixed bug where all identifiers were treated as scoreboard variables
   - Selectors (e.g., `@a`, `@s`) and item names (e.g., `diamond`, `emerald`) are now correctly stored as string literals
   - Previously `give_item(@a, diamond)` generated invalid `scoreboard players get @a temp` command
   - Now correctly generates `data modify storage namespace:global args.selector set value "@a"`
   - Implements three-way detection: selectors (starts with @), scoreboard variables (in tracking), or string literals
-  - Modified `src/transpiler/mod.rs:718-744` to add selector/item detection logic
+  - Modified `src/transpiler/mod.rs` to add selector/item detection logic
 - **CRITICAL: Forward reference macro calls**: Fixed bug where functions calling functions defined later would fail
   - Previously `function_params` HashMap was only populated when `process_function_def` ran
   - Functions defined before their callees wouldn't include "with storage" syntax
   - Now implements two-pass compilation: first pass registers all function signatures, second pass processes bodies
-  - Modified `src/transpiler/mod.rs:245-256` to add two-pass compilation loop
+  - Modified `src/transpiler/mod.rs` to add two-pass compilation loop
   - Enables proper forward references where caller is defined before callee
 - **CRITICAL: Boolean literal evaluation**: Fixed bug where True/False literals failed in contexts without @s executor
   - Previously used `entity @s` which fails in load/tick functions (no execution context)
   - Now uses internal scoreboard constants: `#true_const __internal__ = 1`, `#false_const __internal__ = 0`
   - `if True:` generates `execute if score #true_const __internal__ matches 1..` (always succeeds)
   - `if False:` generates `execute if score #false_const __internal__ matches 1..` (always fails)
-  - Modified `src/transpiler/condition_translator.rs:166-177` for Boolean expression handling
-  - Modified `src/transpiler/data_pack.rs:84-86,107-109` to initialize constants in load function
+  - Modified `src/transpiler/condition_translator.rs` for Boolean expression handling
+  - Modified `src/transpiler/data_pack.rs` to initialize constants in load function
 
 ### Technical Details
-- All 65 integration tests + 7 parser tests = 72 total tests passing
 - Comprehensive verification with nested imports (A→B→C chains)
 - Selector/item parameter tests with @a, @s, diamond, emerald
 - Forward reference tests with caller defined before callee
 - Boolean literal tests in load functions (no @s context)
-- No regression in existing functionality
 
 ## [0.5.7] - 2025-10-05
 
@@ -1152,16 +1124,16 @@ and ships the runtime-semantics fixes below. See
 - **CRITICAL: Function variable type isolation**: Fixed type system bug where variable types leaked between functions
   - Previously, if `func1()` assigned `x = True` (boolean), then `func2()` would fail when trying `x = 10` (integer)
   - Each function now has its own isolated variable type scope
-  - Modified `src/transpiler/mod.rs:567,595` to backup and restore `variable_types` HashMap
+  - Modified `src/transpiler/mod.rs` to backup and restore `variable_types` HashMap
   - This allows different functions to use the same variable names with different types
 - **Compiler warning**: Removed unnecessary parentheses in tokenizer condition check
-  - Modified `src/parser/tokenizer.rs:152` to eliminate compiler warning
+  - Modified `src/parser/tokenizer.rs` to eliminate compiler warning
   - Changed `if (ch == '"' || ch == '\'')` to `if ch == '"' || ch == '\''`
 
 ### Improved
 - **Division by zero detection**: Enhanced compile-time constant division by zero warnings
   - Added warnings when dividing by variables that have constant value of 0
-  - Modified `src/transpiler/statement_processors/assignment.rs:651-684`
+  - Modified `src/transpiler/statement_processors/assignment.rs`
   - Helps catch potential undefined behavior in Minecraft
   - Note: Runtime division by zero detection remains intentionally minimal to avoid code bloat
 
@@ -1176,7 +1148,7 @@ and ships the runtime-semantics fixes below. See
 
 ### Fixed
 - **CRITICAL: Inline comment handling in commands**: Fixed inline comments to be properly removed from Minecraft commands
-  - Minecraft only supports comments at the beginning of lines, not inline
+  - Minecraft only supports comments at the beginning of lines
   - Previously `/say Hello # comment` would output invalid `say Hello # comment`
   - Now correctly outputs `say Hello` with comment stripped
   - Improved to respect strings: `/say "Text with # in string"` now preserves the # inside strings
@@ -1186,12 +1158,12 @@ and ships the runtime-semantics fixes below. See
   - Previously unsupported expressions (like function calls) would silently evaluate to `true`
   - Now raises clear compile-time errors with helpful messages
   - Error message lists all supported condition types (comparisons, boolean vars, literals, logical operators)
-  - Modified `src/transpiler/condition_translator.rs:166-183`
+  - Modified `src/transpiler/condition_translator.rs`
 - **CRITICAL: For loop validation**: Added proper error handling for non-range() iterators
   - Previously `for i in items:` would silently emit only a comment and execute body once
   - Now raises clear error with usage examples
   - Error message explains only `range()` is supported and provides syntax examples
-  - Modified `src/transpiler/statement_processors/loop_processor.rs:141-155`
+  - Modified `src/transpiler/statement_processors/loop_processor.rs`
 
 ### Added
 - **Execute modifiers**: Implemented 6 missing execute command modifiers
@@ -1202,7 +1174,7 @@ and ships the runtime-semantics fixes below. See
   - `align <axes>` - Aligns position to block coordinates
   - `store (result|success) ...` - Stores command output
   - All modifiers generate valid Minecraft Java Edition syntax
-  - Modified `src/parser/combinators.rs:390-429`
+  - Modified `src/parser/combinators.rs`
   - Transpiler already supported these in AST and execute processor
 - **Unary arithmetic operators**: Implemented unary plus and minus operators
   - Supports `-x` (negation of variable)
@@ -1210,23 +1182,21 @@ and ships the runtime-semantics fixes below. See
   - Supports `-(expr)` (negation of expression)
   - Works with complex expressions: `-x * 2`, `-(a + b)`
   - Generates correct Minecraft scoreboard commands using multiplication by -1
-  - Modified parser in `src/parser/combinators.rs:54-64`
-  - Added evaluation in `src/transpiler/expression_evaluator.rs:345-376`
-  - Added assignment handling in `src/transpiler/statement_processors/assignment.rs:79-92`
+  - Modified parser in `src/parser/combinators.rs`
+  - Added evaluation in `src/transpiler/expression_evaluator.rs`
+  - Added assignment handling in `src/transpiler/statement_processors/assignment.rs`
 
 ### Documentation
-- **Fixed variable name error**: Corrected example in `docs/language.md:429`
+- **Fixed variable name error**: Corrected example in `docs/language.md`
   - Example used `{count}` but variable was named `counter`
   - Now correctly uses `{counter}`
-- **Updated GitHub links**: Fixed placeholder URLs in `docs/cli.md:402-403`
+- **Updated GitHub links**: Fixed placeholder URLs in `docs/cli.md`
   - Changed from `github.com/user/cobble` to `github.com/deveworld/cobble`
   - Users can now access actual repository and issue tracker
 
 ### Technical Details
-- All 72 tests passing (65 integration + 7 parser tests)
-- All 16 example files compile successfully
+- All example files compile successfully
 - All generated Minecraft commands validated against wiki specifications
-- No regression in existing functionality
 - Smart comment detection respects string literals and escape sequences
 - Unary operators integrate with full expression evaluator for complex nested expressions
 
@@ -1251,15 +1221,13 @@ and ships the runtime-semantics fixes below. See
 - **Regression tests for title commands**: Added 2 comprehensive tests
   - `test_title_command_preserves_action` - Verifies action tokens preserved for title/subtitle/actionbar
   - `test_title_all_actions_with_scoreboard_vars` - Tests all action types with scoreboard variables
-  - Total test count increased from 63 to 65 integration tests
 
 ### Technical Details
-- Modified `src/commands/init.rs:39-61` to add pack_format validation with MIN/MAX constants
-- Modified `src/transpiler/command_processor.rs:236-380` to handle title vs tellraw differently
+- Modified `src/commands/init.rs` to add pack_format validation with MIN/MAX constants
+- Modified `src/transpiler/command_processor.rs` to handle title vs tellraw differently
   - Split parsing logic to extract action token from title commands
   - Preserve action token in final command output between selector and JSON array
-- Updated default output directory documentation in `docs/cli.md:53`
-- All 65 integration tests + 7 parser tests = 72 total tests passing
+- Updated default output directory documentation in `docs/cli.md`
 
 ## [0.5.3] - 2025-10-05
 
@@ -1269,7 +1237,7 @@ and ships the runtime-semantics fixes below. See
 - **Condition translation**: Comparisons support literals (and constants) on either side, matching Python semantics while emitting valid scoreboard checks.
 
 ### Added
-- **Regression tests**: Expanded integration suite to 63 cases covering constant inlining, literal-on-left comparisons, and pack layout verification.
+- **Regression tests**: Expanded the integration suite to cover constant inlining, literal-on-left comparisons, and pack layout verification.
 
 ### Technical Details
 - Updated `DataPack::write` to emit pluralised directories.
@@ -1295,19 +1263,17 @@ and ships the runtime-semantics fixes below. See
   - `test_asat_with_multi_entity_selector` - Verifies asat uses @s correctly
   - `test_power_operator_zero_exponent` - Verifies x^0 = 1 in expressions
   - `test_power_operator_assignment_zero_exponent` - Verifies x^0 = 1 in assignments
-  - Total test count increased from 59 to 62 integration tests
 
 ### Technical Details
-- Modified `src/parser/combinators.rs:418` to use `@s` instead of selector in asat
-- Modified `src/transpiler/expression_evaluator.rs:120-129` to handle x^0 case
-- Modified `src/transpiler/statement_processors/assignment.rs:269-277` to handle x^0 case
-- All 62 integration tests passing + 7 parser tests = 69 total tests passing
+- Modified `src/parser/combinators.rs` so asat uses `@s` for the `at` modifier
+- Modified `src/transpiler/expression_evaluator.rs` to handle x^0 case
+- Modified `src/transpiler/statement_processors/assignment.rs` to handle x^0 case
 
 ## [0.5.1] - 2025-10-03
 
 ### Fixed
 - **Power operator associativity**: Fixed power operator to be right-associative following mathematical conventions
-  - `2^3^2` now correctly evaluates as `2^(3^2) = 512` instead of `(2^3)^2 = 64`
+  - `2^3^2` now correctly evaluates as `2^(3^2) = 512` (previously `(2^3)^2 = 64`)
   - Matches standard mathematical notation where exponentiation is right-associative
   - Parser updated to build right-associative expression trees for power operations
 - **Constant expression folding**: Implemented recursive constant evaluation for nested expressions
@@ -1339,7 +1305,6 @@ and ships the runtime-semantics fixes below. See
 - Added `try_eval_const()` recursive evaluator in `src/transpiler/mod.rs`
 - Updated `process_assignment()` to use constant folding before expression evaluation
 - Added test `test_power_operator_simple` to verify correct power operation compilation
-- All 66 tests passing (7 parser + 59 integration tests)
 
 ### Documentation
 - Added 9 example files demonstrating all major language features
@@ -1389,7 +1354,7 @@ and ships the runtime-semantics fixes below. See
 - Added type tracking to `process_assignment()` and `process_const_assignment()`
 - Added overlap validation to match processor with sorted range checking
 - Added warning output for float truncation and range overflow in assignment processor
-- Fixed boolean initialization in module-level variable processing (line 211-217 of transpiler/mod.rs)
+- Fixed boolean initialization in module-level variable processing
 
 ### Breaking Changes
 - Variables can no longer change types after initial assignment
@@ -1411,7 +1376,7 @@ and ships the runtime-semantics fixes below. See
   - This bug affected ANY execute block with multiple conditions - generated commands would fail silently in Minecraft
 
 ### Added
-- **Regression tests**: Added 3 new integration tests to prevent future capitalization bugs (58 total, all passing ✅)
+- **Regression tests**: Added 3 new integration tests to prevent future capitalization bugs
   - `test_multiple_if_in_execute_block` - Validates multiple `if` conditions are lowercase
   - `test_if_unless_combination_in_execute` - Validates `if` + `unless` combinations
   - `test_complex_execute_chain` - Validates complex execute chains with all keywords lowercase
@@ -1440,7 +1405,7 @@ and ships the runtime-semantics fixes below. See
   - Prevents duplicate execution of wildcard code
 
 ### Added
-- **Comprehensive tests**: Added 4 new integration tests (55 total, all passing ✅)
+- **Comprehensive tests**: Added 4 new integration tests
   - `test_nested_or_operators` - Validates triple OR expressions
   - `test_or_with_and_combination` - Validates OR combined with AND
   - `test_match_wildcard_single_statement` - Validates single-statement wildcard cases
@@ -1449,7 +1414,6 @@ and ships the runtime-semantics fixes below. See
 ### Improved
 - **OR operator**: Now fully supports nested and combined expressions
 - **Match statements**: Wildcard cases now work correctly in all scenarios
-- **Test coverage**: Increased from 51 to 55 integration tests
 
 ## [0.4.1] - 2025-10-03
 
@@ -1465,7 +1429,7 @@ and ships the runtime-semantics fixes below. See
         /say Countdown: {i}
         /title @a title {"text":"{i}", "color":"red"}
     ```
-- **Comprehensive tests**: Added 3 new integration tests (51 total, all passing ✅)
+- **Comprehensive tests**: Added 3 new integration tests
   - `test_loop_variable_in_commands`
   - `test_loop_variable_with_step`
   - `test_parameterless_function_call`
@@ -1508,7 +1472,7 @@ and ships the runtime-semantics fixes below. See
     import utils
     helper_function()  # From utils.cbl
     ```
-- **Comprehensive tests**: Added 3 new integration tests (48 total, all passing ✅)
+- **Comprehensive tests**: Added 3 new integration tests
   - `test_selector_definition`
   - `test_selector_in_commands`
   - `test_file_import`
@@ -1550,7 +1514,6 @@ and ships the runtime-semantics fixes below. See
 
 ### Improved
 - Documentation: Added comprehensive examples for const and match features in `docs/language.md`
-- Test coverage: Now 45 integration tests (previously 39)
 
 ## [0.2.2] - 2025-10-02
 
@@ -1580,11 +1543,10 @@ and ships the runtime-semantics fixes below. See
 
 ### Documentation
 - **Power operator associativity**: Documented left-associative behavior of `^` operator in `docs/language.md`
-  - `2^3^2` evaluates as `(2^3)^2 = 64`, not mathematical convention `2^(3^2) = 512`
+  - `2^3^2` evaluates as `(2^3)^2 = 64`; mathematical convention gives `2^(3^2) = 512`
   - Added clear examples and warnings
 
 ### Improved
-- Test count increased to 46 tests (7 parser + 39 integration)
 - All tests now pass with bug fixes
 
 ## [0.2.1] - 2025-10-02
@@ -1596,7 +1558,7 @@ and ships the runtime-semantics fixes below. See
   - Works with nested conditions: `if x % 3 == 1 and y ^ 2 == 25:`
   - Automatically creates unique temporary variables (`expr_cond_temp_N`) for evaluation
   - Supports complex expressions on both left and right sides of comparisons
-  - Works seamlessly with AND/OR operators
+  - Works with AND/OR operators
 
 ### Improved
 - Intelligent condition preprocessing that recursively handles nested expressions
@@ -1624,7 +1586,7 @@ and ships the runtime-semantics fixes below. See
   - Default step is 1 if not specified
 
 ### Fixed
-- **Java Edition compatibility**: Negative loop steps now use `scoreboard players remove` instead of `add` with negative values
+- **Java Edition compatibility**: Negative loop steps now use `scoreboard players remove` (previously `add` with negative values)
 
 ### Improved
 - Updated operator precedence: `^` > `*/%` > `+-` > comparisons

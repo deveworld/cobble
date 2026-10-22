@@ -2288,7 +2288,7 @@ fn direct_datapack_writer_rejects_traversal_tag_paths() {
 }
 
 /// The `resource_pack.*` diagnostics documented in
-/// `docs/resource-pack-design.md` are real `TranspileErrorKind`s, so
+/// `docs/language.md` are real `TranspileErrorKind`s, so
 /// `cobble check --json` and the web compiler report them by their own slugs
 /// instead of the generic `semantic` fallback.
 #[test]

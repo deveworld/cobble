@@ -27,9 +27,9 @@ cobble check --json --experimental-python-compat
 cobble build --validate
 ```
 
-`--apply` is deliberately narrow in 0.9.0. It can update supported config
-settings such as `[project].pack_format` to `101.1`; it does not rewrite source
-files and does not enable experimental features. Before changing
+In 0.9.0, `--apply` only updates supported config settings such as
+`[project].pack_format` to `101.1`; it does not rewrite source files or enable
+experimental features. Before changing
 `cobble.toml`, Cobble writes a timestamped backup next to the original file and
 reports that path as `config.backup_path`.
 
@@ -51,14 +51,3 @@ The JSON report is designed for CI review. It includes:
 - Plugins: `plugins/*.toml` manifests are experimental and diagnostics-only in
   0.9.0. Cobble can evaluate built-in declarative rules, but it does not run
   project plugin code.
-
-## CI Gate
-
-For release candidates and larger project upgrades, run:
-
-```bash
-scripts/qa_09_release_gate.sh
-```
-
-Use `COBBLE_QA_ALLOW_DIRTY=1` only for local rehearsal against uncommitted
-changes. The final release gate should run on a clean worktree.

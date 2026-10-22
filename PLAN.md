@@ -30,31 +30,31 @@ Edition data packs:
   editor integrations.
 - Small enough that a standalone Rust CLI remains the default experience.
 
-The goal is not to become a general Minecraft pack SDK like `beet`, a full
-Python interpreter, or a hidden runtime framework. Cobble should stay focused
-on turning `.cbl` source into transparent data pack output.
+Cobble should stay focused on turning `.cbl` source into transparent data pack
+output. A general Minecraft pack SDK like `beet`, a full Python interpreter,
+and a runtime framework that hides state from the author are out of scope.
 
 ## Reference Project Lessons
 
 The following projects were reviewed on 2026-06-04 as comparable or adjacent
 tools:
 
-- `beet` (`019783f`): strongest reference for project configuration,
-  build/watch/link workflow, generated-pack inspection, example snapshots, and
-  pack SDK maturity.
-- `jmc` (`256836c`): strongest reference for authoring ergonomics, inline
+- `beet`: strongest reference for project configuration, build/watch/link
+  workflow, generated-pack inspection, example snapshots, and pack SDK
+  maturity.
+- `jmc`: strongest reference for authoring ergonomics, inline
   source-to-generated-output tests, NBT and vanilla macro shortcuts, and
   pack-feature gates.
-- `cbscript` (`157c9b6`): strongest reference for real-world data pack examples,
+- `cbscript`: strongest reference for real-world data pack examples,
   save-to-world iteration, selector/NBT/vector conveniences, compile-time
   unrolling, template functions, and output traceability.
-- `MC-Language` (`bf50516`): useful reference for small package/class/macro
-  structure and documentation that shows source plus generated JSON/functions.
-- `CakeLang` (`3b38443`): useful as a stated module/static-analysis vision, but
-  the reviewed implementation is still much thinner than the README claims.
+- `MC-Language`: useful reference for small package/class/macro structure and
+  documentation that shows source plus generated JSON/functions.
+- `CakeLang`: useful as a stated module/static-analysis vision, but the
+  reviewed implementation is still much thinner than the README claims.
 
-Cobble should borrow engineering lessons, not copy the whole shape of any one
-project. The best strategic position is:
+Cobble should borrow specific engineering lessons from these projects. The
+best strategic position is:
 
 - More current and easier to install than older transpilers.
 - More compiler-focused and standalone than `beet`.
@@ -63,20 +63,18 @@ project. The best strategic position is:
 
 Concrete lessons to apply:
 
-- Copy `beet`'s workflow clarity, not its whole SDK: config validation,
-  `watch`/`link`, build summaries, and snapshot-tested examples are in scope;
-  plugin injection, worker pools, cache ecosystems, and resource-pack pipelines
-  are not.
-- Copy `jmc`'s output discipline, not its JavaScript surface: small tests should
-  make source input and generated file trees obvious, and future feature gates
-  should be named around Minecraft capabilities even while Cobble supports only
-  one active target.
-- Copy `cbscript`'s authoring pain-point fixes, not its environment coupling:
-  world iteration, source traceability, selector/NBT/vector helpers, and real
-  examples matter; hard-coded world paths, arbitrary Python evaluation, and
-  unbounded registry-generated code do not.
-- Copy `MC-Language`'s transparent helper docs, not generic string macros:
-  helpers should show generated output and validate where possible.
+- Copy `beet`'s workflow clarity: config validation, `watch`/`link`, build
+  summaries, and snapshot-tested examples are in scope. Its plugin injection,
+  worker pools, cache ecosystems, and resource-pack pipelines are out of scope.
+- Copy `jmc`'s output discipline: small tests should make source input and
+  generated file trees obvious, and future feature gates should be named around
+  Minecraft capabilities even while Cobble supports only one active target.
+- Copy `cbscript`'s fixes for authoring pain points: world iteration, source
+  traceability, selector/NBT/vector helpers, and real examples. Leave out its
+  environment coupling: hard-coded world paths, arbitrary Python evaluation,
+  and unbounded registry-generated code.
+- Copy `MC-Language`'s transparent helper docs: helpers should show generated
+  output and validate where possible.
 - Treat `CakeLang` as a warning about roadmap honesty: do not advertise broad
   static analysis, modules, or package support until the implementation and
   tests exist.
@@ -98,9 +96,9 @@ should not need to guess which Python-looking features are supported.
 
 ### 3. Data Pack Resources
 
-Functions are only one part of data packs. Cobble should keep improving
-resources such as tags, predicates, advancements, loot tables, recipes, item
-modifiers, dialogs, and future supported resource types.
+Beyond functions, Cobble should keep improving data pack resources such as
+tags, predicates, advancements, loot tables, recipes, item modifiers, dialogs,
+and future supported resource types.
 
 ### 4. Workflow And Tooling
 
@@ -110,9 +108,8 @@ should build on the same parser and metadata.
 
 ### 5. Web And Documentation
 
-The website and `/try` compiler should remain a real product surface, not only
-a marketing page. It should demonstrate current language behavior and generated
-output accurately.
+The website and `/try` compiler should remain a real product surface that
+demonstrates current language behavior and generated output accurately.
 
 ### 6. Release QA
 
@@ -142,7 +139,7 @@ source language and generated output except for documented bug fixes.
 
 Rules for every 0.x release:
 
-- no hidden runtime behavior,
+- runtime behavior stays visible in the generated output,
 - no required `cobble.toml` change without a `cobble migrate` path,
 - new JSON or metadata surfaces must include a `schema_version`,
 - new JSON or metadata fields are experimental unless explicitly listed as
@@ -162,8 +159,7 @@ Rules for every 0.x release:
   authoring.
 - `0.9.0` (2026-06-27): authoring-platform beta: resource authoring v2,
   resource-pack beta, stdlib v3, CLI and tooling contracts, and experimental
-  plugins, Python-compatibility reports, and migrations
-  (`docs/09-plan.md`).
+  plugins, Python-compatibility reports, and migrations.
 - `0.10.0` (2026-10-22): Minecraft Java Edition 26.3 target (pack format
   `121.0`) and runtime-semantics fixes, practical packs in `examples/`, and
   the showcase self-test in the server gate (`docs/migration-0.10.md`).
@@ -176,7 +172,7 @@ Carried forward from those plans and still open:
 
 ### 0.11.0: Pack Isolation And Persistent State
 
-Status: planned.
+Status: design decided, implementation not started.
 
 Theme: fix the two generated-output behaviors that writing real packs exposed,
 while generated output can still change before 1.0 locks it. Both showed up in
@@ -190,25 +186,35 @@ ordinary pack code while building `examples/lobby`, `examples/parkour`, and
      `temp` objective. String variables already live in per-namespace storage
      (`<ns>:global`), so only scores collide. Two Cobble packs on one server
      that both use a module variable named `round` overwrite each other.
-   - Give each pack a namespace-derived objective, and move internal helper
-     scores to the same rule.
-   - Raw commands read values into Cobble variables with
-     `store result score <var> temp:`, and the docs and examples teach that
-     pattern. Pick a spelling that survives the rename before implementing:
-     keep `temp` as a source-level name the compiler maps to the pack
-     objective, or add an explicit placeholder.
+   - Each pack's variables and internal helper scores (`#multiplier`,
+     `or_temp_*`, `#cobble_value_*`, ...) move to the objective
+     `<namespace>.vars` (for example `parkour.vars`). Every namespace
+     character is valid in an objective name.
+   - `temp` stays the source-level name for "this pack's variable objective".
+     The compiler maps it to `<namespace>.vars` in execute headers
+     (`store result score <var> temp:`), `score.*` helpers, and objective
+     arguments of raw commands, so existing source keeps compiling unchanged
+     and the generated output shows the real objective. Raw commands are
+     mapped at `minecraft:objective` argument positions found through the
+     command tree; decide the fallback for builds without a command tree
+     during implementation.
 2. Persistent module variables.
    - Module-level variables are reset on every load (`/reload` or a server
      start), so records and settings have to live in hand-written objectives;
      all three practical examples do this.
-   - Add an opt-in declaration whose initializer only runs when the score or
-     storage value is unset (syntax candidate: `persist best_time = 0`).
+   - Add `persist <name> = <constant>` at module level. Its initializer only
+     runs when the value is unset: `execute unless score <name> <obj> =
+     <name> <obj> run ...` for scores, `execute unless data storage ...` for
+     storage-backed values. It covers scores, strings, lists, and maps.
    - Plain module variables keep the documented reset-on-load behavior.
 3. Migration.
-   - `docs/migration-0.11.md` and a `cobble migrate` report that lists raw
-     references to `temp`.
-   - Document what happens to values already stored under `temp` in existing
-     worlds.
+   - `docs/migration-0.11.md` explains the objective change. `cobble migrate`
+     only reports: it lists source references to `temp` (which keep working)
+     and reminds authors to update outside readers such as command blocks,
+     other packs, or chat commands that read `<var> temp`.
+   - Old values under `temp` are not carried over. Module variables already
+     reset on every load, so nothing meaningful lives there; once no other
+     pack uses it, `/scoreboard objectives remove temp` clears it.
 
 Candidates only if they stay small:
 
@@ -226,17 +232,16 @@ Candidates only if they stay small:
 
 #### Non-Goals
 
-- No hidden runtime framework or automatic state the author cannot see in the
+- A runtime framework or automatic state that the author cannot see in the
   generated output.
-- No 1.0 contract work beyond what these changes need.
+- 1.0 contract work beyond what these changes need.
 
 ### 1.0.0: Stable Cobble
 
 Theme: make Cobble stable enough for projects that expect compatibility.
 
 Starts after 0.11.0, so the compatibility audit covers per-pack runtime
-state and persistent variables instead of locking the shared `temp`
-objective into the contract.
+state and persistent variables.
 
 #### Goals
 
@@ -275,6 +280,15 @@ objective into the contract.
   - web build and live smoke when web changed
   - real-server smoke for major releases when EULA acceptance is available
 - Write migration docs from the last 0.x release to 1.0.
+- Finish the compiler maintenance work that source maps and diagnostics rely
+  on:
+  - transpiler command and resource metadata prefer located spans, keeping
+    the line-scan and source-key fallbacks;
+  - the obsolete line-scan fallbacks are removed once source-map snapshots
+    cover imports, unrolling, resource JSON, and raw commands;
+  - symbol collection moves out of `src/diagnostics.rs`, and function
+    registration and resource declarations move out of
+    `src/transpiler/mod.rs`, without behavior changes.
 
 #### Acceptance Criteria
 
@@ -285,13 +299,13 @@ objective into the contract.
 
 #### Non-Goals
 
-- No broad new language surface unless needed to close a compatibility hole.
-- No plugin API as a release blocker.
-- No package manager as a release blocker.
-- No full resource-pack pipeline as a release blocker.
-- No arbitrary Python/eval.
-- No unsupported promise of compatibility across Minecraft versions that Cobble
-  cannot validate.
+- Broad new language surface, except where needed to close a compatibility
+  hole.
+- Making a plugin API, a package manager, or a full resource-pack pipeline a
+  release blocker.
+- Arbitrary Python/eval.
+- Promising compatibility across Minecraft versions that Cobble cannot
+  validate.
 
 #### Detailed 1.0.0 Plan
 
@@ -306,7 +320,7 @@ The release is successful when users know which changes can happen in patch
 releases, which changes require minor releases, and which changes would be
 breaking.
 
-##### Phase 0: Compatibility Audit
+##### Compatibility Audit
 
 Audit all public surfaces:
 
@@ -332,7 +346,7 @@ Deliverables:
 - A migration note from the last 0.x release.
 - A list of any behavior that remains explicitly experimental.
 
-##### Phase 0.5: Ecosystem Extension Preflight
+##### Ecosystem Extension Preflight
 
 Before freezing 1.0 metadata and config contracts, reserve enough structure for
 future 1.x ecosystem work without promising those features yet.
@@ -358,7 +372,7 @@ Exit criteria:
 - Future extension fields can be added in minor releases without breaking
   documented 1.0 consumers.
 
-##### Phase 1: Spec And Docs Freeze
+##### Spec And Docs Freeze
 
 Required work:
 
@@ -376,7 +390,7 @@ Exit criteria:
   when upgrading from the last 0.x release to 1.0.0.
 - Experimental fields and commands are labeled consistently.
 
-##### Phase 2: Metadata And CLI Contracts
+##### Metadata And CLI Contracts
 
 Required work:
 
@@ -391,7 +405,7 @@ Exit criteria:
 - Editor or external-tool consumers can rely on documented stable fields.
 - JSON output tests fail on accidental breaking changes.
 
-##### Phase 3: Minecraft Target Policy
+##### Minecraft Target Policy
 
 Required work:
 
@@ -407,7 +421,7 @@ Exit criteria:
 - The bundled target version, data-pack format, command tree, and docs agree.
 - Users get clear diagnostics when validation data is missing or stale.
 
-##### Phase 4: Release Gates
+##### Release Gates
 
 Before the first 1.0.0 release candidate:
 
@@ -587,15 +601,6 @@ used.
 
 These decisions should be made deliberately before implementation starts.
 
-For 0.11.0:
-
-- What is the per-pack objective name, and how do raw commands refer to it
-  (keep `temp` as a mapped source name, or add a placeholder)?
-- What is the persistent-variable syntax, and does it cover string variables
-  as well as scores?
-- Does `cobble migrate --apply` rewrite raw `temp` references, or only report
-  them?
-
 For 1.0.0:
 
 - Should Cobble support multiple Minecraft versions at once, or only one
@@ -628,13 +633,21 @@ Settled by shipped releases:
 - Resource-pack support lives in Cobble core as a beta workflow (0.9.0).
 - Plugins start as an experimental, diagnostics-only declarative host (0.9.0).
 
+Decided for 0.11.0 (2026-10-22):
+
+- The per-pack objective is `<namespace>.vars`; `temp` stays a source-level
+  name the compiler maps to it.
+- `persist <name> = <constant>` covers scores and storage-backed values.
+- `cobble migrate` only reports `temp` references; `--apply` does not rewrite
+  source.
+
 ## Current Priority Order
 
-1. Decide the 0.11.0 design questions in the Decision Backlog.
-2. Implement per-pack runtime state and persistent variables with snapshot,
-   simulator, and server-gate tests, plus migration notes.
-3. Release 0.11.0 and re-verify the practical examples on a real server.
-4. Start the 1.0.0 compatibility audit (Phase 0) on top of 0.11.0.
-5. Keep plugin APIs, package management, full resource-pack pipelines,
+1. Implement per-pack runtime state and persistent variables with snapshot,
+   simulator, and server-gate tests, plus migration notes (design decided
+   2026-10-22, see the Decision Backlog).
+2. Release 0.11.0 and re-verify the practical examples on a real server.
+3. Start the 1.0.0 compatibility audit on top of 0.11.0.
+4. Keep plugin APIs, package management, full resource-pack pipelines,
    arbitrary Python/eval, and multi-target behavior deferred until the
    relevant 1.x design work exists.

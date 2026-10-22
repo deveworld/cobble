@@ -1,6 +1,7 @@
 //! Tests for stdlib v2 per-module opt-in gating.
 //!
-//! See `docs/stdlib-v2-design.md` for the import and versioning contract.
+//! See the Standard Library section of `docs/language.md` for the import and
+//! versioning model.
 
 use std::fs;
 use std::path::{Path, PathBuf};

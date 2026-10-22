@@ -439,13 +439,13 @@ cobble link --clear
 ```
 
 `link` writes project-local state to `.cobble/link_state.json`. The base
-directory given to `--world` or `--minecraft` must already exist — a typo'd
-path fails instead of silently creating a directory tree; only the
-`datapacks/` (and `saves/<pack-name>/`) subdirectories are created
-automatically. A direct `--datapacks` target directory is created when
-configuring a real link. Link configuration does not delete or replace
-existing data packs. Link state reads, writes, and clears
-refuse symlink components in the project-local `.cobble/link_state.json` path.
+directory given to `--world` or `--minecraft` must already exist, so a
+mistyped path fails with an error; Cobble creates only the `datapacks/` (and
+`saves/<pack-name>/`) subdirectories automatically. A direct `--datapacks`
+target directory is created when configuring a real link. Link configuration
+does not delete or replace existing data packs. Link state reads, writes, and
+clears refuse symlink components in the project-local `.cobble/link_state.json`
+path.
 `link --status`, `doctor --json`, `watch --link`, and `clean --linked` all
 reject a saved `pack_path` that is not under the saved `target_path` or would
 traverse an existing target symlink. Use `cobble watch --link` to build into

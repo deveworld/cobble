@@ -36,8 +36,8 @@ The main parser built with chumsky combinator library that handles Python-style 
 
 #### Function: `parse_located_with_diagnostics(source: &str) -> Result<LocatedProgram, Vec<SourceDiagnostic>>`
 
-Parses source and additionally returns provenance sidecars, leaving `parse`,
-`parse_with_diagnostics`, and the AST shape untouched.
+Parses source like `parse_with_diagnostics` and also returns source span tables
+for the parsed program.
 
 `LocatedProgram` holds the parsed `program` plus a `spans: ProgramSpanTable`
 with:
@@ -55,9 +55,9 @@ Each node records the statement header's `span` (byte range plus 1-based line
 and column) and its `end_line`, along with a `StatementSpanKind` tag naming the
 `Statement` variant. Because the tree mirrors the AST, consumers can walk
 statements and spans in lockstep; `verify_span_tree_alignment(&Program,
-&StatementSpanTree)` checks that invariant, and the parser publishes `None`
-rather than a mismatched tree, so callers should treat `None` as "fall back to
-other position sources".
+&StatementSpanTree)` checks that invariant. If the tree does not match the
+program, the parser publishes `None`, so callers should treat `None` as "fall
+back to other position sources".
 
 The semantic diagnostics engine (`src/diagnostics/semantic.rs`) is the primary
 consumer.
@@ -91,7 +91,7 @@ let program = parse(source)
 - Supports all Cobble syntax including execute blocks, global keyword, and complex expressions
 - **Operator precedence**: Four-level precedence for expressions (pow > mul/div/mod > add/sub > comparisons)
 - **Multi-operator expressions**: Chains operations using `.foldl().repeated()` pattern
-- Error reporting integrated with ariadne for beautiful error messages
+- Error messages are rendered with ariadne
 
 **Historical Parser Enhancements**:
 - Fixed division operator tokenization to correctly distinguish `a / b` from `/command`
@@ -328,7 +328,7 @@ pub enum MatchPattern {
 }
 ```
 
-Match statements compile to efficient 4-way split algorithm for optimal branching.
+Match statements compile to a switch tree built with a 4-way split algorithm.
 
 #### Struct: `SelectorDef` (v0.4.0)
 
@@ -727,13 +727,12 @@ pub struct ExperimentalConfig {
 ##### `CobbleConfig::load(path: impl AsRef<Path>) -> Result<CobbleConfig, String>`
 
 Loads and validates configuration from a `cobble.toml` file.
-Unknown keys, misplaced keys, and invalid experimental flag types are rejected
-instead of being ignored.
+Unknown keys, misplaced keys, and invalid experimental flag types are rejected.
 
 ##### `CobbleConfig::load_unvalidated(path: impl AsRef<Path>) -> Result<CobbleConfig, String>`
 
-Loads configuration without enforcing the current release's pack format. The
-schema is still validated. The build command uses this only when the user
+Loads configuration and validates its schema without enforcing the current
+release's pack format. The build command uses this only when the user
 explicitly overrides `--pack-format`.
 
 ##### `CobbleConfig::default_with_name(name: String) -> CobbleConfig`
@@ -994,8 +993,8 @@ Data Pack (.mcfunction files, pack.mcmeta, tags)
 
 ### Key Design Decisions
 
-1. **Python-style Syntax**: Familiar to many programmers, clean and readable
-2. **chumsky Parser Combinators**: Modern, composable parsing with excellent error handling
+1. **Python-style Syntax**: Familiar to Python programmers
+2. **chumsky Parser Combinators**: Composable parsers that report errors with source spans
 3. **Operator Precedence**: Four-level precedence system matches standard mathematical conventions (pow > mul/div/mod > add/sub > comparisons)
 4. **Complex Expression Handling**: Recursive evaluation for nested binary expressions with temporary variables
 5. **Macro-based Parameters**: Uses Minecraft's function macro system for function parameters
@@ -1003,9 +1002,9 @@ Data Pack (.mcfunction files, pack.mcmeta, tags)
    runtime literal arrays, storage-backed list loops, and `while` loops compile
    to helper functions.
 7. **Separate Functions for Complex Control Flow**: Nested if statements become separate functions to avoid command limit issues
-8. **Scoreboard Variables**: All variables are stored as scoreboard objectives with proper tracking
+8. **Scoreboard Variables**: Numeric variables are fake players on the `temp` scoreboard objective
 9. **Module-level Initialization**: Top-level variables automatically initialized at pack load
-10. **ariadne Error Reporting**: Beautiful, user-friendly error messages with context
+10. **ariadne Error Reporting**: Error messages show the source line and a labeled span
 
 ## Performance Considerations
 

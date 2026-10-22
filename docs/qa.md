@@ -1,7 +1,6 @@
 # QA And Release Checklist
 
-This document records repeatable Cobble QA commands that should not depend on
-chat history.
+This document records repeatable Cobble QA commands.
 
 ## Snapshot Tests
 
@@ -74,14 +73,13 @@ cargo package --locked
 cargo publish --dry-run --locked
 ```
 
-The 0.7.3 line also has an aggregate release gate that runs the Rust gate,
-example checks, focused workflow QA scripts, representative validated builds,
-the full example gallery as validated builds, doctor/inspect JSON checks, linked
-cleanup, the full web gate, optional server smoke when EULA acceptance is
-provided, and package dry-runs:
+The aggregate release gate runs the Rust gate, example checks, focused workflow
+QA scripts, representative validated builds, the full example gallery as
+validated builds, doctor/inspect JSON checks, linked cleanup, the full web gate,
+optional server smoke when EULA acceptance is provided, and package dry-runs:
 
 ```bash
-scripts/qa_07_release_gate.sh
+scripts/qa_10_release_gate.sh
 ```
 
 For final release verification, run it from a clean working tree. During
@@ -89,7 +87,7 @@ pre-commit stabilization, this interim form allows Cargo package dry-runs to run
 against local changes:
 
 ```bash
-COBBLE_QA_ALLOW_DIRTY=1 scripts/qa_07_release_gate.sh
+COBBLE_QA_ALLOW_DIRTY=1 scripts/qa_10_release_gate.sh
 ```
 
 `examples/` holds the user-facing example packs. The release fixtures the
@@ -105,8 +103,8 @@ project and is expected to reject duplicate names such as `on_load` or
 
 ## Web Compiler Metadata
 
-The web home page reads `web/lib/compilerMetadata.ts`. Keep that file generated
-from `Cargo.toml` and `src/pack_format.rs` instead of editing it by hand:
+The web home page reads `web/lib/compilerMetadata.ts`, which is generated from
+`Cargo.toml` and `src/pack_format.rs`. Regenerate and check it with:
 
 ```bash
 npm --prefix web run sync:metadata
@@ -128,7 +126,6 @@ directories for debugging.
 scripts/qa_07_templates.sh
 scripts/qa_07_link_clean_safety.sh
 scripts/qa_07_watch_smoke.sh
-scripts/qa_07_release_gate.sh
 ```
 
 Coverage:
@@ -150,10 +147,6 @@ Coverage:
   initial build, confirms a failed validated rebuild preserves the previous
   linked pack, confirms a later valid edit recovers, writes generated-output
   noise, and confirms it does not trigger another rebuild.
-- `qa_07_release_gate.sh` composes the Rust, example, workflow, validated-build,
-  full example gallery, formatter diff, JSON, doctor output-marker, link/clean,
-  full web, optional server, and package dry-run checks into one
-  release-candidate gate.
 
 ## Security Regression Gate
 
@@ -283,8 +276,8 @@ Generating `data/commands.json` — whether through this E2E flow,
 downloads a Mojang server jar and runs `java --reports` to extract the
 command tree. Because `data/commands.json` is gitignored, the GitHub Actions
 Rust job sets `COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD=0` so tests that pass
-`--validate` skip instead of hitting the network; unset it (or pre-generate
-the file) when validation coverage is wanted in CI.
+`--validate` skip; unset it (or pre-generate the file) when validation coverage
+is wanted in CI.
 
 ## Optional Server Gate
 
@@ -365,19 +358,6 @@ cargo run --locked -- inspect /tmp/cobble-qa-unrolling --json
 cargo run --locked -- inspect /tmp/cobble-qa-resource-pack --json
 ```
 
-### 0.8.0 Aggregate Release Gate
-
-```bash
-scripts/qa_08_release_gate.sh
-```
-
-This composes the 0.7.x Rust/example/workflow gates with the 0.8.0 focused
-QA scripts, the validated build matrix above, resource snapshot and schema
-checks, the full web gate, optional server smoke when EULA acceptance is
-provided, and Cargo package dry-runs. After publishing and deploying 0.8.x,
-run `scripts/qa_post_release_smoke.sh` to verify the released crate and
-web package.
-
 ## 0.9.0 QA Gate
 
 The 0.9.0 line widens Cobble into an authoring-platform beta. It keeps the
@@ -399,7 +379,8 @@ scripts/check_resource_snapshots.sh
 scripts/check_resource_schemas.sh
 ```
 
-Additional 0.9 checks are embedded in `scripts/qa_09_release_gate.sh`:
+The aggregate release gate (`scripts/qa_10_release_gate.sh`) also runs these
+0.9 checks:
 
 - `cobble inspect --json` reports `schema_version`, `ok`, `status`,
   `manifest`, and `source_map_entries`.
@@ -417,8 +398,8 @@ Additional 0.9 checks are embedded in `scripts/qa_09_release_gate.sh`:
   rewriting files.
 - `cobble migrate --json --apply` performs only supported config-only changes,
   writes a timestamped config backup, and preserves source files.
-- Stdlib v3 value helpers generate visible storage commands, teleport commands,
-  and item modifier JSON resources without hidden load/tick behavior.
+- Stdlib v3 value helpers generate storage commands, teleport commands, and
+  item modifier JSON resources without registering load or tick functions.
 - `tests/fixtures/projects/stdlib_v3` validates as a checked-in fixture for storage path,
   item component, selector, position, entity teleport, and schedule helpers.
 
@@ -429,33 +410,18 @@ cargo run --locked -- build tests/fixtures/projects/stdlib_v3 --validate -o /tmp
 cargo run --locked -- inspect /tmp/cobble-qa-stdlib-v3 --json
 ```
 
-### 0.9.0 Aggregate Release Gate
-
-```bash
-scripts/qa_09_release_gate.sh
-```
-
-This composes the core Rust gate, clippy with `-D warnings`, existing focused
-authoring gates, security regressions, 0.9 tooling checks, validated builds,
-the full web gate, optional server smoke when EULA acceptance is provided, and
-Cargo package dry-runs. Use `COBBLE_QA_ALLOW_DIRTY=1` only for local release
-candidate rehearsal before the final clean-tree run. After publishing and
-deploying 0.9.x, run `scripts/qa_post_release_smoke.sh` to verify the released
-crate and deployed web demo.
-
 ## 0.10.0 QA Gate
 
 The 0.10.0 line moves the single supported target to Minecraft Java Edition
 26.3 (pack format 121.0) and ships the runtime-semantics fixes listed in the
 changelog. It keeps every 0.9 check and adds:
 
-- The pinned 26.3 command tree (`data/commands.json`, SHA-1
-  `d6e1c0ba339ad510056c31ea55c02aefca427dd1`, generated from the 26.3 server jar
-  `33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c`) for `--validate` and
-  `cobble validate`, including its permission levels and 26.3 argument types.
+- The pinned 26.3 command tree (`data/commands.json`, generated from the 26.3
+  server jar) for `--validate` and `cobble validate`, including its permission
+  levels and 26.3 argument types.
 - `cargo test --locked --test fix_runtime_semantics_test`, which executes the
   generated packs in the command simulator (`tests/common/mcsim.rs`) and checks
-  runtime results instead of generated text.
+  their runtime results.
 - `cobble migrate --json` reports the 0.9 to 0.10 dry-run schema by default;
   `--apply` updates `project.pack_format` to `121.0`.
 - The optional server gate runs Purpur 26.3 (build 2652).
@@ -466,8 +432,8 @@ changelog. It keeps every 0.9 check and adds:
 scripts/qa_10_release_gate.sh
 ```
 
-This composes the same Rust, focused, tooling, validated-build, web, optional
-server, and package gates as 0.9.0 against the 26.3 target. Use
+This composes the Rust, focused, tooling, validated-build, web, optional
+server, and package gates above against the 26.3 target. Use
 `COBBLE_QA_ALLOW_DIRTY=1` only for local release candidate rehearsal before the
 final clean-tree run. After publishing and deploying 0.10.x, run
 `scripts/qa_post_release_smoke.sh` to verify the released crate and deployed

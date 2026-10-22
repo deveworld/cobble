@@ -50,11 +50,12 @@ cobble build examples/hello_world.cbl -o output/hello_world
   records or player stats, in their own scoreboard objectives.
 - Function names are shared across a project's files, so each example uses
   distinct names (`use_spawn`, `try_blink`, ...).
-- The release-gate fixtures that used to live here (`26_smoke`,
+- The release test fixtures that used to live here (`26_smoke`,
   `26_feature_matrix`, `resource_authoring`, `stdlib_v2`, `stdlib_v3`,
   `resource_pack`, `unrolling`, `inventory.cbl`) are in
   [`tests/fixtures/projects/`](../tests/fixtures/projects/), along with
-  `showcase`, a feature tour whose in-game self-test runs in the server gate.
+  `showcase`, a feature tour whose in-game self-test runs in the real-server
+  test below.
 
 To run the optional real-server QA path from the repository root:
 

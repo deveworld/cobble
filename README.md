@@ -1,6 +1,6 @@
 # Cobble
 
-> A modern, Python-like language for creating Minecraft Data Packs
+> A Python-like language for creating Minecraft data packs
 
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange.svg)](https://www.rust-lang.org)
 [![Minecraft](https://img.shields.io/badge/minecraft-26.3-green.svg)](https://minecraft.net)
@@ -14,8 +14,8 @@ you write functions, events, resources, and command-heavy logic with a
 Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
 and JSON resource files.
 
-**Cobble 0.10.0** targets Minecraft Java Edition 26.3 and pack format
-121.0. It is the current stable crates.io release.
+**Cobble 0.10.0**, the current stable crates.io release, targets Minecraft Java
+Edition 26.3 and pack format 121.0.
 
 ## Website And Web Demo
 
@@ -180,8 +180,6 @@ npm run dev
 - [Resource Authoring Cookbook](https://github.com/deveworld/cobble/blob/main/docs/resource-authoring-cookbook.md)
 - [Resource Pack Cookbook](https://github.com/deveworld/cobble/blob/main/docs/resource-pack-cookbook.md)
 - [Plugin Diagnostics Cookbook](https://github.com/deveworld/cobble/blob/main/docs/plugin-cookbook.md)
-- [LSP Design Notes](https://github.com/deveworld/cobble/blob/main/docs/lsp-design.md)
-- [Compiler Maintenance Plan](https://github.com/deveworld/cobble/blob/main/docs/compiler-maintenance-plan.md)
 - [QA Checklist](https://github.com/deveworld/cobble/blob/main/docs/qa.md)
 - [Examples](examples/)
 - [Web Demo Source](https://github.com/deveworld/cobble/tree/main/web/)
