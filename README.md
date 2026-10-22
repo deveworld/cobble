@@ -1,195 +1,124 @@
 # Cobble
 
-> A Python-like language for creating Minecraft data packs
+[![crates.io](https://img.shields.io/crates/v/cobble-lang.svg)](https://crates.io/crates/cobble-lang)
+[![CI](https://github.com/deveworld/cobble/actions/workflows/ci.yml/badge.svg)](https://github.com/deveworld/cobble/actions/workflows/ci.yml)
+[![Minecraft](https://img.shields.io/badge/minecraft-26.3-green.svg)](https://minecraft.wiki/w/Data_pack)
+[![Docs](https://img.shields.io/badge/docs-book-7bd66f.svg)](https://deveworld.github.io/cobble/docs/)
 
-[![Rust](https://img.shields.io/badge/rust-2021%20edition-orange.svg)](https://www.rust-lang.org)
-[![Minecraft](https://img.shields.io/badge/minecraft-26.3-green.svg)](https://minecraft.net)
-[![Pack Format](https://img.shields.io/badge/pack%20format-121.0-blue.svg)](https://minecraft.wiki/w/Data_pack)
-[![Web Demo](https://img.shields.io/badge/web%20demo-live-7bd66f.svg)](https://deveworld.github.io/cobble/)
+Cobble is a Python-like language for Minecraft Java Edition data packs. You
+write functions, conditions, loops, events, and resources in `.cbl` files, and
+the compiler turns them into an ordinary data pack: `.mcfunction` files,
+function tags, and JSON resources that you can read, edit, and ship.
+
+**[Website](https://deveworld.github.io/cobble/)** ·
+**[Documentation](https://deveworld.github.io/cobble/docs/)** ·
+**[Try it in the browser](https://deveworld.github.io/cobble/try/)** ·
+**[Examples](examples/)**
 
 ![Cobble web demo preview](https://raw.githubusercontent.com/deveworld/cobble/main/web/public/cobble-workshop.jpg)
 
-Cobble transpiles `.cbl` source into Minecraft Java Edition data packs. It lets
-you write functions, events, resources, and command-heavy logic with a
-Python-like syntax while still emitting plain `.mcfunction`, `pack.mcmeta`, tag,
-and JSON resource files.
+## Example
 
-**Cobble 0.10.0**, the current stable crates.io release, targets Minecraft Java
-Edition 26.3 and pack format 121.0.
+```python
+from stdlib import event
 
-## Website And Web Demo
+countdown = 0
 
-**Website:** <https://deveworld.github.io/cobble/>
-**Browser compiler:** <https://deveworld.github.io/cobble/try/>
+def start():
+    global countdown
+    countdown = 100
 
-The website introduces Cobble with short examples and links to the browser
-compiler at `/try`. The compiler runs Cobble's Rust parser and transpiler
-through WebAssembly, so you can inspect generated functions, resources,
-metadata, diagnostics, and data pack ZIP output without installing the CLI.
+def tick():
+    global countdown
+    if countdown > 0:
+        countdown -= 1
+        /title @a actionbar {"text":"Starting in {countdown}"}
+        if countdown == 0:
+            /title @a title {"text":"Go!","color":"green"}
 
-> [!WARNING]
-> Cobble is pre-1.0 software in active development. Bugs and API changes are
-> still possible. Please report issues at
-> <https://github.com/deveworld/cobble/issues>.
+stdlib.addEventListener(event.TICK, tick)
+```
 
-## Features
+With the namespace `race`, `tick` and its helper compile to:
 
-- Python-like syntax for functions, indentation, imports, and control flow
-- Static type inference for variables, constants, and expressions
-- Data pack output for functions, event tags, predicates, advancements, loot
-  tables, recipes, item modifiers, and dialogs
-- Minecraft command handling with JSON safety, macro parameters, and command
-  validation
-- Standard library helpers for events, text, scoreboards, storage, item
-  components, schedules, selector and position values, bossbars, teams, and
-  entities
-- CLI workflow for project templates, formatting, build, check, watch,
-  validation, and ZIP output
-- Browser playground powered by Rust and WebAssembly
+```mcfunction
+# race:tick
+execute if score countdown race.vars matches 1.. run function race:if_temp_0
 
-## Installation
+# race:if_temp_0
+scoreboard players remove countdown race.vars 1
+title @a actionbar {"extra":[{"score":{"name":"countdown","objective":"race.vars"}}],"text":"Starting in "}
+execute if score countdown race.vars matches 0 run title @a title {"text":"Go!","color":"green"}
+```
 
-For the latest stable release:
+Variables become scoreboard values, an `if` with more than one command becomes
+a helper function, and `{countdown}` inside the JSON text becomes a score
+component. `cobble build --validate` checks every generated command against
+the Minecraft 26.3 command tree.
+
+## Install
 
 ```bash
 cargo install cobble-lang --locked
 cobble --version
 ```
 
-For an exact version:
-
-```bash
-cargo install cobble-lang --version 0.10.0 --locked
-cobble --help
-```
-
-The crates.io package is named `cobble-lang`; the installed command is
-`cobble`.
-
-To build from source:
-
-```bash
-git clone https://github.com/deveworld/cobble.git
-cd cobble
-cargo build --release
-```
+The crates.io package is `cobble-lang`; the command it installs is `cobble`.
+To build from source, clone the repository and run `cargo build --release`.
 
 ## Quick Start
 
 ```bash
-cobble init --name my-datapack
-cd my-datapack
+cobble init --name my_datapack
+cd my_datapack
+cobble build --validate -o ~/.minecraft/saves/MyWorld/datapacks/my_datapack
 ```
 
-Edit `src/main.cbl`:
+Run `/reload` in the world to load the pack. `cobble watch` with the same `-o`
+path rebuilds on every save. [Your First Pack](https://deveworld.github.io/cobble/docs/getting-started/first-pack.html)
+walks through the rest.
 
-```python
-import stdlib
-from stdlib import event
+## What You Get
 
-def on_load():
-    /tellraw @a {"text":"Cobble loaded","color":"green"}
+- Python-like syntax: indentation blocks, `if`/`elif`/`else`, `for`, `while`,
+  `match`, functions with parameters and integer return values, and imports.
+- Raw Minecraft commands with `{placeholders}` for variables and parameters.
+- Variables in scoreboards and storage, with type checking and `persist`
+  variables that survive `/reload`.
+- `datapack.*` declarations for tags, predicates, advancements, loot tables,
+  recipes, item modifiers, and dialogs.
+- Standard library helpers for text, scores, storage, timers, bossbars, teams,
+  and entities.
+- A CLI with project templates, a formatter, watch mode, command validation,
+  and ZIP output.
+- Source-aware diagnostics with file, line, and column, also available as JSON.
 
-def reward(player, amount):
-    /give {player} minecraft:diamond {amount}
+## Status
 
-stdlib.addEventListener(event.LOAD, on_load)
-```
+Cobble 0.10.0 is the current release on crates.io and targets Minecraft Java
+Edition 26.3 (pack format 121.0). The `main` branch is working toward 0.11,
+which so far gives each pack its own variable objective and adds `persist`
+variables.
 
-Build the data pack:
-
-```bash
-cobble build --validate --zip
-```
-
-Copy the generated output to your world's `datapacks` directory:
-
-```text
-.minecraft/saves/YourWorld/datapacks/
-```
-
-## Commands
-
-| Command | Purpose |
-| ------- | ------- |
-| `cobble init` | Create a new project |
-| `cobble init --list-templates` | List starter templates |
-| `cobble build` | Build source files into a data pack |
-| `cobble check` | Check Cobble syntax without building |
-| `cobble check --json --symbols` | Emit diagnostic JSON with experimental editor symbols |
-| `cobble check --experimental-plugins` | Enable the experimental diagnostics-only plugin host and read-only manifest checks |
-| `cobble check --experimental-python-compat` | Include the experimental Python compatibility report |
-| `cobble fmt` | Format Cobble source files |
-| `cobble fmt --diff` | Preview formatter changes without writing files |
-| `cobble doctor` | Inspect project and validation environment status |
-| `cobble doctor --json` | Emit machine-readable project health status |
-| `cobble migrate` | Report what to change when moving a project to a newer Cobble release |
-| `cobble clean` | Remove marked Cobble-generated output |
-| `cobble link` | Configure a local datapacks target |
-| `cobble inspect` | Summarize generated build metadata |
-| `cobble validate` | Validate generated `.mcfunction` files |
-| `cobble watch` | Rebuild when source files change |
-
-Use `cobble build --dry-run` to compile and inspect the output plan without
-writing the final data pack. Each build writes `.cobble/build_manifest.json`
-with the Cobble version, Minecraft target, pack format, source inputs,
-generated resource entries, validation summary when available, and generated
-file counts. Use `cobble inspect output/` to summarize that metadata after a
-build. Use `cobble build --quiet` when a script only needs the exit code.
-
-`cobble build --validate` and `cobble validate` check generated `.mcfunction`
-files against Minecraft Java Edition 26.3 commands. The default
-`data/commands.json` file is generated automatically on first validation when
-missing; this requires `curl` and Java.
-
-## Configuration
-
-`cobble.toml` controls the project namespace, pack metadata, source directory,
-output directory, and entry points.
-
-```toml
-[project]
-name = "my-datapack"
-namespace = "my_namespace"
-version = "1.0.0"
-pack_format = "121.0"
-
-[build]
-source = "src"
-output = "output"
-entry_points = []
-```
+Cobble is pre-1.0: language behavior and generated output can still change
+between minor releases, and each such change comes with notes in
+[Upgrading](https://deveworld.github.io/cobble/docs/upgrading.html) and a
+`cobble migrate` report. Please report bugs at
+[GitHub Issues](https://github.com/deveworld/cobble/issues).
 
 ## Development
 
 ```bash
 cargo test --locked
-
-cd web
-npm install
-npm run dev
+mdbook serve docs        # preview the documentation
+cd web && npm install && npm run dev
 ```
 
-## Documentation
-
-**Docs:** <https://deveworld.github.io/cobble/docs/>
-
-- [Your First Pack](https://deveworld.github.io/cobble/docs/getting-started/first-pack.html)
-- [Language Guide](https://deveworld.github.io/cobble/docs/language/basics.html)
-- [Standard Library](https://deveworld.github.io/cobble/docs/stdlib/modules.html)
-- [CLI Commands](https://deveworld.github.io/cobble/docs/reference/cli.html)
-- [Upgrading](https://deveworld.github.io/cobble/docs/upgrading.html)
-- [Rust API on docs.rs](https://docs.rs/cobble-lang)
-- [Examples](examples/)
-- [Roadmap](PLAN.md)
-
-The book's source is in [`docs/src/`](docs/src/). Preview it with
-`mdbook serve docs`.
-
-## Support
-
-- [GitHub Issues](https://github.com/deveworld/cobble/issues)
+The documentation source is in [`docs/src/`](docs/src/), the website and
+browser compiler are in [`web/`](web/), and the roadmap is [PLAN.md](PLAN.md).
+[Testing And Releases](https://deveworld.github.io/cobble/docs/contributing/qa.html)
+lists the checks to run before a change lands.
 
 ## License
 
-Cobble is licensed under the MIT License. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
