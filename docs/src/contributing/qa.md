@@ -109,21 +109,28 @@ web gate covers every page in `docs/src/`, including links to headings.
 
 ## Command Tree Check
 
-`--validate` needs `data/commands.json`, which Cobble generates by downloading
-the Minecraft server jar and running `java --reports`. Tests that need the tree
-skip when `data/commands.json` is missing, so `cargo test` also runs on a fresh
-clone without Java. CI also sets `COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD=0`, so a
-`--validate` run without the tree fails instead of downloading the jar. Before a
-release, check the live download path from an empty directory:
+`--validate` needs the Minecraft command tree, which Cobble generates by
+downloading the Minecraft server jar and running `java --reports`. In a
+checkout, Cobble and the tests read `data/commands.json`; generate it with
+`scripts/setup_commands_json.sh 26.3`. Elsewhere the default tree lives in the
+user cache (see [`cobble build`](../reference/cli.md#cobble-build)). Tests that
+need the tree skip when `data/commands.json` is missing, so `cargo test` also
+runs on a fresh clone without Java. CI also sets
+`COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD=0`, so a `--validate` run without the tree
+fails instead of downloading the jar. Before a release, check the live
+download path from an empty directory with an empty cache (`XDG_CACHE_HOME`
+applies on Linux):
 
 ```bash
 REPO=/path/to/cobble
 mkdir -p /tmp/cobble-command-tree-e2e && cd /tmp/cobble-command-tree-e2e
+export XDG_CACHE_HOME=/tmp/cobble-command-tree-e2e/cache
 cargo run --locked --manifest-path "$REPO/Cargo.toml" -- build "$REPO/tests/fixtures/projects/inventory.cbl" --validate --output output
-cargo run --locked --manifest-path "$REPO/Cargo.toml" -- doctor --commands-json data/commands.json
+cargo run --locked --manifest-path "$REPO/Cargo.toml" -- doctor
 ```
 
-Validation should pass, and `doctor` should report a target match.
+Validation should pass, the tree should appear under
+`cache/cobble/26.3/commands.json`, and `doctor` should report a target match.
 
 ## Server Gate
 

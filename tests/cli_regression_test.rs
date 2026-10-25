@@ -1922,7 +1922,7 @@ fn cli_build_validate_refuses_existing_file_output_without_deleting_it() {
 
 #[cfg(unix)]
 #[test]
-fn cli_build_refuses_symlink_output_parent_component() {
+fn cli_build_allows_symlink_output_parent_but_refuses_symlink_output() {
     use std::os::unix::fs::symlink;
 
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -1934,6 +1934,8 @@ fn cli_build_refuses_symlink_output_parent_component() {
     fs::create_dir_all(&real_parent).unwrap();
     symlink(&real_parent, &symlink_parent).unwrap();
 
+    // A linked folder above the output (macOS `/tmp`, a linked `.minecraft`)
+    // is where the user chose to build.
     let output = cobble()
         .arg("build")
         .arg(&source_dir)
@@ -1941,11 +1943,44 @@ fn cli_build_refuses_symlink_output_parent_component() {
         .arg(symlink_parent.join("build_pack"))
         .output()
         .unwrap();
-
     let (_stdout, stderr) = output_text(&output);
-    assert!(!output.status.success());
-    assert!(stderr.contains("Refusing to build through symlink"));
-    assert!(!real_parent.join("build_pack").exists());
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert!(real_parent.join("build_pack/pack.mcmeta").exists());
+
+    // The output folder itself must not be a link, however the path is
+    // spelled; `linked-pack/` and `linked-pack/.` resolve the link when read
+    // as written.
+    let linked_output = temp_dir.path().join("linked-pack");
+    symlink(real_parent.join("build_pack"), &linked_output).unwrap();
+    let linked_text = linked_output.display().to_string();
+    for spelled in [
+        linked_text.clone(),
+        format!("{linked_text}/"),
+        format!("{linked_text}/."),
+    ] {
+        let output = cobble()
+            .arg("build")
+            .arg(&source_dir)
+            .arg("-o")
+            .arg(&spelled)
+            .output()
+            .unwrap();
+        let (_stdout, stderr) = output_text(&output);
+        assert!(!output.status.success(), "{spelled} was accepted");
+        assert!(
+            stderr.contains("Refusing to build through symlink"),
+            "{spelled}: {stderr}"
+        );
+
+        let output = cobble()
+            .arg("clean")
+            .arg("--output")
+            .arg(&spelled)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "clean {spelled} was accepted");
+        assert!(real_parent.join("build_pack/pack.mcmeta").exists());
+    }
 }
 
 #[cfg(unix)]

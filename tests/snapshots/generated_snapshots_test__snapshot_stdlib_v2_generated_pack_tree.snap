@@ -15,17 +15,17 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Cobble stdlib v2 fixture",
   "generated": {
     "advancements": 0,
-    "commands": 7,
+    "commands": 6,
     "custom_function_tags": 1,
     "function_tags": 2,
-    "functions": 2,
+    "functions": 3,
     "item_modifiers": 0,
     "json_function_tags": 1,
     "json_resources": 2,
     "loot_tables": 0,
     "predicates": 1,
     "recipes": 0,
-    "source_map_entries": 10,
+    "source_map_entries": 9,
     "stdlib_function_tags": 1,
     "total_json_resources": 2
   },
@@ -82,6 +82,13 @@ expression: datapack_tree_snapshot(&output_dir)
   "version": 1,
   "entries": [
     {
+      "generated_path": "data/cobble_stdlib_v2/function/_cobble_init.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard objectives add cobble_stdlib_v2.vars dummy",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
       "generated_path": "data/cobble_stdlib_v2/function/announce.mcfunction",
       "generated_line": 1,
       "command": "say stdlib v2 utility tag",
@@ -95,20 +102,6 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
       "generated_line": 1,
-      "command": "gamerule max_command_sequence_length 1000000000",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
-      "generated_line": 2,
-      "command": "scoreboard objectives add cobble_stdlib_v2.vars dummy",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
-      "generated_line": 3,
       "command": "scoreboard players set points cobble_stdlib_v2.vars 10",
       "source": {
         "file": "src/main.cbl",
@@ -119,7 +112,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
-      "generated_line": 4,
+      "generated_line": 2,
       "command": "data modify storage cobble_stdlib_v2:global state set value {ready:1b}",
       "source": {
         "file": "src/main.cbl",
@@ -130,7 +123,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
-      "generated_line": 5,
+      "generated_line": 3,
       "command": "tellraw @a {\"text\":\"Stdlib v2 modules ready\"}",
       "source": {
         "file": "src/main.cbl",
@@ -141,7 +134,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v2/function/load.mcfunction",
-      "generated_line": 6,
+      "generated_line": 4,
       "command": "function cobble_stdlib_v2:announce",
       "source": {
         "file": "src/main.cbl",
@@ -182,12 +175,13 @@ expression: datapack_tree_snapshot(&output_dir)
   ]
 }
 
+===== data/cobble_stdlib_v2/function/_cobble_init.mcfunction =====
+scoreboard objectives add cobble_stdlib_v2.vars dummy
+
 ===== data/cobble_stdlib_v2/function/announce.mcfunction =====
 say stdlib v2 utility tag
 
 ===== data/cobble_stdlib_v2/function/load.mcfunction =====
-gamerule max_command_sequence_length 1000000000
-scoreboard objectives add cobble_stdlib_v2.vars dummy
 scoreboard players set points cobble_stdlib_v2.vars 10
 data modify storage cobble_stdlib_v2:global state set value {ready:1b}
 tellraw @a {"text":"Stdlib v2 modules ready"}
@@ -209,6 +203,7 @@ function cobble_stdlib_v2:announce
 ===== data/minecraft/tags/function/load.json =====
 {
   "values": [
+    "cobble_stdlib_v2:_cobble_init",
     "cobble_stdlib_v2:load"
   ]
 }

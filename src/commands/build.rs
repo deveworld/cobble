@@ -1,9 +1,9 @@
 use super::{find_cobble_files, find_config, resolve_entry_points};
 use crate::commands::output_safety::{
-    build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
-    project_marker_identity, read_build_manifest, require_manifest_ownership,
+    build_manifest_path, ensure_no_symlink_descendants, ensure_no_symlinks_from,
+    ensure_not_symlink, project_marker_identity, read_build_manifest, require_manifest_ownership,
 };
-use crate::commands::validate::{print_validation_report, run_validation};
+use crate::commands::validate::{print_validation_report, resolve_commands_json, run_validation};
 use crate::config::CobbleConfig;
 use crate::diagnostics::{format_file_diagnostics, parse_source_files};
 use crate::fs_safety::{
@@ -80,6 +80,16 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     } else {
         PathBuf::from("output")
     };
+
+    if options.zip && is_in_datapacks_folder(&output_dir) {
+        return Err(format!(
+            "--zip cannot write into a world's datapacks folder ({}).\n\
+            The ZIP is written next to the pack folder, and Minecraft would load both as \
+            separate packs, running every function twice. Build without --zip there, or build \
+            the ZIP elsewhere and copy only the .zip file into datapacks.",
+            output_dir.display()
+        ));
+    }
 
     // Get namespace from options, config, or use default
     let namespace = options
@@ -234,11 +244,23 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
 
         transpiler
             .transpile(&parsed.program)
-            .map_err(|e| format!("Transpilation failed for {:?}: {}", file_path, e))?;
+            .map_err(|e| match &e.location {
+                Some(location) => format!(
+                    "Transpilation failed at {}:{}:{}: {}",
+                    path_display_relative(&location.file, &source_display_root),
+                    location.line,
+                    location.column,
+                    e
+                ),
+                None => format!("Transpilation failed for {:?}: {}", file_path, e),
+            })?;
     }
 
-    let generated_asset_paths = generated_resource_pack_asset_paths(&transpiler);
     let current_static_asset_paths = resource_pack_static_asset_paths(&asset_passthrough_files);
+    transpiler
+        .data_pack
+        .remove_item_definitions_replaced_by(&current_static_asset_paths);
+    let generated_asset_paths = generated_resource_pack_asset_paths(&transpiler);
     let previous_static_asset_paths = read_resource_pack_static_asset_manifest(&final_output_dir)?;
     let output_assets_overlap_project_assets =
         output_assets_tree_overlaps_project_assets(&final_output_dir, &project_root_for_marker)?;
@@ -273,7 +295,8 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         if !options.quiet {
             println!("Validating generated commands...");
         }
-        let report = match run_validation(&build_output_dir, &options.commands_json) {
+        let commands_json = resolve_commands_json(&options.commands_json);
+        let report = match run_validation(&build_output_dir, &commands_json) {
             Ok(report) => report,
             Err(error) => {
                 if build_output_dir != final_output_dir {
@@ -285,12 +308,9 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
         let has_validation_errors =
             !report.errors.is_empty() || !report.source_map_errors.is_empty();
         if !options.quiet || has_validation_errors {
-            print_validation_report(&report, &options.commands_json, &build_output_dir);
+            print_validation_report(&report, &commands_json, &build_output_dir);
         }
-        validation_summary = Some(validation_summary_from_report(
-            &options.commands_json,
-            &report,
-        ));
+        validation_summary = Some(validation_summary_from_report(&commands_json, &report));
         if has_validation_errors {
             if build_output_dir != final_output_dir {
                 let _ = fs::remove_dir_all(&build_output_dir);
@@ -510,6 +530,12 @@ fn print_build_summary(
     if generated.resource_pack_models > 0 {
         println!("  Resource-pack models: {}", generated.resource_pack_models);
     }
+    if generated.resource_pack_item_definitions > 0 {
+        println!(
+            "  Resource-pack item definitions: {}",
+            generated.resource_pack_item_definitions
+        );
+    }
     if generated.resource_pack_langs > 0 {
         println!(
             "  Resource-pack lang files: {}",
@@ -565,7 +591,7 @@ fn validate_namespace(namespace: &str) -> Result<(), String> {
 }
 
 fn ensure_build_output_path_safe(output_dir: &Path) -> Result<(), String> {
-    ensure_no_symlink_components(output_dir, "build")?;
+    ensure_not_symlink(output_dir, "build")?;
     if output_dir.exists() {
         let metadata = fs::symlink_metadata(output_dir)
             .map_err(|e| format!("Failed to inspect build output {:?}: {}", output_dir, e))?;
@@ -867,7 +893,7 @@ fn clean_generated_data_dirs(namespace_dir: &Path) -> Result<(), String> {
 }
 
 fn clean_generated_asset_dirs(namespace_dir: &Path) -> Result<(), String> {
-    for asset_dir in ["models", "lang"] {
+    for asset_dir in ["models", "items", "lang"] {
         remove_path_if_exists(&namespace_dir.join(asset_dir))?;
     }
     Ok(())
@@ -1049,7 +1075,7 @@ fn collect_resource_pack_asset_passthrough_files(
             ));
         }
     };
-    ensure_no_symlink_components(&assets_dir, "copy resource-pack assets")?;
+    ensure_not_symlink(&assets_dir, "copy resource-pack assets")?;
     if !metadata.is_dir() {
         return Err(format!(
             "Refusing to copy resource-pack assets from non-directory path: {}",
@@ -1187,7 +1213,9 @@ fn ensure_no_resource_pack_asset_passthrough_output_cleaning_overlap(
             ));
         }
 
-        if generated_namespaces.contains(&namespace) && (top_dir == "models" || top_dir == "lang") {
+        if generated_namespaces.contains(&namespace)
+            && matches!(top_dir.as_str(), "models" | "items" | "lang")
+        {
             return Err(format!(
                 "Refusing to copy resource-pack assets from output assets tree: {}. Generated resource-pack output cleans assets/{}/{}; use a separate build output directory.",
                 file.source_path.display(),
@@ -1363,7 +1391,7 @@ fn clean_stale_resource_pack_asset_passthrough(
         }
 
         let target_path = output_assets_dir.join(relative_path);
-        ensure_no_symlink_components(&target_path, "clean stale resource-pack assets")?;
+        ensure_no_symlinks_from(output_dir, &target_path, "clean stale resource-pack assets")?;
         let metadata = match fs::symlink_metadata(&target_path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => continue,
@@ -1404,7 +1432,7 @@ fn clean_empty_asset_parent_dirs(
         if dir == output_assets_dir || !dir.starts_with(output_assets_dir) {
             break;
         }
-        ensure_no_symlink_components(dir, "clean stale resource-pack assets")?;
+        ensure_no_symlinks_from(output_assets_dir, dir, "clean stale resource-pack assets")?;
         match fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),
             Err(error) if error.kind() == ErrorKind::NotFound => break,
@@ -1438,7 +1466,7 @@ fn copy_resource_pack_asset_passthrough(
         }
 
         let target_path = output_assets_dir.join(&file.relative_path);
-        ensure_no_symlink_components(&target_path, "copy resource-pack assets")?;
+        ensure_no_symlinks_from(output_dir, &target_path, "copy resource-pack assets")?;
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 format!(
@@ -1447,7 +1475,7 @@ fn copy_resource_pack_asset_passthrough(
                     error
                 )
             })?;
-            ensure_no_symlink_components(parent, "copy resource-pack assets")?;
+            ensure_no_symlinks_from(output_dir, parent, "copy resource-pack assets")?;
         }
 
         if target_path.exists() {
@@ -2036,7 +2064,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn build_rejects_symlink_output_parent_component() {
+    fn build_allows_symlink_output_parent_component() {
         use std::os::unix::fs::symlink;
 
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -2048,7 +2076,7 @@ mod tests {
         fs::create_dir_all(&real_parent).unwrap();
         symlink(&real_parent, &symlink_parent).unwrap();
 
-        let error = build(BuildOptions {
+        build(BuildOptions {
             input: Some(input_file),
             output: Some(output_dir),
             namespace: Some("symlink_build".to_string()),
@@ -2062,15 +2090,15 @@ mod tests {
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
-        .unwrap_err();
+        .unwrap();
 
-        assert!(error.contains("Refusing to build through symlink"));
-        assert!(!real_parent.join("output").exists());
+        // Links above the output folder are where the user chose to build.
+        assert!(real_parent.join("output/pack.mcmeta").exists());
     }
 
     #[cfg(unix)]
     #[test]
-    fn build_directory_input_rejects_symlink_output_parent_component() {
+    fn build_directory_input_allows_symlink_output_parent_component() {
         use std::os::unix::fs::symlink;
 
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -2083,7 +2111,7 @@ mod tests {
         fs::create_dir_all(&real_parent).unwrap();
         symlink(&real_parent, &symlink_parent).unwrap();
 
-        let error = build(BuildOptions {
+        build(BuildOptions {
             input: Some(source_dir),
             output: Some(output_dir),
             namespace: Some("symlink_build".to_string()),
@@ -2097,10 +2125,10 @@ mod tests {
             dry_run: false,
             commands_json: PathBuf::from("data/commands.json"),
         })
-        .unwrap_err();
+        .unwrap();
 
-        assert!(error.contains("Refusing to build through symlink"));
-        assert!(!real_parent.join("output").exists());
+        // Links above the output folder are where the user chose to build.
+        assert!(real_parent.join("output/pack.mcmeta").exists());
     }
 
     #[cfg(unix)]
@@ -3039,13 +3067,30 @@ resource_pack = true
     }
 }
 
+/// Whether `output_dir` sits directly in a world's `datapacks` folder: a
+/// folder named `datapacks` next to the world's `level.dat`.
+fn is_in_datapacks_folder(output_dir: &Path) -> bool {
+    let Ok(output_dir) = std::path::absolute(output_dir) else {
+        return false;
+    };
+    let Some(datapacks) = output_dir.parent() else {
+        return false;
+    };
+    datapacks
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("datapacks"))
+        && datapacks
+            .parent()
+            .is_some_and(|world| world.join("level.dat").is_file())
+}
+
 fn create_zip(
     output_dir: &Path,
     namespace: &str,
     asset_paths: Option<&HashSet<PathBuf>>,
 ) -> Result<PathBuf, String> {
     let zip_path = output_dir.with_file_name(format!("{}.zip", namespace));
-    ensure_no_symlink_components(&zip_path, "create zip file")?;
+    ensure_not_symlink(&zip_path, "create zip file")?;
     let (file, temp_zip_path) = create_temp_output_file(&zip_path)
         .map_err(|e| format!("Failed to create temporary zip file: {}", e))?;
 

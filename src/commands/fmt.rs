@@ -1,4 +1,7 @@
-use super::{find_cobble_files, find_config, output_safety::ensure_no_symlink_components};
+use super::{
+    find_cobble_files, find_config,
+    output_safety::{ensure_no_symlinks_from, ensure_not_symlink},
+};
 use crate::config::CobbleConfig;
 use crate::diagnostics::{parse_source, FileSourceDiagnostics, SourceDiagnostic};
 use crate::error::report_file_source_diagnostics;
@@ -38,7 +41,7 @@ pub fn format(options: FmtOptions) -> Result<(), String> {
         return Err("No input specified and no cobble.toml found".to_string());
     };
 
-    ensure_no_symlink_components(&source_path, "format source")?;
+    ensure_not_symlink(&source_path, "format source")?;
 
     let files_to_format = if source_path.is_file() {
         vec![source_path.clone()]
@@ -57,7 +60,7 @@ pub fn format(options: FmtOptions) -> Result<(), String> {
     let mut diagnostics = Vec::new();
 
     for path in &files_to_format {
-        if let Err(error) = ensure_no_symlink_components(path, "format source") {
+        if let Err(error) = ensure_no_symlinks_from(&source_path, path, "format source") {
             diagnostics.push(FileSourceDiagnostics::new(
                 path,
                 "",
@@ -155,7 +158,7 @@ pub fn format(options: FmtOptions) -> Result<(), String> {
     }
 
     for candidate in &changed {
-        ensure_no_symlink_components(&candidate.path, "format source")?;
+        ensure_no_symlinks_from(&source_path, &candidate.path, "format source")?;
     }
 
     for candidate in &changed {

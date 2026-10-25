@@ -1225,6 +1225,7 @@ impl Transpiler {
             cleanup_commands,
         } = driver;
 
+        self.data_pack.track_runtime_loop();
         let init_commands = init_commands(self)?;
         if let Some(ref mut commands) = self.current_function {
             commands.extend(init_commands);

@@ -1,5 +1,5 @@
 use super::{find_cobble_files, resolve_entry_points};
-use crate::commands::output_safety::ensure_no_symlink_components;
+use crate::commands::output_safety::ensure_no_symlinks_from;
 use crate::config::CobbleConfig;
 use crate::diagnostics::{
     parse_source_files, python_compat_observed_constructs, python_compat_suggestion_for_kind,
@@ -523,10 +523,19 @@ fn semantic_check_diagnostics(
         std::collections::HashMap::new();
     for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
         transpiler.set_current_file_with_source_spans(path, &parsed.source, &parsed.spans);
-        let Err(error) = transpiler.transpile(&parsed.program) else {
+        let Err(mut error) = transpiler.transpile(&parsed.program) else {
             continue;
         };
         let canonical_path = canonical_or_original(path);
+        // A statement location from an imported file would point at the
+        // wrong line of this one.
+        if error
+            .location
+            .as_ref()
+            .is_some_and(|location| location.file != canonical_path)
+        {
+            error.location = None;
+        }
         if let Some(reporters) = seen_errors.get(&error.message) {
             if reporters
                 .iter()
@@ -752,7 +761,9 @@ fn plugin_report(enabled: bool, project_root: &Path) -> Option<CheckPluginReport
     };
 
     let plugins_dir = project_root.join("plugins");
-    if let Err(error) = ensure_no_symlink_components(&plugins_dir, "inspect plugin manifests") {
+    if let Err(error) =
+        ensure_no_symlinks_from(project_root, &plugins_dir, "inspect plugin manifests")
+    {
         report
             .diagnostics
             .push(plugin_host_diagnostic("manifest-safety", "error", error));
@@ -853,7 +864,11 @@ fn inspect_plugin_manifest_dir(plugins_dir: &Path, report: &mut CheckPluginRepor
 }
 
 fn inspect_plugin_manifest(manifest_path: &Path, report: &mut CheckPluginReport) {
-    if let Err(error) = ensure_no_symlink_components(manifest_path, "inspect plugin manifest") {
+    if let Err(error) = ensure_no_symlinks_from(
+        manifest_path.parent().unwrap_or(manifest_path),
+        manifest_path,
+        "inspect plugin manifest",
+    ) {
         report.diagnostics.push(plugin_manifest_diagnostic(
             manifest_path,
             "manifest-safety",

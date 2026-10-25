@@ -11,6 +11,7 @@ mod paths;
 mod resource_pack;
 mod resources;
 mod runtime;
+pub use runtime::INIT_FUNCTION;
 mod source_locations;
 mod source_map;
 mod tags;
@@ -124,6 +125,8 @@ pub struct BuildManifestGenerated {
     #[serde(skip_serializing_if = "is_zero_usize", default)]
     pub resource_pack_models: usize,
     #[serde(skip_serializing_if = "is_zero_usize", default)]
+    pub resource_pack_item_definitions: usize,
+    #[serde(skip_serializing_if = "is_zero_usize", default)]
     pub resource_pack_langs: usize,
     #[serde(skip_serializing_if = "is_zero_usize", default)]
     pub resource_pack_static_assets: usize,
@@ -171,6 +174,9 @@ pub struct DataPack {
     pub used_objectives: HashSet<String>,
     /// Whether `#true_const`/`#false_const` are set up in the init function.
     pub uses_boolean_constants: bool,
+    /// Set when the pack has a runtime loop (`while`, runtime `for`). Only
+    /// then does the init function raise `max_command_sequence_length`.
+    pub uses_runtime_loops: bool,
     pub source_display_root: Option<PathBuf>,
     pub build_input: Option<BuildManifestInput>,
     pub project_root: Option<String>,
@@ -212,6 +218,7 @@ impl DataPack {
             stdlib: StdLib::new(),
             used_objectives: HashSet::new(),
             uses_boolean_constants: false,
+            uses_runtime_loops: false,
             source_display_root: None,
             build_input: None,
             project_root: None,

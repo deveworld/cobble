@@ -19,8 +19,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The optional Purpur server gate loads two packs with the same variable names
   and checks that their scores stay separate and that a `persist` variable
   survives `/reload`.
+- `resource_pack.item_model` also writes the item model definition
+  `assets/<namespace>/items/<path>.json` that Minecraft needs since 1.21.4,
+  except for `minecraft` models, whose vanilla definitions stay. A static file
+  at that path replaces it. The build manifest counts these as
+  `generated.resource_pack_item_definitions` with the resource kind
+  `resource_pack_item_definition`.
+- Entity templates add each `tag=` value of their selector to the created
+  entity's `Tags`.
+- The 0.11 `cobble migrate` report also marks lines whose output changes:
+  `say-variable-text`, `load-function-tag`, `entity-template-tag`, and
+  `item-model-definition`.
 
 ### Changed
+- `/say` text with variables runs as a macro `say` in a helper function
+  instead of becoming `tellraw @a`, so it keeps the `[name]` prefix and shows
+  selectors as names. The text after filling in the values is limited to 256
+  characters, like any `say`.
+- The objective setup and module variable initializers move from the first
+  load handler into their own load function, `_cobble_init`, which runs first
+  in `minecraft:load`; the other load functions keep their order.
+- The gamerule `max_command_sequence_length` is only raised in packs with a
+  runtime loop or a runtime `^` power.
+- Validation keeps the default command tree in the user cache
+  (`~/.cache/cobble/26.3/`, `~/Library/Caches/cobble/26.3/`, or
+  `%LOCALAPPDATA%\cobble\26.3\`) instead of `data/commands.json` in the
+  current folder, which is still used when it exists.
+- Symlinked folders above an output or project folder, such as `/tmp` on
+  macOS, are allowed. The folder itself and anything inside it still must not
+  be a symlink.
+- `cobble build --zip` refuses an output folder inside a world's `datapacks`
+  folder (next to `level.dat`), where the folder and the ZIP would load as two
+  packs.
+- Compiler errors report the file, line, and column of the statement that
+  caused them in `cobble build`, `cobble check`, and the browser compiler, and
+  the variable placeholder error shows its example with indentation.
+- Library users: `TranspileError` gains a `location` field.
 - Each pack keeps its numeric variables and internal helper scores on its own
   objective, `<namespace>.vars`, so Cobble packs no longer overwrite each
   other's variables. The shared `temp`, `math`, and `__internal__` objectives
@@ -30,6 +64,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<namespace>.vars`; existing source keeps working. See
   [Upgrading](https://deveworld.github.io/cobble/docs/upgrading.html).
 - The serde AST adds `Assignment.persist` (omitted when `false`).
+
+### Fixed
+- A raw execute header `unless A or B:` compiles to `unless A unless B`
+  instead of being written unchanged as an invalid command.
+- Raw `if`/`unless` headers no longer split on `or` or `and` inside quotes or
+  brackets, and an `if A and B or C:` alternative compiles to a valid chain.
+- `--validate` reports `message` arguments (`say`, `msg`, `me`, `teammsg`)
+  over 256 characters, which Minecraft refuses to load.
+- Commands inside unrolled `for` loops keep their own source locations
+  instead of taking those of identical commands later in the file.
+- First-time command tree generation uses a partial file of its own, so two
+  validations at once do not overwrite each other's download.
 
 ### Documentation
 - The documentation is now a book built with mdBook from `docs/src/` and

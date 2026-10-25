@@ -66,6 +66,14 @@ impl StdLib {
             .push(function_name);
     }
 
+    /// Register `function_name` as the first handler of `event_type`, moving
+    /// it to the front if it is already registered.
+    pub fn add_first_event_listener(&mut self, event_type: EventType, function_name: String) {
+        let handlers = self.event_handlers.entry(event_type).or_default();
+        handlers.retain(|handler| *handler != function_name);
+        handlers.insert(0, function_name);
+    }
+
     /// Get all handlers for a specific event
     pub fn get_event_handlers(&self, event_type: &EventType) -> Vec<String> {
         self.event_handlers

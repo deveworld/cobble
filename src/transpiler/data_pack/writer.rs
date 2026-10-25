@@ -233,6 +233,9 @@ impl DataPack {
                 fs::create_dir_all(parent)?;
             }
             let content = Self::merge_tag_json_if_existing(&file_path, relative_path, json)?;
+            let content = self
+                .order_load_tag_json(resource_namespace, relative_path, content)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
             write_file_atomic(&file_path, content)?;
         }
 
@@ -285,7 +288,7 @@ impl DataPack {
     pub(in crate::transpiler::data_pack) fn clean_generated_asset_dirs(
         namespace_dir: &Path,
     ) -> std::io::Result<()> {
-        for asset_dir in ["models", "lang"] {
+        for asset_dir in ["models", "items", "lang"] {
             let path = namespace_dir.join(asset_dir);
             if path.exists() {
                 fs::remove_dir_all(path)?;

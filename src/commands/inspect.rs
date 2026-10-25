@@ -115,6 +115,11 @@ fn print_inspection(input: &Path, summary: &InspectionSummary) {
     );
     print_usize(
         manifest,
+        &["generated", "resource_pack_item_definitions"],
+        "  Resource-pack item definitions",
+    );
+    print_usize(
+        manifest,
         &["generated", "resource_pack_langs"],
         "  Resource-pack lang files",
     );

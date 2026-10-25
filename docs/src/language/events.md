@@ -21,4 +21,8 @@ stdlib.addEventListener(event.TICK, on_tick)
 - `event.TICK` runs every game tick, 20 times per second.
 
 Cobble adds the functions to the `minecraft:load` and `minecraft:tick` function
-tags.
+tags. A pack with variables also gets the load function `_cobble_init`, which
+creates the pack's objectives and sets module variables. Cobble puts it first
+in `minecraft:load`, so every load handler and every function added with
+`datapack.function_tag("minecraft:load", [...])` runs after it and can use
+those variables.

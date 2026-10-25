@@ -2,6 +2,64 @@ use crate::ast::Expression;
 use crate::transpiler::TranspileError;
 use std::collections::{HashMap, HashSet};
 
+/// A `say` command that shows Cobble variables, run as a macro in a helper
+/// function. See [`CommandProcessor::say_macro`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SayMacro {
+    /// The helper's macro line: `$say ...` with `$(name)` for each argument.
+    pub command: String,
+    /// The values the caller copies into the macro storage, in order.
+    pub arguments: Vec<SayMacroArgument>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SayMacroArgument {
+    pub name: String,
+    pub source: SayMacroSource,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SayMacroSource {
+    /// A score on `objective` (`temp` is this pack's variable objective).
+    Score { objective: String },
+    /// A storage-backed variable at `path` in `<namespace>:global`.
+    Storage { path: String },
+    /// A parameter of the current function, read from `args`.
+    Parameter,
+}
+
+/// A command after placeholder substitution.
+struct Substituted {
+    text: String,
+    /// Cobble variables found, as (start, end, name) char positions in the
+    /// original command.
+    vars: Vec<(usize, usize, String)>,
+    /// Whether the text uses macro arguments (`$(name)`).
+    has_macro_vars: bool,
+}
+
+/// Names of the `$(name)` macro arguments in `text`, in order, without
+/// duplicates.
+fn macro_argument_names(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("$(") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find(')') else {
+            break;
+        };
+        let name = &after[..end];
+        if !name.is_empty()
+            && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+            && !names.iter().any(|existing| existing == name)
+        {
+            names.push(name.to_string());
+        }
+        rest = &after[end + 1..];
+    }
+    names
+}
+
 /// Process Minecraft command strings with variable substitution
 pub struct CommandProcessor<'a> {
     pub namespace: String,
@@ -43,10 +101,99 @@ impl<'a> CommandProcessor<'a> {
     }
 
     pub fn process_command_string(&self, cmd: &str) -> Result<String, TranspileError> {
+        // Special handling for tellraw/title commands with scoreboard variables
+        let Substituted {
+            text: mut result,
+            vars: scoreboard_vars_found,
+            has_macro_vars,
+        } = self.substitute_placeholders(cmd, false)?;
+
+        // Handle scoreboard variables - special processing for tellraw/title/say
+        if !scoreboard_vars_found.is_empty() {
+            result = self.handle_scoreboard_vars_in_command(&result, &scoreboard_vars_found)?;
+        }
+
+        if has_macro_vars && scoreboard_vars_found.is_empty() {
+            result = self.normalize_macro_text_component_command(&result)?;
+        }
+
+        // If the command has macro variables, prefix with $ for Minecraft 1.21.8+ macro system
+        if has_macro_vars && !result.starts_with('$') {
+            result = format!("${}", result);
+        }
+
+        Ok(expand_selector_aliases(&result, self.selector_aliases))
+    }
+
+    /// Plans a `say` command whose text shows Cobble variables. `say` adds
+    /// its `[name]` prefix and shows selectors as names only when it runs as
+    /// `say`, so every variable becomes a macro argument (`$(name)`) and the
+    /// caller copies the values into storage before running the command in a
+    /// helper. Returns `None` for other commands and for `say` text without
+    /// variables.
+    pub fn say_macro(&self, cmd: &str) -> Result<Option<SayMacro>, TranspileError> {
+        if !cmd.trim().starts_with("say ") {
+            return Ok(None);
+        }
+        let Substituted { text, vars, .. } = self.substitute_placeholders(cmd, true)?;
+        if vars.is_empty() {
+            return Ok(None);
+        }
+
+        let mut arguments: Vec<SayMacroArgument> = Vec::new();
+        for (_, _, name) in vars {
+            if arguments.iter().any(|argument| argument.name == name) {
+                continue;
+            }
+            let source = match self.variable_storage_paths.get(&name) {
+                Some(path) => SayMacroSource::Storage { path: path.clone() },
+                None => SayMacroSource::Score {
+                    objective: self
+                        .variable_objectives
+                        .get(&name)
+                        .cloned()
+                        .unwrap_or_else(|| "temp".to_string()),
+                },
+            };
+            arguments.push(SayMacroArgument { name, source });
+        }
+        // Parameters already read `$(name)`; the caller copies them too,
+        // since the helper only sees the storage it is called with. A
+        // hand-written `$(name)` that is not a parameter comes from whoever
+        // calls this function with macro arguments, which a copy from `args`
+        // would not see, so such text keeps the `tellraw` form.
+        for name in macro_argument_names(&text) {
+            if arguments.iter().any(|argument| argument.name == name) {
+                continue;
+            }
+            if !self.is_param(&name) {
+                return Ok(None);
+            }
+            arguments.push(SayMacroArgument {
+                name,
+                source: SayMacroSource::Parameter,
+            });
+        }
+
+        let text = text.trim();
+        let text = text.strip_prefix('$').unwrap_or(text);
+        Ok(Some(SayMacro {
+            command: format!("${}", expand_selector_aliases(text, self.selector_aliases)),
+            arguments,
+        }))
+    }
+
+    /// Replaces `{name}` placeholders for parameters (`$(name)`), constants,
+    /// and constant variables, and collects the Cobble variables it finds.
+    /// With `vars_as_macros`, each variable placeholder also becomes
+    /// `$(name)`.
+    fn substitute_placeholders(
+        &self,
+        cmd: &str,
+        vars_as_macros: bool,
+    ) -> Result<Substituted, TranspileError> {
         // Handle both variable substitution and parameter substitution for Minecraft 1.21.8+ macros
         // Properly handles nested braces by tracking nesting levels
-        // Special handling for tellraw/title commands with scoreboard variables
-
         let mut result = cmd.to_string();
         let mut has_macro_vars = false;
         let mut replacements = Vec::new();
@@ -129,13 +276,14 @@ impl<'a> CommandProcessor<'a> {
                             let replacement = self.format_constant(*const_value);
                             replacements.push((i, j, replacement));
                             i = j;
-                        } else if self.variable_storage_paths.contains_key(var_name) {
-                            // Storage variable found - collect for special handling
+                        } else if self.variable_storage_paths.contains_key(var_name)
+                            || self.scoreboard_variables.contains(var_name)
+                        {
+                            // Storage or scoreboard variable found - collect for special handling
                             scoreboard_vars_found.push((i, j, var_name.to_string()));
-                            i = j; // Skip past this variable
-                        } else if self.scoreboard_variables.contains(var_name) {
-                            // Scoreboard variable found - collect for special handling
-                            scoreboard_vars_found.push((i, j, var_name.to_string()));
+                            if vars_as_macros {
+                                replacements.push((i, j, format!("$({})", var_name)));
+                            }
                             i = j; // Skip past this variable
                         } else if let Some(value) = self.variables.get(var_name) {
                             // Constant variable - inline the value
@@ -237,21 +385,11 @@ impl<'a> CommandProcessor<'a> {
             result.replace_range(byte_start..byte_end, &replacement);
         }
 
-        // Handle scoreboard variables - special processing for tellraw/title/say
-        if !scoreboard_vars_found.is_empty() {
-            result = self.handle_scoreboard_vars_in_command(&result, &scoreboard_vars_found)?;
-        }
-
-        if has_macro_vars && scoreboard_vars_found.is_empty() {
-            result = self.normalize_macro_text_component_command(&result)?;
-        }
-
-        // If the command has macro variables, prefix with $ for Minecraft 1.21.8+ macro system
-        if has_macro_vars && !result.starts_with('$') {
-            result = format!("${}", result);
-        }
-
-        Ok(expand_selector_aliases(&result, self.selector_aliases))
+        Ok(Substituted {
+            text: result,
+            vars: scoreboard_vars_found,
+            has_macro_vars,
+        })
     }
 
     fn normalize_macro_text_component_command(&self, cmd: &str) -> Result<String, TranspileError> {
@@ -412,7 +550,9 @@ impl<'a> CommandProcessor<'a> {
         }
 
         if let Some(say_message) = trimmed.strip_prefix("say ") {
-            // Auto-convert /say to /tellraw @a
+            // Fallback for callers that cannot add helper functions: the
+            // transpiler runs `say` text with variables through
+            // `say_macro` instead, which keeps `say`'s own output.
             let tellraw_cmd = format!("tellraw @a {}", say_message.trim());
             return self.convert_to_tellraw_json(&tellraw_cmd, vars);
         }
@@ -433,17 +573,19 @@ impl<'a> CommandProcessor<'a> {
 
         // For other commands with scoreboard variables, provide helpful error
         let var_names: Vec<_> = vars.iter().map(|(_, _, name)| name.as_str()).collect();
+        // Explicit `\n` plus spaces: a `\` line continuation would strip the
+        // example's indentation.
         Err(format!(
             "Cannot interpolate scoreboard variable{} {} in '{}' command.\n\
-            Scoreboard variables cannot be displayed in this command.\n\n\
-            Note: /say and /tellraw commands are automatically converted to display scores.\n\
-            For other commands, use function parameters:\n\
-               def show_value(val):\n\
-                   /command {{val}}\n\
-               show_value(your_variable)",
+            Only say, tellraw, and title text can show a variable's value.\n\
+            To use it in another command, pass it to a function parameter:\n    \
+            def show_value(val):\n        \
+            /command {{val}}\n    \
+            show_value({})",
             if var_names.len() > 1 { "s" } else { "" },
             var_names.join(", "),
-            trimmed.split_whitespace().next().unwrap_or("unknown")
+            trimmed.split_whitespace().next().unwrap_or("unknown"),
+            var_names.first().copied().unwrap_or("your_variable")
         )
         .into())
     }

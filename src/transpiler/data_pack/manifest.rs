@@ -93,11 +93,12 @@ impl DataPack {
             let Some((namespace, path)) = Self::split_json_resource_key(key) else {
                 continue;
             };
-            entries.push(Self::resource_entry_from_asset_path(
-                "resource_pack_model",
-                namespace,
-                path,
-            ));
+            let kind = if Self::is_item_definition_path(path) {
+                "resource_pack_item_definition"
+            } else {
+                "resource_pack_model"
+            };
+            entries.push(Self::resource_entry_from_asset_path(kind, namespace, path));
         }
         for key in self.resource_pack_langs.keys() {
             let Some((namespace, path)) = Self::split_json_resource_key(key) else {
@@ -245,6 +246,7 @@ impl DataPack {
     ) -> BuildManifestResourceEntry {
         let path = path
             .strip_prefix("models/")
+            .or_else(|| path.strip_prefix("items/"))
             .or_else(|| path.strip_prefix("lang/"))
             .unwrap_or(path);
         BuildManifestResourceEntry {
@@ -323,7 +325,16 @@ impl DataPack {
             item_modifiers: item_modifier_count,
             json_resources: self.json_resources.len(),
             total_json_resources: legacy_typed_json_resources + self.json_resources.len(),
-            resource_pack_models: self.resource_pack_models.len(),
+            resource_pack_models: self
+                .resource_pack_models
+                .keys()
+                .filter(|key| !Self::is_item_definition_key(key))
+                .count(),
+            resource_pack_item_definitions: self
+                .resource_pack_models
+                .keys()
+                .filter(|key| Self::is_item_definition_key(key))
+                .count(),
             resource_pack_langs: self.resource_pack_langs.len(),
             resource_pack_static_assets: self.resource_pack_static_assets.len(),
         }

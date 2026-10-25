@@ -15,7 +15,7 @@ expression: datapack_tree_snapshot(&output_dir)
   ],
   "generated": {
     "advancements": 0,
-    "commands": 2,
+    "commands": 1,
     "custom_function_tags": 0,
     "function_tags": 1,
     "functions": 1,
@@ -25,6 +25,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 0,
     "recipes": 0,
+    "resource_pack_item_definitions": 1,
     "resource_pack_langs": 1,
     "resource_pack_models": 2,
     "source_map_entries": 6,
@@ -56,6 +57,11 @@ expression: datapack_tree_snapshot(&output_dir)
       "kind": "function_tag",
       "namespace": "minecraft",
       "path": "load"
+    },
+    {
+      "kind": "resource_pack_item_definition",
+      "namespace": "cobble_resource_pack",
+      "path": "custom_sword"
     },
     {
       "kind": "resource_pack_lang",
@@ -96,13 +102,6 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_resource_pack/function/load.mcfunction",
       "generated_line": 1,
-      "command": "gamerule max_command_sequence_length 1000000000",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_resource_pack/function/load.mcfunction",
-      "generated_line": 2,
       "command": "tellraw @a {\"text\":\"Resource-pack assets generated\",\"color\":\"aqua\"}",
       "source": {
         "file": "src/main.cbl",
@@ -116,6 +115,17 @@ expression: datapack_tree_snapshot(&output_dir)
       "generated_line": 1,
       "command": "{",
       "source": null,
+      "kind": "JsonGenerated"
+    },
+    {
+      "generated_path": "assets/cobble_resource_pack/items/custom_sword.json",
+      "generated_line": 1,
+      "command": "{",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 3,
+        "column": 1
+      },
       "kind": "JsonGenerated"
     },
     {
@@ -154,6 +164,14 @@ expression: datapack_tree_snapshot(&output_dir)
   ]
 }
 
+===== assets/cobble_resource_pack/items/custom_sword.json =====
+{
+  "model": {
+    "model": "cobble_resource_pack:item/custom_sword",
+    "type": "minecraft:model"
+  }
+}
+
 ===== assets/cobble_resource_pack/lang/en_us.json =====
 {
   "block.cobble_resource_pack.display_block": "Cobble Display Block",
@@ -177,7 +195,6 @@ expression: datapack_tree_snapshot(&output_dir)
 }
 
 ===== data/cobble_resource_pack/function/load.mcfunction =====
-gamerule max_command_sequence_length 1000000000
 tellraw @a {"text":"Resource-pack assets generated","color":"aqua"}
 
 ===== data/minecraft/tags/function/load.json =====

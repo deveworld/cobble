@@ -1,4 +1,4 @@
-use crate::commands::output_safety::ensure_no_symlink_components;
+use crate::commands::output_safety::ensure_no_symlinks_from;
 use crate::pack_format::SUPPORTED_MINECRAFT_VERSION;
 use crate::transpiler::SourceMap;
 use crate::validator::CommandValidator;
@@ -23,14 +23,59 @@ const SUPPORTED_SERVER_JAR_URL: &str =
 const SUPPORTED_SERVER_JAR_SHA1: &str = "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c";
 pub const SUPPORTED_COMMANDS_JSON_SHA1: &str = "d6e1c0ba339ad510056c31ea55c02aefca427dd1";
 
+/// The `--commands-json` default. A Cobble checkout keeps the tree here; in
+/// any other folder the default resolves to the user cache.
+pub const DEFAULT_COMMANDS_JSON: &str = "data/commands.json";
+
+/// Resolves a `--commands-json` value. The default keeps using
+/// `data/commands.json` when that file exists in the current folder (a Cobble
+/// checkout, CI). Otherwise it points at the user cache, so every project and
+/// folder shares one generated tree. Other paths are returned unchanged.
+pub fn resolve_commands_json(commands_json: &Path) -> PathBuf {
+    if commands_json != Path::new(DEFAULT_COMMANDS_JSON) || commands_json.exists() {
+        return commands_json.to_path_buf();
+    }
+    cached_commands_json_path().unwrap_or_else(|| commands_json.to_path_buf())
+}
+
+/// Where the default command tree is cached:
+/// `<cache>/cobble/<Minecraft version>/commands.json`, with `<cache>` being
+/// `%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS, and
+/// `$XDG_CACHE_HOME` or `~/.cache` elsewhere.
+pub fn cached_commands_json_path() -> Option<PathBuf> {
+    Some(
+        user_cache_dir()?
+            .join("cobble")
+            .join(SUPPORTED_MINECRAFT_VERSION)
+            .join("commands.json"),
+    )
+}
+
+fn user_cache_dir() -> Option<PathBuf> {
+    let absolute_env = |name: &str| {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    if cfg!(windows) {
+        absolute_env("LOCALAPPDATA")
+    } else if cfg!(target_os = "macos") {
+        absolute_env("HOME").map(|home| home.join("Library").join("Caches"))
+    } else {
+        absolute_env("XDG_CACHE_HOME")
+            .or_else(|| absolute_env("HOME").map(|home| home.join(".cache")))
+    }
+}
+
 pub struct ValidateOptions {
     pub input: PathBuf,
     pub commands_json: PathBuf,
 }
 
 pub fn validate(options: ValidateOptions) -> Result<(), String> {
-    let report = run_validation(&options.input, &options.commands_json)?;
-    print_validation_report(&report, &options.commands_json, &options.input);
+    let commands_json = resolve_commands_json(&options.commands_json);
+    let report = run_validation(&options.input, &commands_json)?;
+    print_validation_report(&report, &commands_json, &options.input);
 
     if report.errors.is_empty() && report.source_map_errors.is_empty() {
         println!("All commands valid");
@@ -97,7 +142,11 @@ fn ensure_commands_json(commands_json: &Path) -> Result<(), String> {
 
 fn ensure_commands_json_path_safe(commands_json: &Path) -> Result<(), String> {
     if is_auto_download_commands_json_path(commands_json) {
-        ensure_no_symlink_components(commands_json, "generate commands.json")?;
+        ensure_no_symlinks_from(
+            commands_json.parent().unwrap_or(commands_json),
+            commands_json,
+            "generate commands.json",
+        )?;
     }
     Ok(())
 }
@@ -135,16 +184,18 @@ fn verify_commands_json_sha1(commands_json: &Path, expected_sha1: &str) -> Resul
 fn missing_command_tree_error(commands_json: &Path) -> String {
     format!(
         "Command tree not found: {}\n\
-        Cobble can auto-generate the default data/commands.json path during validation.\n\
-        For custom paths, generate data/commands.json with scripts/setup_commands_json.sh {} and copy it to the requested path.\n\
-        Default path: data/commands.json",
+        Without --commands-json, validation generates the tree on first use.\n\
+        For a custom path, generate it with scripts/setup_commands_json.sh {} and copy it to the requested path.",
         commands_json.display(),
         SUPPORTED_MINECRAFT_VERSION
     )
 }
 
-fn is_auto_download_commands_json_path(commands_json: &Path) -> bool {
-    commands_json == Path::new("data/commands.json")
+/// Paths Cobble generates and fingerprint-checks itself: the default
+/// `data/commands.json` and the cached tree it resolves to.
+pub(crate) fn is_auto_download_commands_json_path(commands_json: &Path) -> bool {
+    commands_json == Path::new(DEFAULT_COMMANDS_JSON)
+        || cached_commands_json_path().is_some_and(|cached| commands_json == cached)
 }
 
 fn generate_commands_json(commands_json: &Path) -> Result<(), String> {
@@ -227,46 +278,71 @@ fn generate_commands_json_in(work_dir: &Path, commands_json: &Path) -> Result<()
         )
     })?;
 
-    let partial = commands_json.with_file_name("commands.json.part");
-    let _ = fs::remove_file(&partial);
-    fs::copy(&generated_commands, &partial).map_err(|e| {
-        format!(
-            "Failed to copy generated commands.json from {} to {}: {}",
-            generated_commands.display(),
-            partial.display(),
-            e
-        )
-    })?;
-    fs::rename(&partial, commands_json).map_err(|e| {
-        format!(
-            "Failed to move generated commands.json to {}: {}",
-            commands_json.display(),
-            e
-        )
-    })?;
+    let partial = partial_commands_json_path(commands_json);
+    let result = fs::copy(&generated_commands, &partial)
+        .map_err(|e| {
+            format!(
+                "Failed to copy generated commands.json from {} to {}: {}",
+                generated_commands.display(),
+                partial.display(),
+                e
+            )
+        })
+        .and_then(|_| {
+            fs::rename(&partial, commands_json).map_err(|e| {
+                format!(
+                    "Failed to move generated commands.json to {}: {}",
+                    commands_json.display(),
+                    e
+                )
+            })
+        });
+    if result.is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    result?;
 
     println!("Generated commands.json at {}", commands_json.display());
     Ok(())
 }
 
+/// A partial file next to `commands_json` that no other Cobble process
+/// writes, since builds from several projects can share the cached tree.
+fn partial_commands_json_path(commands_json: &Path) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    commands_json.with_file_name(format!(
+        "commands.json.{}-{}.part",
+        std::process::id(),
+        stamp
+    ))
+}
+
 fn download_ready_made_commands_json(url: &str, commands_json: &Path) -> Result<(), String> {
     println!("Downloading commands.json from COBBLE_COMMANDS_JSON_URL...");
-    let partial = commands_json.with_file_name("commands.json.part");
-    let _ = fs::remove_file(&partial);
-    run_command(
+    let partial = partial_commands_json_path(commands_json);
+    let result = run_command(
         Command::new("curl")
             .args(["-fsSL", "--retry", "3", "-o"])
             .arg(&partial)
             .arg(url),
         "download commands.json",
-    )?;
-    fs::rename(&partial, commands_json).map_err(|e| {
-        format!(
-            "Failed to move downloaded commands.json to {}: {}",
-            commands_json.display(),
-            e
-        )
-    })?;
+    )
+    .and_then(|_| {
+        fs::rename(&partial, commands_json).map_err(|e| {
+            format!(
+                "Failed to move downloaded commands.json to {}: {}",
+                commands_json.display(),
+                e
+            )
+        })
+    });
+    if result.is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    result?;
     println!("Downloaded commands.json at {}", commands_json.display());
     Ok(())
 }
@@ -700,6 +776,34 @@ mod tests {
         assert!(!is_auto_download_commands_json_path(Path::new(
             "custom/commands.json"
         )));
+
+        if let Some(cached) = cached_commands_json_path() {
+            assert!(is_auto_download_commands_json_path(&cached));
+        }
+    }
+
+    #[test]
+    fn default_commands_json_resolves_to_a_versioned_cache_path() {
+        assert_eq!(
+            resolve_commands_json(Path::new("custom/commands.json")),
+            PathBuf::from("custom/commands.json")
+        );
+        if let Some(cached) = cached_commands_json_path() {
+            assert!(cached.is_absolute());
+            assert!(cached.ends_with(
+                Path::new("cobble")
+                    .join(SUPPORTED_MINECRAFT_VERSION)
+                    .join("commands.json")
+            ));
+        }
+        // A checkout keeps its own tree; elsewhere the default moves to the
+        // cache.
+        let resolved = resolve_commands_json(Path::new(DEFAULT_COMMANDS_JSON));
+        if Path::new(DEFAULT_COMMANDS_JSON).exists() {
+            assert_eq!(resolved, PathBuf::from(DEFAULT_COMMANDS_JSON));
+        } else if let Some(cached) = cached_commands_json_path() {
+            assert_eq!(resolved, cached);
+        }
     }
 
     #[test]

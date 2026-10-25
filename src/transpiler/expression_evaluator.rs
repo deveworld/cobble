@@ -160,6 +160,8 @@ impl<'a> ExpressionEvaluator<'a> {
     ) {
         self.data_pack.track_objective("temp");
         self.data_pack.track_objective(target_obj);
+        // The helper calls itself once per exponent step, like a loop.
+        self.data_pack.track_runtime_loop();
 
         let id = self.next_temp_id();
         let base_var = format!("#power_base_{}", id);

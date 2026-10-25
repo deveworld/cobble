@@ -27,7 +27,7 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Snapshot fixture",
   "generated": {
     "advancements": 0,
-    "commands": 3,
+    "commands": 2,
     "custom_function_tags": 0,
     "function_tags": 1,
     "functions": 2,
@@ -37,7 +37,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 1,
     "recipes": 0,
-    "source_map_entries": 6,
+    "source_map_entries": 5,
     "stdlib_function_tags": 1,
     "total_json_resources": 2
   },
@@ -100,13 +100,6 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/snapshot_merge/function/load.mcfunction",
       "generated_line": 1,
-      "command": "gamerule max_command_sequence_length 1000000000",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/snapshot_merge/function/load.mcfunction",
-      "generated_line": 2,
       "command": "say load",
       "source": {
         "file": "main.cbl",
@@ -159,7 +152,6 @@ expression: datapack_tree_snapshot(&output_dir)
 say extra
 
 ===== data/snapshot_merge/function/load.mcfunction =====
-gamerule max_command_sequence_length 1000000000
 say load
 
 ===== data/snapshot_merge/predicate/checks/ready.json =====

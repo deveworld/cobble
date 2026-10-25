@@ -229,6 +229,13 @@ false. All iterations run within one game tick, so a loop with many iterations
 can stall the server. Spread long work across ticks with a tick event handler
 or `/schedule`.
 
+Minecraft caps how many commands one function run can execute, including the
+functions it calls (`max_command_sequence_length`, 65,536 by default). A pack
+with a runtime loop, meaning a `while` loop, a `for` loop that Cobble does
+not expand at compile time, or a `^` power with a runtime exponent, raises the
+cap to 1,000,000,000 in its load function. The gamerule applies to the whole world. Packs without runtime loops
+leave it unchanged.
+
 ## Match Statements
 
 `match` branches on an integer value:

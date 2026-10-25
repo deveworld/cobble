@@ -40,7 +40,6 @@ create {
         "type": "minecraft:plains"
     },
     "CustomName": {"text": "Shop Keeper", "color": "gold"},
-    "Tags": ["shop_keeper"],
     "PersistenceRequired": True,
     "NoAI": True
 }
@@ -54,12 +53,14 @@ def spawn_shop():
 `create @ShopKeeper` compiles to a `summon` at the current execute position:
 
 ```mcfunction
-execute as @a[tag=spawn_shop] at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{...},CustomName:{...},Tags:["shop_keeper"],PersistenceRequired:1b,NoAI:1b}
+execute as @a[tag=spawn_shop] at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{...},CustomName:{...},PersistenceRequired:1b,NoAI:1b,Tags:["shop_keeper"]}
 ```
 
 The payload uses Cobble map and list literals and is written as SNBT. The
 entity type comes from the selector's `type=` argument, so give every template
-one. Other selector arguments are not applied to the new entity; add `Tags` to
-the payload, as above, when the alias should match the entities it creates.
+one. Each `tag=` argument is added to the entity's `Tags`, after any tags the
+payload lists, so the alias matches the entities it creates. Negated tags
+(`tag=!name`) and other selector arguments, such as `name=` or `scores=`, are
+not applied to the new entity.
 `create @Name` must name a template defined in the project, and template names
 share the project-wide name set with functions and selector aliases.

@@ -16,8 +16,9 @@ source-aware checks before compiling. They report:
 - type mismatches;
 - malformed `datapack.*` arguments, resource IDs, and tag entries.
 
-Compilation then adds its own errors, such as loop expansion limits and JSON
-resource formats.
+Compilation then adds its own errors, such as loop expansion limits, JSON
+resource formats, and variable placeholders in commands that cannot show them.
+They point at the statement that caused them.
 
 ## Output Format
 
@@ -46,4 +47,6 @@ Error: missing-block-colon: Block headers must end with `:`
 - `missing-stdlib-module`: [Standard Library Modules](../stdlib/modules.md).
 - `datapack-resource-format`: [Data Pack Resources](../stdlib/datapack-resources.md).
 - `resource-pack-*` kinds: [Resource Packs](../stdlib/resource-packs.md#diagnostics).
-- `temp-objective-reference` in `cobble migrate`: [Upgrading](../upgrading.md).
+- `temp-objective-reference`, `say-variable-text`, `load-function-tag`,
+  `entity-template-tag`, and `item-model-definition` in `cobble migrate`:
+  [Upgrading](../upgrading.md#010-to-011).

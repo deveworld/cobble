@@ -143,7 +143,7 @@ test("try page renders resource-pack assets and ZIP entries", async ({ page }) =
   await page.getByLabel("sample").selectOption({ label: "Resource Pack" });
   await page.getByRole("button", { name: /compile/i }).click();
 
-  await expect(page.getByText("3 resources")).toBeVisible();
+  await expect(page.getByText("4 resources")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "resource pack" })).toBeChecked();
   await page.getByRole("button", { name: /resources/i }).click();
   const itemModelButton = page.getByRole("button", {
@@ -158,6 +158,9 @@ test("try page renders resource-pack assets and ZIP entries", async ({ page }) =
   await expect(
     page.getByRole("button", { name: "assets/resource_pack_demo/lang/en_us.json" })
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "assets/resource_pack_demo/items/custom_sword.json" })
+  ).toBeVisible();
   await itemModelButton.click();
   await expect(page.locator(".output-code")).toContainText("minecraft:item/generated");
 
@@ -171,6 +174,9 @@ test("try page renders resource-pack assets and ZIP entries", async ({ page }) =
   const entries = readStoredZipEntries(await readFile(downloadPath!));
   expect(entries.map((entry) => entry.name)).toContain(
     "assets/resource_pack_demo/models/item/custom_sword.json"
+  );
+  expect(entries.map((entry) => entry.name)).toContain(
+    "assets/resource_pack_demo/items/custom_sword.json"
   );
   expect(entries.map((entry) => entry.name)).toContain(
     "assets/resource_pack_demo/models/block/display_block.json"

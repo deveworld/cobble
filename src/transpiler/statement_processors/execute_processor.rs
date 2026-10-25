@@ -179,25 +179,30 @@ impl Transpiler {
                         .into());
                     } else {
                         // Raw Minecraft syntax - check for AND/OR conditions
-                        if condition.contains(" or ") {
-                            // OR conditions need special handling with temp variables
+                        let alternatives = Self::split_raw_conditions(condition, " or ");
+                        let clauses = Self::split_raw_conditions(condition, " and ");
+                        if alternatives.len() > 1 {
+                            // OR conditions need special handling with temp variables.
+                            // An alternative `A and B` becomes the chain `A if B`.
                             special_conditions.push(DeferredExecuteCondition::Or(
-                                Self::split_raw_or_conditions(condition),
+                                alternatives
+                                    .iter()
+                                    .map(|alternative| {
+                                        Self::split_raw_conditions(alternative, " and ")
+                                            .iter()
+                                            .map(|clause| Self::normalize_condition_spacing(clause))
+                                            .collect::<Vec<_>>()
+                                            .join(" if ")
+                                    })
+                                    .collect(),
                             ));
-                        } else if condition.contains(" and ") {
+                        } else if clauses.len() > 1 {
                             // Split on " and " and create multiple if conditions
-                            let parts: Vec<&str> = condition.split(" and ").collect();
-                            for part in parts {
-                                let part = part.trim();
-                                // Fix spacing for range operators
-                                let fixed_part = if part.contains("matches..") {
-                                    part.replace("matches..", "matches ..")
-                                } else if part.contains("matches-") && !part.contains("matches -") {
-                                    part.replace("matches-", "matches -")
-                                } else {
-                                    part.to_string()
-                                };
-                                execute_parts.push(format!("if {}", fixed_part));
+                            for part in clauses {
+                                execute_parts.push(format!(
+                                    "if {}",
+                                    Self::normalize_condition_spacing(&part)
+                                ));
                             }
                         } else {
                             // Fix spacing for range operators in single conditions too
@@ -283,8 +288,22 @@ impl Transpiler {
                         )
                         .into());
                     } else {
-                        // Raw Minecraft syntax - check for AND conditions
-                        if condition.contains(" and ") {
+                        // Raw Minecraft syntax - check for OR and AND conditions
+                        let alternatives = Self::split_raw_conditions(condition, " or ");
+                        if alternatives.len() > 1 {
+                            // unless (A or B) = unless A and unless B (De Morgan's law)
+                            for alternative in alternatives {
+                                if Self::split_raw_conditions(&alternative, " and ").len() > 1 {
+                                    special_conditions
+                                        .push(DeferredExecuteCondition::UnlessAnd(alternative));
+                                } else {
+                                    execute_parts.push(format!(
+                                        "unless {}",
+                                        Self::normalize_condition_spacing(&alternative)
+                                    ));
+                                }
+                            }
+                        } else if Self::split_raw_conditions(condition, " and ").len() > 1 {
                             // Split on " and " and create multiple unless conditions
                             // unless (A and B) requires special handling with temp variable
                             special_conditions
@@ -723,36 +742,49 @@ impl Transpiler {
             .collect())
     }
 
-    /// Split a raw (non-Python) execute condition on ` or `, honoring
-    /// parenthesized groups, into its alternative conditions.
-    fn split_raw_or_conditions(condition: &str) -> Vec<String> {
-        let joined = condition.replace(" or ", ";");
+    /// Split a raw (non-Python) execute condition on `separator` (` or ` or
+    /// ` and `), honoring parenthesized groups, selector/NBT brackets, and
+    /// quoted strings, so `@a[name="Tom or Jerry"]` stays one condition.
+    fn split_raw_conditions(condition: &str, separator: &str) -> Vec<String> {
         let mut parts: Vec<String> = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0i32;
-        for ch in joined.chars() {
+        let mut start = 0;
+        let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        let mut chars = condition.char_indices().peekable();
+        while let Some((index, ch)) = chars.next() {
+            if let Some(active) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active {
+                    quote = None;
+                }
+                continue;
+            }
             match ch {
-                '(' => {
-                    depth += 1;
-                    current.push(ch);
-                }
-                ')' => {
-                    depth -= 1;
-                    current.push(ch);
-                }
-                ';' if depth == 0 => {
-                    if !current.is_empty() {
-                        parts.push(current.trim().to_string());
-                        current.clear();
+                '"' | '\'' => quote = Some(ch),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                ' ' if depth == 0 && condition[index..].starts_with(separator) => {
+                    let part = condition[start..index].trim();
+                    if !part.is_empty() {
+                        parts.push(part.to_string());
+                    }
+                    start = index + separator.len();
+                    // Skip the rest of the separator so it is not re-split.
+                    for _ in 1..separator.chars().count() {
+                        chars.next();
                     }
                 }
-                _ => current.push(ch),
+                _ => {}
             }
         }
-        if !current.is_empty() {
-            parts.push(current.trim().to_string());
+        let part = condition[start..].trim();
+        if !part.is_empty() {
+            parts.push(part.to_string());
         }
-        parts.retain(|part| !part.is_empty());
         parts
     }
 
@@ -878,8 +910,8 @@ impl Transpiler {
             return conditions;
         }
 
-        condition
-            .split(" and ")
+        Self::split_raw_conditions(condition, " and ")
+            .iter()
             .map(|cond| {
                 let fixed_cond = Self::normalize_condition_spacing(cond.trim());
                 if fixed_cond.starts_with("if ") || fixed_cond.starts_with("unless ") {

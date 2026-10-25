@@ -36,8 +36,14 @@ resource_pack.lang("en_us", {
 })
 ```
 
-`resource_pack.item_model` writes `assets/<namespace>/models/item/<path>.json`,
-`resource_pack.block_model` writes
+`resource_pack.item_model` writes `assets/<namespace>/models/item/<path>.json`
+and the item model definition `assets/<namespace>/items/<path>.json`, which
+points the item at that model. An item with the component
+`minecraft:item_model="<namespace>:<path>"` uses it. A static file at
+`assets/<namespace>/items/<path>.json` replaces the generated definition, for
+example to add tints or conditions. Models in the `minecraft` namespace get no
+definition, so vanilla items keep their own (a bow's pulling states, a
+potion's color). `resource_pack.block_model` writes
 `assets/<namespace>/models/block/<path>.json`, and `resource_pack.lang` writes
 `assets/<namespace>/lang/<locale>.json`. The same lowercase namespace/path
 validation used by `datapack.*` applies here. JSON must be an object, and lang

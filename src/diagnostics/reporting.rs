@@ -148,16 +148,26 @@ impl SourceDiagnostic {
     }
 
     /// Recovers a best-effort 1-based source location for a transpiler error:
-    /// structured `location:`/`source-key:`/`loop:` trailers for unroll and
-    /// runtime-for errors, a `location:` trailer on any other error, and a
+    /// an explicit `location:` trailer first, then the statement the
+    /// transpiler recorded on the error, then the `source-key:`/`loop:`
+    /// trailers and loop scans for unroll and runtime-for errors and a
     /// `module '<name>'` scan for stdlib errors.
+    ///
+    /// The recorded statement can belong to an imported file; callers that
+    /// report against a different file clear [`TranspileError::location`]
+    /// first.
     pub fn recover_transpile_error_location(
         error: &TranspileError,
         source: &str,
     ) -> Option<(usize, usize)> {
+        let recorded = error
+            .location
+            .as_ref()
+            .map(|location| (location.line, location.column));
         if error.kind.is_unroll() || error.kind.is_runtime_for() {
             let message = error.message.as_str();
             return unroll_error_location(message)
+                .or(recorded)
                 .or_else(|| {
                     unroll_error_source_key(message).and_then(|source_key| {
                         find_for_loop_location_for_source_key(source, source_key)
@@ -175,13 +185,23 @@ impl SourceDiagnostic {
             return Some(location);
         }
 
+        // A stdlib error names the module; its first use at or after the
+        // recorded statement is more precise than the statement itself.
         let module = error
             .message
             .split_once("module '")
             .and_then(|(_, rest)| rest.split_once('\''))
-            .map(|(module, _)| module)?;
+            .map(|(module, _)| module);
+        let Some(module) = module else {
+            return recorded;
+        };
+        let start = recorded.unwrap_or((1, 1));
         let needle = format!("{module}.");
-        find_source_location(source, &needle).or_else(|| find_source_location(source, module))
+        find_source_location_from(source, &needle, start)
+            .or_else(|| find_source_location_from(source, module, start))
+            .or(recorded)
+            .or_else(|| find_source_location(source, &needle))
+            .or_else(|| find_source_location(source, module))
     }
 
     /// Builds the error diagnostic `cobble check` and the web demo report for
@@ -233,6 +253,30 @@ fn unroll_error_source_key(error: &str) -> Option<&str> {
         .and_then(|(_, rest)| rest.lines().next())
         .map(str::trim)
         .filter(|source_key| !source_key.is_empty())
+}
+
+/// Like [`find_source_location`], starting at the 1-based `start` position.
+fn find_source_location_from(
+    source: &str,
+    needle: &str,
+    (start_line, start_column): (usize, usize),
+) -> Option<(usize, usize)> {
+    source
+        .lines()
+        .enumerate()
+        .skip(start_line.saturating_sub(1))
+        .find_map(|(line_index, line)| {
+            let skip = if line_index + 1 == start_line {
+                line.char_indices()
+                    .nth(start_column.saturating_sub(1))
+                    .map_or(line.len(), |(index, _)| index)
+            } else {
+                0
+            };
+            line[skip..]
+                .find(needle)
+                .map(|offset| (line_index + 1, line[..skip + offset].chars().count() + 1))
+        })
 }
 
 fn find_source_location(source: &str, needle: &str) -> Option<(usize, usize)> {

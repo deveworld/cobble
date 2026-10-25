@@ -29,6 +29,43 @@ impl DataPack {
         )
     }
 
+    /// Whether a `resource_pack_models` path is a generated item model
+    /// definition (`items/<name>`) rather than a model (`models/...`).
+    pub(in crate::transpiler::data_pack) fn is_item_definition_path(relative_path: &str) -> bool {
+        relative_path.starts_with("items/")
+    }
+
+    pub(in crate::transpiler::data_pack) fn is_item_definition_key(key: &str) -> bool {
+        Self::split_json_resource_key(key)
+            .is_some_and(|(_, relative_path)| Self::is_item_definition_path(relative_path))
+    }
+
+    /// Drops generated item model definitions (`items/<name>`) that a static
+    /// project asset replaces. `static_assets` holds paths relative to
+    /// `assets/`, such as `mypack/items/custom_sword.json`.
+    pub fn remove_item_definitions_replaced_by(
+        &mut self,
+        static_assets: &std::collections::HashSet<std::path::PathBuf>,
+    ) {
+        let replaced: Vec<String> = self
+            .resource_pack_models
+            .keys()
+            .filter(|key| {
+                Self::split_json_resource_key(key).is_some_and(|(namespace, relative_path)| {
+                    Self::is_item_definition_path(relative_path)
+                        && static_assets.contains(
+                            &std::path::Path::new(namespace).join(format!("{relative_path}.json")),
+                        )
+                })
+            })
+            .cloned()
+            .collect();
+        for key in replaced {
+            self.resource_pack_models.remove(&key);
+            self.resource_pack_resource_origins.remove(&key);
+        }
+    }
+
     pub fn add_resource_pack_lang_in_namespace_with_source(
         &mut self,
         namespace: String,

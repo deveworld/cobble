@@ -1,4 +1,6 @@
+use super::INIT_FUNCTION;
 use super::{DataPack, SourceLocation};
+use crate::stdlib::EventType;
 
 impl DataPack {
     /// Returns true when `relative_path` points at a Cobble-owned typed tag
@@ -195,6 +197,57 @@ impl DataPack {
             a_id.cmp(b_id).then(a_required_rank.cmp(&b_required_rank))
         });
         values.dedup();
+    }
+
+    /// The namespaced ID of `_cobble_init`, which holds the runtime setup and
+    /// module variable initializers (see `ensure_init_function`), when the
+    /// pack has one.
+    pub fn init_function_id(&self) -> Option<String> {
+        self.stdlib
+            .get_event_handlers(&EventType::Load)
+            .iter()
+            .any(|name| name == INIT_FUNCTION)
+            .then(|| format!("{}:{}", self.namespace, INIT_FUNCTION))
+    }
+
+    /// Moves `_cobble_init` to the front of a merged `minecraft:load` tag.
+    /// Merged tags are sorted, so a `datapack.function_tag` entry that sorts
+    /// earlier would otherwise run before the pack's objectives exist. The
+    /// other entries keep their sorted order. Other tags are returned
+    /// unchanged.
+    pub fn order_load_tag_json(
+        &self,
+        resource_namespace: &str,
+        relative_path: &str,
+        json: String,
+    ) -> Result<String, String> {
+        if resource_namespace != "minecraft" || relative_path != "tags/function/load" {
+            return Ok(json);
+        }
+        let Some(init_id) = self.init_function_id() else {
+            return Ok(json);
+        };
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&json) else {
+            return Ok(json);
+        };
+        let Some(values) = value
+            .get_mut("values")
+            .and_then(|values| values.as_array_mut())
+        else {
+            return Ok(json);
+        };
+        let Some(index) = values
+            .iter()
+            .position(|entry| Self::tag_value_sort_key(entry).0 == init_id)
+        else {
+            return Ok(json);
+        };
+        if index == 0 {
+            return Ok(json);
+        }
+        let entry = values.remove(index);
+        values.insert(0, entry);
+        serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
     }
 
     fn tag_value_sort_key(value: &serde_json::Value) -> (&str, u8) {

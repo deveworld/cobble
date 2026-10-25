@@ -1,4 +1,4 @@
-use super::output_safety::ensure_no_symlink_components;
+use super::output_safety::{ensure_no_symlinks_from, ensure_not_symlink};
 use crate::config::CobbleConfig;
 use crate::fs_safety::write_file_atomic;
 use std::fs;
@@ -75,7 +75,7 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     // Create project directory if a name was provided
     let project_dir = if has_name {
         let dir = PathBuf::from(requested_name.as_ref().unwrap());
-        ensure_no_symlink_components(&dir, "initialize project")?;
+        ensure_not_symlink(&dir, "initialize project")?;
         if dir.join("cobble.toml").exists() {
             return Err("cobble.toml already exists".to_string());
         }
@@ -97,11 +97,11 @@ pub fn init(options: InitOptions) -> Result<(), String> {
     let gitignore = project_dir.join(".gitignore");
 
     for path in [&config_path, &src_dir, &main_file, &gitignore] {
-        ensure_no_symlink_components(path, "initialize project")?;
+        ensure_no_symlinks_from(&project_dir, path, "initialize project")?;
     }
     for extra_file in template.extra_files {
         let path = project_dir.join(extra_file.path);
-        ensure_no_symlink_components(&path, "initialize project")?;
+        ensure_no_symlinks_from(&project_dir, &path, "initialize project")?;
     }
 
     if config_path.exists() {
@@ -136,7 +136,7 @@ Thumbs.db
     for extra_file in template.extra_files {
         let path = project_dir.join(extra_file.path);
         if let Some(parent) = path.parent() {
-            ensure_no_symlink_components(parent, "initialize project")?;
+            ensure_no_symlinks_from(&project_dir, parent, "initialize project")?;
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
         }

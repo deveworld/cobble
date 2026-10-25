@@ -2,6 +2,12 @@ use super::{DataPack, GeneratedCommand, GeneratedCommandKind};
 use crate::stdlib::EventType;
 use crate::transpiler::vars_objective;
 
+/// The load function that holds the runtime setup and module variable
+/// initializers.
+pub const INIT_FUNCTION: &str = "_cobble_init";
+
+const MAX_COMMAND_SEQUENCE_LENGTH_COMMAND: &str = "gamerule max_command_sequence_length 1000000000";
+
 impl DataPack {
     /// Records an objective the init function must create. The source-level
     /// `temp` objective is recorded as this pack's `<namespace>.vars`.
@@ -20,8 +26,18 @@ impl DataPack {
         self.uses_boolean_constants = true;
     }
 
+    /// Records that the pack has a runtime loop. A loop runs every iteration
+    /// in one tick and can pass Minecraft's default limit of 65536 commands,
+    /// so the init function raises `max_command_sequence_length`.
+    pub fn track_runtime_loop(&mut self) {
+        self.uses_runtime_loops = true;
+    }
+
     fn runtime_setup_commands(&self) -> Vec<String> {
-        let mut commands = vec!["gamerule max_command_sequence_length 1000000000".to_string()];
+        let mut commands = Vec::new();
+        if self.uses_runtime_loops {
+            commands.push(MAX_COMMAND_SEQUENCE_LENGTH_COMMAND.to_string());
+        }
 
         let mut objectives: Vec<_> = self.used_objectives.iter().collect();
         objectives.sort();
@@ -48,6 +64,7 @@ impl DataPack {
         Self::is_runtime_setup_command_for(
             &self.used_objectives,
             &self.boolean_constant_commands(),
+            self.uses_runtime_loops,
             command,
         )
     }
@@ -55,9 +72,12 @@ impl DataPack {
     fn is_runtime_setup_command_for(
         used_objectives: &std::collections::HashSet<String>,
         boolean_constants: &[String; 2],
+        uses_runtime_loops: bool,
         command: &str,
     ) -> bool {
-        if command == "gamerule max_command_sequence_length 1000000000"
+        // The gamerule only counts as setup when Cobble emits it, so the same
+        // command written in a load handler stays.
+        if (uses_runtime_loops && command == MAX_COMMAND_SEQUENCE_LENGTH_COMMAND)
             || boolean_constants.iter().any(|constant| constant == command)
         {
             return true;
@@ -82,79 +102,70 @@ impl DataPack {
             .unwrap_or(commands.len())
     }
 
+    /// Puts the runtime setup (gamerule, objectives, boolean constants) at the
+    /// start of `_cobble_init`, the first `minecraft:load` handler, so it runs
+    /// before every other load function. Module variable initializers follow
+    /// it in the same function. Packs without setup get no `_cobble_init`.
     pub fn ensure_init_function(&mut self) {
-        // Get or create the init function from load event handlers
-        let load_handlers = self.stdlib.get_event_handlers(&EventType::Load);
-
-        if let Some(init_func_name) = load_handlers.first().cloned() {
-            let setup_commands = self.runtime_setup_commands();
-            let used_objectives = self.used_objectives.clone();
-            let boolean_constants = self.boolean_constant_commands();
-            // Add objectives to the beginning of the load function
-            if let Some(commands) = self.functions.get_mut(&init_func_name) {
-                let original_commands = commands.clone();
-                let existing_metadata = self
-                    .command_metadata
-                    .remove(&init_func_name)
-                    .unwrap_or_default();
-
-                let mut updated_commands = setup_commands.clone();
-                let mut kept_entries = Vec::new();
-                for (old_index, command) in original_commands.into_iter().enumerate() {
-                    if Self::is_runtime_setup_command_for(
-                        &used_objectives,
-                        &boolean_constants,
-                        &command,
-                    ) {
-                        continue;
-                    }
-                    kept_entries.push((old_index, command.clone()));
-                    updated_commands.push(command);
-                }
-
-                let mut updated_metadata = Self::metadata_for_commands(
-                    &setup_commands,
-                    GeneratedCommandKind::RuntimeSetup,
-                );
-                let setup_len = setup_commands.len();
-                for (new_offset, (old_index, command)) in kept_entries.into_iter().enumerate() {
-                    let new_index = setup_len + new_offset;
-                    let generated =
-                        existing_metadata
-                            .get(&old_index)
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                GeneratedCommand::new(
-                                    command,
-                                    None,
-                                    GeneratedCommandKind::ControlFlow,
-                                )
-                            });
-                    updated_metadata.insert(new_index, generated);
-                }
-
-                updated_metadata = Self::complete_metadata(
-                    &updated_commands,
-                    updated_metadata,
-                    GeneratedCommandKind::ControlFlow,
-                );
-
-                self.command_metadata
-                    .insert(init_func_name.clone(), updated_metadata);
-                *commands = updated_commands;
-            }
-        } else if !self.used_objectives.is_empty() {
-            // No load handler exists, create a default init function
-            let commands = self.runtime_setup_commands();
-
-            self.add_function_with_kind(
-                "_cobble_init".to_string(),
-                commands,
-                GeneratedCommandKind::RuntimeSetup,
-            );
-            self.stdlib
-                .add_event_listener(EventType::Load, "_cobble_init".to_string());
+        let setup_commands = self.runtime_setup_commands();
+        if setup_commands.is_empty() && !self.functions.contains_key(INIT_FUNCTION) {
+            return;
         }
+
+        let used_objectives = self.used_objectives.clone();
+        let boolean_constants = self.boolean_constant_commands();
+        let uses_runtime_loops = self.uses_runtime_loops;
+        let original_commands = self
+            .functions
+            .get(INIT_FUNCTION)
+            .cloned()
+            .unwrap_or_default();
+        let existing_metadata = self
+            .command_metadata
+            .remove(INIT_FUNCTION)
+            .unwrap_or_default();
+
+        // Drop the setup written by an earlier file of the build, then write
+        // the current setup in front of the remaining commands.
+        let mut updated_commands = setup_commands.clone();
+        let mut kept_entries = Vec::new();
+        for (old_index, command) in original_commands.into_iter().enumerate() {
+            if Self::is_runtime_setup_command_for(
+                &used_objectives,
+                &boolean_constants,
+                uses_runtime_loops,
+                &command,
+            ) {
+                continue;
+            }
+            kept_entries.push((old_index, command.clone()));
+            updated_commands.push(command);
+        }
+
+        let mut updated_metadata =
+            Self::metadata_for_commands(&setup_commands, GeneratedCommandKind::RuntimeSetup);
+        let setup_len = setup_commands.len();
+        for (new_offset, (old_index, command)) in kept_entries.into_iter().enumerate() {
+            let generated = existing_metadata
+                .get(&old_index)
+                .cloned()
+                .unwrap_or_else(|| {
+                    GeneratedCommand::new(command, None, GeneratedCommandKind::ControlFlow)
+                });
+            updated_metadata.insert(setup_len + new_offset, generated);
+        }
+        updated_metadata = Self::complete_metadata(
+            &updated_commands,
+            updated_metadata,
+            GeneratedCommandKind::ControlFlow,
+        );
+
+        self.command_metadata
+            .insert(INIT_FUNCTION.to_string(), updated_metadata);
+        self.functions
+            .insert(INIT_FUNCTION.to_string(), updated_commands);
+        self.stdlib
+            .add_first_event_listener(EventType::Load, INIT_FUNCTION.to_string());
     }
 
     pub fn ensure_math_helper(&mut self, op: &str) {

@@ -367,6 +367,15 @@ fn materialize_files(
                     content: pack.json_resources[key].clone(),
                 },
             )?;
+            if let Some(file) = files.iter_mut().find(|file| file.path == path) {
+                file.content = pack
+                    .order_load_tag_json(
+                        resource_namespace,
+                        relative_path,
+                        std::mem::take(&mut file.content),
+                    )
+                    .map_err(|error| vec![generic_diagnostic("serialization", error)])?;
+            }
             push_json_source_map_entry(
                 &mut source_map_entries,
                 path,
@@ -678,7 +687,9 @@ fn transpile_error_diagnostics(
     error: &transpiler::TranspileError,
     source: &str,
 ) -> Vec<CompileDiagnostic> {
-    if diagnostics::SourceDiagnostic::transpile_error_is_recognized(error) {
+    if diagnostics::SourceDiagnostic::transpile_error_is_recognized(error)
+        || error.location.is_some()
+    {
         return source_diagnostics(
             "demo.cbl",
             source,

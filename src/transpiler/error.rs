@@ -11,6 +11,8 @@
 
 use std::fmt;
 
+use super::SourceLocation;
+
 /// Classification of a transpiler error.
 ///
 /// [`TranspileErrorKind::slug`] maps each kind onto the stable diagnostic
@@ -109,7 +111,8 @@ impl TranspileErrorKind {
     }
 }
 
-/// A transpiler error: a diagnostic kind plus the user-visible message.
+/// A transpiler error: a diagnostic kind, the user-visible message, and the
+/// source statement being lowered when it was raised.
 ///
 /// `Display` renders the message exactly, so error text reaching users is
 /// unchanged by the typed channel.
@@ -117,6 +120,10 @@ impl TranspileErrorKind {
 pub struct TranspileError {
     pub kind: TranspileErrorKind,
     pub message: String,
+    /// The innermost statement being lowered when the error was raised, if
+    /// the transpiler knew its location. The file is the canonical path of
+    /// the file that contains the statement, which can be an imported file.
+    pub location: Option<SourceLocation>,
 }
 
 impl TranspileError {
@@ -125,7 +132,17 @@ impl TranspileError {
         Self {
             kind,
             message: message.into(),
+            location: None,
         }
+    }
+
+    /// Records `location` unless the error already carries one, so the
+    /// innermost statement wins as the error travels up nested blocks.
+    pub fn with_location_if_missing(mut self, location: Option<SourceLocation>) -> Self {
+        if self.location.is_none() {
+            self.location = location;
+        }
+        self
     }
 
     /// Re-classifies an unclassified (`Semantic`) error, leaving errors that

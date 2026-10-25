@@ -1,9 +1,12 @@
 use crate::commands::link::{link_state_path, read_link_state, validate_link_state_paths};
 use crate::commands::output_safety::{
-    build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
-    project_marker_identity, read_build_manifest, require_manifest_ownership,
+    build_manifest_path, ensure_no_symlink_descendants, ensure_no_symlinks_from,
+    ensure_not_symlink, project_marker_identity, read_build_manifest, require_manifest_ownership,
 };
-use crate::commands::validate::SUPPORTED_COMMANDS_JSON_SHA1;
+use crate::commands::validate::{
+    is_auto_download_commands_json_path, resolve_commands_json, DEFAULT_COMMANDS_JSON,
+    SUPPORTED_COMMANDS_JSON_SHA1,
+};
 use crate::config::CobbleConfig;
 use crate::pack_format::{COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
 use serde::Serialize;
@@ -29,7 +32,8 @@ pub fn doctor(options: DoctorOptions) -> Result<(), String> {
         project_root.as_path()
     };
 
-    let report = build_doctor_report(&project_root, config_search_root, &options.commands_json);
+    let commands_json = resolve_commands_json(&options.commands_json);
+    let report = build_doctor_report(&project_root, config_search_root, &commands_json);
     if options.json {
         print_json_report(&report)
     } else {
@@ -346,7 +350,7 @@ fn inspect_output_report(config: &ConfigReport) -> OutputReport {
     };
     let output_path_display = Some(path_display(&output_path));
 
-    if let Err(error) = ensure_no_symlink_components(&output_path, "inspect output") {
+    if let Err(error) = ensure_not_symlink(&output_path, "inspect output") {
         return OutputReport {
             id: "output",
             status: "error".to_string(),
@@ -451,7 +455,8 @@ fn inspect_output_marker(
     expected_project_id: Option<&str>,
 ) -> OutputMarkerReport {
     let marker_path = build_manifest_path(output_path);
-    if let Err(error) = ensure_no_symlink_components(&marker_path, "inspect output marker") {
+    if let Err(error) = ensure_no_symlinks_from(output_path, &marker_path, "inspect output marker")
+    {
         return OutputMarkerReport {
             status: "error".to_string(),
             path: Some(path_display(&marker_path)),
@@ -641,7 +646,9 @@ fn inspect_link_marker(
     expected_project_id: Option<&str>,
 ) -> LinkMarkerReport {
     let marker_path = build_manifest_path(pack_path);
-    if let Err(error) = ensure_no_symlink_components(&marker_path, "inspect linked output marker") {
+    if let Err(error) =
+        ensure_no_symlinks_from(pack_path, &marker_path, "inspect linked output marker")
+    {
         return LinkMarkerReport {
             status: "error".to_string(),
             path: Some(path_display(&marker_path)),
@@ -967,8 +974,8 @@ fn inspect_commands_json(commands_json: &Path) -> CommandsJsonStatus {
 }
 
 fn is_default_commands_json_path(commands_json: &Path) -> bool {
-    commands_json == Path::new("data/commands.json")
-        || commands_json.ends_with(Path::new("data/commands.json"))
+    is_auto_download_commands_json_path(commands_json)
+        || commands_json.ends_with(Path::new(DEFAULT_COMMANDS_JSON))
 }
 
 fn sha1_file(path: &Path) -> Result<String, String> {

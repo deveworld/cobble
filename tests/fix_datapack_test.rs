@@ -65,7 +65,8 @@ stdlib.addEventListener(event.LOAD, on_load)
     let values = tag["values"].as_array().unwrap();
     // Sorted by id; `required: true` object normalized to a plain string;
     // `required: false` object preserved; stdlib load handler merged in at
-    // its sorted position instead of being prepended; no duplicates.
+    // its sorted position; no duplicates. (A pack with runtime setup puts
+    // `_cobble_init` first; this one has none.)
     assert_eq!(
         values,
         &vec![

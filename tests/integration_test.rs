@@ -506,8 +506,9 @@ def test():
         .position(|line| line.contains("scoreboard players set score cobble.vars 1"))
         .unwrap();
 
+    // No runtime loop, so the world's command limit stays untouched.
+    assert!(!init_content.contains("gamerule"), "{init_content}");
     for setup in [
-        "gamerule max_command_sequence_length",
         "scoreboard objectives add cobble.vars dummy",
         "scoreboard players set #true_const cobble.vars 1",
         "scoreboard players set #false_const cobble.vars 0",
@@ -645,7 +646,9 @@ def test():
     assert!(
         body_content.contains("scoreboard players operation total cobble.vars += i cobble.vars")
     );
-    assert!(body_content.contains(r#""score":{"name":"i","objective":"cobble.vars"}"#));
+    assert!(body_content.contains(
+        "execute store result storage cobble:global _say_args.i int 1 run scoreboard players get i cobble.vars"
+    ));
     assert!(body_content.contains("scoreboard players add i cobble.vars 1"));
 }
 
@@ -804,7 +807,9 @@ def test():
     let body_content = read_first_function_with_prefix(&output_dir, "for_list_body_");
     assert!(body_content
         .contains("scoreboard players operation total cobble.vars += value cobble.vars"));
-    assert!(body_content.contains(r#""nbt":"vars.value","storage":"cobble:global""#));
+    assert!(body_content.contains(
+        "data modify storage cobble:global _say_args.value set from storage cobble:global vars.value"
+    ));
     assert!(body_content.contains("scoreboard players add #for_list_index_"));
 }
 
@@ -1206,10 +1211,9 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let init = read_function(&output_dir, "_cobble_init");
 
-    // Objective MUST be created first (after gamerule)
+    // Objective MUST be created first
     let lines: Vec<&str> = init.lines().collect();
 
-    // Find first objective add command (skip gamerule line)
     let obj_idx = lines
         .iter()
         .position(|l| l.contains("scoreboard objectives add"))
@@ -1223,7 +1227,8 @@ def test():
         obj_idx < var_idx,
         "Objective must be created before variable initialization"
     );
-    assert!(init.contains("gamerule max_command_sequence_length"));
+    // Only packs with a runtime loop raise the world's command limit.
+    assert!(!init.contains("gamerule"));
     assert!(init.contains("scoreboard objectives add cobble.vars dummy"));
     assert!(init.contains("scoreboard players set score cobble.vars 10"));
     assert!(init.contains("scoreboard players set counter cobble.vars 5"));
@@ -1283,26 +1288,34 @@ def test():
     /say {message}
 "#;
 
-    // String variables in /say are now auto-converted to /tellraw with nbt component
+    // `say` text with a variable runs as a macro `say`, which keeps the
+    // `[name]` prefix that a `tellraw` rewrite would lose.
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
     // String is stored in data storage
     assert!(
-        content.contains("data modify storage"),
+        content.contains("data modify storage cobble:global vars.message set value \"Hello\""),
         "String should be stored in data storage: {}",
         content
     );
-    // say is auto-converted to tellraw with nbt component
     assert!(
-        content.contains("tellraw @a"),
-        "say should be auto-converted to tellraw: {}",
+        content.contains(
+            "data modify storage cobble:global _say_args.message set from storage cobble:global vars.message"
+        ),
+        "the value should be copied into the macro storage: {}",
         content
     );
     assert!(
-        content.contains("nbt") && content.contains("storage"),
-        "Should use nbt storage component: {}",
+        content.contains("with storage cobble:global _say_args") && !content.contains("tellraw"),
+        "say should call its macro helper: {}",
         content
+    );
+    let all_functions = read_all_functions(&output_dir);
+    assert!(
+        all_functions.contains("$say $(message)"),
+        "the helper should run the macro say: {}",
+        all_functions
     );
 }
 

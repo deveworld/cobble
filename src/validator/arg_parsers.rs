@@ -1430,13 +1430,32 @@ fn parse_item_predicate(reader: &mut StringReader) -> bool {
 // Message (greedy) parser
 // ============================================================================
 
+/// Minecraft rejects `message` arguments (`say`, `msg`, `me`, `teammsg`)
+/// longer than this many UTF-16 code units.
+const MAX_MESSAGE_LENGTH: usize = 256;
+
 fn parse_message(reader: &mut StringReader) -> bool {
-    if reader.can_read() {
-        reader.read_greedy();
-        true
-    } else {
-        false
+    if !reader.can_read() {
+        return false;
     }
+    // In a macro line the values replace `$(name)`, so only the fixed text
+    // is known to count against the limit.
+    let message = reader.read_greedy();
+    without_macro_placeholders(&message).encode_utf16().count() <= MAX_MESSAGE_LENGTH
+}
+
+fn without_macro_placeholders(text: &str) -> String {
+    let mut result = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("$(") {
+        let Some(end) = rest[start..].find(')') else {
+            break;
+        };
+        result.push_str(&rest[..start]);
+        rest = &rest[start + end + 1..];
+    }
+    result.push_str(rest);
+    result
 }
 
 #[cfg(test)]
@@ -1709,6 +1728,29 @@ mod tests {
         let mut r = StringReader::new("hello world @a");
         assert!(parse_argument(&mut r, "minecraft:message", None));
         assert!(r.remaining().is_empty());
+    }
+
+    #[test]
+    fn test_parse_message_rejects_text_over_256_characters() {
+        let fits = "a".repeat(256);
+        assert!(parse_argument(
+            &mut StringReader::new(&fits),
+            "minecraft:message",
+            None
+        ));
+        let too_long = "a".repeat(257);
+        assert!(!parse_argument(
+            &mut StringReader::new(&too_long),
+            "minecraft:message",
+            None
+        ));
+        // Macro values are unknown, so only the fixed text counts.
+        let macro_line = format!("{} $(name)", "a".repeat(250));
+        assert!(parse_argument(
+            &mut StringReader::new(&macro_line),
+            "minecraft:message",
+            None
+        ));
     }
 
     #[test]

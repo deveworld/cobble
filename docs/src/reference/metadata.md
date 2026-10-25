@@ -96,16 +96,22 @@ ownership checks.
 | `resource_pack_langs` | Generated resource-pack lang JSON count. Omitted when zero. |
 | `resource_pack_static_assets` | Static resource-pack assets copied from project `assets/`. Omitted when zero. |
 
+### 0.11.0 Additive `generated` Fields
+
+| Field | Meaning |
+| --- | --- |
+| `resource_pack_item_definitions` | Generated item model definitions (`assets/<namespace>/items/`). Omitted when zero. |
+
 Each `resources` entry has:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `kind` | string | Resource kind such as `function_tag`, `predicate`, `resource_pack_model`, `resource_pack_lang`, or `resource_pack_static_asset`. |
+| `kind` | string | Resource kind such as `function_tag`, `predicate`, `resource_pack_model`, `resource_pack_item_definition`, `resource_pack_lang`, or `resource_pack_static_asset`. |
 | `namespace` | string | Resource namespace. |
 | `path` | string | Resource path without namespace or file extension. |
 
-`resource_pack_model`, `resource_pack_lang`, and
-`resource_pack_static_asset` are emitted under the resource-pack opt-in. See
+`resource_pack_model`, `resource_pack_item_definition`, `resource_pack_lang`,
+and `resource_pack_static_asset` are emitted under the resource-pack opt-in. See
 [Resource Packs](../stdlib/resource-packs.md).
 
 When validation runs, `validation` has:

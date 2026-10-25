@@ -1,5 +1,5 @@
 use super::find_config;
-use super::output_safety::ensure_no_symlink_components;
+use super::output_safety::ensure_not_symlink;
 use crate::config::CobbleConfig;
 use crate::diagnostics::{parse_source, python_compat_suggestion_for_kind};
 use crate::fs_safety::write_file_atomic_with_permissions;
@@ -664,7 +664,7 @@ fn apply_supported_migration(
 }
 
 fn apply_config_migration(config_path: &Path) -> Result<PathBuf, String> {
-    ensure_no_symlink_components(config_path, "apply migration config")?;
+    ensure_not_symlink(config_path, "apply migration config")?;
     CobbleConfig::load_unvalidated(config_path)?;
     let original_permissions = fs::metadata(config_path)
         .map_err(|error| {
@@ -705,7 +705,7 @@ fn apply_config_migration(config_path: &Path) -> Result<PathBuf, String> {
 }
 
 fn copy_config_backup(source: &Path, backup_path: &Path) -> Result<(), String> {
-    ensure_no_symlink_components(backup_path, "write migration backup")?;
+    ensure_not_symlink(backup_path, "write migration backup")?;
     let source_permissions = fs::metadata(source)
         .map_err(|error| {
             format!(
@@ -1083,6 +1083,16 @@ fn analyze_source(source: &str, file: &str, report_temp: bool) -> SourceSignals 
             });
         }
         if report_temp {
+            for (column, kind, message) in output_change_notes(raw_line) {
+                locations.push(MigrationSourceLocation {
+                    file: file.to_string(),
+                    line: line_number,
+                    column,
+                    kind: kind.to_string(),
+                    message: message.to_string(),
+                    suggested_cobble_alternative: None,
+                });
+            }
             if let Some(column) = temp_objective_column(raw_line) {
                 temp_objective_references += 1;
                 locations.push(MigrationSourceLocation {
@@ -1167,6 +1177,89 @@ fn temp_objective_column(raw_line: &str) -> Option<usize> {
         index - "execute ".len()
     };
     Some(leading + offset_in_line + index + 1)
+}
+
+/// Source lines whose generated output changes in 0.11 beyond the `temp`
+/// objective, as (1-based column, kind, message).
+fn output_change_notes(raw_line: &str) -> Vec<(usize, &'static str, &'static str)> {
+    let mut notes = Vec::new();
+    let trimmed = raw_line.trim_start();
+    if trimmed.starts_with('#') {
+        return notes;
+    }
+    let leading = raw_line.len() - trimmed.len();
+
+    if let Some(text) = trimmed.strip_prefix("/say ") {
+        if has_simple_placeholder(text) {
+            notes.push((
+                leading + 1,
+                "say-variable-text",
+                "`say` text that shows a variable now runs as `say` instead of `tellraw @a` \
+                 (since 0.11), so it keeps the `[name]` prefix and shows selectors as names. \
+                 Placeholders for parameters and constants are unchanged.",
+            ));
+        }
+    }
+    for needle in [
+        "datapack.function_tag(\"minecraft:load\"",
+        "datapack.function_tag('minecraft:load'",
+    ] {
+        for column in match_columns(raw_line, needle) {
+            notes.push((
+                column,
+                "load-function-tag",
+                "The load handler that creates this pack's objectives now runs before these \
+                 `minecraft:load` entries (since 0.11).",
+            ));
+        }
+    }
+    if trimmed.starts_with("define @")
+        && trimmed.split(['[', ',', ']']).any(|arg| {
+            arg.trim()
+                .strip_prefix("tag=")
+                .is_some_and(|tag| !tag.is_empty() && !tag.starts_with('!'))
+        })
+    {
+        notes.push((
+            leading + 1,
+            "entity-template-tag",
+            "`create` now adds this selector's `tag=` values to the entity's `Tags` (since 0.11).",
+        ));
+    }
+    for column in match_columns(raw_line, "resource_pack.item_model(") {
+        notes.push((
+            column,
+            "item-model-definition",
+            "`resource_pack.item_model` now also writes the item model definition \
+             `assets/<namespace>/items/<name>.json` (since 0.11). A static file at that path \
+             replaces it.",
+        ));
+    }
+    notes
+}
+
+/// Whether `text` holds a `{name}` placeholder with a plain identifier.
+fn has_simple_placeholder(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start + 1..];
+        if let Some(escaped) = after.strip_prefix('{') {
+            rest = escaped;
+            continue;
+        }
+        let Some(end) = after.find('}') else {
+            return false;
+        };
+        let name = after[..end].trim();
+        if !name.is_empty()
+            && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+            && !name.starts_with(|ch: char| ch.is_ascii_digit())
+        {
+            return true;
+        }
+        rest = &after[end + 1..];
+    }
+    false
 }
 
 fn match_columns(line: &str, needle: &str) -> Vec<usize> {

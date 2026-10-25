@@ -1,7 +1,7 @@
 use crate::commands::find_config;
 use crate::commands::link::linked_output_path;
 use crate::commands::output_safety::{
-    build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
+    build_manifest_path, ensure_no_symlink_descendants, ensure_not_symlink,
     project_marker_identity, read_build_manifest, require_manifest_ownership,
 };
 use crate::config::CobbleConfig;
@@ -144,7 +144,7 @@ fn inspect_clean_target(
         });
     }
 
-    ensure_no_symlink_components(output_dir, "clean")?;
+    ensure_not_symlink(output_dir, "clean")?;
     let metadata = fs::symlink_metadata(output_dir)
         .map_err(|error| format!("Failed to inspect {}: {error}", output_dir.display()))?;
     if metadata.file_type().is_symlink() {
@@ -321,7 +321,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn inspect_clean_target_rejects_symlink_parent_component() {
+    fn inspect_clean_target_allows_symlink_parent_but_refuses_symlink_target() {
         use std::os::unix::fs::symlink;
 
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -331,8 +331,11 @@ mod tests {
         write_marked_output(&output_dir);
         symlink(&real_parent, &symlink_parent).unwrap();
 
-        let error =
-            inspect_clean_target(&symlink_parent.join("output"), None, None, None).unwrap_err();
+        inspect_clean_target(&symlink_parent.join("output"), None, None, None).unwrap();
+
+        let linked_output = temp_dir.path().join("linked-output");
+        symlink(&output_dir, &linked_output).unwrap();
+        let error = inspect_clean_target(&linked_output, None, None, None).unwrap_err();
 
         assert!(error.contains("Refusing to clean through symlink"));
         assert!(output_dir.exists());

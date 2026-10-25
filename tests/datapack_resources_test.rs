@@ -227,6 +227,7 @@ stdlib.addEventListener(event.LOAD, load)
     .unwrap();
     let values = tag["values"].as_array().unwrap().clone();
 
+    // No runtime setup, so no `_cobble_init`: the merged entries stay sorted.
     assert_eq!(
         values,
         vec![
@@ -774,6 +775,19 @@ def setup():
         .exists());
     assert!(output_dir.join("assets/rp/lang/en_us.json").exists());
 
+    // An item model also gets the `items/` definition that points at it.
+    let definition: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("assets/rp/items/custom_sword.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        definition,
+        serde_json::json!({
+            "model": {"type": "minecraft:model", "model": "rp:item/custom_sword"}
+        })
+    );
+    assert!(!output_dir.join("assets/resources/items").exists());
+
     let lang: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(output_dir.join("assets/rp/lang/en_us.json")).unwrap(),
     )
@@ -785,6 +799,7 @@ def setup():
     )
     .unwrap();
     assert_eq!(manifest["generated"]["resource_pack_models"], 2);
+    assert_eq!(manifest["generated"]["resource_pack_item_definitions"], 1);
     assert_eq!(manifest["generated"]["resource_pack_langs"], 1);
     assert!(manifest["experimental_features"]
         .as_array()
@@ -798,6 +813,15 @@ def setup():
             resource["kind"] == "resource_pack_model"
                 && resource["namespace"] == "rp"
                 && resource["path"] == "item/custom_sword"
+        }));
+    assert!(manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| {
+            resource["kind"] == "resource_pack_item_definition"
+                && resource["namespace"] == "rp"
+                && resource["path"] == "custom_sword"
         }));
     assert!(manifest["resources"]
         .as_array()
@@ -990,6 +1014,140 @@ resource_pack = true
     assert!(names
         .iter()
         .any(|name| name == "data/resources/function/setup.mcfunction"));
+}
+
+#[test]
+fn vanilla_item_models_keep_the_vanilla_item_definitions() {
+    let (_temp, output_dir) = compile_resource_pack_source(
+        r#"
+from stdlib import resource_pack
+resource_pack.item_model("minecraft:bow", {"parent": "minecraft:item/generated"})
+resource_pack.item_model("rp:wand", {"parent": "minecraft:item/handheld"})
+"#,
+    )
+    .unwrap();
+    assert!(output_dir
+        .join("assets/minecraft/models/item/bow.json")
+        .exists());
+    // A plain definition would drop the bow's pulling states.
+    assert!(!output_dir.join("assets/minecraft/items").exists());
+    assert!(output_dir.join("assets/rp/items/wand.json").exists());
+}
+
+#[test]
+fn validated_rebuild_removes_stale_item_model_definitions() {
+    if !std::path::Path::new("data/commands.json").exists() {
+        eprintln!("skipping: data/commands.json is not generated");
+        return;
+    }
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = temp_dir.path().join("main.cbl");
+    let output_dir = temp_dir.path().join("output");
+    for name in ["old_wand", "new_wand"] {
+        fs::write(
+            &input,
+            format!(
+                "from stdlib import resource_pack\nresource_pack.item_model(\"rp:{name}\", {{\"parent\": \"minecraft:item/handheld\"}})\n\ndef main():\n    /say hi\n"
+            ),
+        )
+        .unwrap();
+        cobble::commands::build::build(cobble::commands::build::BuildOptions {
+            input: Some(input.clone()),
+            output: Some(output_dir.clone()),
+            namespace: Some("resources".to_string()),
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            experimental_resource_pack: true,
+            validate: true,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+    }
+    assert!(output_dir.join("assets/rp/items/new_wand.json").exists());
+    assert!(!output_dir.join("assets/rp/items/old_wand.json").exists());
+    assert!(!output_dir
+        .join("assets/rp/models/item/old_wand.json")
+        .exists());
+}
+
+#[test]
+fn static_item_model_definition_replaces_the_generated_one() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let source_dir = project_dir.join("src");
+    let output_dir = project_dir.join("output");
+    let static_definition = project_dir.join("assets/resources/items/wand.json");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(static_definition.parent().unwrap()).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        r#"from stdlib import resource_pack
+resource_pack.item_model("wand", {"parent": "minecraft:item/handheld"})
+resource_pack.item_model("staff", {"parent": "minecraft:item/handheld"})
+"#,
+    )
+    .unwrap();
+    let custom = r#"{"model":{"type":"minecraft:model","model":"resources:item/wand","tints":[]}}"#;
+    fs::write(&static_definition, custom).unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "resources"
+description = "Resources"
+namespace = "resources"
+version = "1.0.0"
+pack_format = "121.0"
+
+[build]
+source = "src"
+output = "output"
+
+[experimental]
+resource_pack = true
+"#,
+    )
+    .unwrap();
+
+    for _ in 0..2 {
+        cobble::commands::build::build(cobble::commands::build::BuildOptions {
+            input: Some(source_dir.clone()),
+            output: Some(output_dir.clone()),
+            namespace: None,
+            pack_format: None,
+            description: None,
+            verbose: false,
+            quiet: true,
+            zip: false,
+            experimental_resource_pack: false,
+            validate: false,
+            dry_run: false,
+            commands_json: PathBuf::from("data/commands.json"),
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(output_dir.join("assets/resources/items/wand.json")).unwrap(),
+            custom
+        );
+        let staff: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(output_dir.join("assets/resources/items/staff.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(staff["model"]["model"], "resources:item/staff");
+    }
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["generated"]["resource_pack_models"], 2);
+    assert_eq!(manifest["generated"]["resource_pack_item_definitions"], 1);
+    assert_eq!(manifest["generated"]["resource_pack_static_assets"], 1);
 }
 
 #[cfg(unix)]

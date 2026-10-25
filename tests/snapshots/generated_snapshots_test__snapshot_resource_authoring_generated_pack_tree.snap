@@ -27,7 +27,7 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Cobble resource authoring fixture",
   "generated": {
     "advancements": 1,
-    "commands": 11,
+    "commands": 10,
     "custom_function_tags": 1,
     "function_tags": 3,
     "functions": 3,
@@ -37,7 +37,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 1,
     "predicates": 1,
     "recipes": 1,
-    "source_map_entries": 23,
+    "source_map_entries": 22,
     "stdlib_function_tags": 2,
     "total_json_resources": 10
   },
@@ -163,13 +163,6 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
       "generated_line": 1,
-      "command": "gamerule max_command_sequence_length 1000000000",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
-      "generated_line": 2,
       "command": "tellraw @a {\"text\":\"Resource authoring fixture loaded\",\"color\":\"green\"}",
       "source": {
         "file": "src/main.cbl",
@@ -180,7 +173,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
-      "generated_line": 3,
+      "generated_line": 2,
       "command": "dialog clear @a",
       "source": {
         "file": "src/main.cbl",
@@ -191,7 +184,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
-      "generated_line": 4,
+      "generated_line": 3,
       "command": "dialog show @a cobble_resource_authoring:notice",
       "source": {
         "file": "src/main.cbl",
@@ -202,7 +195,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
-      "generated_line": 5,
+      "generated_line": 4,
       "command": "data remove storage cobble_resource_authoring:global _call_args_0",
       "source": {
         "file": "src/main.cbl",
@@ -213,7 +206,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
-      "generated_line": 6,
+      "generated_line": 5,
       "command": "data modify storage cobble_resource_authoring:global _call_args_0.target set value \"@a\"",
       "source": {
         "file": "src/main.cbl",
@@ -224,7 +217,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
-      "generated_line": 7,
+      "generated_line": 6,
       "command": "data modify storage cobble_resource_authoring:global args set from storage cobble_resource_authoring:global _call_args_0",
       "source": {
         "file": "src/main.cbl",
@@ -235,7 +228,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
-      "generated_line": 8,
+      "generated_line": 7,
       "command": "function cobble_resource_authoring:grant_reward with storage cobble_resource_authoring:global args",
       "source": {
         "file": "src/main.cbl",
@@ -246,7 +239,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_resource_authoring/function/init.mcfunction",
-      "generated_line": 9,
+      "generated_line": 8,
       "command": "data remove storage cobble_resource_authoring:global _call_args_0",
       "source": {
         "file": "src/main.cbl",
@@ -404,7 +397,6 @@ $give $(target) minecraft:diamond 1
 $tellraw $(target) {"text":"Generated resource reward granted","color":"gold"}
 
 ===== data/cobble_resource_authoring/function/init.mcfunction =====
-gamerule max_command_sequence_length 1000000000
 tellraw @a {"text":"Resource authoring fixture loaded","color":"green"}
 dialog clear @a
 dialog show @a cobble_resource_authoring:notice

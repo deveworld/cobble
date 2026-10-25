@@ -27,17 +27,17 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Cobble 26.3 smoke fixture",
   "generated": {
     "advancements": 0,
-    "commands": 52,
+    "commands": 63,
     "custom_function_tags": 0,
     "function_tags": 2,
-    "functions": 7,
+    "functions": 14,
     "item_modifiers": 0,
     "json_function_tags": 0,
     "json_resources": 1,
     "loot_tables": 0,
     "predicates": 0,
     "recipes": 0,
-    "source_map_entries": 55,
+    "source_map_entries": 66,
     "stdlib_function_tags": 2,
     "total_json_resources": 1
   },
@@ -95,6 +95,112 @@ expression: datapack_tree_snapshot(&output_dir)
   "version": 1,
   "entries": [
     {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_init.mcfunction",
+      "generated_line": 1,
+      "command": "scoreboard objectives add cobble_26_smoke.vars dummy",
+      "source": null,
+      "kind": "RuntimeSetup"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_init.mcfunction",
+      "generated_line": 2,
+      "command": "scoreboard players set score cobble_26_smoke.vars 10",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 6,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_init.mcfunction",
+      "generated_line": 3,
+      "command": "scoreboard players set health cobble_26_smoke.vars 20",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 7,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_init.mcfunction",
+      "generated_line": 4,
+      "command": "scoreboard players set active cobble_26_smoke.vars 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 8,
+        "column": 1
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_say_3.mcfunction",
+      "generated_line": 1,
+      "command": "$say score high $(score)",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 35,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_say_3.mcfunction",
+      "generated_line": 2,
+      "command": "return 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 35,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_say_6.mcfunction",
+      "generated_line": 1,
+      "command": "$say score medium $(score)",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_say_6.mcfunction",
+      "generated_line": 2,
+      "command": "return 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_say_8.mcfunction",
+      "generated_line": 1,
+      "command": "$say score low $(score)",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 39,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/_cobble_say_8.mcfunction",
+      "generated_line": 2,
+      "command": "return 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 39,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
       "generated_path": "data/cobble_26_smoke/function/admin_probe.mcfunction",
       "generated_line": 1,
       "command": "$waypoint modify $(player) color red",
@@ -150,55 +256,74 @@ expression: datapack_tree_snapshot(&output_dir)
       "kind": "UserCommand"
     },
     {
+      "generated_path": "data/cobble_26_smoke/function/elif_temp_7.mcfunction",
+      "generated_line": 1,
+      "command": "execute store result storage cobble_26_smoke:global _say_args.score int 1 run scoreboard players get score cobble_26_smoke.vars",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/elif_temp_7.mcfunction",
+      "generated_line": 2,
+      "command": "function cobble_26_smoke:_cobble_say_6 with storage cobble_26_smoke:global _say_args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 37,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/else_temp_9.mcfunction",
+      "generated_line": 1,
+      "command": "execute store result storage cobble_26_smoke:global _say_args.score int 1 run scoreboard players get score cobble_26_smoke.vars",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 39,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/else_temp_9.mcfunction",
+      "generated_line": 2,
+      "command": "function cobble_26_smoke:_cobble_say_8 with storage cobble_26_smoke:global _say_args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 39,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/if_temp_4.mcfunction",
+      "generated_line": 1,
+      "command": "execute store result storage cobble_26_smoke:global _say_args.score int 1 run scoreboard players get score cobble_26_smoke.vars",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 35,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/if_temp_4.mcfunction",
+      "generated_line": 2,
+      "command": "function cobble_26_smoke:_cobble_say_3 with storage cobble_26_smoke:global _say_args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 35,
+        "column": 9
+      },
+      "kind": "UserCommand"
+    },
+    {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 1,
-      "command": "gamerule max_command_sequence_length 1000000000",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 2,
-      "command": "scoreboard objectives add cobble_26_smoke.vars dummy",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 3,
-      "command": "scoreboard players set score cobble_26_smoke.vars 10",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 6,
-        "column": 1
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 4,
-      "command": "scoreboard players set health cobble_26_smoke.vars 20",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 7,
-        "column": 1
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 5,
-      "command": "scoreboard players set active cobble_26_smoke.vars 1",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 8,
-        "column": 1
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 6,
       "command": "data remove storage cobble_26_smoke:global _call_args_0",
       "source": {
         "file": "src/main.cbl",
@@ -209,7 +334,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 7,
+      "generated_line": 2,
       "command": "data modify storage cobble_26_smoke:global _call_args_0.message set value \"Cobble 26.3 smoke test loaded\"",
       "source": {
         "file": "src/main.cbl",
@@ -220,7 +345,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 8,
+      "generated_line": 3,
       "command": "data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_0",
       "source": {
         "file": "src/main.cbl",
@@ -231,7 +356,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 9,
+      "generated_line": 4,
       "command": "function cobble_26_smoke:announce with storage cobble_26_smoke:global args",
       "source": {
         "file": "src/main.cbl",
@@ -242,11 +367,66 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 10,
+      "generated_line": 5,
       "command": "data remove storage cobble_26_smoke:global _call_args_0",
       "source": {
         "file": "src/main.cbl",
         "line": 16,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 6,
+      "command": "data remove storage cobble_26_smoke:global _call_args_1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 7,
+      "command": "data modify storage cobble_26_smoke:global _call_args_1.player set value \"@a\"",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 8,
+      "command": "data modify storage cobble_26_smoke:global _call_args_1.amount set value 1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 9,
+      "command": "data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_1",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "ControlFlow"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
+      "generated_line": 10,
+      "command": "function cobble_26_smoke:reward with storage cobble_26_smoke:global args",
+      "source": {
+        "file": "src/main.cbl",
+        "line": 17,
         "column": 5
       },
       "kind": "ControlFlow"
@@ -265,61 +445,6 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
       "generated_line": 12,
-      "command": "data modify storage cobble_26_smoke:global _call_args_1.player set value \"@a\"",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 17,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 13,
-      "command": "data modify storage cobble_26_smoke:global _call_args_1.amount set value 1",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 17,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 14,
-      "command": "data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_1",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 17,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 15,
-      "command": "function cobble_26_smoke:reward with storage cobble_26_smoke:global args",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 17,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 16,
-      "command": "data remove storage cobble_26_smoke:global _call_args_1",
-      "source": {
-        "file": "src/main.cbl",
-        "line": 17,
-        "column": 5
-      },
-      "kind": "ControlFlow"
-    },
-    {
-      "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 17,
       "command": "scoreboard objectives add smoke dummy \"Smoke Test\"",
       "source": {
         "file": "src/main.cbl",
@@ -330,7 +455,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 18,
+      "generated_line": 13,
       "command": "tellraw @a {\"text\":\"Smoke datapack initialized\",\"color\":\"green\"}",
       "source": {
         "file": "src/main.cbl",
@@ -341,7 +466,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 19,
+      "generated_line": 14,
       "command": "dialog clear @a",
       "source": {
         "file": "src/main.cbl",
@@ -352,7 +477,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 20,
+      "generated_line": 15,
       "command": "dialog show @a cobble_26_smoke:notice",
       "source": {
         "file": "src/main.cbl",
@@ -363,7 +488,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 21,
+      "generated_line": 16,
       "command": "fetchprofile name Notch",
       "source": {
         "file": "src/main.cbl",
@@ -374,7 +499,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 22,
+      "generated_line": 17,
       "command": "fetchprofile id 123e4567-e89b-12d3-a456-426614174000",
       "source": {
         "file": "src/main.cbl",
@@ -385,7 +510,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 23,
+      "generated_line": 18,
       "command": "waypoint list",
       "source": {
         "file": "src/main.cbl",
@@ -396,7 +521,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 24,
+      "generated_line": 19,
       "command": "stopwatch create cobble:smoke",
       "source": {
         "file": "src/main.cbl",
@@ -407,7 +532,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 25,
+      "generated_line": 20,
       "command": "stopwatch query cobble:smoke 20.0",
       "source": {
         "file": "src/main.cbl",
@@ -418,7 +543,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_smoke/function/init.mcfunction",
-      "generated_line": 26,
+      "generated_line": 21,
       "command": "version",
       "source": {
         "file": "src/main.cbl",
@@ -507,18 +632,18 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 4,
-      "command": "execute if score score cobble_26_smoke.vars matches 15.. run tellraw @a [{\"text\":\"score high \"},{\"score\":{\"name\":\"score\",\"objective\":\"cobble_26_smoke.vars\"}}]",
+      "command": "execute if score score cobble_26_smoke.vars matches 15.. run function cobble_26_smoke:if_temp_4",
       "source": {
         "file": "src/main.cbl",
-        "line": 35,
-        "column": 9
+        "line": 34,
+        "column": 5
       },
-      "kind": "UserCommand"
+      "kind": "ControlFlow"
     },
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 5,
-      "command": "scoreboard players set elif_taken_3 cobble_26_smoke.vars 0",
+      "command": "scoreboard players set elif_taken_5 cobble_26_smoke.vars 0",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -529,7 +654,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 6,
-      "command": "execute unless score if_branch_2 cobble_26_smoke.vars matches 1 if score score cobble_26_smoke.vars matches 12.. run scoreboard players set elif_taken_3 cobble_26_smoke.vars 1",
+      "command": "execute unless score if_branch_2 cobble_26_smoke.vars matches 1 if score score cobble_26_smoke.vars matches 12.. run scoreboard players set elif_taken_5 cobble_26_smoke.vars 1",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -540,7 +665,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 7,
-      "command": "execute if score elif_taken_3 cobble_26_smoke.vars matches 1 run scoreboard players set if_branch_2 cobble_26_smoke.vars 1",
+      "command": "execute if score elif_taken_5 cobble_26_smoke.vars matches 1 run scoreboard players set if_branch_2 cobble_26_smoke.vars 1",
       "source": {
         "file": "src/main.cbl",
         "line": 34,
@@ -551,29 +676,29 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 8,
-      "command": "execute if score elif_taken_3 cobble_26_smoke.vars matches 1 run tellraw @a [{\"text\":\"score medium \"},{\"score\":{\"name\":\"score\",\"objective\":\"cobble_26_smoke.vars\"}}]",
+      "command": "execute if score elif_taken_5 cobble_26_smoke.vars matches 1 run function cobble_26_smoke:elif_temp_7",
       "source": {
         "file": "src/main.cbl",
-        "line": 37,
-        "column": 9
+        "line": 34,
+        "column": 5
       },
-      "kind": "UserCommand"
+      "kind": "ControlFlow"
     },
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 9,
-      "command": "execute unless score if_branch_2 cobble_26_smoke.vars matches 1 run tellraw @a [{\"text\":\"score low \"},{\"score\":{\"name\":\"score\",\"objective\":\"cobble_26_smoke.vars\"}}]",
+      "command": "execute unless score if_branch_2 cobble_26_smoke.vars matches 1 run function cobble_26_smoke:else_temp_9",
       "source": {
         "file": "src/main.cbl",
-        "line": 39,
-        "column": 9
+        "line": 34,
+        "column": 5
       },
-      "kind": "UserCommand"
+      "kind": "ControlFlow"
     },
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 10,
-      "command": "scoreboard players operation match_temp_4 cobble_26_smoke.vars = score cobble_26_smoke.vars",
+      "command": "scoreboard players operation match_temp_10 cobble_26_smoke.vars = score cobble_26_smoke.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 41,
@@ -584,7 +709,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 11,
-      "command": "execute if score match_temp_4 cobble_26_smoke.vars matches 0..14 run say warming",
+      "command": "execute if score match_temp_10 cobble_26_smoke.vars matches 0..14 run say warming",
       "source": {
         "file": "src/main.cbl",
         "line": 43,
@@ -595,7 +720,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 12,
-      "command": "execute if score match_temp_4 cobble_26_smoke.vars matches 15..30 run say active",
+      "command": "execute if score match_temp_10 cobble_26_smoke.vars matches 15..30 run say active",
       "source": {
         "file": "src/main.cbl",
         "line": 45,
@@ -606,7 +731,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/tick.mcfunction",
       "generated_line": 13,
-      "command": "execute unless score match_temp_4 cobble_26_smoke.vars matches 0..14 unless score match_temp_4 cobble_26_smoke.vars matches 15..30 run say overflow",
+      "command": "execute unless score match_temp_10 cobble_26_smoke.vars matches 0..14 unless score match_temp_10 cobble_26_smoke.vars matches 15..30 run say overflow",
       "source": {
         "file": "src/main.cbl",
         "line": 47,
@@ -694,6 +819,24 @@ expression: datapack_tree_snapshot(&output_dir)
   "type": "minecraft:notice"
 }
 
+===== data/cobble_26_smoke/function/_cobble_init.mcfunction =====
+scoreboard objectives add cobble_26_smoke.vars dummy
+scoreboard players set score cobble_26_smoke.vars 10
+scoreboard players set health cobble_26_smoke.vars 20
+scoreboard players set active cobble_26_smoke.vars 1
+
+===== data/cobble_26_smoke/function/_cobble_say_3.mcfunction =====
+$say score high $(score)
+return 1
+
+===== data/cobble_26_smoke/function/_cobble_say_6.mcfunction =====
+$say score medium $(score)
+return 1
+
+===== data/cobble_26_smoke/function/_cobble_say_8.mcfunction =====
+$say score low $(score)
+return 1
+
 ===== data/cobble_26_smoke/function/admin_probe.mcfunction =====
 $waypoint modify $(player) color red
 $swing $(player) mainhand
@@ -703,12 +846,19 @@ test run minecraft:always_pass 1 true
 ===== data/cobble_26_smoke/function/announce.mcfunction =====
 $tellraw @a {"text":"$(message)","color":"aqua"}
 
+===== data/cobble_26_smoke/function/elif_temp_7.mcfunction =====
+execute store result storage cobble_26_smoke:global _say_args.score int 1 run scoreboard players get score cobble_26_smoke.vars
+function cobble_26_smoke:_cobble_say_6 with storage cobble_26_smoke:global _say_args
+
+===== data/cobble_26_smoke/function/else_temp_9.mcfunction =====
+execute store result storage cobble_26_smoke:global _say_args.score int 1 run scoreboard players get score cobble_26_smoke.vars
+function cobble_26_smoke:_cobble_say_8 with storage cobble_26_smoke:global _say_args
+
+===== data/cobble_26_smoke/function/if_temp_4.mcfunction =====
+execute store result storage cobble_26_smoke:global _say_args.score int 1 run scoreboard players get score cobble_26_smoke.vars
+function cobble_26_smoke:_cobble_say_3 with storage cobble_26_smoke:global _say_args
+
 ===== data/cobble_26_smoke/function/init.mcfunction =====
-gamerule max_command_sequence_length 1000000000
-scoreboard objectives add cobble_26_smoke.vars dummy
-scoreboard players set score cobble_26_smoke.vars 10
-scoreboard players set health cobble_26_smoke.vars 20
-scoreboard players set active cobble_26_smoke.vars 1
 data remove storage cobble_26_smoke:global _call_args_0
 data modify storage cobble_26_smoke:global _call_args_0.message set value "Cobble 26.3 smoke test loaded"
 data modify storage cobble_26_smoke:global args set from storage cobble_26_smoke:global _call_args_0
@@ -745,16 +895,16 @@ execute as @a[gamemode=survival] run say survivor online
 scoreboard players add score cobble_26_smoke.vars 1
 scoreboard players set if_branch_2 cobble_26_smoke.vars 0
 execute if score score cobble_26_smoke.vars matches 15.. run scoreboard players set if_branch_2 cobble_26_smoke.vars 1
-execute if score score cobble_26_smoke.vars matches 15.. run tellraw @a [{"text":"score high "},{"score":{"name":"score","objective":"cobble_26_smoke.vars"}}]
-scoreboard players set elif_taken_3 cobble_26_smoke.vars 0
-execute unless score if_branch_2 cobble_26_smoke.vars matches 1 if score score cobble_26_smoke.vars matches 12.. run scoreboard players set elif_taken_3 cobble_26_smoke.vars 1
-execute if score elif_taken_3 cobble_26_smoke.vars matches 1 run scoreboard players set if_branch_2 cobble_26_smoke.vars 1
-execute if score elif_taken_3 cobble_26_smoke.vars matches 1 run tellraw @a [{"text":"score medium "},{"score":{"name":"score","objective":"cobble_26_smoke.vars"}}]
-execute unless score if_branch_2 cobble_26_smoke.vars matches 1 run tellraw @a [{"text":"score low "},{"score":{"name":"score","objective":"cobble_26_smoke.vars"}}]
-scoreboard players operation match_temp_4 cobble_26_smoke.vars = score cobble_26_smoke.vars
-execute if score match_temp_4 cobble_26_smoke.vars matches 0..14 run say warming
-execute if score match_temp_4 cobble_26_smoke.vars matches 15..30 run say active
-execute unless score match_temp_4 cobble_26_smoke.vars matches 0..14 unless score match_temp_4 cobble_26_smoke.vars matches 15..30 run say overflow
+execute if score score cobble_26_smoke.vars matches 15.. run function cobble_26_smoke:if_temp_4
+scoreboard players set elif_taken_5 cobble_26_smoke.vars 0
+execute unless score if_branch_2 cobble_26_smoke.vars matches 1 if score score cobble_26_smoke.vars matches 12.. run scoreboard players set elif_taken_5 cobble_26_smoke.vars 1
+execute if score elif_taken_5 cobble_26_smoke.vars matches 1 run scoreboard players set if_branch_2 cobble_26_smoke.vars 1
+execute if score elif_taken_5 cobble_26_smoke.vars matches 1 run function cobble_26_smoke:elif_temp_7
+execute unless score if_branch_2 cobble_26_smoke.vars matches 1 run function cobble_26_smoke:else_temp_9
+scoreboard players operation match_temp_10 cobble_26_smoke.vars = score cobble_26_smoke.vars
+execute if score match_temp_10 cobble_26_smoke.vars matches 0..14 run say warming
+execute if score match_temp_10 cobble_26_smoke.vars matches 15..30 run say active
+execute unless score match_temp_10 cobble_26_smoke.vars matches 0..14 unless score match_temp_10 cobble_26_smoke.vars matches 15..30 run say overflow
 say loop 0
 say loop 1
 say loop 2
@@ -763,6 +913,7 @@ execute as @a[gamemode=creative] at @s run particle flame ~ ~1 ~
 ===== data/minecraft/tags/function/load.json =====
 {
   "values": [
+    "cobble_26_smoke:_cobble_init",
     "cobble_26_smoke:init"
   ]
 }

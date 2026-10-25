@@ -11,9 +11,10 @@ lists every change.
 and will grow before the release.
 
 Cobble 0.11 keeps the Minecraft Java Edition 26.3 target and pack format
-`121.0`, so `cobble.toml` and the command tree stay as they are. The changes are
-in generated output: each pack keeps its variables on its own objective, and
-module variables can opt into keeping their values across loads.
+`121.0`, so `cobble.toml` and the command tree stay as they are. Most changes
+are in generated output: each pack keeps its variables on its own objective,
+module variables can opt into keeping their values across loads, and several
+commands compile differently (see [Other Output Changes](#other-output-changes)).
 
 ### Recommended Flow
 
@@ -27,7 +28,9 @@ cobble migrate --json
    The report lists every raw command and execute header that names the
    `temp` objective (`temp-objective-reference`). These lines keep working;
    the list shows where your pack reads or writes Cobble variables, which helps
-   with step 3.
+   with step 3. It also marks the lines whose output changes for the reasons
+   under [Other Output Changes](#other-output-changes): `say-variable-text`,
+   `load-function-tag`, `entity-template-tag`, and `item-model-definition`.
 
 2. Rebuild and re-run project checks:
 
@@ -85,11 +88,70 @@ objective.
 
 `persist` is not a reserved word: a variable named `persist` keeps working.
 
+### Other Output Changes
+
+- **`say` text with variables.** 0.10 turned `/say Count {count}` into
+  `tellraw @a`, which dropped the `[name]` prefix and printed selectors such as
+  `@s` as plain text. 0.11 copies the values into the storage
+  `<namespace>:global _say_args` and runs the line as a macro `say` in a
+  helper function (`_cobble_say_<n>`), so the message looks like any other
+  `say`. Selectors inside string values now show as names too, and the text
+  after filling in the values must fit in 256 characters. See
+  [Variables In `say`](language/commands.md#variables-in-say).
+- **Load order.** 0.10 put the objective setup and module variable
+  initializers at the top of the first load handler. A
+  `datapack.function_tag("minecraft:load", [...])` entry whose name sorted
+  before that handler ran before the objectives existed, and the handler then
+  reset module variables the entry had set. 0.11 moves the setup into its own
+  load function, `_cobble_init`, which runs first; the other load functions
+  keep their 0.10 order.
+- **Command limit.** 0.10 set the gamerule `max_command_sequence_length` to
+  1,000,000,000 in every pack. 0.11 sets it only in packs with a runtime loop
+  (a `while` loop, or a `for` loop that is not expanded at compile time). The
+  gamerule is stored in the world, so a world that loaded a 0.10 pack keeps
+  the raised value until you set it back with
+  `/gamerule max_command_sequence_length 65536`.
+- **Entity templates.** `create @Name` now adds each `tag=` value of the
+  template's selector to the entity's `Tags`. A payload that already lists the
+  same tags gets no duplicates.
+- **Item model definitions.** `resource_pack.item_model` also writes
+  `assets/<namespace>/items/<path>.json`, which Minecraft needs since 1.21.4
+  to use the model. A static file at that path replaces the generated one.
+  Models in the `minecraft` namespace get no definition, so vanilla items keep
+  theirs.
+- **`unless A or B`.** A raw execute header such as
+  `unless entity @a[tag=x] or entity @a[tag=y]:` was written unchanged, which
+  is not a valid command. It now compiles to
+  `execute unless entity @a[tag=x] unless entity @a[tag=y]`. Raw `if` and
+  `unless` headers also stop splitting on `or` and `and` inside quotes and
+  brackets, such as `@a[name="Tom and Jerry"]`.
+
 ### Tooling Changes
 
 - `cobble migrate` defaults to `--from 0.10 --to 0.11`. Routes from 0.8 and 0.9
   to 0.11 are also supported; pass `--to 0.10` for the previous route.
+- Validation keeps the default command tree in the user cache
+  (`~/.cache/cobble/26.3/commands.json` on Linux; see
+  [`cobble build`](reference/cli.md#cobble-build) for macOS and Windows), so
+  each folder you build from no longer gets its own `data/commands.json`. A
+  `data/commands.json` in the current folder is still used when it exists.
+  Delete leftover `data/commands.json` files in project folders, or move one
+  into the cache to skip the next download.
+- `cobble build --zip` refuses an output folder inside a world's `datapacks`
+  folder, because the folder and the ZIP would load as two packs.
+- `--validate` reports message text over 256 characters in `say`, `msg`,
+  `me`, and `teammsg`, which Minecraft refuses to load.
+- Output, clean, link, init, and format paths may now pass through symlinked
+  folders above the output or project folder, such as `/tmp` on macOS. The
+  folder itself and anything inside it still must not be a symlink.
+- Compiler errors, such as a variable placeholder in `give`, now report the
+  file, line, and column of the statement in `cobble build`, `cobble check`,
+  and the browser compiler.
+- The build manifest adds `generated.resource_pack_item_definitions` and the
+  resource kind `resource_pack_item_definition`.
 - The serde AST adds `Assignment.persist`, omitted from JSON when `false`.
+  Library users: `TranspileError` gains a `location` field, so code that
+  builds it with a struct literal needs to set it (or use `TranspileError::new`).
 
 ## 0.9 To 0.10
 

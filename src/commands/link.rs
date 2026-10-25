@@ -1,6 +1,6 @@
 use super::find_config;
 use super::output_safety::{
-    build_manifest_path, ensure_no_symlink_components, project_marker_identity,
+    build_manifest_path, ensure_no_symlinks_from, ensure_not_symlink, project_marker_identity,
     read_build_manifest, require_manifest_ownership,
 };
 use crate::config::CobbleConfig;
@@ -206,7 +206,7 @@ fn print_link_status(config: &CobbleConfig, config_dir: &Path) -> Result<(), Str
 
 fn clear_link_state(config_dir: &Path) -> Result<(), String> {
     let path = link_state_path(config_dir);
-    ensure_no_symlink_components(&path, "clear link state")?;
+    ensure_no_symlinks_from(&config_dir.join(".cobble"), &path, "clear link state")?;
     if path.exists() {
         fs::remove_file(&path)
             .map_err(|error| format!("Failed to remove {}: {error}", path.display()))?;
@@ -219,7 +219,7 @@ fn clear_link_state(config_dir: &Path) -> Result<(), String> {
 
 fn write_link_state(config_dir: &Path, state: &LinkState) -> Result<(), String> {
     let path = link_state_path(config_dir);
-    ensure_no_symlink_components(&path, "write link state")?;
+    ensure_no_symlinks_from(&config_dir.join(".cobble"), &path, "write link state")?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
@@ -232,7 +232,7 @@ fn write_link_state(config_dir: &Path, state: &LinkState) -> Result<(), String> 
 
 pub(crate) fn read_link_state(config_dir: &Path) -> Result<Option<LinkState>, String> {
     let path = link_state_path(config_dir);
-    ensure_no_symlink_components(&path, "read link state")?;
+    ensure_no_symlinks_from(&config_dir.join(".cobble"), &path, "read link state")?;
     if !path.exists() {
         return Ok(None);
     }
@@ -271,7 +271,7 @@ fn ensure_link_base_directory_exists(path: &Path, label: &str) -> Result<(), Str
 }
 
 fn ensure_safe_directory_target(path: &Path) -> Result<(), String> {
-    ensure_no_symlink_components(path, "link")?;
+    ensure_not_symlink(path, "link")?;
     if path.exists() {
         let metadata = fs::symlink_metadata(path)
             .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;

@@ -14,13 +14,13 @@ pub mod vars_objective;
 pub use data_pack::{
     BuildManifest, BuildManifestGenerated, BuildManifestInput, BuildManifestResourceEntry,
     BuildManifestValidation, DataPack, GeneratedCommand, GeneratedCommandKind, SourceLocation,
-    SourceMap, SourceMapEntry,
+    SourceMap, SourceMapEntry, INIT_FUNCTION,
 };
 pub use error::{TranspileError, TranspileErrorKind};
 
 use crate::ast::*;
 use crate::stdlib::EventType;
-use command_processor::CommandProcessor;
+use command_processor::{CommandProcessor, SayMacro, SayMacroSource};
 use condition_translator::{ConditionTranslator, TranslatedCondition};
 use expression_evaluator::ExpressionEvaluator;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
@@ -777,47 +777,29 @@ impl Transpiler {
         // a chance to register every objective they need.
         self.data_pack.ensure_init_function();
 
-        // Then initialize module-level variables in the init function.
+        // Then initialize module-level variables in the init function, after
+        // the runtime setup.
         if let Some((init_commands, init_metadata)) = module_init {
-            // Add these commands after gamerule and objective creation
             if !init_commands.is_empty() {
-                if let Some(existing_init) = self.data_pack.functions.get("_cobble_init") {
-                    // Find the position after gamerule and all objectives
-                    let setup_end = self.data_pack.runtime_setup_end_index(existing_init);
-
-                    self.data_pack.insert_function_commands_with_metadata(
-                        "_cobble_init",
-                        setup_end,
-                        &init_commands,
-                        init_metadata,
+                if !self.data_pack.functions.contains_key(INIT_FUNCTION) {
+                    self.data_pack.add_function_with_metadata(
+                        INIT_FUNCTION.to_string(),
+                        Vec::new(),
+                        HashMap::new(),
                     );
-                } else {
-                    // Find the load handler function
-                    let load_handlers = self.data_pack.stdlib.get_event_handlers(&EventType::Load);
-                    if let Some(handler_name) = load_handlers.first() {
-                        if let Some(handler_func) = self.data_pack.functions.get(handler_name) {
-                            // Find the position after gamerule and all objectives
-                            let setup_end = self.data_pack.runtime_setup_end_index(handler_func);
-
-                            self.data_pack.insert_function_commands_with_metadata(
-                                handler_name,
-                                setup_end,
-                                &init_commands,
-                                init_metadata,
-                            );
-                        }
-                    } else {
-                        // No _cobble_init and no load handler - create _cobble_init
-                        self.data_pack.add_function_with_metadata(
-                            "_cobble_init".to_string(),
-                            init_commands,
-                            init_metadata,
-                        );
-                        self.data_pack
-                            .stdlib
-                            .add_event_listener(EventType::Load, "_cobble_init".to_string());
-                    }
+                    self.data_pack
+                        .stdlib
+                        .add_first_event_listener(EventType::Load, INIT_FUNCTION.to_string());
                 }
+                let setup_end = self
+                    .data_pack
+                    .runtime_setup_end_index(&self.data_pack.functions[INIT_FUNCTION]);
+                self.data_pack.insert_function_commands_with_metadata(
+                    INIT_FUNCTION,
+                    setup_end,
+                    &init_commands,
+                    init_metadata,
+                );
             }
 
             self.module_level_vars.clear();
@@ -847,7 +829,8 @@ impl Transpiler {
                     self.current_statement_source = source.clone();
                     let generated = self.module_variable_init_commands(&target, &value);
                     self.current_statement_source = previous_source;
-                    let mut generated = generated?;
+                    let mut generated = generated
+                        .map_err(|error| error.with_location_if_missing(source.clone()))?;
                     if persist {
                         generated = self.guard_persistent_init(&target, generated, &source);
                     }
@@ -867,7 +850,8 @@ impl Transpiler {
                     self.current_statement_source = source.clone();
                     let generated = self.storage_target_assignment_commands(&target_expr, &value);
                     self.current_statement_source = previous_source;
-                    let generated = generated?;
+                    let generated = generated
+                        .map_err(|error| error.with_location_if_missing(source.clone()))?;
                     Self::append_module_init_commands(
                         &mut init_commands,
                         &mut init_metadata,
@@ -1303,14 +1287,22 @@ impl Transpiler {
 
     fn process_statement(&mut self, statement: &Statement) -> Result<(), TranspileError> {
         let previous_statement_source = self.current_statement_source.clone();
-        let statement_source = self
-            .take_statement_source(statement)
-            .or_else(|| previous_statement_source.clone());
+        // An unrolled loop sets the location of each body statement itself.
+        // Substituted text no longer matches its source line and could claim
+        // the location of identical text elsewhere in the file.
+        let statement_source = if self.unroll_depth > 0 {
+            previous_statement_source.clone()
+        } else {
+            self.take_statement_source(statement)
+                .or_else(|| previous_statement_source.clone())
+        };
         self.current_statement_source = statement_source.clone();
 
         let start_index = self.current_function.as_ref().map(Vec::len);
         let default_kind = Self::default_generated_kind_for_statement(statement);
-        let result = self.process_statement_inner(statement);
+        let result = self
+            .process_statement_inner(statement)
+            .map_err(|error| error.with_location_if_missing(statement_source.clone()));
 
         if result.is_ok() {
             if let Some(start_index) = start_index {
@@ -1366,7 +1358,11 @@ impl Transpiler {
             Statement::MinecraftCommand(cmd) => {
                 // Strip leading slash and process variable/parameter substitution
                 let clean_cmd = Self::strip_command_prefix(cmd);
-                let source_location = self.take_raw_command_source(clean_cmd.trim());
+                let source_location = if self.unroll_depth > 0 {
+                    self.current_statement_source.clone()
+                } else {
+                    self.take_raw_command_source(clean_cmd.trim())
+                };
                 let processor = CommandProcessor::new(
                     self.data_pack.namespace.clone(),
                     &self.current_context.params,
@@ -1378,7 +1374,15 @@ impl Transpiler {
                     &self.compile_time_constants,
                 );
 
-                let processed_cmd = processor.process_command_string(&clean_cmd)?;
+                let say_macro = processor
+                    .say_macro(&clean_cmd)
+                    .map_err(|error| error.with_location_if_missing(source_location.clone()))?;
+                if let Some(say_macro) = say_macro {
+                    return self.emit_say_macro(say_macro, source_location);
+                }
+                let processed_cmd = processor
+                    .process_command_string(&clean_cmd)
+                    .map_err(|error| error.with_location_if_missing(source_location.clone()))?;
 
                 if let Some(ref mut commands) = self.current_function {
                     let command_index = commands.len();
@@ -1667,8 +1671,10 @@ impl Transpiler {
                 format!("minecraft:{}", type_str)
             };
 
-            // Serialize NBT
-            let nbt_str = self.serialize_to_snbt(&template.nbt)?;
+            // The selector's `tag=` values go into `Tags`, so the alias
+            // matches the entities it creates.
+            let nbt = Self::with_selector_tags(&template.nbt, &template.selector);
+            let nbt_str = self.serialize_to_snbt(&nbt)?;
 
             // Generate summon command
             if let Some(ref mut commands) = self.current_function {
@@ -1682,6 +1688,164 @@ impl Transpiler {
             .into());
         }
         Ok(())
+    }
+
+    /// Lowers `say` text with variables: copy each value into
+    /// `<namespace>:global _say_args`, then run the text as a macro `say` in
+    /// a helper, so the output keeps `say`'s `[name]` prefix and selector
+    /// names.
+    fn emit_say_macro(
+        &mut self,
+        say_macro: SayMacro,
+        source: Option<SourceLocation>,
+    ) -> Result<(), TranspileError> {
+        if self.current_function.is_none() {
+            return Err("Minecraft command outside of function context".into());
+        }
+        let namespace = self.data_pack.namespace.clone();
+        let storage = format!("{namespace}:global");
+        let mut commands = Vec::new();
+        for argument in &say_macro.arguments {
+            let name = &argument.name;
+            commands.push(match &argument.source {
+                SayMacroSource::Score { objective } => format!(
+                    "execute store result storage {storage} _say_args.{name} int 1 run scoreboard players get {name} {objective}"
+                ),
+                SayMacroSource::Storage { path } => format!(
+                    "data modify storage {storage} _say_args.{name} set from storage {storage} {path}"
+                ),
+                SayMacroSource::Parameter => format!(
+                    "data modify storage {storage} _say_args.{name} set from storage {storage} args.{name}"
+                ),
+            });
+        }
+
+        let helper = format!("_cobble_say_{}", self.next_temp_id());
+        commands.push(format!(
+            "function {namespace}:{helper} with storage {storage} _say_args"
+        ));
+        // Text substituted by an unrolled loop has no raw location of its own.
+        let source = source.or_else(|| self.current_statement_source.clone());
+        // `return 1` gives the call the result `say` itself has, for `store`
+        // blocks and `execute if function`.
+        let helper_commands = vec![say_macro.command, "return 1".to_string()];
+        let helper_metadata = helper_commands
+            .iter()
+            .enumerate()
+            .map(|(index, command)| {
+                (
+                    index,
+                    GeneratedCommand::new(
+                        command.clone(),
+                        source.clone(),
+                        GeneratedCommandKind::UserCommand,
+                    ),
+                )
+            })
+            .collect();
+        self.data_pack
+            .add_function_with_metadata(helper, helper_commands, helper_metadata);
+
+        let function = self
+            .current_function
+            .as_mut()
+            .expect("checked above that a function is being lowered");
+        let start = function.len();
+        function.extend(commands);
+        if let Some(ref mut metadata) = self.current_function_metadata {
+            for (index, command) in function.iter().enumerate().skip(start) {
+                metadata.insert(
+                    index,
+                    GeneratedCommand::new(
+                        command.clone(),
+                        source.clone(),
+                        GeneratedCommandKind::UserCommand,
+                    ),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds each positive `tag=` argument of `selector` to the `Tags` list of
+    /// an entity template payload. Negated (`tag=!x`) and empty (`tag=`)
+    /// arguments are skipped, as are tags the payload already lists.
+    fn with_selector_tags(nbt: &Expression, selector: &str) -> Expression {
+        let Some(args) = selector
+            .find('[')
+            .and_then(|start| selector[start + 1..].strip_suffix(']'))
+        else {
+            return nbt.clone();
+        };
+        let tags: Vec<String> = Self::split_selector_args(args)
+            .into_iter()
+            .filter_map(|arg| {
+                let (key, value) = arg.split_once('=')?;
+                if key.trim() != "tag" {
+                    return None;
+                }
+                let value = value.trim().trim_matches('"');
+                (!value.is_empty() && !value.starts_with('!')).then(|| value.to_string())
+            })
+            .collect();
+        if tags.is_empty() {
+            return nbt.clone();
+        }
+
+        let mut entries = match nbt {
+            Expression::Map(entries) => entries.clone(),
+            _ => return nbt.clone(),
+        };
+        match entries.iter_mut().find(|(key, _)| key == "Tags") {
+            Some((_, Expression::Array(existing))) => {
+                for tag in tags {
+                    let tag = Expression::String(tag);
+                    if !existing.contains(&tag) {
+                        existing.push(tag);
+                    }
+                }
+            }
+            Some(_) => {}
+            None => entries.push((
+                "Tags".to_string(),
+                Expression::Array(tags.into_iter().map(Expression::String).collect()),
+            )),
+        }
+        Expression::Map(entries)
+    }
+
+    /// Splits selector arguments on top-level commas, keeping nested
+    /// brackets (`scores={...}`, `nbt={...}`) and quoted strings intact.
+    fn split_selector_args(args: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0;
+        let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        for (index, ch) in args.char_indices() {
+            if let Some(active) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                '[' | '{' | '(' => depth += 1,
+                ']' | '}' | ')' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    parts.push(args[start..index].trim());
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(args[start..].trim());
+        parts
     }
 
     fn process_entity_def(&mut self, entity_def: &EntityDef) -> Result<(), TranspileError> {
@@ -3699,9 +3863,38 @@ impl Transpiler {
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
         self.data_pack
             .add_resource_pack_model_in_namespace_with_source(
-                namespace,
+                namespace.clone(),
                 format!("models/{}/{}", model_type, name),
                 content,
+                self.current_statement_source.clone(),
+            )
+            .map_err(|message| {
+                TranspileError::new(TranspileErrorKind::ResourcePackDuplicate, message)
+            })?;
+        // Vanilla items already have definitions, some with states and tints
+        // (a bow's pulling, a potion's color) that a plain one would drop, so
+        // overriding a `minecraft:` model keeps them.
+        if model_type != "item" || namespace == "minecraft" {
+            return Ok(());
+        }
+
+        // Since Minecraft 1.21.4 an item finds its model through an item model
+        // definition in `items/`, so write the plain one that points at the
+        // new model. A static `assets/<namespace>/items/<name>.json` replaces
+        // it (see `DataPack::remove_item_definitions_replaced_by`).
+        let definition = serde_json::json!({
+            "model": {
+                "type": "minecraft:model",
+                "model": format!("{}:item/{}", namespace, name),
+            }
+        });
+        let definition = serde_json::to_string_pretty(&definition)
+            .map_err(|e| format!("Failed to encode item model definition JSON: {}", e))?;
+        self.data_pack
+            .add_resource_pack_model_in_namespace_with_source(
+                namespace,
+                format!("items/{}", name),
+                definition,
                 self.current_statement_source.clone(),
             )
             .map_err(|message| {

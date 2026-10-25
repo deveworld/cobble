@@ -19,7 +19,7 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Cobble stdlib v3 fixture",
   "generated": {
     "advancements": 0,
-    "commands": 8,
+    "commands": 7,
     "custom_function_tags": 0,
     "function_tags": 1,
     "functions": 1,
@@ -29,7 +29,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 0,
     "recipes": 0,
-    "source_map_entries": 10,
+    "source_map_entries": 9,
     "stdlib_function_tags": 1,
     "total_json_resources": 1
   },
@@ -83,13 +83,6 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
       "generated_line": 1,
-      "command": "gamerule max_command_sequence_length 1000000000",
-      "source": null,
-      "kind": "RuntimeSetup"
-    },
-    {
-      "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
-      "generated_line": 2,
       "command": "data modify storage cobble_stdlib_v3:global players.current set value \"alex\"",
       "source": {
         "file": "src/main.cbl",
@@ -100,7 +93,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
-      "generated_line": 3,
+      "generated_line": 2,
       "command": "data modify storage cobble_stdlib_v3:global players.current.score set value 10",
       "source": {
         "file": "src/main.cbl",
@@ -111,7 +104,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
-      "generated_line": 4,
+      "generated_line": 3,
       "command": "data get storage cobble_stdlib_v3:global players.events[0]",
       "source": {
         "file": "src/main.cbl",
@@ -122,7 +115,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
-      "generated_line": 5,
+      "generated_line": 4,
       "command": "tellraw @a {\"color\":\"gold\",\"text\":\"Stdlib v3 helpers ready\"}",
       "source": {
         "file": "src/main.cbl",
@@ -133,7 +126,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
-      "generated_line": 6,
+      "generated_line": 5,
       "command": "tp @s ~ ~1 ~",
       "source": {
         "file": "src/main.cbl",
@@ -144,7 +137,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
-      "generated_line": 7,
+      "generated_line": 6,
       "command": "schedule function cobble_stdlib_v3:load 20t replace",
       "source": {
         "file": "src/main.cbl",
@@ -155,7 +148,7 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_stdlib_v3/function/load.mcfunction",
-      "generated_line": 8,
+      "generated_line": 7,
       "command": "schedule clear cobble_stdlib_v3:load",
       "source": {
         "file": "src/main.cbl",
@@ -186,7 +179,6 @@ expression: datapack_tree_snapshot(&output_dir)
 }
 
 ===== data/cobble_stdlib_v3/function/load.mcfunction =====
-gamerule max_command_sequence_length 1000000000
 data modify storage cobble_stdlib_v3:global players.current set value "alex"
 data modify storage cobble_stdlib_v3:global players.current.score set value 10
 data get storage cobble_stdlib_v3:global players.events[0]

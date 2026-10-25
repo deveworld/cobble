@@ -2,7 +2,7 @@ use crate::commands::build::{build, BuildOptions};
 use crate::commands::find_config;
 use crate::commands::link::linked_output_path;
 use crate::commands::output_safety::{
-    build_manifest_path, ensure_no_symlink_components, ensure_no_symlink_descendants,
+    build_manifest_path, ensure_no_symlink_descendants, ensure_not_symlink,
     project_marker_identity, read_build_manifest, require_manifest_ownership,
 };
 use crate::config::CobbleConfig;
@@ -470,7 +470,7 @@ fn ensure_linked_output_target_safe(
         return Ok(());
     }
 
-    ensure_no_symlink_components(output_dir, "build linked output")?;
+    ensure_not_symlink(output_dir, "build linked output")?;
 
     let metadata = std::fs::symlink_metadata(output_dir).map_err(|error| {
         format!(

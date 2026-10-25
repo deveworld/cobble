@@ -148,6 +148,18 @@ datapack.advancement("smoke/root", {"display": {"icon": {"id": "minecraft:diamon
 datapack.recipe("smoke_smelt", {"type": "minecraft:smelting", "ingredient": "minecraft:cobblestone", "result": {"id": "minecraft:stone"}, "cookingtime": 200})
 datapack.dialog("notice", {"type": "minecraft:notice", "title": {"text": "Smoke"}})
 
+# `a_early` sorts before `init`, which creates the pack objective; the setup
+# handler must still run first.
+datapack.function_tag("minecraft:load", ["cobble_server_smoke:a_early"])
+
+define @ProbeMarker = @e[type=minecraft:marker,tag=cobble_tagged]
+create {"Tags": ["cobble_probe_extra"]}
+end
+
+def a_early():
+    /scoreboard players add early_hits temp 1
+    /execute if score early_hits temp matches 1.. run say early load ok
+
 def init():
     /say Cobble quiet load ok
     /execute if predicate cobble_server_smoke:checks/always run say predicate ok
@@ -300,6 +312,18 @@ def probe():
     compound_base ^= pow_exp
     if compound_score == 1 and compound_base == 16:
         /say compound assignment ok
+
+    # `say` with a variable keeps say's own output: the sender prefix and
+    # selectors shown as names.
+    # The console runs at the world spawn, whose chunk may not be loaded; the
+    # showcase pack force-loads the chunks around 0 0.
+    positioned 0 64 0:
+        /summon minecraft:marker ~ ~ ~ {Tags:["cobble_probe"]}
+        create @ProbeMarker
+    /say probe selector {counter} @e[type=minecraft:marker,tag=cobble_probe,limit=1]
+    /execute if entity @e[type=minecraft:marker,tag=cobble_tagged,tag=cobble_probe_extra] run say template tags ok
+    unless entity @e[tag=cobble_missing_a] or entity @e[tag=cobble_missing_b]:
+        /say unless or ok
 
     /data get storage cobble:server_smoke status
     /return run say return command ok
@@ -460,6 +484,7 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
     wait_for_log(child, &log_path, "Done (", STARTUP_TIMEOUT)?;
     wait_for_log(child, &log_path, "Cobble quiet load ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "predicate ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "early load ok", COMMAND_TIMEOUT)?;
 
     send_command(child, "datapack list")?;
     wait_for_log(
@@ -557,6 +582,14 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
     wait_for_log(child, &log_path, "runtime json array ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "runtime power ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "compound assignment ok", COMMAND_TIMEOUT)?;
+    wait_for_log(
+        child,
+        &log_path,
+        "[Server] probe selector 1 Marker",
+        COMMAND_TIMEOUT,
+    )?;
+    wait_for_log(child, &log_path, "template tags ok", COMMAND_TIMEOUT)?;
+    wait_for_log(child, &log_path, "unless or ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "return command ok", COMMAND_TIMEOUT)?;
 
     run_showcase_selftest(child, &log_path)?;
@@ -597,9 +630,9 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
 }
 
 /// Runs the showcase fixture's in-game self-test. Each check prints
-/// `PASS <label>` or `FAIL <label> expected <x> got <y>`; the totals use
-/// runtime values, which `/say` turns into `tellraw`, so they are read back as
-/// scores instead.
+/// `PASS <label>` or `FAIL <label> expected <x> got <y>`. The totals are read
+/// back as scores, since the summary line prints before the scheduled checks
+/// finish.
 fn run_showcase_selftest(child: &mut Child, log_path: &Path) -> Result<(), String> {
     send_command(child, &format!("function {SHOWCASE_NAMESPACE}:selftest"))?;
     // The last check is scheduled 2 ticks out; a cleared schedule would
