@@ -20,15 +20,32 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 /// Compile one Cobble source file with the library build entry point.
-/// Returns the tempdir guard, the output directory, and the namespace.
+/// Returns the tempdir guard and the output directory.
 pub fn compile(source: &str) -> Result<(TempDir, PathBuf), String> {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.cbl");
-    let output_dir = temp_dir.path().join("output");
     fs::write(&input_file, source).unwrap();
+    let output_dir = build_into(input_file, &temp_dir)?;
+    Ok((temp_dir, output_dir))
+}
 
+/// Compile a project folder whose `src` holds `files` as (name, source),
+/// like `cobble build <folder>`.
+pub fn compile_project(files: &[(&str, &str)]) -> Result<(TempDir, PathBuf), String> {
+    let temp_dir = TempDir::new().unwrap();
+    let source_dir = temp_dir.path().join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    for (name, source) in files {
+        fs::write(source_dir.join(name), source).unwrap();
+    }
+    let output_dir = build_into(temp_dir.path().to_path_buf(), &temp_dir)?;
+    Ok((temp_dir, output_dir))
+}
+
+fn build_into(input: PathBuf, temp_dir: &TempDir) -> Result<PathBuf, String> {
+    let output_dir = temp_dir.path().join("output");
     cobble::commands::build::build(cobble::commands::build::BuildOptions {
-        input: Some(input_file),
+        input: Some(input),
         output: Some(output_dir.clone()),
         namespace: Some("sim".to_string()),
         pack_format: None,
@@ -41,8 +58,7 @@ pub fn compile(source: &str) -> Result<(TempDir, PathBuf), String> {
         dry_run: false,
         commands_json: PathBuf::from("data/commands.json"),
     })?;
-
-    Ok((temp_dir, output_dir))
+    Ok(output_dir)
 }
 
 pub fn load_functions(output_dir: &Path) -> HashMap<String, Vec<String>> {
@@ -52,10 +68,12 @@ pub fn load_functions(output_dir: &Path) -> HashMap<String, Vec<String>> {
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|ext| ext == "mcfunction") {
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
+            // Minecraft trims each line when it loads a function, but not
+            // the command a macro line expands to.
             let commands = fs::read_to_string(&path)
                 .unwrap()
                 .lines()
-                .map(str::to_string)
+                .map(|line| line.trim().to_string())
                 .collect();
             functions.insert(name, commands);
         }
@@ -108,15 +126,36 @@ pub struct Sim {
 impl Sim {
     /// Compile `source`, run the `minecraft:load` tag, and return the sim.
     pub fn load(source: &str, players: &[&str]) -> Sim {
-        let (_temp, output_dir) = compile(source).unwrap_or_else(|e| panic!("build failed: {e}"));
+        Self::try_load(source, players).unwrap_or_else(|e| panic!("build failed: {e}"))
+    }
+
+    /// Like [`Sim::load`], returning the build error instead of panicking.
+    pub fn try_load(source: &str, players: &[&str]) -> Result<Sim, String> {
+        let (_temp, output_dir) = compile(source)?;
+        Ok(Self::from_output(&output_dir, players))
+    }
+
+    /// Like [`Sim::load`] for a project folder with several source files.
+    pub fn load_project(files: &[(&str, &str)], players: &[&str]) -> Sim {
+        Self::try_load_project(files, players).unwrap_or_else(|e| panic!("build failed: {e}"))
+    }
+
+    /// Like [`Sim::load_project`], returning the build error instead of
+    /// panicking.
+    pub fn try_load_project(files: &[(&str, &str)], players: &[&str]) -> Result<Sim, String> {
+        let (_temp, output_dir) = compile_project(files)?;
+        Ok(Self::from_output(&output_dir, players))
+    }
+
+    fn from_output(output_dir: &Path, players: &[&str]) -> Sim {
         let mut sim = Sim {
-            functions: load_functions(&output_dir),
+            functions: load_functions(output_dir),
             players: players.iter().map(|p| p.to_string()).collect(),
             scores: HashMap::new(),
             objectives: HashSet::new(),
             storage: Value::Object(Map::new()),
             log: Vec::new(),
-            load_tag: read_tag(&output_dir, "load"),
+            load_tag: read_tag(output_dir, "load"),
             budget: 1_000_000,
         };
         for handler in sim.load_tag.clone() {
@@ -225,7 +264,7 @@ impl Sim {
             .budget
             .checked_sub(1)
             .expect("command budget exhausted (runaway recursion?)");
-        let command = command.trim();
+        let command = command.trim_start();
         if command.is_empty() || command.starts_with('#') || command.starts_with("gamerule ") {
             return Flow::Continue;
         }
@@ -253,7 +292,7 @@ impl Sim {
 
     /// Run a non-control command and return its result value.
     fn eval(&mut self, command: &str, context: &Context) -> Option<i32> {
-        let command = command.trim();
+        let command = command.trim_start();
         if let Some(rest) = command.strip_prefix("function ") {
             let (target, args) = match rest.split_once(" with storage ") {
                 Some((target, storage)) => {
@@ -450,12 +489,8 @@ impl Sim {
                 self.scores.insert(key, value);
                 Some(value)
             }
-            "get" => Some(
-                *self
-                    .scores
-                    .get(&key)
-                    .unwrap_or_else(|| panic!("scoreboard get of unset score {key:?}")),
-            ),
+            // Getting an unset score fails the command.
+            "get" => self.scores.get(&key).copied(),
             "reset" => {
                 self.scores.remove(&key);
                 Some(0)
@@ -502,17 +537,54 @@ impl Sim {
         if let Some(after) = rest.strip_prefix("modify storage ") {
             let (_, after) = after.split_once(' ').expect("storage id");
             let (path, after) = after.split_once(' ').expect("storage path");
-            let value = if let Some(snbt) = after.strip_prefix("set value ") {
+            let (append, source) = match after.split_once(' ') {
+                Some(("set", source)) => (false, source),
+                Some(("append", source)) => (true, source),
+                _ => panic!("unsupported data modify: {rest}"),
+            };
+            let value = if let Some(snbt) = source.strip_prefix("value ") {
                 parse_snbt(snbt.trim())
-            } else if let Some(source) = after.strip_prefix("set from storage ") {
+            } else if let Some(source) = source.strip_prefix("from storage ") {
                 let (_, source_path) = source.split_once(' ').expect("source path");
-                self.storage_get(source_path.trim())
-                    .cloned()
-                    .unwrap_or_else(|| panic!("data copy from missing path {source_path}"))
+                // Copying from a missing path fails the command.
+                self.storage_get(source_path.trim())?.clone()
+            } else if let Some(source) = source.strip_prefix("string storage ") {
+                let (_, source) = source.split_once(' ').expect("source path");
+                let mut parts = source.split_whitespace();
+                let source_path = parts.next().expect("source path");
+                let mut offset = || {
+                    parts
+                        .next()
+                        .map(|v| v.parse::<i64>().expect("string index"))
+                };
+                let (start, end) = (offset(), offset());
+                let Value::String(text) = self.storage_get(source_path)? else {
+                    panic!("`set string` of a value that is not a string at {source_path}");
+                };
+                let chars: Vec<char> = text.chars().collect();
+                let len = chars.len() as i64;
+                let resolve = |offset: i64| if offset < 0 { len + offset } else { offset };
+                let start = start.map_or(0, resolve);
+                let end = end.map_or(len, resolve);
+                // Minecraft fails the command for indexes outside the string.
+                if start < 0 || end > len || start > end {
+                    return None;
+                }
+                Value::String(chars[start as usize..end as usize].iter().collect())
             } else {
                 panic!("unsupported data modify: {rest}");
             };
-            self.storage_set(path, value);
+            if append {
+                let mut list = match self.storage_get(path) {
+                    Some(Value::Array(items)) => items.clone(),
+                    Some(_) => panic!("append to non-list at {path}"),
+                    None => Vec::new(),
+                };
+                list.push(value);
+                self.storage_set(path, Value::Array(list));
+            } else {
+                self.storage_set(path, value);
+            }
             return Some(1);
         }
         if let Some(after) = rest.strip_prefix("remove storage ") {
@@ -666,6 +738,16 @@ impl Sim {
         let Some(last) = segments.pop() else {
             return;
         };
+        let resolve = |items_len: usize, index: i64| -> Option<usize> {
+            let index = if index < 0 {
+                items_len as i64 + index
+            } else {
+                index
+            };
+            usize::try_from(index)
+                .ok()
+                .filter(|index| *index < items_len)
+        };
         let mut current = &mut self.storage;
         for segment in segments {
             current = match segment {
@@ -673,10 +755,13 @@ impl Sim {
                     Some(next) => next,
                     None => return,
                 },
-                Segment::Index(index) => match current.get_mut(index as usize) {
-                    Some(next) => next,
-                    None => return,
-                },
+                Segment::Index(index) => {
+                    let len = current.as_array().map_or(0, Vec::len);
+                    match resolve(len, index).and_then(|index| current.get_mut(index)) {
+                        Some(next) => next,
+                        None => return,
+                    }
+                }
             };
         }
         match last {
@@ -687,8 +772,8 @@ impl Sim {
             }
             Segment::Index(index) => {
                 if let Some(items) = current.as_array_mut() {
-                    if (index as usize) < items.len() {
-                        items.remove(index as usize);
+                    if let Some(index) = resolve(items.len(), index) {
+                        items.remove(index);
                     }
                 }
             }

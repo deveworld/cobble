@@ -110,6 +110,16 @@ pub struct Assignment {
     pub persist: bool,
 }
 
+impl Assignment {
+    /// Whether this assigns the name `target` itself, as opposed to an
+    /// attribute or subscript of it such as `config.count = 5`.
+    pub fn assigns_name(&self) -> bool {
+        self.target_expr.as_ref().is_none_or(
+            |target| matches!(target, Expression::Identifier(name) if name == &self.target),
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConstAssignment {
     pub target: String,

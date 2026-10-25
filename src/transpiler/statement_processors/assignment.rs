@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::transpiler::expression_evaluator::{min_constant_commands, ExpressionEvaluator};
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
+use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{escape_quoted, GeneratedCommandKind, ModuleLevelAssignment};
 use crate::transpiler::{TranspileError, Transpiler};
 
@@ -35,6 +36,8 @@ enum AssignValueKind {
     ParamCopy,
     /// Array/Map/String literal materialized into NBT storage.
     StorageLiteral,
+    /// A character of a string variable, `s[i]`, stored as a string.
+    StringChar,
     /// Everything else: the simple scoreboard ladder.
     ScoreSimple,
 }
@@ -270,8 +273,15 @@ impl Transpiler {
             return self.process_parameter_assignment(assign);
         }
 
-        // Infer the type of the value being assigned
-        let value_type = self.infer_type(&assign.value);
+        // Infer the type of the value being assigned. A value of unknown
+        // type, such as a parameter, keeps the variable's type.
+        let value_type = match (
+            self.infer_type(&assign.value),
+            self.symbols.variable_types.get(&assign.target),
+        ) {
+            (CobbleType::Unknown, Some(existing)) => existing.clone(),
+            (value_type, _) => value_type,
+        };
 
         // Check if this assignment is type-safe
         self.check_type_assignment(&assign.target, &value_type)?;
@@ -293,10 +303,37 @@ impl Transpiler {
             return Ok(());
         }
 
-        if !matches!(
-            &assign.value,
-            Expression::Array(_) | Expression::Map(_) | Expression::String(_)
-        ) {
+        // A parameter's type is unknown. Copied into a string, list, or map
+        // variable, it keeps that variable in storage.
+        let target_path = self
+            .symbols
+            .variable_storage_paths
+            .get(&assign.target)
+            .cloned();
+        if let (Expression::Identifier(name), Some(target_path)) = (&assign.value, &target_path) {
+            if self.current_context.is_param(name) {
+                let namespace = &self.data_pack.namespace;
+                let command = format!(
+                    "data modify storage {namespace}:global {target_path} set from storage {namespace}:global args.{name}"
+                );
+                self.extend_current_function(vec![command]);
+                return Ok(());
+            }
+        }
+
+        // A score value replaces a storage one. A copy of a storage
+        // variable and a character of a string stay in storage, and may
+        // read the target itself, as in `s = s[0]`.
+        let storage_value = match &assign.value {
+            Expression::Array(_) | Expression::Map(_) | Expression::String(_) => true,
+            Expression::Identifier(name) => {
+                self.symbols.variable_storage_paths.contains_key(name)
+                    && !self.copies_a_score(&assign.target, name)
+            }
+            Expression::Subscript(base, _) => self.string_variable_path(base).is_some(),
+            _ => false,
+        };
+        if !storage_value {
             self.symbols.variable_storage_paths.remove(&assign.target);
         }
 
@@ -310,8 +347,20 @@ impl Transpiler {
                 self.lower_expression_eval_assignment(assign)
             }
             AssignValueKind::StorageLiteral => self.lower_storage_literal_assignment(assign),
+            AssignValueKind::StringChar => self.lower_string_char_assignment(assign),
             AssignValueKind::ScoreSimple => self.lower_simple_score_assignment(assign),
         }
+    }
+
+    /// Whether `target = source` copies a score: the target holds a number
+    /// and the source has a score, as the target of a list loop does next
+    /// to its storage copy.
+    fn copies_a_score(&self, target: &str, source: &str) -> bool {
+        matches!(
+            self.symbols.variable_types.get(target),
+            Some(CobbleType::Integer | CobbleType::Boolean)
+        ) && (self.symbols.scoreboard_variables.contains(source)
+            || self.symbols.variable_objectives.contains_key(source))
     }
 
     /// Assign to a parameter of the current function. Parameters live in
@@ -319,15 +368,34 @@ impl Transpiler {
     /// written there and every later read of the parameter sees it.
     fn process_parameter_assignment(&mut self, assign: &Assignment) -> Result<(), TranspileError> {
         let path = format!("args.{}", assign.target);
+        let namespace = self.data_pack.namespace.clone();
+        let storage_source = match &assign.value {
+            Expression::Identifier(name) if self.current_context.is_param(name) => {
+                Some(format!("args.{name}"))
+            }
+            Expression::Identifier(name) => self.symbols.variable_storage_paths.get(name).cloned(),
+            _ => None,
+        };
         let commands = match &assign.value {
-            Expression::String(_) => self.storage_value_commands(&path, &assign.value)?,
-            Expression::Array(_) | Expression::Map(_) | Expression::None => {
+            Expression::String(_) | Expression::Array(_) | Expression::Map(_) => {
+                self.storage_value_commands(&path, &assign.value)?
+            }
+            Expression::None => {
                 return Err(format!(
-                    "Parameter `{}` can only be assigned a number or a string. Store the list or map in a new variable instead.",
+                    "Parameter `{}` can't be assigned `None`, which storage can't hold.",
                     assign.target
                 )
                 .into());
             }
+            Expression::Subscript(base, index) if self.string_variable_path(base).is_some() => {
+                let base_path = self.string_variable_path(base).unwrap_or_default();
+                self.string_char_commands(&path, &base_path, index)?
+            }
+            // A copy of a string, list, map, or another parameter.
+            _ if storage_source.is_some() => vec![format!(
+                "data modify storage {namespace}:global {path} set from storage {namespace}:global {}",
+                storage_source.unwrap_or_default()
+            )],
             _ => {
                 let scratch = format!("#param_value_{}", self.next_temp_id());
                 self.process_assignment(&Assignment {
@@ -351,10 +419,12 @@ impl Transpiler {
     /// Classify where an assignment's *target* routes it. See the
     /// decision-order comment on [`Self::process_assignment`].
     fn classify_assignment_target<'a>(&self, assign: &'a Assignment) -> AssignTargetKind<'a> {
-        if let Some(target_expr) = assign.target_expr.as_ref() {
-            if !matches!(target_expr, Expression::Identifier(name) if name == &assign.target) {
-                return AssignTargetKind::StorageExpr(target_expr);
-            }
+        if let Some(target_expr) = assign
+            .target_expr
+            .as_ref()
+            .filter(|_| !assign.assigns_name())
+        {
+            return AssignTargetKind::StorageExpr(target_expr);
         }
         if self.current_function.is_none() {
             AssignTargetKind::ModuleLevel
@@ -373,6 +443,11 @@ impl Transpiler {
 
         if Self::is_runtime_condition_expression(value) {
             return AssignValueKind::ConditionFlag;
+        }
+
+        if matches!(value, Expression::Subscript(base, _) if self.string_variable_path(base).is_some())
+        {
+            return AssignValueKind::StringChar;
         }
 
         let needs_complex_eval = match value {
@@ -428,23 +503,28 @@ impl Transpiler {
     /// replay (`ModuleLevelAssignment::Variable`), recording the target's
     /// storage or scoreboard backing up front.
     fn defer_module_level_assignment(&mut self, assign: &Assignment) {
-        // Storage types (Array, Map, String) use NBT storage, not scoreboard
-        match &assign.value {
-            Expression::Array(_) | Expression::Map(_) | Expression::String(_) => {
-                let storage_path = format!("vars.{}", assign.target);
-                self.symbols
-                    .variable_storage_paths
-                    .insert(assign.target.clone(), storage_path);
-            }
-            _ => {
-                self.data_pack.track_objective("temp");
-                self.symbols
-                    .variable_objectives
-                    .insert(assign.target.clone(), "temp".to_string());
-                self.symbols
-                    .scoreboard_variables
-                    .insert(assign.target.clone());
-            }
+        // Strings, lists, and maps live in storage: literals, copies of
+        // such variables, and characters of strings.
+        let storage = matches!(
+            &assign.value,
+            Expression::Array(_) | Expression::Map(_) | Expression::String(_)
+        ) || matches!(
+            self.symbols.variable_types.get(&assign.target),
+            Some(CobbleType::String | CobbleType::List | CobbleType::Map)
+        );
+        if storage {
+            let storage_path = format!("vars.{}", assign.target);
+            self.symbols
+                .variable_storage_paths
+                .insert(assign.target.clone(), storage_path);
+        } else {
+            self.data_pack.track_objective("temp");
+            self.symbols
+                .variable_objectives
+                .insert(assign.target.clone(), "temp".to_string());
+            self.symbols
+                .scoreboard_variables
+                .insert(assign.target.clone());
         }
         self.module_level_vars
             .push(ModuleLevelAssignment::Variable {
@@ -459,6 +539,9 @@ impl Transpiler {
     /// compile-time constant, so emit a direct `scoreboard players set`.
     fn lower_const_fold_assignment(&mut self, assign: &Assignment, const_value: f64) {
         // The expression is a constant - fold it at compile time
+        if self.current_function.is_some() {
+            self.warn_score_value(const_value);
+        }
         if let Some(ref mut commands) = self.current_function {
             self.data_pack.track_objective("temp");
             self.symbols
@@ -467,31 +550,6 @@ impl Transpiler {
             self.symbols
                 .scoreboard_variables
                 .insert(assign.target.clone());
-
-            // Warn if number exceeds scoreboard range
-            if const_value > i32::MAX as f64 || const_value < i32::MIN as f64 {
-                eprintln!(
-                        "⚠️  Warning: Constant expression result {} for variable '{}' exceeds Minecraft scoreboard range.\n\
-                        Scoreboard range: {} to {}\n\
-                        Value will be clamped to: {}",
-                        const_value,
-                        assign.target,
-                        i32::MIN,
-                        i32::MAX,
-                        if const_value > i32::MAX as f64 { i32::MAX } else { i32::MIN }
-                    );
-            }
-
-            // Warn if float has fractional part
-            if const_value.fract() != 0.0 {
-                eprintln!(
-                        "⚠️  Warning: Constant expression result {} for variable '{}' will lose precision.\n\
-                        Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                        const_value,
-                        assign.target,
-                        const_value as i32
-                    );
-            }
 
             commands.push(format!(
                 "scoreboard players set {} temp {}",
@@ -574,13 +632,35 @@ impl Transpiler {
         &mut self,
         assign: &Assignment,
     ) -> Result<(), TranspileError> {
-        let storage_path = format!("vars.{}", assign.target);
+        let storage_path = self.variable_storage_path(&assign.target);
         self.symbols
             .variable_storage_paths
             .insert(assign.target.clone(), storage_path.clone());
 
         let value_commands = self.storage_value_commands(&storage_path, &assign.value)?;
 
+        if let Some(ref mut commands) = self.current_function {
+            commands.extend(value_commands);
+        }
+        Ok(())
+    }
+
+    /// Lower `AssignValueKind::StringChar`: copy one character of a string
+    /// variable into the target's storage.
+    fn lower_string_char_assignment(&mut self, assign: &Assignment) -> Result<(), TranspileError> {
+        let Expression::Subscript(base, index) = &assign.value else {
+            unreachable!("classified as a string character");
+        };
+        let base_path = self
+            .string_variable_path(base)
+            .expect("classified as a string character");
+        let storage_path = self.variable_storage_path(&assign.target);
+        let value_commands = self.string_char_commands(&storage_path, &base_path, index)?;
+        self.symbols
+            .variable_storage_paths
+            .insert(assign.target.clone(), storage_path);
+        self.symbols.scoreboard_variables.remove(&assign.target);
+        self.symbols.variable_objectives.remove(&assign.target);
         if let Some(ref mut commands) = self.current_function {
             commands.extend(value_commands);
         }
@@ -650,31 +730,7 @@ impl Transpiler {
                     .scoreboard_variables
                     .insert(assign.target.clone());
 
-                // Warn if number exceeds scoreboard range
-                if *n > i32::MAX as f64 || *n < i32::MIN as f64 {
-                    eprintln!(
-                            "⚠️  Warning: Value {} for variable '{}' exceeds Minecraft scoreboard range.\n\
-                            Scoreboard range: {} to {}\n\
-                            Value will be clamped to: {}",
-                            n,
-                            assign.target,
-                            i32::MIN,
-                            i32::MAX,
-                            if *n > i32::MAX as f64 { i32::MAX } else { i32::MIN }
-                        );
-                }
-
-                // Warn if float has fractional part
-                if n.fract() != 0.0 {
-                    eprintln!(
-                            "⚠️  Warning: Float value {} for variable '{}' will lose precision.\n\
-                            Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                            n,
-                            assign.target,
-                            *n as i32
-                        );
-                }
-
+                self.warn_score_value(*n);
                 let score = *n as i32;
                 commands.push(format!(
                     "scoreboard players set {} temp {}",
@@ -682,12 +738,18 @@ impl Transpiler {
                 ));
             }
             Expression::Identifier(var) => {
-                // Check if source is a storage variable (Array/Map)
-                let src_path_opt = self.symbols.variable_storage_paths.get(var).cloned();
+                // A storage variable is copied in storage, unless a number
+                // goes to a number: the target of a list loop has both.
+                let src_path_opt = self
+                    .symbols
+                    .variable_storage_paths
+                    .get(var)
+                    .filter(|_| !self.copies_a_score(&assign.target, var))
+                    .cloned();
                 if let Some(src_path) = src_path_opt {
                     // Storage copy: target = src
                     // Mark target as storage variable
-                    let target_path = format!("vars.{}", assign.target);
+                    let target_path = self.variable_storage_path(&assign.target);
                     self.symbols
                         .variable_storage_paths
                         .insert(assign.target.clone(), target_path.clone());
@@ -697,6 +759,26 @@ impl Transpiler {
                         "data modify storage {}:global {} set from storage {}:global {}",
                         namespace, target_path, namespace, src_path
                     ));
+                    // A list loop target of unknown type holds a score next
+                    // to its storage copy; the target keeps both.
+                    let source_has_score = self.symbols.scoreboard_variables.contains(var);
+                    let target_is_storage_type = matches!(
+                        self.symbols.variable_types.get(&assign.target),
+                        Some(CobbleType::String | CobbleType::List | CobbleType::Map)
+                    );
+                    if source_has_score && !target_is_storage_type {
+                        self.data_pack.track_objective("temp");
+                        self.symbols
+                            .variable_objectives
+                            .insert(assign.target.clone(), "temp".to_string());
+                        self.symbols
+                            .scoreboard_variables
+                            .insert(assign.target.clone());
+                        commands.push(format!(
+                            "scoreboard players operation {} temp = {} temp",
+                            assign.target, var
+                        ));
+                    }
                 } else {
                     // Variable-to-variable assignment (Scoreboard)
                     self.data_pack.track_objective("temp");
@@ -841,13 +923,7 @@ impl Transpiler {
                 },
             },
             Expression::Number(n) => {
-                if n.fract() != 0.0 {
-                    eprintln!(
-                        "⚠️  Warning: Float value {} in binary operation will lose precision.\n\
-                        Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                        n, *n as i32
-                    );
-                }
+                self.warn_score_value(*n);
                 ScoreOperand::Constant {
                     value: *n as i32,
                     literal: true,
@@ -1037,62 +1113,7 @@ impl Transpiler {
         &self,
         expr: &Expression,
     ) -> Result<String, TranspileError> {
-        match expr {
-            Expression::Number(n) => {
-                if n.fract() == 0.0 {
-                    Ok(format!("{}", *n as i32))
-                } else {
-                    Ok(format!("{}f", n))
-                }
-            }
-            Expression::String(s) => {
-                let escaped = escape_quoted(s);
-                Ok(format!("\"{}\"", escaped))
-            }
-            Expression::Boolean(b) => Ok(if *b {
-                "1b".to_string()
-            } else {
-                "0b".to_string()
-            }),
-            Expression::None => Err(
-                "None/null values are not supported in Minecraft SNBT storage literals because NBT has no null type. Use a data pack JSON resource helper when you need JSON null, or choose an explicit sentinel value for storage.".into(),
-            ),
-            Expression::Array(items) => {
-                let mut result = String::from("[");
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        result.push(',');
-                    }
-                    result.push_str(&self.serialize_to_snbt(item)?);
-                }
-                result.push(']');
-                Ok(result)
-            }
-            Expression::Map(entries) => {
-                let mut result = String::from("{");
-                for (i, (key, value)) in entries.iter().enumerate() {
-                    if i > 0 {
-                        result.push(',');
-                    }
-                    result.push_str(&Self::serialize_snbt_key(key));
-                    result.push(':');
-                    result.push_str(&self.serialize_to_snbt(value)?);
-                }
-                result.push('}');
-                Ok(result)
-            }
-            Expression::Identifier(name) => {
-                if let Some(val) = self.symbols.compile_time_constants.get(name) {
-                    Ok(format!("{}", val))
-                } else {
-                    Err(format!("Runtime variable '{}' cannot be serialized as static SNBT. Use the storage runtime materialization path or a compile-time constant.", name).into())
-                }
-            }
-            _ => Err(format!(
-                "Unsupported expression in SNBT serialization: {:?}",
-                expr
-            ).into()),
-        }
+        serialize_snbt(&self.symbols, expr)
     }
 
     pub(in crate::transpiler) fn serialize_snbt_key(key: &str) -> String {
@@ -1106,6 +1127,69 @@ impl Transpiler {
 
         let escaped = escape_quoted(key);
         format!("\"{}\"", escaped)
+    }
+}
+
+/// SNBT text for a literal or constant value.
+pub(in crate::transpiler) fn serialize_snbt(
+    symbols: &Symbols,
+    expr: &Expression,
+) -> Result<String, TranspileError> {
+    match expr {
+        Expression::Number(n) => {
+            if n.fract() == 0.0 {
+                Ok(format!("{}", *n as i32))
+            } else {
+                Ok(format!("{}f", n))
+            }
+        }
+        Expression::String(s) => {
+            let escaped = escape_quoted(s);
+            Ok(format!("\"{}\"", escaped))
+        }
+        Expression::Boolean(b) => Ok(if *b {
+            "1b".to_string()
+        } else {
+            "0b".to_string()
+        }),
+        Expression::None => Err(
+            "None/null values are not supported in Minecraft SNBT storage literals because NBT has no null type. Use a data pack JSON resource helper when you need JSON null, or choose an explicit sentinel value for storage.".into(),
+        ),
+        Expression::Array(items) => {
+            let mut result = String::from("[");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    result.push(',');
+                }
+                result.push_str(&serialize_snbt(symbols, item)?);
+            }
+            result.push(']');
+            Ok(result)
+        }
+        Expression::Map(entries) => {
+            let mut result = String::from("{");
+            for (i, (key, value)) in entries.iter().enumerate() {
+                if i > 0 {
+                    result.push(',');
+                }
+                result.push_str(&Transpiler::serialize_snbt_key(key));
+                result.push(':');
+                result.push_str(&serialize_snbt(symbols, value)?);
+            }
+            result.push('}');
+            Ok(result)
+        }
+        Expression::Identifier(name) => {
+            if let Some(val) = symbols.compile_time_constants.get(name) {
+                Ok(format!("{}", val))
+            } else {
+                Err(format!("Runtime variable '{}' cannot be serialized as static SNBT. Use the storage runtime materialization path or a compile-time constant.", name).into())
+            }
+        }
+        _ => Err(format!(
+            "Unsupported expression in SNBT serialization: {:?}",
+            expr
+        ).into()),
     }
 }
 

@@ -31,6 +31,9 @@ cobble migrate --json
    with step 3. It also marks the lines whose output changes for the reasons
    under [Other Output Changes](#other-output-changes): `say-variable-text`,
    `load-function-tag`, `entity-template-tag`, and `item-model-definition`.
+   `function-local-variable` marks each function that assigns a module
+   variable without `global`; see
+   [Function-Local Variables](#function-local-variables).
 
 2. Rebuild and re-run project checks:
 
@@ -88,6 +91,46 @@ objective.
 
 `persist` is not a reserved word: a variable named `persist` keeps working.
 
+### Function-Local Variables
+
+In 0.10 every variable was a module variable: a function that assigned
+`score` changed the module's `score`, with or without `global`. In 0.11 a
+name that a function assigns is local to that function unless the function
+declares it `global`, as in Python. A local has its own score holder,
+`#<function>.<name>`, and storage path, `locals.<function>.<name>`.
+
+```python
+score = 0
+
+def add_point():
+    global score   # needed in 0.11 to change the module variable
+    score += 1
+```
+
+- Add `global name` to each function that changes a module variable.
+  `cobble migrate` lists the functions that need it
+  (`function-local-variable`), and `cobble build` and `cobble check` report a
+  `local-shadows-module-variable` warning for each one.
+- A function that reads a module variable before assigning it, such as
+  `score += 1` without `global`, no longer compiles. The error names the
+  variable and the function.
+- Raw commands in a function that name a local, such as
+  `/scoreboard players add level temp 1` after `level = 0`, now change the
+  local's holder. Command blocks, other packs, and commands typed in chat that
+  read such a variable need the new holder name, or the function can keep the
+  value in a module variable.
+
+See [Calling Convention](reference/calling-convention.md) for the full rules.
+
+### Recursion
+
+0.10 rejected a function that called itself, directly or through other
+functions. 0.11 compiles it: each call saves the function's scores in the
+storage `frames.<function>` and restores them before returning, so the caller
+finds its own values again. A raw `/return` in a recursive function is a
+compile error; use Cobble's `return`. See
+[Recursion](reference/calling-convention.md#recursion).
+
 ### Other Output Changes
 
 - **`say` text with variables.** 0.10 turned `/say Count {count}` into
@@ -107,7 +150,8 @@ objective.
   keep their 0.10 order.
 - **Command limit.** 0.10 set the gamerule `max_command_sequence_length` to
   1,000,000,000 in every pack. 0.11 sets it only in packs with a runtime loop
-  (a `while` loop, or a `for` loop that is not expanded at compile time). The
+  (a `while` loop, or a `for` loop that is not expanded at compile time), a
+  runtime `^` power, or a recursive function. The
   gamerule is stored in the world, so a world that loaded a 0.10 pack keeps
   the raised value until you set it back with
   `/gamerule max_command_sequence_length 65536`.
@@ -157,6 +201,9 @@ lines that rely on the old behavior:
 - **Assignment order.** In `result = 1 + square(3)`, 0.10 wrote 1 into
   `result` before calling `square`, so a `square` that also set `result`
   changed the sum. 0.11 assigns after the whole right side.
+- **Comparison order.** In `if level > raise_level():`, 0.10 read `level`
+  after calling `raise_level`, so a change the call made to `level` counted.
+  0.11 reads the left side first, as Python does.
 - **`while` conditions.** 0.10 evaluated the condition twice per iteration,
   so a function in it ran twice. 0.11 evaluates it once.
 - **`return` in `as @a:`.** In 0.10 the entities after the one that returned

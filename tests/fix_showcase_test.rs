@@ -59,9 +59,9 @@ def main():
         &[],
     );
     sim.call("main");
-    assert_eq!(sim.var("count"), 3);
-    assert_eq!(sim.var("length"), 4);
-    assert_eq!(sim.var("scaled"), 30);
+    assert_eq!(sim.var("#main.count"), 3);
+    assert_eq!(sim.var("#main.length"), 4);
+    assert_eq!(sim.var("#main.scaled"), 30);
     assert!(sim
         .function_text("main")
         .contains("run data get storage sim:global events\n"));

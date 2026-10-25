@@ -56,27 +56,36 @@ def read_level():
     /execute if score level temp matches 10.. run say high level
 ```
 
-This compiles to `execute store result score level mypack.vars run scoreboard
-players get @s lvl` and `execute if score level mypack.vars matches 10.. run
-say high level`. Other text, such as a chat message that contains the word
-`temp`, stays unchanged. Commands typed in chat or in command blocks use the
-real objective name, for example `/scoreboard players get level mypack.vars`.
+This compiles to `execute store result score #read_level.level mypack.vars
+run scoreboard players get @s lvl` and `execute if score #read_level.level
+mypack.vars matches 10.. run say high level`. `level` is a local variable of
+`read_level`, so its score holder is `#read_level.level` (see
+[Variables In Functions](#variables-in-functions)). Other text, such as a chat
+message that contains the word `temp`, stays unchanged. Commands typed in chat
+or in command blocks use the real names, for example
+`/scoreboard players get score mypack.vars` for a module variable `score`.
 
 ## Variables In Functions
 
-Assignments inside a function run each time the function is called:
+A name that a function assigns is a local variable of that function, as in
+Python. Each function's locals get their own score holders and storage paths,
+so two functions can use the same name without changing each other's value:
 
 ```python
 def my_function():
     score = 0
-    score = score + 10  # Compiles to: scoreboard players add score mypack.vars 10
-    score = score - 5   # Compiles to: scoreboard players remove score mypack.vars 5
-    config = {"count": 1}
+    score = score + 10  # Compiles to: scoreboard players add #my_function.score mypack.vars 10
+    score = score - 5   # Compiles to: scoreboard players remove #my_function.score mypack.vars 5
+    config = {"count": 1}  # Stored at locals.my_function.config
     values = [1, 2, 3]
     i = 1
     config.count = 5
     values[i] = config.count + 2
 ```
+
+Reading a local before the function assigns it is a compile error. See
+[Calling Convention](../reference/calling-convention.md) for the holder names
+and the exact rules.
 
 Storage-backed list, map, and string paths can be assigned through attribute
 or subscript targets inside functions. Dynamic list indexes and string map keys
@@ -84,7 +93,8 @@ use the same runtime storage path support as storage reads.
 
 ## The `global` Keyword
 
-`global name` marks that a function changes a module-level variable:
+A function that changes a module-level variable declares it `global`, as in
+Python:
 
 ```python
 score = 0
@@ -94,13 +104,17 @@ def increment_score():
     score = score + 1
 ```
 
-Minecraft scoreboards have no local scope. Every variable with the same name
-is the same fake player on the pack's objective, so a function that assigns
-`score` changes the module-level `score` with or without `global`. Use
-`global` to make that intent visible, and use distinct names for values that
-should stay separate. A function parameter is the exception: it hides the
-module variable with the same name inside its function (see
-[Functions with Parameters](functions.md#functions-with-parameters)).
+Without `global score`, `score` would be a local of `increment_score`, and
+`score = score + 1` would read it before assigning it, which is a compile
+error. A function that only reads a module variable doesn't need `global`.
+When a function assigns the name of a module variable without `global`,
+Cobble reports a `local-shadows-module-variable` warning: the module variable
+keeps its value.
+
+A function parameter hides the module variable with the same name inside its
+function (see
+[Functions with Parameters](functions.md#functions-with-parameters)) and
+can't be declared `global`.
 
 ## Compile-time Constants
 

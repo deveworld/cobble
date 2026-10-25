@@ -205,8 +205,11 @@ fn large_unrolls_print_an_expansion_warning() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "build failed: {stderr}");
-    assert!(stderr.contains("unroll-large-expansion"), "{stderr}");
-    assert!(stderr.contains("257 iterations"), "{stderr}");
+    assert!(
+        stderr.contains("main.cbl:2:5: warning[unroll-large-expansion]"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("257 copies of its body"), "{stderr}");
 }
 
 #[test]
@@ -261,7 +264,7 @@ def test():
     assert!(content.contains("data modify storage unroll:global _cobble_for_iter_"));
     assert!(content.contains("function unroll:for_list_temp_"));
     assert!(body.contains("function unroll:_cobble_storage_dyn_"));
-    assert!(all_functions.contains("$data modify storage unroll:global vars.value set from storage unroll:global _cobble_for_iter_"));
+    assert!(all_functions.contains("$data modify storage unroll:global locals.test.value set from storage unroll:global _cobble_for_iter_"));
 }
 
 #[test]

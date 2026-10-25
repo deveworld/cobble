@@ -597,6 +597,73 @@ def test_python_semantics():
     check("fold_overflow", 100000 * 100000 / 100000, big * big / big)
 
 
+def fact(n):
+    if n <= 1:
+        return 1
+    return n * fact(n - 1)
+
+
+def fib(n):
+    if n < 2:
+        return n
+    a = fib(n - 1)
+    b = fib(n - 2)
+    return a + b
+
+
+def even_steps(n):
+    if n == 0:
+        return 1
+    return odd_steps(n - 1)
+
+
+def odd_steps(n):
+    if n == 0:
+        return 0
+    return even_steps(n - 1)
+
+
+def outer_slot():
+    slot = 1
+    inner_slot()
+    return slot
+
+
+def inner_slot():
+    slot = 2
+    return slot
+
+
+def call_without_args():
+    return shadow_double(3)
+
+
+def keep_args(n):
+    m = call_without_args()
+    return n + m
+
+
+def raise_slot():
+    global result_slot
+    result_slot = 50
+    return 5
+
+
+def test_calls():
+    global result_slot
+    check("recursion_fact", fact(5), 120)
+    check("recursion_fib", fib(10), 55)
+    check("recursion_mutual", even_steps(7), 0)
+    check("locals_are_separate", outer_slot(), 1)
+    check("args_kept_across_call", keep_args(4), 10)
+
+    result_slot = 0
+    compared = 0
+    if result_slot > raise_slot():
+        compared = 1
+    check("compare_left_first", compared, 0)
+
+
 def scheduled_check():
     check("schedule_once", 1, 1)
 
@@ -622,4 +689,5 @@ def selftest():
     test_entities()
     test_resources()
     test_python_semantics()
+    test_calls()
     /say SELFTEST summary passed={passed} failed={failed}

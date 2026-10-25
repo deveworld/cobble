@@ -29,7 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entity's `Tags`.
 - The 0.11 `cobble migrate` report also marks lines whose output changes:
   `say-variable-text`, `load-function-tag`, `entity-template-tag`, and
-  `item-model-definition`.
+  `item-model-definition`, and functions that assign a module variable without
+  `global` (`function-local-variable`).
+- Functions can call themselves, directly or through other functions. Each
+  call saves the function's scores and local storage in `frames.<function>`
+  and restores them before it returns. A raw `/return` in a recursive
+  function is an error.
+- A differential test runs random programs through the compiler and the
+  command simulator and compares the results with the same programs run as
+  Python. The programs use numbers, strings, and lists, and some are split
+  into files that import each other. CI runs it with 300 programs.
+- Compiler warnings are diagnostics with a kind and a source location.
+  `cobble build` prints them with the line they point at, `cobble check`
+  reports them with severity `warning` and counts them in `warning_count`,
+  and the browser compiler lists them under Diagnostics. The kinds are listed
+  in [Diagnostics](https://deveworld.github.io/cobble/docs/reference/diagnostics.html#warnings).
 
 ### Changed
 - An execute block may start with `execute`, as in `execute as @a at @s:`.
@@ -41,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   load handler into their own load function, `_cobble_init`, which runs first
   in `minecraft:load`; the other load functions keep their order.
 - The gamerule `max_command_sequence_length` is only raised in packs with a
-  runtime loop or a runtime `^` power.
+  runtime loop, a runtime `^` power, or a recursive function.
 - Validation keeps the default command tree in the user cache
   (`~/.cache/cobble/26.3/`, `~/Library/Caches/cobble/26.3/`, or
   `%LOCALAPPDATA%\cobble\26.3\`) instead of `data/commands.json` in the
@@ -55,10 +69,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compiler errors report the file, line, and column of the statement that
   caused them in `cobble build`, `cobble check`, and the browser compiler, and
   the variable placeholder error shows its example with indentation.
-- Library users: `TranspileError` gains a `location` field, and
+- Library users: `TranspileError` gains a `location` field,
+  `Transpiler::take_warnings` returns the warnings as `TranspileWarning`
+  values instead of printing them, `Transpiler::has_compiled` tells whether a
+  file was compiled already, and
   `Transpiler::with_options(TranspilerOptions { .. })` replaces the
   `set_description`, `set_pack_format`, `set_stdlib_version`, and other build
   setters. Set the validation summary on `transpiler.data_pack`.
+  `transpiler::module_variables_made_local` lists the functions that assign a
+  module variable without `global`.
 - Each pack keeps its numeric variables and internal helper scores on its own
   objective, `<namespace>.vars`, so Cobble packs no longer overwrite each
   other's variables. The shared `temp`, `math`, and `__internal__` objectives
@@ -71,8 +90,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A bare value in a condition is true when it is not 0, as in Python.
   Negative numbers used to count as false.
 - Declaring a function parameter `global` is an error.
+- A constant `range` that is empty, such as `range(3, 1)` or `range(i, 2)`
+  inside an expanded `for i in range(4)`, and an empty array `[]` run no
+  passes, as in Python. They used to be `unroll-bad-range` errors.
+- A name that a function assigns is local to it unless declared `global`, as
+  in Python. Locals use the score holder `#<function>.<name>` and the storage
+  path `locals.<function>.<name>`, and raw commands in the function that name
+  a local reach the same holder. Reading a local before assigning it is a
+  compile error, and a function's local with the name of a module variable
+  reports a `local-shadows-module-variable` warning.
+- Runtime division by a variable or an expression no longer warns. The
+  divisor is not checked, as described under Division By Zero.
+- `^` in a `const` declaration computes the real power, like `*`. A result
+  past the 32-bit range used to become 2147483647 there.
+- `while True` warns only when its body has no `return`.
 
 ### Fixed
+- A build compiles each file once. A file that an earlier file imports used
+  to be compiled again when the build reached it in the source folder, which
+  left unused helper functions in the pack and set its module variables
+  twice.
+- `cobble check` reports an error in an imported file in that file. It used
+  to report it in the importing file too, at that file's line numbers.
+- `s[i]` of a string variable is a one-character string, for a literal,
+  negative, or runtime index. It used to read a number, which fails in
+  Minecraft.
+- A call can pass a list or map literal, as in `total([1, 2])`, and a
+  character of a string, as in `show(word[1])`. The literal used to fail to
+  compile, and the character was passed as a number.
+- A function can iterate a list parameter with `for`, read it in an
+  assignment such as `first = values[0]`, and assign it a list or map. These
+  used to be errors.
+- A string or list variable stays in storage when it is assigned a copy of
+  itself (`name = name`), a character of itself (`s = s[0]`), or a parameter.
+  It used to turn into a score.
+- A module variable assigned a copy of a string or list variable, or a
+  character of a string, lives in storage. It used to become a score.
+- The target of a `for` loop over a list copies into a number variable as a
+  number, as in `last = value`. The copy used to go to storage, where the
+  variable's score never saw it, and a new variable assigned from the target
+  couldn't be used in arithmetic.
+- A comma inside brackets of an assignment target, as in
+  `items[pick(0, 1)] = 9`, no longer reads as tuple unpacking.
+- `cobble check` no longer reports a type mismatch when a function's local or
+  parameter has the name of a module variable of another type.
+- A comparison reads a variable on its left before a call on its right runs,
+  as in Python. In `if level > raise_level():`, a `raise_level` that changed
+  `level` used to change the result.
+- A function with parameters keeps its arguments across a call to a function
+  without parameters. When that function called one with parameters, the
+  caller's later reads of its own parameters got the other call's arguments.
+- A number or a negation as a condition, such as `if 3:` or `if -x:`,
+  compiles. Both used to be errors.
 - A function parameter hides a module variable or constant with the same
   name. Conditions and arithmetic used to read the module variable while
   `{name}` read the argument.
@@ -139,6 +208,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Upgrading page, and the cookbooks are folded into the chapters they cover.
   The hand-written Rust API reference is replaced by
   [docs.rs](https://docs.rs/cobble-lang).
+- A Calling Convention reference describes where locals, arguments, return
+  values, and recursion frames live in the generated pack.
 
 ## [0.10.0] - 2026-10-22
 

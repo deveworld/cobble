@@ -120,7 +120,7 @@ def check():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "check");
     assert!(
-        content.contains("execute if score x cobble.vars matches 4.. run say big"),
+        content.contains("execute if score #check.x cobble.vars matches 4.. run say big"),
         "{content}"
     );
 }
@@ -275,7 +275,7 @@ def check():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "check");
     assert!(
-        content.contains("execute as @a if score x cobble.vars matches 6.. run say big"),
+        content.contains("execute as @a if score #check.x cobble.vars matches 6.. run say big"),
         "{content}"
     );
 }
@@ -297,9 +297,9 @@ def check():
     );
     assert!(
         content.contains(
-            "if score x cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"
+            "if score #check.x cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"
         ) && content.contains(
-            "if score x cobble.vars matches 2 run scoreboard players set @s cobble.vars 1"
+            "if score #check.x cobble.vars matches 2 run scoreboard players set @s cobble.vars 1"
         ),
         "{content}"
     );

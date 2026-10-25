@@ -1,11 +1,13 @@
 use crate::ast::{BinaryOp, CobbleType, Expression, UnaryOp};
+use crate::transpiler::calls::ArgumentStaging;
 use crate::transpiler::data_pack::DataPack;
-use crate::transpiler::storage_paths::StoragePathOps;
+use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::symbols::{FunctionTable, Symbols};
 use crate::transpiler::{
-    escape_quoted, FunctionReturnKind, GeneratedCommandKind, SourceLocation, StoragePathPlan,
-    TranspileError, MAX_POWER_EXPONENT,
+    escape_quoted, record_warning, score_value_warning, FunctionReturnKind, GeneratedCommandKind,
+    SourceLocation, StoragePathPlan, TranspileError, TranspileWarning, MAX_POWER_EXPONENT,
 };
+use std::cell::RefCell;
 
 /// Lowers an expression into commands that compute it into a score.
 pub struct ExpressionEvaluator<'a> {
@@ -15,12 +17,19 @@ pub struct ExpressionEvaluator<'a> {
     pub(in crate::transpiler) current_params: &'a [String],
     pub(in crate::transpiler) temp_counter: &'a mut u32,
     pub(in crate::transpiler) source: Option<SourceLocation>,
-    /// Name of the user function whose body is currently being lowered, for
-    /// rejecting recursive calls at the call site.
-    pub(in crate::transpiler) current_function_name: Option<&'a str>,
+    /// Whether the function being lowered is recursive, so its calls stage
+    /// arguments on the call stack.
+    pub(in crate::transpiler) caller_recursive: bool,
+    pub(in crate::transpiler) warnings: &'a RefCell<Vec<TranspileWarning>>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
+    fn warn_score_value(&self, value: f64) {
+        if let Some(warning) = score_value_warning(value, self.source.clone()) {
+            record_warning(self.warnings, warning);
+        }
+    }
+
     fn expression_path(expr: &Expression) -> Option<String> {
         match expr {
             Expression::Identifier(name) => Some(name.clone()),
@@ -48,7 +57,7 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    fn next_temp_id(&mut self) -> u32 {
+    pub(in crate::transpiler) fn next_temp_id(&mut self) -> u32 {
         let id = *self.temp_counter;
         *self.temp_counter += 1;
         id
@@ -294,8 +303,6 @@ impl<'a> ExpressionEvaluator<'a> {
         target: &str,
         target_obj: &str,
     ) -> Result<Vec<String>, TranspileError> {
-        self.functions
-            .record_call(self.current_function_name, func_name)?;
         let Some(param_names) = self.functions.params.get(func_name).cloned() else {
             return Err(format!(
                 "Undefined function `{}` in expression. Define it before using its return value.",
@@ -315,23 +322,32 @@ impl<'a> ExpressionEvaluator<'a> {
         }
 
         let namespace = self.data_pack.namespace.clone();
+        let plain_call = format!(
+            "execute store result score {} {} run function {}:{}",
+            target, target_obj, namespace, func_name
+        );
+        if param_names.is_empty() && self.current_params.is_empty() {
+            return Ok(vec![plain_call]);
+        }
+        let staging = if self.caller_recursive {
+            ArgumentStaging::Stack
+        } else {
+            ArgumentStaging::Site(self.next_temp_id())
+        };
         if param_names.is_empty() {
-            return Ok(vec![format!(
-                "execute store result score {} {} run function {}:{}",
-                target, target_obj, namespace, func_name
-            )]);
+            // The callee may call functions with parameters, which replace
+            // `args`; see `Transpiler::preserving_args`.
+            return Ok(staging.preserve(&namespace, plain_call));
         }
 
-        let id = self.next_temp_id();
         let mut argument_commands = Vec::new();
         for (param_name, arg) in param_names.iter().zip(args.iter()) {
-            let target_path = format!("{}.{}", call_args_path(id), param_name);
+            let target_path = staging.argument_path(param_name);
             argument_commands
                 .extend(self.function_argument_to_storage_commands(&target_path, arg)?);
         }
-        Ok(staged_call_commands(
+        Ok(staging.wrap(
             &namespace,
-            id,
             !self.current_params.is_empty(),
             argument_commands,
             format!(
@@ -401,6 +417,13 @@ impl<'a> ExpressionEvaluator<'a> {
                     namespace, target_path, name, objective
                 )])
             }
+            Expression::Array(_) | Expression::Map(_) => {
+                self.storage_value_commands(target_path, arg)
+            }
+            Expression::Subscript(base, index) if self.string_variable_path(base).is_some() => {
+                let base_path = self.string_variable_path(base).unwrap_or_default();
+                self.string_char_commands(target_path, &base_path, index)
+            }
             _ => {
                 let id = self.next_temp_id();
                 let temp_score = format!("#arg_temp_{}", id);
@@ -446,7 +469,10 @@ impl<'a> ExpressionEvaluator<'a> {
         }
 
         match expr {
-            Expression::Number(n) => Ok(Self::number_to_target(*n, target, &target_obj)),
+            Expression::Number(n) => {
+                self.warn_score_value(*n);
+                Ok(Self::number_to_target(*n, target, &target_obj))
+            }
             Expression::Identifier(var) => self.identifier_to_target(var, target, &target_obj),
             Expression::Call(func, args) => self.call_to_target(func, args, target, &target_obj),
             // Array/map access `base[index]` and attribute access `obj.attr`
@@ -478,13 +504,6 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     fn number_to_target(n: f64, target: &str, target_obj: &str) -> Vec<String> {
-        if n.fract() != 0.0 {
-            eprintln!(
-                "⚠️  Warning: Float value {} will lose precision.\n\
-                Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                n, n as i32
-            );
-        }
         vec![format!(
             "scoreboard players set {} {} {}",
             target, target_obj, n as i32
@@ -716,13 +735,7 @@ impl<'a> ExpressionEvaluator<'a> {
         // Now apply the operation with the right side
         match right {
             Expression::Number(n) => {
-                if n.fract() != 0.0 {
-                    eprintln!(
-                        "⚠️  Warning: Float value {} in expression will lose precision.\n\
-                        Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                        n, *n as i32
-                    );
-                }
+                self.warn_score_value(*n);
                 let value = *n as i32;
                 // Check for division and modulo by zero at compile time
                 match op {
@@ -755,19 +768,6 @@ impl<'a> ExpressionEvaluator<'a> {
                 // evaluations cannot clobber each other's intermediate results.
                 let right_temp = format!("#expr_temp_{}", self.next_temp_id());
                 commands.extend(self.evaluate_expression_to_target(right, &right_temp)?);
-                match op {
-                    BinaryOp::Div => eprintln!(
-                        "⚠️  Warning: Runtime division by expression result.\n\
-                        If the expression evaluates to 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
-                        Consider validating the divisor before division."
-                    ),
-                    BinaryOp::Mod => eprintln!(
-                        "⚠️  Warning: Runtime modulo by expression result.\n\
-                        If the expression evaluates to 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
-                        Consider validating the divisor before modulo."
-                    ),
-                    _ => {}
-                }
                 self.apply_score_operand(
                     &mut commands,
                     op,
@@ -856,21 +856,6 @@ impl<'a> ExpressionEvaluator<'a> {
             return self.apply_score_operand(commands, op, &scratch, "temp", target, target_obj);
         }
         let var_obj = self.target_objective(var).to_string();
-        match op {
-            BinaryOp::Div => eprintln!(
-                "⚠️  Warning: Runtime division by variable '{}'.\n\
-                If '{}' is 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
-                Consider adding a check: if {} != 0",
-                var, var, var
-            ),
-            BinaryOp::Mod => eprintln!(
-                "⚠️  Warning: Runtime modulo by variable '{}'.\n\
-                If '{}' is 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
-                Consider adding a check: if {} != 0",
-                var, var, var
-            ),
-            _ => {}
-        }
         self.apply_score_operand(commands, op, var, &var_obj, target, target_obj)
     }
 
@@ -1020,62 +1005,6 @@ impl<'a> ExpressionEvaluator<'a> {
             ),
         }
     }
-}
-
-/// Storage path that holds the arguments of call `id` while they are built.
-pub(in crate::transpiler) fn call_args_path(id: u32) -> String {
-    format!("_call_args_{}", id)
-}
-
-/// The commands around a call to a function with parameters. The arguments
-/// are built under [`call_args_path`] by `argument_commands`, then copied to
-/// `args` for `call`. A caller that has parameters of its own saves its
-/// `args` first and gets them back after the call.
-pub(in crate::transpiler) fn staged_call_commands(
-    namespace: &str,
-    id: u32,
-    preserve_caller_args: bool,
-    argument_commands: Vec<String>,
-    call: String,
-) -> Vec<String> {
-    let call_path = call_args_path(id);
-    let caller_path = format!("_caller_args_{}", id);
-    let mut commands = Vec::new();
-    if preserve_caller_args {
-        commands.push(format!(
-            "data remove storage {}:global {}",
-            namespace, caller_path
-        ));
-        commands.push(format!(
-            "data modify storage {}:global {} set from storage {}:global args",
-            namespace, caller_path, namespace
-        ));
-    }
-    commands.push(format!(
-        "data remove storage {}:global {}",
-        namespace, call_path
-    ));
-    commands.extend(argument_commands);
-    commands.push(format!(
-        "data modify storage {}:global args set from storage {}:global {}",
-        namespace, namespace, call_path
-    ));
-    commands.push(call);
-    if preserve_caller_args {
-        commands.push(format!(
-            "data modify storage {}:global args set from storage {}:global {}",
-            namespace, namespace, caller_path
-        ));
-        commands.push(format!(
-            "data remove storage {}:global {}",
-            namespace, caller_path
-        ));
-    }
-    commands.push(format!(
-        "data remove storage {}:global {}",
-        namespace, call_path
-    ));
-    commands
 }
 
 fn contains_call(expr: &Expression) -> bool {

@@ -50,8 +50,27 @@ def countdown(n):
         n = n - 1
 ```
 
-A parameter can hold a number or a string. A parameter can't also be declared
-`global`.
+A parameter can hold a number, a string, a list, or a map. An argument is
+copied into the call, so a function that changes a list it received leaves the
+caller's list as it was, where Python would change it:
+
+```python
+def total(values):
+    result = 0
+    for value in values:
+        result += value
+    return result
+
+def main():
+    pairs = [3, 4]
+    a = total(pairs)       # 7
+    b = total([1, 2, 3])   # 6
+```
+
+Cobble doesn't know a parameter's type, so it indexes and iterates a parameter
+as a list. Copied into a variable that holds a string, list, or map, a
+parameter keeps that type; copied into a new variable, it becomes a number. A
+parameter can't also be declared `global`.
 
 ## Calling Functions
 
@@ -79,11 +98,19 @@ conditions such as `if ready():` or `while should_continue():`. Imported
 functions have the same return metadata after their module is processed. Use
 storage or explicit output variables for non-integer data.
 
-**Recursion is not supported.** A function may not call itself, directly or
-through a cycle of other functions. Recursive calls are rejected at compile
-time with an error such as
-`Recursive call to 'fact' is not supported. Rewrite the recursion as a loop (while/for) instead.`
-Rewrite recursion as a `while` or `for` loop with explicit state.
+A function can call itself, directly or through other functions:
+
+```python
+def fact(n):
+    if n <= 1:
+        return 1
+    return n * fact(n - 1)
+```
+
+Each call has its own local variables and arguments, and the caller gets its
+values back when the call returns. All calls run in the same game tick. See
+[Recursion](../reference/calling-convention.md#recursion) for how a recursive
+function compiles and what it doesn't save.
 
 Parameterized functions can call other parameterized functions and forward their
 own parameters:

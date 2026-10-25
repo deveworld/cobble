@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expression, Statement};
+use crate::ast::{BinaryOp, Expression, Statement, UnaryOp};
 use crate::transpiler::condition_translator::{ConditionTranslator, TranslatedCondition};
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
 use crate::transpiler::{FunctionCapture, TranspileError, Transpiler};
@@ -66,9 +66,15 @@ impl Transpiler {
                     // first so side effects keep source order. Both sides are
                     // checked: `actual == expected` with two parameters must
                     // not leave the right one as an unset score name.
+                    // Python reads a variable on the left before a call on
+                    // the right runs, and the call may change it.
+                    let read_left_first = ExpressionEvaluator::calls_user_code(right)
+                        && matches!(&**left, Expression::Identifier(name)
+                            if self.symbols.scoreboard_variables.contains(name)
+                                || self.symbols.variable_objectives.contains_key(name));
                     let new_left = if let Some(folded) = self.fold_condition_operand(left) {
                         folded
-                    } else if self.condition_operand_needs_temp(left) {
+                    } else if self.condition_operand_needs_temp(left) || read_left_first {
                         self.lower_condition_value_to_temp(left)?
                     } else {
                         (**left).clone()
@@ -109,10 +115,16 @@ impl Transpiler {
                     }
                 }
             }
-            Expression::Unary(op, expr) => {
-                // Recursively preprocess the inner expression
+            Expression::Unary(UnaryOp::Not, expr) => {
                 let new_expr = self.preprocess_condition(expr)?;
-                Ok(Expression::Unary(op.clone(), Box::new(new_expr)))
+                Ok(Expression::Unary(UnaryOp::Not, Box::new(new_expr)))
+            }
+            // `-x` in condition position is a number, true when it is not 0.
+            Expression::Unary(..) => self.lower_condition_value_to_temp(condition),
+            // A number literal is true when it is not 0, like a variable.
+            Expression::Number(value) => {
+                self.data_pack.track_boolean_constants();
+                Ok(Expression::Boolean(*value as i32 != 0))
             }
             expr if self.condition_operand_needs_temp(expr) => {
                 self.lower_condition_value_to_temp(expr)

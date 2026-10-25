@@ -3,11 +3,12 @@ use crate::commands::output_safety::ensure_no_symlinks_from;
 use crate::config::CobbleConfig;
 use crate::diagnostics::{
     parse_source_files, python_compat_observed_constructs, python_compat_suggestion_for_kind,
-    python_compat_supported_constructs, FileSourceDiagnostics, ParsedSourceFile, SourceDiagnostic,
+    python_compat_supported_constructs, warning_diagnostics, FileSourceDiagnostics,
+    ParsedSourceFile, SourceDiagnostic,
 };
 use crate::error::report_file_source_diagnostics;
 use crate::pack_format::{PackFormat, SUPPORTED_PACK_FORMAT};
-use crate::transpiler::{Transpiler, TranspilerOptions};
+use crate::transpiler::{TranspileError, Transpiler, TranspilerOptions};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,7 @@ struct CheckReport {
     files: Vec<CheckFileReport>,
     diagnostics: Vec<CheckDiagnosticReport>,
     error_count: usize,
+    warning_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     experimental_symbols: Option<Vec<CheckSymbolReport>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,7 +206,14 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                 &config_dir,
             );
             let observed = observed_constructs_from_diagnostics(&file_diagnostics);
-            return run.fail(plugin_report, Vec::new(), &file_diagnostics, observed, true);
+            return run.fail(
+                plugin_report,
+                Vec::new(),
+                &file_diagnostics,
+                &[],
+                observed,
+                true,
+            );
         }
     };
 
@@ -216,7 +225,7 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
             .map(|file| (file.path.as_path(), file.source.as_str())),
         &config_dir,
     );
-    let semantic_diagnostics = semantic_check_diagnostics(
+    let SemanticCheck { errors, warnings } = semantic_check(
         &files_to_check,
         &parsed_files,
         config.as_ref(),
@@ -224,10 +233,10 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
         experimental_resource_pack,
     );
     let observed = observed_constructs_from_parsed(&parsed_files);
-    if !semantic_diagnostics.is_empty() {
-        return run.fail(plugin_report, files, &semantic_diagnostics, observed, false);
+    if !errors.is_empty() {
+        return run.fail(plugin_report, files, &errors, &warnings, observed, false);
     }
-    run.pass(plugin_report, files, &parsed_files, observed)
+    run.pass(plugin_report, files, &parsed_files, &warnings, observed)
 }
 
 /// Loads `cobble.toml` when there is one. Under `--json`, a config error is
@@ -296,6 +305,7 @@ impl CheckRun<'_> {
                 files: Vec::new(),
                 diagnostics: Vec::new(),
                 error_count: plugin_errors,
+                warning_count: 0,
                 experimental_symbols: self.options.symbols.then(Vec::new),
                 experimental_plugins: plugin_report,
                 experimental_python_compat: python_compat,
@@ -308,20 +318,19 @@ impl CheckRun<'_> {
         plugin_result(plugin_errors)
     }
 
-    /// Reports parse or semantic errors. `list_files` prints each failing
-    /// file first, as parse failures do.
+    /// Reports parse or semantic errors, and the warnings found before
+    /// them. `list_files` prints each failing file first, as parse failures
+    /// do.
     fn fail(
         &self,
         plugin_report: Option<CheckPluginReport>,
         files: Vec<CheckFileReport>,
         diagnostics: &[FileSourceDiagnostics],
+        warnings: &[FileSourceDiagnostics],
         observed_constructs: Vec<String>,
         list_files: bool,
     ) -> Result<(), String> {
-        let errors = diagnostics
-            .iter()
-            .map(|file| file.diagnostics.len())
-            .sum::<usize>();
+        let errors = diagnostic_count(diagnostics);
         let plugin_errors = plugin_error_count(plugin_report.as_ref());
         let python_compat = python_compat_report_from_diagnostics(
             self.experimental_python_compat,
@@ -336,8 +345,12 @@ impl CheckRun<'_> {
                 source: path_display(self.source_path),
                 files_checked: self.files_checked,
                 files,
-                diagnostics: diagnostic_reports(diagnostics, self.config_dir),
+                diagnostics: diagnostic_reports(
+                    diagnostics.iter().chain(warnings),
+                    self.config_dir,
+                ),
                 error_count: errors + plugin_errors,
+                warning_count: diagnostic_count(warnings),
                 experimental_symbols: symbol_reports_from_diagnostics(
                     diagnostics,
                     self.config_dir,
@@ -357,12 +370,14 @@ impl CheckRun<'_> {
                 }
             }
             report_file_source_diagnostics(diagnostics);
+            report_file_source_diagnostics(warnings);
             println!();
             println!(
                 "✗ {} error(s) found in {} file(s)",
                 errors,
                 diagnostics.len()
             );
+            print_warning_count_human(warnings);
             print_python_compat_report_human(python_compat.as_ref());
             print_plugin_report_human(plugin_report.as_ref());
         }
@@ -377,6 +392,7 @@ impl CheckRun<'_> {
         plugin_report: Option<CheckPluginReport>,
         files: Vec<CheckFileReport>,
         parsed_files: &[ParsedSourceFile],
+        warnings: &[FileSourceDiagnostics],
         observed_constructs: Vec<String>,
     ) -> Result<(), String> {
         let plugin_errors = plugin_error_count(plugin_report.as_ref());
@@ -389,8 +405,9 @@ impl CheckRun<'_> {
                 source: path_display(self.source_path),
                 files_checked: self.files_checked,
                 files,
-                diagnostics: Vec::new(),
+                diagnostics: diagnostic_reports(warnings, self.config_dir),
                 error_count: plugin_errors,
+                warning_count: diagnostic_count(warnings),
                 experimental_symbols: symbol_reports_from_parsed(
                     parsed_files,
                     self.config_dir,
@@ -406,12 +423,25 @@ impl CheckRun<'_> {
                     file.file, file.imports, file.functions, file.commands
                 );
             }
+            report_file_source_diagnostics(warnings);
             println!();
             println!("✓ All files passed validation!");
+            print_warning_count_human(warnings);
             print_python_compat_report_human(python_compat.as_ref());
             print_plugin_report_human(plugin_report.as_ref());
         }
         plugin_result(plugin_errors)
+    }
+}
+
+fn diagnostic_count(files: &[FileSourceDiagnostics]) -> usize {
+    files.iter().map(|file| file.diagnostics.len()).sum()
+}
+
+fn print_warning_count_human(warnings: &[FileSourceDiagnostics]) {
+    let count = diagnostic_count(warnings);
+    if count > 0 {
+        println!("{count} warning(s)");
     }
 }
 
@@ -448,19 +478,26 @@ fn print_config_error_json(
             formatted: format!("{file}:1:1: error[config]: {error}"),
         }],
         error_count: 1,
+        warning_count: 0,
         experimental_symbols: include_symbols.then(Vec::new),
         experimental_plugins: None,
         experimental_python_compat: None,
     })
 }
 
-fn semantic_check_diagnostics(
+/// The errors and warnings that compiling the checked files reports.
+struct SemanticCheck {
+    errors: Vec<FileSourceDiagnostics>,
+    warnings: Vec<FileSourceDiagnostics>,
+}
+
+fn semantic_check(
     files_to_check: &[PathBuf],
     parsed_files: &[ParsedSourceFile],
     config: Option<&CobbleConfig>,
     config_dir: &Path,
     experimental_resource_pack: bool,
-) -> Vec<FileSourceDiagnostics> {
+) -> SemanticCheck {
     let namespace = config
         .map(|config| config.project.namespace.clone())
         .unwrap_or_else(|| "cobble".to_string());
@@ -480,144 +517,76 @@ fn semantic_check_diagnostics(
         ..TranspilerOptions::new(namespace, output_dir)
     });
 
-    // Keep checking the remaining files after a failure so one run reveals
-    // every file's first semantic error. A file whose imports failed replays
-    // the same underlying error text, so an identical error is suppressed
-    // only when the current file (transitively) imports a file that already
-    // reported it; unrelated files with byte-identical errors are all
-    // reported, and file order stays deterministic.
-    let import_graph = check_import_graph(files_to_check, parsed_files);
-    let mut diagnostics = Vec::new();
-    let mut seen_errors: std::collections::HashMap<String, Vec<PathBuf>> =
-        std::collections::HashMap::new();
-    for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
-        transpiler.set_current_file_with_source_spans(path, &parsed.source, &parsed.spans);
-        let Err(mut error) = transpiler.transpile(&parsed.program) else {
-            continue;
-        };
-        let canonical_path = canonical_or_original(path);
-        // A statement location from an imported file would point at the
-        // wrong line of this one.
-        if error
-            .location
-            .as_ref()
-            .is_some_and(|location| location.file != canonical_path)
-        {
-            error.location = None;
-        }
-        if let Some(reporters) = seen_errors.get(&error.message) {
-            if reporters
-                .iter()
-                .any(|reporter| import_graph_reaches(&import_graph, &canonical_path, reporter))
-            {
-                continue;
-            }
-        }
-        seen_errors
-            .entry(error.message.clone())
-            .or_default()
-            .push(canonical_path);
-        diagnostics.push(FileSourceDiagnostics::new(
-            path.clone(),
-            parsed.source.clone(),
-            vec![SourceDiagnostic::from_transpile_error(
-                &error,
-                &parsed.source,
-            )],
-        ));
-    }
-
-    diagnostics
-}
-
-/// Direct non-stdlib import edges (canonical importer path -> canonical
-/// imported `.cbl` paths) for every checked file, extended through imported
-/// files that are not themselves in the checked set so reachability stays
-/// transitive.
-fn check_import_graph(
-    files_to_check: &[PathBuf],
-    parsed_files: &[ParsedSourceFile],
-) -> std::collections::HashMap<PathBuf, Vec<PathBuf>> {
-    let mut graph = std::collections::HashMap::new();
-    let mut pending = Vec::new();
-
-    for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
-        let edges = parsed
-            .program
-            .imports
+    // The path to report for a file a location names, and its source.
+    let report_file = |file: &Path| {
+        files_to_check
             .iter()
-            .filter_map(|import| resolve_import_edge(path, &import.module))
-            .collect::<Vec<_>>();
-        pending.extend(edges.iter().cloned());
-        graph.insert(canonical_or_original(path), edges);
-    }
-
-    // Imported files outside the checked set still forward errors from their
-    // own imports, so follow their top-level import lines too.
-    while let Some(node) = pending.pop() {
-        if graph.contains_key(&node) {
-            continue;
-        }
-        let edges = scan_top_level_import_edges(&node);
-        pending.extend(edges.iter().cloned());
-        graph.insert(node, edges);
-    }
-
-    graph
-}
-
-fn resolve_import_edge(importer: &Path, module: &str) -> Option<PathBuf> {
-    if module == "stdlib" || !is_identifier(module) {
-        return None;
-    }
-    let dir = importer.parent().unwrap_or_else(|| Path::new("."));
-    Some(canonical_or_original(&dir.join(format!("{module}.cbl"))))
-}
-
-fn scan_top_level_import_edges(path: &Path) -> Vec<PathBuf> {
-    let Ok(source) = fs::read_to_string(path) else {
-        return Vec::new();
+            .zip(parsed_files)
+            .find(|(checked, _)| canonical_or_original(checked) == file)
+            .map(|(checked, parsed)| (checked.clone(), parsed.source.clone()))
+            .or_else(|| imported_file_source(file, config_dir))
     };
 
-    let mut edges = Vec::new();
-    for line in source.lines() {
-        if line.starts_with([' ', '\t']) {
+    // Keep checking the remaining files after a failure so one run reveals
+    // every file's first semantic error. A file that an earlier file imports
+    // was checked with it.
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
+        if transpiler.has_compiled(path) {
             continue;
         }
-        let line = line.trim_end();
-        if let Some(rest) = line.strip_prefix("import ") {
-            for module in rest.split(',') {
-                let module = module.split_whitespace().next().unwrap_or("");
-                edges.extend(resolve_import_edge(path, module));
-            }
-        } else if let Some(rest) = line.strip_prefix("from ") {
-            if let Some((module, _items)) = rest.split_once(" import ") {
-                edges.extend(resolve_import_edge(path, module.trim()));
-            }
+        transpiler.set_current_file_with_source_spans(path, &parsed.source, &parsed.spans);
+        let result = transpiler.transpile(&parsed.program);
+        warnings.extend(warning_diagnostics(
+            &transpiler.take_warnings(),
+            path,
+            &parsed.source,
+            report_file,
+        ));
+        if let Err(error) = result {
+            errors.push(transpile_error_report(error, path, parsed, report_file));
         }
     }
-    edges
+
+    SemanticCheck { errors, warnings }
 }
 
-fn import_graph_reaches(
-    graph: &std::collections::HashMap<PathBuf, Vec<PathBuf>>,
-    from: &Path,
-    to: &Path,
-) -> bool {
-    let mut visited = std::collections::HashSet::new();
-    let mut stack = graph.get(from).cloned().unwrap_or_default();
-    while let Some(node) = stack.pop() {
-        if node == to {
-            return true;
+/// Reports a failed transpile of `path`. An error raised in a file that
+/// `path` imports is reported in that file.
+fn transpile_error_report(
+    mut error: TranspileError,
+    path: &Path,
+    parsed: &ParsedSourceFile,
+    report_file: impl Fn(&Path) -> Option<(PathBuf, String)>,
+) -> FileSourceDiagnostics {
+    let error_file: Option<PathBuf> = error
+        .location
+        .as_ref()
+        .map(|location| location.file.clone())
+        .filter(|file| *file != canonical_or_original(path));
+    let (report_path, source) = match error_file.map(|file| report_file(&file)) {
+        None => (path.to_path_buf(), parsed.source.clone()),
+        Some(Some(report)) => report,
+        Some(None) => {
+            // The location would point into a file that can't be shown.
+            error.location = None;
+            (path.to_path_buf(), parsed.source.clone())
         }
-        if !visited.insert(node.clone()) {
-            continue;
-        }
-        if let Some(edges) = graph.get(&node) {
-            stack.extend(edges.iter().cloned());
-        }
-    }
-    false
+    };
+    let diagnostic = SourceDiagnostic::from_transpile_error(&error, &source);
+    FileSourceDiagnostics::new(report_path, source, vec![diagnostic])
+}
+
+/// The path to report and the source of an imported file outside the
+/// checked files. The path is under `config_dir` when the file is.
+fn imported_file_source(file: &Path, config_dir: &Path) -> Option<(PathBuf, String)> {
+    let source = fs::read_to_string(file).ok()?;
+    let path = file
+        .strip_prefix(canonical_or_original(config_dir))
+        .map(|relative| config_dir.join(relative))
+        .unwrap_or_else(|_| file.to_path_buf());
+    Some((path, source))
 }
 
 fn canonical_or_original(path: &Path) -> PathBuf {
@@ -1344,12 +1313,12 @@ fn check_file_reports(
         .collect()
 }
 
-fn diagnostic_reports(
-    file_diagnostics: &[FileSourceDiagnostics],
+fn diagnostic_reports<'a>(
+    file_diagnostics: impl IntoIterator<Item = &'a FileSourceDiagnostics>,
     config_dir: &Path,
 ) -> Vec<CheckDiagnosticReport> {
     file_diagnostics
-        .iter()
+        .into_iter()
         .flat_map(|file| {
             let relative_path = file.path.strip_prefix(config_dir).unwrap_or(&file.path);
             let file_name = path_display(relative_path);

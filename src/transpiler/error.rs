@@ -110,6 +110,20 @@ impl TranspileErrorKind {
     }
 }
 
+/// A problem the transpiler reports without failing the build, such as a
+/// local variable with the name of a module variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranspileWarning {
+    /// The diagnostic kind, reported as `warning[<kind>]`.
+    pub kind: &'static str,
+    pub message: String,
+    pub help: Option<String>,
+    /// The statement the warning is about, when the transpiler knew its
+    /// location. As for [`TranspileError::location`], the file can be an
+    /// imported file.
+    pub location: Option<SourceLocation>,
+}
+
 /// A transpiler error: a diagnostic kind, the user-visible message, and the
 /// source statement being lowered when it was raised.
 ///

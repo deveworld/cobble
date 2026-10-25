@@ -40,6 +40,23 @@ Error: missing-block-colon: Block headers must end with `:`
 `cobble check --json` writes the same diagnostics to stdout as JSON with
 `file`, `line`, `column`, `severity`, `kind`, `message`, `help`, and a
 `formatted` text version. The browser compiler shows the same fields.
+A diagnostic in an imported file is reported in that file.
+
+## Warnings
+
+A warning reports code that compiles but may not do what it says. Warnings
+don't stop `cobble build` or fail `cobble check`. `cobble build` prints them,
+`cobble check` reports them with severity `warning`, and the browser compiler
+lists them under Diagnostics.
+
+| Kind | Reported when |
+| --- | --- |
+| `local-shadows-module-variable` | a function assigns the name of a module variable without `global`, so it changes a local variable (see [Calling Convention](calling-convention.md#local-and-module-variables)) |
+| `unroll-large-expansion` | a `for` loop expands to more than 256 copies of its body |
+| `infinite-loop` | a `while True` loop has no `return` in its body |
+| `fractional-number` | a number with a fractional part is stored in a score, which keeps only the integer part |
+| `number-out-of-range` | a number outside the 32-bit range is stored in a score, which clamps it |
+| `selector-redefined` | a selector alias is defined again, which replaces the earlier definition |
 
 ## Kinds Listed Elsewhere
 

@@ -44,14 +44,17 @@ def read_level():
     sim.set_score("alex", "lvl", 2);
     let body = sim.function_text("read_level");
     assert!(!body.contains(" temp"), "temp should be mapped:\n{body}");
-    assert!(body.contains("store result score level sim.vars"), "{body}");
     assert!(
-        body.contains("scoreboard players add level sim.vars 10"),
+        body.contains("store result score #read_level.level sim.vars"),
+        "{body}"
+    );
+    assert!(
+        body.contains("scoreboard players add #read_level.level sim.vars 10"),
         "{body}"
     );
 
     sim.call_as("read_level", "alex");
-    assert_eq!(sim.var("level"), 12);
+    assert_eq!(sim.var("#read_level.level"), 12);
     assert_eq!(sim.log, vec!["alex: twelve"]);
 }
 

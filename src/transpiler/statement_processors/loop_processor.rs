@@ -1,8 +1,8 @@
 use crate::ast::*;
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
-    FunctionCapture, GeneratedCommand, GeneratedCommandKind, SourceLocation, StoragePathPlan,
-    TranspileError, TranspileErrorKind, Transpiler,
+    FunctionCapture, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, SourceLocation,
+    StoragePathPlan, TranspileError, TranspileErrorKind, Transpiler,
 };
 use std::collections::HashMap;
 
@@ -197,10 +197,14 @@ impl Transpiler {
             ));
         }
         if values.len() > UNROLL_WARNING_THRESHOLD {
-            eprintln!(
-                "warning: unroll-large-expansion: for {} expands to {} iterations",
-                for_loop.target,
-                values.len()
+            self.warn(
+                "unroll-large-expansion",
+                format!(
+                    "`for {}` expands to {} copies of its body.",
+                    for_loop.target,
+                    values.len()
+                ),
+                Some("A `range` whose bounds are known only when the pack runs compiles to a runtime loop instead."),
             );
         }
 
@@ -482,8 +486,10 @@ impl Transpiler {
 
     fn runtime_storage_list_candidate(&self, iter: &Expression) -> bool {
         match iter {
+            // A parameter is iterated as a list.
             Expression::Identifier(name) => {
                 self.symbols.variable_storage_paths.contains_key(name)
+                    || self.current_context.is_param(name)
                     || matches!(
                         self.symbols.variable_types.get(name),
                         Some(CobbleType::List)
@@ -513,6 +519,7 @@ impl Transpiler {
                 self.symbols.variable_storage_paths
                     .get(name)
                     .cloned()
+                    .or_else(|| self.current_context.is_param(name).then(|| format!("args.{name}")))
                     .map(|path| RuntimeStorageListPlan {
                         path: StoragePathPlan::static_path(path),
                         setup_commands: Vec::new(),
@@ -543,12 +550,7 @@ impl Transpiler {
                     cleanup_commands: Vec::new(),
                 })
             }
-            Expression::Array(items) => {
-                if items.is_empty() {
-                    return Err(
-                        TranspileError::new(TranspileErrorKind::RuntimeForBadRange, "runtime-for-bad-range: runtime literal arrays cannot be empty."),
-                    );
-                }
+            Expression::Array(_) => {
                 let id = self.next_temp_id();
                 let path = format!("_cobble_for_iter_{}", id);
                 let setup_commands = self.storage_value_commands(&path, iter)?;
@@ -597,7 +599,7 @@ impl Transpiler {
         target: &str,
     ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.data_pack.namespace.clone();
-        let target_path = format!("vars.{}", target);
+        let target_path = self.variable_storage_path(target);
         self.dynamic_storage_command(item_plan, GeneratedCommandKind::ControlFlow, |path| {
             vec![
                 format!("data remove storage {}:global {}", namespace, target_path),
@@ -920,7 +922,7 @@ impl Transpiler {
         self.symbols.scoreboard_variables.insert(name.to_string());
         self.symbols
             .variable_storage_paths
-            .insert(name.to_string(), format!("vars.{}", name));
+            .insert(name.to_string(), self.variable_storage_path(name));
         self.symbols.compile_time_constants.remove(name);
         self.symbols
             .variable_types
@@ -984,12 +986,7 @@ impl Transpiler {
         &self,
         items: &[Expression],
     ) -> Result<Vec<UnrollValue>, TranspileError> {
-        if items.is_empty() {
-            return Err(TranspileError::new(
-                TranspileErrorKind::UnrollBadRange,
-                "unroll-bad-range: literal arrays used for unrolling cannot be empty.",
-            ));
-        }
+        // An empty array runs no passes, like an empty range.
         if items.len() > UNROLL_LIMIT {
             return Err(TranspileError::new(
                 TranspileErrorKind::UnrollLimit,
@@ -1044,12 +1041,6 @@ impl Transpiler {
         let (start, stop, step) = match args.len() {
             1 => {
                 let count = self.integer_unroll_expr(&args[0], "range count")?;
-                if count < 0 {
-                    return Err(TranspileError::new(
-                        TranspileErrorKind::UnrollBadRange,
-                        format!("unroll-bad-range: range({count}) cannot expand a negative count."),
-                    ));
-                }
                 let step = by_step.unwrap_or(1);
                 if step == 0 {
                     return Err(TranspileError::new(
@@ -1090,19 +1081,9 @@ impl Transpiler {
             _ => unreachable!(),
         };
 
-        if args.len() != 1 {
-            if step > 0 && start > stop {
-                return Err(TranspileError::new(TranspileErrorKind::UnrollBadRange, format!(
-                    "unroll-bad-range: range start {start} is greater than stop {stop} with a positive step."
-                )));
-            }
-            if step < 0 && start < stop {
-                return Err(TranspileError::new(TranspileErrorKind::UnrollBadRange, format!(
-                    "unroll-bad-range: range start {start} is less than stop {stop} with a negative step."
-                )));
-            }
-        }
-
+        // A range that is empty, such as `range(3, 1)`, runs no passes, as in
+        // Python. It often comes from an outer loop: `range(i, 2)` inside
+        // `for i in range(4)`.
         range_unroll_values(start, stop, step)
     }
 
@@ -1199,16 +1180,17 @@ impl Transpiler {
         &mut self,
         while_loop: &WhileLoop,
     ) -> Result<(), TranspileError> {
-        // WARNING: While loops execute all iterations in a single tick
-        // This can cause server lag with large iteration counts (>100)
-        // Future improvement: Add schedule command support for tick-based iteration
-
-        // Check for obvious infinite loops
-        if let Expression::Boolean(true) = &while_loop.condition {
-            eprintln!(
-                "⚠️  Warning: Infinite loop detected (while True). \n\
-                    This will run forever and freeze Minecraft!\n\
-                    Consider using a condition that can become false."
+        // All passes of a loop run in the same tick.
+        if matches!(while_loop.condition, Expression::Boolean(true))
+            && matches!(
+                Self::analyze_function_return_kind(&while_loop.body),
+                FunctionReturnKind::None
+            )
+        {
+            self.warn(
+                "infinite-loop",
+                "`while True` has no `return` in its body, so it runs until the game stops it at the command limit, which Cobble raises to 1,000,000,000 commands.",
+                Some("Use a condition that becomes false, or `return` from the loop."),
             );
         }
 

@@ -686,6 +686,9 @@ function StatusStrip({
     );
   }
 
+  const warningCount = result.diagnostic_details.filter(
+    (diagnostic) => diagnostic.severity === "warning"
+  ).length;
   return (
     <div className="status-strip">
       <span>{result.summary.function_count} functions</span>
@@ -693,6 +696,11 @@ function StatusStrip({
       <span>{result.summary.resource_count} resources</span>
       <span>{result.summary.file_count} files</span>
       <span>pack {result.summary.pack_format}</span>
+      {warningCount ? (
+        <span className="status-warnings">
+          {warningCount} warning{warningCount === 1 ? "" : "s"}
+        </span>
+      ) : null}
       {result.experimental_python_compat ? <span>python compat</span> : null}
     </div>
   );

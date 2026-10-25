@@ -213,6 +213,8 @@ last item.
 **Unrolling Support:**
 - `range(n)` iterates `0..n`.
 - `range(start, stop, step)` uses Python-style half-open bounds.
+- An empty range, such as `range(3, 1)` or `range(-2)`, and an empty array
+  `[]` run no passes, as in Python.
 - `for i in range(n) by step:` remains supported for compatibility.
 - Negative `by` over `range(n)` starts at `n - 1` and counts down.
 - Runtime `range(...)` supports dynamic count/start/stop/step expressions.
@@ -229,7 +231,8 @@ last item.
 - Runtime list `by` steps support positive, negative, and dynamic integer
   expressions. A statically known step of `0` is rejected; a dynamic step that
   evaluates to `0` executes zero iterations.
-- A single loop may expand up to 1024 iterations. Expansions above 256 emit a warning.
+- A single loop may expand up to 1024 iterations. Expansions above 256 report
+  an `unroll-large-expansion` warning.
 - Nested unrolling is capped at 65,536 aggregate iterations and one outer
   unroll may emit at most 65,536 generated commands.
 
@@ -242,9 +245,10 @@ statement:
 | `unroll-large-expansion` | warning | a loop expands past 256 iterations |
 | `unroll-non-literal` | error | the iterable is none of: a literal array, a literal or runtime `range`, a runtime literal array, or a storage-backed list |
 | `unroll-bad-step` | error | a `range` step is zero or non-integer |
-| `unroll-bad-range` | error | a `range` stops below its start with a positive step, or the array is empty |
+| `unroll-bad-range` | error | a `range` value is outside the 32-bit integer range |
 | `runtime-for-unsupported` | error | a runtime `range` has a non-integer bound or step, or a runtime list loop iterates something that is not a list |
 | `runtime-for-bad-step` | error | a static runtime step is zero, or a step is non-integer |
+| `runtime-for-bad-range` | error | a static runtime step is outside the 32-bit integer range |
 
 ## While Loops
 
@@ -268,7 +272,8 @@ functions it calls (`max_command_sequence_length`, 65,536 by default). A pack
 with a runtime loop, meaning a `while` loop, a `for` loop that Cobble does
 not expand at compile time, or a `^` power with a runtime exponent, raises the
 cap to 1,000,000,000 in its load function. The gamerule applies to the whole world. Packs without runtime loops
-leave it unchanged.
+leave it unchanged. A `while True` loop with no `return` in its body reports an
+`infinite-loop` [warning](../reference/diagnostics.md#warnings).
 
 ## Match Statements
 

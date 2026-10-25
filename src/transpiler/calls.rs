@@ -1,6 +1,6 @@
 use crate::ast::{Assignment, Expression};
 use crate::stdlib::EventType;
-use crate::transpiler::expression_evaluator::{call_args_path, staged_call_commands};
+use crate::transpiler::storage_paths::StorageValueOps;
 use crate::transpiler::{escape_quoted, TranspileError, Transpiler};
 
 impl Transpiler {
@@ -9,12 +9,12 @@ impl Transpiler {
         func_name: &str,
         args: &[Expression],
     ) -> Result<(), TranspileError> {
-        self.record_user_function_call(func_name)?;
         let namespace = self.data_pack.namespace.clone();
         let plain_call = format!("function {}:{}", namespace, func_name);
 
         let Some(param_names) = self.functions.params.get(func_name).cloned() else {
-            self.extend_current_function(vec![plain_call]);
+            let commands = self.preserving_args(plain_call);
+            self.extend_current_function(commands);
             return Ok(());
         };
         // A function without parameters takes no arguments either.
@@ -30,14 +30,19 @@ impl Transpiler {
             .into());
         }
         if param_names.is_empty() {
-            self.extend_current_function(vec![plain_call]);
+            let commands = self.preserving_args(plain_call);
+            self.extend_current_function(commands);
             return Ok(());
         }
 
-        let id = self.next_temp_id();
+        let staging = if self.in_recursive_function() {
+            ArgumentStaging::Stack
+        } else {
+            ArgumentStaging::Site(self.next_temp_id())
+        };
         let mut argument_commands = Vec::new();
         for (param_name, arg) in param_names.iter().zip(args) {
-            let target_path = format!("{}.{}", call_args_path(id), param_name);
+            let target_path = staging.argument_path(param_name);
             argument_commands.extend(self.call_argument_commands(
                 func_name,
                 param_name,
@@ -45,9 +50,8 @@ impl Transpiler {
                 arg,
             )?);
         }
-        let commands = staged_call_commands(
+        let commands = staging.wrap(
             &namespace,
-            id,
             !self.current_context.params.is_empty(),
             argument_commands,
             format!(
@@ -59,7 +63,22 @@ impl Transpiler {
         Ok(())
     }
 
-    fn extend_current_function(&mut self, commands: Vec<String>) {
+    /// A call to a function without parameters. The callee can still call
+    /// functions that have some, which replaces `args`, so a caller with
+    /// parameters keeps its `args` around the call.
+    fn preserving_args(&mut self, call: String) -> Vec<String> {
+        if self.current_context.params.is_empty() {
+            return vec![call];
+        }
+        let staging = if self.in_recursive_function() {
+            ArgumentStaging::Stack
+        } else {
+            ArgumentStaging::Site(self.next_temp_id())
+        };
+        staging.preserve(&self.data_pack.namespace, call)
+    }
+
+    pub(in crate::transpiler) fn extend_current_function(&mut self, commands: Vec<String>) {
         if let Some(ref mut function_commands) = self.current_function {
             function_commands.extend(commands);
         }
@@ -136,6 +155,13 @@ impl Transpiler {
                 var, func_name, var
             )
             .into()),
+            Expression::Array(_) | Expression::Map(_) => {
+                self.storage_value_commands(target_path, arg)
+            }
+            Expression::Subscript(base, index) if self.string_variable_path(base).is_some() => {
+                let base_path = self.string_variable_path(base).unwrap_or_default();
+                self.string_char_commands(target_path, &base_path, index)
+            }
             Expression::Binary(..)
             | Expression::Unary(..)
             | Expression::Call(..)
@@ -167,11 +193,9 @@ impl Transpiler {
                  - Literal numbers: func(42)\n\
                  - Literal strings: func(\"text\")\n\
                  - Boolean values: func(True), func(False)\n\
+                 - Lists and maps: func([1, 2]), func({{\"a\": 1}})\n\
                  - Variables: func(my_var)\n\
-                 - Arithmetic expressions: func(x + 10)\n\
-                 \n\
-                 Not supported:\n\
-                 - Arrays/maps as direct macro arguments",
+                 - Arithmetic expressions: func(x + 10)",
                 param_name, arg
             )
             .into()),
@@ -225,5 +249,130 @@ impl Transpiler {
             .add_event_listener(event_type, handler_name);
 
         Ok(())
+    }
+}
+
+/// Where a call's arguments are built before they become `args`. See
+/// `docs/src/reference/calling-convention.md`.
+pub(in crate::transpiler) enum ArgumentStaging {
+    /// A path of the call site's own, `_call_args_<id>`. A caller with
+    /// parameters keeps its `args` in `_caller_args_<id>` during the call.
+    Site(u32),
+    /// The top of `call_stack`. Calls inside a recursive function use it,
+    /// since one call site can then be running more than once at a time.
+    Stack,
+}
+
+impl ArgumentStaging {
+    /// The storage path one argument is written to.
+    pub(in crate::transpiler) fn argument_path(&self, param: &str) -> String {
+        match self {
+            Self::Site(id) => format!("_call_args_{}.{}", id, param),
+            Self::Stack => format!("call_stack[-1].{}", param),
+        }
+    }
+
+    /// The commands around a call to a function without parameters from a
+    /// caller with parameters: the caller's `args` are kept and restored.
+    pub(in crate::transpiler) fn preserve(&self, namespace: &str, call: String) -> Vec<String> {
+        let storage = |path: &str| format!("{}:global {}", namespace, path);
+        match self {
+            Self::Site(id) => {
+                let caller_path = format!("_caller_args_{}", id);
+                vec![
+                    format!("data remove storage {}", storage(&caller_path)),
+                    format!(
+                        "data modify storage {} set from storage {}",
+                        storage(&caller_path),
+                        storage("args")
+                    ),
+                    call,
+                    format!(
+                        "data modify storage {} set from storage {}",
+                        storage("args"),
+                        storage(&caller_path)
+                    ),
+                    format!("data remove storage {}", storage(&caller_path)),
+                ]
+            }
+            Self::Stack => vec![
+                format!(
+                    "data modify storage {} append from storage {}",
+                    storage("call_stack"),
+                    storage("args")
+                ),
+                call,
+                format!(
+                    "data modify storage {} set from storage {}",
+                    storage("args"),
+                    storage("call_stack[-1]")
+                ),
+                format!("data remove storage {}", storage("call_stack[-1]")),
+            ],
+        }
+    }
+
+    /// The commands around a call to a function with parameters:
+    /// `argument_commands` build the arguments, which are then copied to
+    /// `args` for `call`. A caller that has parameters of its own keeps its
+    /// `args` and gets them back after the call.
+    pub(in crate::transpiler) fn wrap(
+        &self,
+        namespace: &str,
+        preserve_caller_args: bool,
+        argument_commands: Vec<String>,
+        call: String,
+    ) -> Vec<String> {
+        let storage = |path: &str| format!("{}:global {}", namespace, path);
+        let copy = |to: &str, from: &str| {
+            format!(
+                "data modify storage {} set from storage {}",
+                storage(to),
+                storage(from)
+            )
+        };
+        let remove = |path: &str| format!("data remove storage {}", storage(path));
+        let mut commands = Vec::new();
+        match self {
+            Self::Site(id) => {
+                let call_path = format!("_call_args_{}", id);
+                let caller_path = format!("_caller_args_{}", id);
+                if preserve_caller_args {
+                    commands.push(remove(&caller_path));
+                    commands.push(copy(&caller_path, "args"));
+                }
+                commands.push(remove(&call_path));
+                commands.extend(argument_commands);
+                commands.push(copy("args", &call_path));
+                commands.push(call);
+                if preserve_caller_args {
+                    commands.push(copy("args", &caller_path));
+                    commands.push(remove(&caller_path));
+                }
+                commands.push(remove(&call_path));
+            }
+            Self::Stack => {
+                if preserve_caller_args {
+                    commands.push(format!(
+                        "data modify storage {} append from storage {}",
+                        storage("call_stack"),
+                        storage("args")
+                    ));
+                }
+                commands.push(format!(
+                    "data modify storage {} append value {{}}",
+                    storage("call_stack")
+                ));
+                commands.extend(argument_commands);
+                commands.push(copy("args", "call_stack[-1]"));
+                commands.push(remove("call_stack[-1]"));
+                commands.push(call);
+                if preserve_caller_args {
+                    commands.push(copy("args", "call_stack[-1]"));
+                    commands.push(remove("call_stack[-1]"));
+                }
+            }
+        }
+        commands
     }
 }

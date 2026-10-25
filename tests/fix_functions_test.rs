@@ -1,5 +1,4 @@
 //! Regression tests for user-function and statement-processor fixes:
-//! - recursion (direct and mutual) is rejected with a clear error
 //! - functions without `return` skip the return-flag prologue and
 //!   `_cobble_init`
 //! - a single multi-command statement in an `if` branch routes through a
@@ -45,55 +44,6 @@ fn read_function(output_dir: &Path, function_name: &str) -> String {
         .join(format!("{}.mcfunction", function_name));
     fs::read_to_string(&function_path)
         .unwrap_or_else(|e| panic!("cannot read {}: {}", function_path.display(), e))
-}
-
-#[test]
-fn direct_recursion_is_rejected() {
-    let error = compile_source(
-        r#"
-def g(n):
-    if n <= 0:
-        return 0
-    g(n - 1)
-    return n
-
-def main():
-    x = g(2)
-"#,
-    )
-    .unwrap_err();
-
-    assert!(
-        error.contains("Recursive call to 'g' is not supported"),
-        "unexpected error: {error}"
-    );
-    assert!(error.contains("Rewrite the recursion as a loop"));
-}
-
-#[test]
-fn mutual_recursion_cycle_is_rejected() {
-    let error = compile_source(
-        r#"
-def ping(n):
-    pong(n)
-
-def pong(n):
-    ping(n)
-
-def main():
-    ping(3)
-"#,
-    )
-    .unwrap_err();
-
-    assert!(
-        error.contains("Recursive function calls are not supported"),
-        "unexpected error: {error}"
-    );
-    assert!(
-        error.contains("ping -> pong -> ping") || error.contains("pong -> ping -> pong"),
-        "cycle path missing from error: {error}"
-    );
 }
 
 #[test]
@@ -163,7 +113,7 @@ def tick():
     let tick = read_function(&output_dir, "tick");
     let condition_lines = tick
         .lines()
-        .filter(|line| line.starts_with("execute if score x cobble.vars"))
+        .filter(|line| line.starts_with("execute if score #tick.x cobble.vars"))
         .count();
     assert_eq!(
         condition_lines, 1,
@@ -190,7 +140,7 @@ def tick():
         "helper must contain the branch commands:\n{helper}"
     );
     assert!(
-        helper.contains("scoreboard players set x cobble.vars 0"),
+        helper.contains("scoreboard players set #tick.x cobble.vars 0"),
         "helper must contain the branch commands:\n{helper}"
     );
 }

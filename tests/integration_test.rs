@@ -112,11 +112,11 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    assert!(content.contains("scoreboard players set flag cobble.vars 0"));
+    assert!(content.contains("scoreboard players set #test.flag cobble.vars 0"));
     assert!(content.contains(
-        "execute if score x cobble.vars matches 1 run scoreboard players set flag cobble.vars 1"
+        "execute if score #test.x cobble.vars matches 1 run scoreboard players set #test.flag cobble.vars 1"
     ));
-    assert!(content.contains("execute unless score flag cobble.vars matches 0 run say true"));
+    assert!(content.contains("execute unless score #test.flag cobble.vars matches 0 run say true"));
 }
 
 #[test]
@@ -145,13 +145,16 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    assert!(content.contains("data modify storage cobble:global vars.items set value [1,2,3]"));
-    assert!(content.contains("data modify storage cobble:global vars.config set value {chance:7}"));
+    assert!(
+        content.contains("data modify storage cobble:global locals.test.items set value [1,2,3]")
+    );
+    assert!(content
+        .contains("data modify storage cobble:global locals.test.config set value {chance:7}"));
     assert!(content.contains(
-        "execute store result score first cobble.vars run data get storage cobble:global vars.items[0]"
+        "execute store result score #test.first cobble.vars run data get storage cobble:global locals.test.items[0]"
     ));
     assert!(content
-        .contains("execute store result score chance cobble.vars run data get storage cobble:global vars.config.chance"));
+        .contains("execute store result score #test.chance cobble.vars run data get storage cobble:global locals.test.config.chance"));
 }
 
 #[test]
@@ -168,7 +171,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(content.contains(
-        "execute store result score selected cobble.vars run data get storage cobble:global vars.items[1]"
+        "execute store result score #test.selected cobble.vars run data get storage cobble:global locals.test.items[1]"
     ));
 }
 
@@ -191,17 +194,17 @@ def test():
     assert!(content.contains("function cobble:_cobble_storage_read_"));
     assert!(content.contains("with storage cobble:global _cobble_dyn_"));
     assert!(all_functions.contains(
-        "$execute store result score selected cobble.vars run data get storage cobble:global vars.items[$(idx0)]"
+        "$execute store result score #test.selected cobble.vars run data get storage cobble:global locals.test.items[$(idx0)]"
     ));
     // Right-operand scratches now carry unique suffixes (#expr_temp_<id>).
     assert!(all_functions.lines().any(|line| {
         line.starts_with("$execute store result score #expr_temp_")
-            && line.ends_with("cobble.vars run data get storage cobble:global vars.items[$(idx0)]")
+            && line.ends_with(
+                "cobble.vars run data get storage cobble:global locals.test.items[$(idx0)]",
+            )
     }));
-    assert!(content
-        .lines()
-        .any(|line| line
-            .starts_with("scoreboard players operation total cobble.vars += #expr_temp_")));
+    assert!(content.lines().any(|line| line
+        .starts_with("scoreboard players operation #test.total cobble.vars += #expr_temp_")));
     assert!(content.contains("execute if score expr_cond_temp_"));
     assert!(content.contains("run say matched"));
 }
@@ -222,24 +225,26 @@ def test():
     let content = read_function(&output_dir, "test");
     let all_functions = read_all_functions(&output_dir);
 
-    assert!(content.contains("data modify storage cobble:global vars.key set value \"chance\""));
+    assert!(
+        content.contains("data modify storage cobble:global locals.test.key set value \"chance\"")
+    );
     assert!(
         content.contains("data modify storage cobble:global _cobble_dyn_")
-            && content.contains(".key0 set from storage cobble:global vars.key"),
+            && content.contains(".key0 set from storage cobble:global locals.test.key"),
         "{content}"
     );
     assert!(all_functions.contains(
-        "$execute store result score selected cobble.vars run data get storage cobble:global vars.config.$(key0)"
+        "$execute store result score #test.selected cobble.vars run data get storage cobble:global locals.test.config.$(key0)"
     ));
     // Right-operand scratches now carry unique suffixes (#expr_temp_<id>).
     assert!(all_functions.lines().any(|line| {
         line.starts_with("$execute store result score #expr_temp_")
-            && line.ends_with("cobble.vars run data get storage cobble:global vars.config.$(key0)")
+            && line.ends_with(
+                "cobble.vars run data get storage cobble:global locals.test.config.$(key0)",
+            )
     }));
-    assert!(content
-        .lines()
-        .any(|line| line
-            .starts_with("scoreboard players operation total cobble.vars += #expr_temp_")));
+    assert!(content.lines().any(|line| line
+        .starts_with("scoreboard players operation #test.total cobble.vars += #expr_temp_")));
     assert!(content.contains("execute if score expr_cond_temp_"));
     assert!(content.contains("run say dynamic key matched"));
 }
@@ -262,7 +267,7 @@ def lookup(key):
         "{content}"
     );
     assert!(all_functions.contains(
-        "$execute store result score selected cobble.vars run data get storage cobble:global vars.config.$(key0)"
+        "$execute store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.$(key0)"
     ));
 }
 
@@ -281,12 +286,12 @@ def probe():
     let all_functions = read_all_functions(&output_dir);
 
     assert!(
-        content.contains(".key0 set from storage cobble:global vars.key"),
+        content.contains(".key0 set from storage cobble:global locals.probe.key"),
         "{content}"
     );
     assert!(
-        all_functions.contains("vars.config.nested.$(key0)")
-            && !all_functions.contains("vars.config.nested[$(idx0)]"),
+        all_functions.contains("locals.probe.config.nested.$(key0)")
+            && !all_functions.contains("locals.probe.config.nested[$(idx0)]"),
         "{all_functions}"
     );
 }
@@ -343,19 +348,22 @@ def test():
     assert!(content.contains("data modify storage cobble:global events set value [10,20,30]"));
     assert!(all_functions.contains("$data get storage cobble:global events[$(idx0)]"));
     assert!(all_functions.contains(
-        "$execute store result score picked_again cobble.vars run data get storage cobble:global events[$(idx0)]\n"
+        "$execute store result score #test.picked_again cobble.vars run data get storage cobble:global events[$(idx0)]\n"
     ));
     assert!(all_functions.contains(
         "$data modify storage cobble:global events[$(idx0)] set from storage cobble:global _cobble_value_"
     ));
-    assert!(content.contains("data modify storage cobble:global vars.values set value [0,0]"));
+    assert!(
+        content.contains("data modify storage cobble:global locals.test.values set value [0,0]")
+    );
     assert!(content.contains(
-        "execute store result storage cobble:global vars.values[0] int 1 run scoreboard players get picked cobble.vars"
+        "execute store result storage cobble:global locals.test.values[0] int 1 run scoreboard players get #test.picked cobble.vars"
     ));
-    assert!(content
-        .contains("data modify storage cobble:global vars.state set value {picked:0,again:0}"));
     assert!(content.contains(
-        "execute store result storage cobble:global vars.state.again int 1 run scoreboard players get picked_again cobble.vars"
+        "data modify storage cobble:global locals.test.state set value {picked:0,again:0}"
+    ));
+    assert!(content.contains(
+        "execute store result storage cobble:global locals.test.state.again int 1 run scoreboard players get #test.picked_again cobble.vars"
     ));
 }
 
@@ -536,10 +544,14 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    assert!(content.contains("scoreboard players set x cobble.vars 10"));
-    assert!(content.contains("scoreboard players set y cobble.vars 20"));
-    assert!(content.contains("scoreboard players operation z cobble.vars = x cobble.vars"));
-    assert!(content.contains("scoreboard players operation z cobble.vars += y cobble.vars"));
+    assert!(content.contains("scoreboard players set #test.x cobble.vars 10"));
+    assert!(content.contains("scoreboard players set #test.y cobble.vars 20"));
+    assert!(
+        content.contains("scoreboard players operation #test.z cobble.vars = #test.x cobble.vars")
+    );
+    assert!(
+        content.contains("scoreboard players operation #test.z cobble.vars += #test.y cobble.vars")
+    );
 }
 
 #[test]
@@ -554,8 +566,8 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    assert!(content.contains("scoreboard players set x cobble.vars 5"));
-    assert!(content.contains("execute if score x cobble.vars matches 5 run say equal"));
+    assert!(content.contains("scoreboard players set #test.x cobble.vars 5"));
+    assert!(content.contains("execute if score #test.x cobble.vars matches 5 run say equal"));
 }
 
 #[test]
@@ -572,7 +584,7 @@ def test():
 
     // Check main function
     let main_content = read_function(&output_dir, "test");
-    assert!(main_content.contains("scoreboard players set i cobble.vars 0"));
+    assert!(main_content.contains("scoreboard players set #test.i cobble.vars 0"));
     assert!(main_content.contains("function cobble:while_temp_"));
 
     // Check that while_body function exists (new behavior)
@@ -586,12 +598,13 @@ def test():
 
     let body_content = fs::read_to_string(body_files[0].path()).unwrap();
     assert!(body_content.contains("say counting"));
-    assert!(body_content.contains("scoreboard players add i cobble.vars 1"));
+    assert!(body_content.contains("scoreboard players add #test.i cobble.vars 1"));
 
     // Check while loop function calls body conditionally
     let while_content = read_first_function_with_prefix(&output_dir, "while_temp_");
-    assert!(while_content
-        .contains("execute if score i cobble.vars matches ..4 run function cobble:while_body"));
+    assert!(while_content.contains(
+        "execute if score #test.i cobble.vars matches ..4 run function cobble:while_body"
+    ));
     // The body ends by starting the next iteration, so the condition is
     // checked once per iteration.
     assert!(!while_content.contains("run function cobble:while_temp_"));
@@ -631,14 +644,14 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     let main_content = read_function(&output_dir, "test");
-    assert!(main_content.contains("scoreboard players set i cobble.vars 0"));
+    assert!(main_content.contains("scoreboard players set #test.i cobble.vars 0"));
     assert!(main_content.contains("scoreboard players operation #for_range_stop_"));
     assert!(main_content.contains("function cobble:for_range_temp_"));
     assert!(!main_content.contains("say Count: 0"));
 
     let loop_content = read_first_function_with_prefix(&output_dir, "for_range_temp_");
     assert!(
-        loop_content.contains("execute if score i cobble.vars < #for_range_stop_")
+        loop_content.contains("execute if score #test.i cobble.vars < #for_range_stop_")
             && loop_content.contains("run function cobble:for_range_body_"),
         "{loop_content}"
     );
@@ -653,13 +666,12 @@ def test():
             .is_some_and(|last| last.starts_with("function cobble:for_range_temp_")),
         "{body_content}"
     );
-    assert!(
-        body_content.contains("scoreboard players operation total cobble.vars += i cobble.vars")
-    );
+    assert!(body_content
+        .contains("scoreboard players operation #test.total cobble.vars += #test.i cobble.vars"));
     assert!(body_content.contains(
-        "execute store result storage cobble:global _say_args.i int 1 run scoreboard players get i cobble.vars"
+        "execute store result storage cobble:global _say_args.i int 1 run scoreboard players get #test.i cobble.vars"
     ));
-    assert!(body_content.contains("scoreboard players add i cobble.vars 1"));
+    assert!(body_content.contains("scoreboard players add #test.i cobble.vars 1"));
 }
 
 #[test]
@@ -676,15 +688,17 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     let main_content = read_function(&output_dir, "test");
-    assert!(main_content.contains("scoreboard players operation i cobble.vars = start cobble.vars"));
+    assert!(main_content
+        .contains("scoreboard players operation #test.i cobble.vars = #test.start cobble.vars"));
     assert!(main_content.contains("scoreboard players operation #for_range_stop_"));
 
     let loop_content = read_first_function_with_prefix(&output_dir, "for_range_temp_");
-    assert!(loop_content.contains("execute if score i cobble.vars > #for_range_stop_"));
+    assert!(loop_content.contains("execute if score #test.i cobble.vars > #for_range_stop_"));
 
     let body_content = read_first_function_with_prefix(&output_dir, "for_range_body_");
-    assert!(body_content.contains("scoreboard players operation total cobble.vars = i cobble.vars"));
-    assert!(body_content.contains("scoreboard players remove i cobble.vars 2"));
+    assert!(body_content
+        .contains("scoreboard players operation #test.total cobble.vars = #test.i cobble.vars"));
+    assert!(body_content.contains("scoreboard players remove #test.i cobble.vars 2"));
 }
 
 #[test]
@@ -706,14 +720,14 @@ def test():
     let loop_content = read_first_function_with_prefix(&output_dir, "for_range_temp_");
     assert!(loop_content.contains("scoreboard players set #for_range_run_"));
     assert!(loop_content.contains("if score #for_range_step_"));
-    assert!(loop_content.contains("matches 1.. if score i cobble.vars < #for_range_stop_"));
-    assert!(loop_content.contains("matches ..-1 if score i cobble.vars > #for_range_stop_"));
+    assert!(loop_content.contains("matches 1.. if score #test.i cobble.vars < #for_range_stop_"));
+    assert!(loop_content.contains("matches ..-1 if score #test.i cobble.vars > #for_range_stop_"));
 
     let body_content = read_first_function_with_prefix(&output_dir, "for_range_body_");
-    assert!(
-        body_content.contains("scoreboard players operation total cobble.vars += i cobble.vars")
-    );
-    assert!(body_content.contains("scoreboard players operation i cobble.vars += #for_range_step_"));
+    assert!(body_content
+        .contains("scoreboard players operation #test.total cobble.vars += #test.i cobble.vars"));
+    assert!(body_content
+        .contains("scoreboard players operation #test.i cobble.vars += #for_range_step_"));
 }
 
 #[test]
@@ -731,10 +745,11 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     let loop_content = read_first_function_with_prefix(&output_dir, "for_range_temp_");
-    assert!(loop_content.contains("matches ..-1 if score i cobble.vars > #for_range_stop_"));
+    assert!(loop_content.contains("matches ..-1 if score #test.i cobble.vars > #for_range_stop_"));
 
     let body_content = read_first_function_with_prefix(&output_dir, "for_range_body_");
-    assert!(body_content.contains("scoreboard players operation i cobble.vars += #for_range_step_"));
+    assert!(body_content
+        .contains("scoreboard players operation #test.i cobble.vars += #for_range_step_"));
 }
 
 #[test]
@@ -752,10 +767,9 @@ def test():
 
     let main_content = read_function(&output_dir, "test");
     assert!(main_content.contains("if score #for_range_step_"));
-    assert!(
-        main_content.contains("run scoreboard players operation i cobble.vars = #for_range_stop_")
-    );
-    assert!(main_content.contains("run scoreboard players remove i cobble.vars 1"));
+    assert!(main_content
+        .contains("run scoreboard players operation #test.i cobble.vars = #for_range_stop_"));
+    assert!(main_content.contains("run scoreboard players remove #test.i cobble.vars 1"));
     assert!(main_content.contains("run scoreboard players set #for_range_stop_"));
 }
 
@@ -779,7 +793,7 @@ def greet(player):
 
     let body_content = read_first_function_with_prefix(&output_dir, "for_range_body_");
     assert!(body_content.contains("$tellraw $(player)"));
-    assert!(body_content.contains(r#""score":{"name":"i","objective":"cobble.vars"}"#));
+    assert!(body_content.contains(r##""score":{"name":"#greet.i","objective":"cobble.vars"}"##));
 }
 
 #[test]
@@ -801,13 +815,13 @@ def test():
 
     assert!(content.contains("scoreboard players set #for_list_index_"));
     assert!(content.contains("execute store result score #for_list_len_"));
-    assert!(content.contains("run data get storage cobble:global vars.values"));
+    assert!(content.contains("run data get storage cobble:global locals.test.values"));
     assert!(content.contains("function cobble:for_list_temp_"));
     assert!(all_functions.contains(
-        "$data modify storage cobble:global vars.value set from storage cobble:global vars.values[$(idx0)]"
+        "$data modify storage cobble:global locals.test.value set from storage cobble:global locals.test.values[$(idx0)]"
     ));
     assert!(all_functions.contains(
-        "$execute store result score value cobble.vars run data get storage cobble:global vars.values[$(idx0)]"
+        "$execute store result score #test.value cobble.vars run data get storage cobble:global locals.test.values[$(idx0)]"
     ));
 
     let loop_content = read_first_function_with_prefix(&output_dir, "for_list_temp_");
@@ -815,10 +829,11 @@ def test():
     assert!(loop_content.contains("run function cobble:for_list_body_"));
 
     let body_content = read_first_function_with_prefix(&output_dir, "for_list_body_");
-    assert!(body_content
-        .contains("scoreboard players operation total cobble.vars += value cobble.vars"));
     assert!(body_content.contains(
-        "data modify storage cobble:global _say_args.value set from storage cobble:global vars.value"
+        "scoreboard players operation #test.total cobble.vars += #test.value cobble.vars"
+    ));
+    assert!(body_content.contains(
+        "data modify storage cobble:global _say_args.value set from storage cobble:global locals.test.value"
     ));
     assert!(body_content.contains("scoreboard players add #for_list_index_"));
 }
@@ -914,15 +929,15 @@ def test():
     let content = read_function(&output_dir, "test");
     let all_functions = read_all_functions(&output_dir);
 
-    assert!(content.contains("scoreboard players set literal_len cobble.vars 2"));
+    assert!(content.contains("scoreboard players set #test.literal_len cobble.vars 2"));
     assert!(content.contains(
-        "execute store result score values_len cobble.vars run data get storage cobble:global vars.values"
+        "execute store result score #test.values_len cobble.vars run data get storage cobble:global locals.test.values"
     ));
     assert!(content.contains(
-        "execute store result score message_len cobble.vars run data get storage cobble:global vars.message"
+        "execute store result score #test.message_len cobble.vars run data get storage cobble:global locals.test.message"
     ));
     assert!(all_functions.contains(
-        "$execute store result score selected_len cobble.vars run data get storage cobble:global vars.nested[$(idx0)]"
+        "$execute store result score #test.selected_len cobble.vars run data get storage cobble:global locals.test.nested[$(idx0)]"
     ));
     assert!(content.contains("run say len ok"));
 }
@@ -1020,9 +1035,9 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should use variable-to-variable comparison
-    assert!(
-        content.contains("execute if score x cobble.vars < y cobble.vars run say x is less than y")
-    );
+    assert!(content.contains(
+        "execute if score #test.x cobble.vars < #test.y cobble.vars run say x is less than y"
+    ));
 }
 
 #[test]
@@ -1037,7 +1052,9 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "test");
 
-    assert!(content.contains("execute if score value cobble.vars matches 6.. run say greater"));
+    assert!(
+        content.contains("execute if score #test.value cobble.vars matches 6.. run say greater")
+    );
 }
 
 #[test]
@@ -1053,7 +1070,9 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should use unless instead of if with negation
-    assert!(content.contains("execute unless score x cobble.vars matches 10 run say not equal"));
+    assert!(
+        content.contains("execute unless score #test.x cobble.vars matches 10 run say not equal")
+    );
 }
 
 #[test]
@@ -1180,10 +1199,12 @@ def test():
     let (_temp, output_dir) = compile_source(source).unwrap();
 
     let main_content = read_function(&output_dir, "test");
-    assert!(main_content.contains("scoreboard players set total cobble.vars 0"));
+    assert!(main_content.contains("scoreboard players set #test.total cobble.vars 0"));
     for value in 0..5 {
         assert!(
-            main_content.contains(&format!("scoreboard players add total cobble.vars {value}")),
+            main_content.contains(&format!(
+                "scoreboard players add #test.total cobble.vars {value}"
+            )),
             "{}",
             main_content
         );
@@ -1276,13 +1297,14 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should handle operator precedence correctly
-    assert!(content.contains("scoreboard players set a cobble.vars 10"));
-    assert!(content.contains("scoreboard players set b cobble.vars 20"));
-    assert!(content.contains("scoreboard players set c cobble.vars 30"));
+    assert!(content.contains("scoreboard players set #test.a cobble.vars 10"));
+    assert!(content.contains("scoreboard players set #test.b cobble.vars 20"));
+    assert!(content.contains("scoreboard players set #test.c cobble.vars 30"));
 
     // Verify arithmetic operations with proper precedence
     // result = a + (b * c) due to precedence
-    assert!(content.contains("scoreboard players operation result cobble.vars = a cobble.vars"));
+    assert!(content
+        .contains("scoreboard players operation #test.result cobble.vars = #test.a cobble.vars"));
     assert!(content.contains("scoreboard players operation"));
 
     // Multiple complex expressions should all compile
@@ -1305,13 +1327,14 @@ def test():
 
     // String is stored in data storage
     assert!(
-        content.contains("data modify storage cobble:global vars.message set value \"Hello\""),
+        content
+            .contains("data modify storage cobble:global locals.test.message set value \"Hello\""),
         "String should be stored in data storage: {}",
         content
     );
     assert!(
         content.contains(
-            "data modify storage cobble:global _say_args.message set from storage cobble:global vars.message"
+            "data modify storage cobble:global _say_args.message set from storage cobble:global locals.test.message"
         ),
         "the value should be copied into the macro storage: {}",
         content
@@ -1353,7 +1376,7 @@ def test():
         content
     );
     assert!(
-        content.contains("nbt") && content.contains("vars.message"),
+        content.contains("nbt") && content.contains("locals.test.message"),
         "Should reference string via nbt storage path: {}",
         content
     );
@@ -1373,7 +1396,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should chain conditions with "if ... if ..."
-    assert!(content.contains("execute if score x cobble.vars matches 1.. if score y cobble.vars matches ..14 run say Both conditions true!"));
+    assert!(content.contains("execute if score #test.x cobble.vars matches 1.. if score #test.y cobble.vars matches ..14 run say Both conditions true!"));
 }
 
 #[test]
@@ -1389,9 +1412,8 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should use "unless" for negation
-    assert!(
-        content.contains("execute unless score x cobble.vars matches 10 run say Not equal to 10!")
-    );
+    assert!(content
+        .contains("execute unless score #test.x cobble.vars matches 10 run say Not equal to 10!"));
 }
 
 #[test]
@@ -1409,7 +1431,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should chain multiple conditions
-    assert!(content.contains("execute if score a cobble.vars matches 6.. if score b cobble.vars matches ..24 unless score c cobble.vars matches 40 run say Complex condition works!"));
+    assert!(content.contains("execute if score #test.a cobble.vars matches 6.. if score #test.b cobble.vars matches ..24 unless score #test.c cobble.vars matches 40 run say Complex condition works!"));
 }
 
 #[test]
@@ -1440,12 +1462,14 @@ def test():
     );
 
     // Should have three separate condition checks
-    assert!(content
-        .contains("execute if score a cobble.vars matches 10 run scoreboard players set or_temp_"));
-    assert!(content
-        .contains("execute if score b cobble.vars matches 30 run scoreboard players set or_temp_"));
     assert!(content.contains(
-        "execute if score c cobble.vars matches 26.. run scoreboard players set or_temp_"
+        "execute if score #test.a cobble.vars matches 10 run scoreboard players set or_temp_"
+    ));
+    assert!(content.contains(
+        "execute if score #test.b cobble.vars matches 30 run scoreboard players set or_temp_"
+    ));
+    assert!(content.contains(
+        "execute if score #test.c cobble.vars matches 26.. run scoreboard players set or_temp_"
     ));
 }
 
@@ -1607,7 +1631,7 @@ def test():
 
     // Check while loop function - should have chained conditions
     let while_content = read_first_function_with_prefix(&output_dir, "while_temp_");
-    assert!(while_content.contains("execute if score x cobble.vars matches ..4 if score y cobble.vars matches ..9 run function cobble:while_body"));
+    assert!(while_content.contains("execute if score #test.x cobble.vars matches ..4 if score #test.y cobble.vars matches ..9 run function cobble:while_body"));
 }
 
 #[test]
@@ -1672,7 +1696,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should handle >=, <=, and != correctly
-    assert!(content.contains("execute if score a cobble.vars matches 5.. if score b cobble.vars matches ..20 unless score c cobble.vars matches 30 run say All conditions met!"));
+    assert!(content.contains("execute if score #test.a cobble.vars matches 5.. if score #test.b cobble.vars matches ..20 unless score #test.c cobble.vars matches 30 run say All conditions met!"));
 }
 
 #[test]
@@ -1688,7 +1712,9 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Double negative should cancel out (unless unless -> if)
-    assert!(content.contains("execute if score x cobble.vars matches 5 run say Double negative!"));
+    assert!(
+        content.contains("execute if score #test.x cobble.vars matches 5 run say Double negative!")
+    );
 }
 
 #[test]
@@ -1724,7 +1750,7 @@ def test():
     // `extra`, so it inherits the component's styling.
     assert!(
         content.contains(
-            r#"tellraw @a {"extra":[{"score":{"name":"score","objective":"cobble.vars"}}],"text":"Score: "}"#
+            r##"tellraw @a {"extra":[{"score":{"name":"#test.score","objective":"cobble.vars"}}],"text":"Score: "}"##
         ),
         "{content}"
     );
@@ -1800,6 +1826,7 @@ def init():
     /say Init called
 
 def tick():
+    global counter
     counter = counter + 1
 
 stdlib.addEventListener(event.LOAD, init)
@@ -1851,7 +1878,7 @@ def test():
     assert!(!if_files.is_empty(), "No if function generated");
 
     let if_content = fs::read_to_string(if_files[0].path()).unwrap();
-    assert!(if_content.contains("scoreboard players set x cobble.vars 0"));
+    assert!(if_content.contains("scoreboard players set #test.x cobble.vars 0"));
     assert!(if_content.contains("say Should execute"));
 }
 
@@ -1888,7 +1915,7 @@ def test():
     assert!(!elif_files.is_empty(), "No elif function generated");
 
     let elif_content = fs::read_to_string(elif_files[0].path()).unwrap();
-    assert!(elif_content.contains("scoreboard players set x cobble.vars 100"));
+    assert!(elif_content.contains("scoreboard players set #test.x cobble.vars 100"));
     assert!(elif_content.contains("say Between 10 and 20"));
 }
 
@@ -1919,7 +1946,7 @@ def test():
     assert!(!else_files.is_empty(), "No else function generated");
 
     let else_content = fs::read_to_string(else_files[0].path()).unwrap();
-    assert!(else_content.contains("scoreboard players set x cobble.vars 100"));
+    assert!(else_content.contains("scoreboard players set #test.x cobble.vars 100"));
     assert!(else_content.contains("say Not greater"));
 }
 
@@ -1948,7 +1975,7 @@ def test():
 
     let body_content = fs::read_to_string(body_files[0].path()).unwrap();
     // Body should execute unconditionally (no execute if)
-    assert!(body_content.contains("scoreboard players add i cobble.vars 1"));
+    assert!(body_content.contains("scoreboard players add #test.i cobble.vars 1"));
     assert!(body_content.contains("say Iteration"));
     assert!(!body_content.contains("execute if"));
 
@@ -1963,8 +1990,9 @@ def test():
 
     let while_content = fs::read_to_string(while_files[0].path()).unwrap();
     // Should check condition and call body
-    assert!(while_content
-        .contains("execute if score i cobble.vars matches ..2 run function cobble:while_body"));
+    assert!(while_content.contains(
+        "execute if score #test.i cobble.vars matches ..2 run function cobble:while_body"
+    ));
     // The body starts the next iteration
     assert!(body_content.contains("function cobble:while_temp"));
 }
@@ -2177,7 +2205,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Constants should be inlined at compile time
-    assert!(content.contains("scoreboard players set area cobble.vars 78"));
+    assert!(content.contains("scoreboard players set #test.area cobble.vars 78"));
     assert!(!content.contains("PI cobble.vars"));
 }
 
@@ -2193,7 +2221,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Constant should be inlined at compile time
-    assert!(content.contains("scoreboard players set health cobble.vars 100"));
+    assert!(content.contains("scoreboard players set #test.health cobble.vars 100"));
     assert!(!content.contains("MAX_HEALTH cobble.vars"));
 }
 
@@ -2553,7 +2581,7 @@ def test():
 
     // For x^3, we need 2 multiplications (x * x * x = x * (x * x))
     let mult_count = content
-        .matches("scoreboard players operation result cobble.vars *= #power_base cobble.vars")
+        .matches("scoreboard players operation #test.result cobble.vars *= #power_base cobble.vars")
         .count();
     assert_eq!(
         mult_count, 2,
@@ -2600,9 +2628,9 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // x^0 should set result to 1
-    assert!(content.contains("scoreboard players set x cobble.vars 5"));
+    assert!(content.contains("scoreboard players set #test.x cobble.vars 5"));
     assert!(
-        content.contains("scoreboard players set result cobble.vars 1"),
+        content.contains("scoreboard players set #test.result cobble.vars 1"),
         "x^0 should set result to 1, but command not found in: {}",
         content
     );
@@ -2631,9 +2659,9 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // base^0 should set result to 1
-    assert!(content.contains("scoreboard players set base cobble.vars 10"));
+    assert!(content.contains("scoreboard players set #test.base cobble.vars 10"));
     assert!(
-        content.contains("scoreboard players set result cobble.vars 1"),
+        content.contains("scoreboard players set #test.result cobble.vars 1"),
         "base^0 should set result to 1"
     );
 }
@@ -2660,7 +2688,8 @@ def test():
 
     assert!(content.contains("_cobble_power_"), "{content}");
     assert!(
-        all_functions.contains("scoreboard players operation result cobble.vars *= #power_base_"),
+        all_functions
+            .contains("scoreboard players operation #test.result cobble.vars *= #power_base_"),
         "{all_functions}"
     );
     assert!(
@@ -2692,24 +2721,29 @@ def test():
     let all_functions = read_all_functions(&output_dir);
 
     assert!(
-        content.contains("scoreboard players add score cobble.vars 5"),
+        content.contains("scoreboard players add #test.score cobble.vars 5"),
         "{content}"
     );
     assert!(
-        content.contains("scoreboard players remove score cobble.vars 3"),
+        content.contains("scoreboard players remove #test.score cobble.vars 3"),
         "{content}"
     );
     assert!(
-        content
-            .contains("scoreboard players operation score cobble.vars *= #multiplier cobble.vars"),
+        content.contains(
+            "scoreboard players operation #test.score cobble.vars *= #multiplier cobble.vars"
+        ),
         "{content}"
     );
     assert!(
-        content.contains("scoreboard players operation score cobble.vars /= #divisor cobble.vars"),
+        content.contains(
+            "scoreboard players operation #test.score cobble.vars /= #divisor cobble.vars"
+        ),
         "{content}"
     );
     assert!(
-        content.contains("scoreboard players operation score cobble.vars %= #modulus cobble.vars"),
+        content.contains(
+            "scoreboard players operation #test.score cobble.vars %= #modulus cobble.vars"
+        ),
         "{content}"
     );
     assert!(all_functions.contains("_cobble_power_"), "{all_functions}");
@@ -2737,16 +2771,18 @@ def test():
     let content = read_function(&output_dir, "test");
     let all_functions = read_all_functions(&output_dir);
 
-    assert!(content.contains("data modify storage cobble:global vars.config.count set value 5"));
+    assert!(
+        content.contains("data modify storage cobble:global locals.test.config.count set value 5")
+    );
     assert!(
         content.contains("function cobble:_cobble_storage_dyn_"),
         "{content}"
     );
     assert!(all_functions.contains(
-        "$data modify storage cobble:global vars.config.$(key0) set from storage cobble:global _cobble_value_"
+        "$data modify storage cobble:global locals.test.config.$(key0) set from storage cobble:global _cobble_value_"
     ));
     assert!(all_functions.contains(
-        "$data modify storage cobble:global vars.values[$(idx0)] set from storage cobble:global _cobble_value_"
+        "$data modify storage cobble:global locals.test.values[$(idx0)] set from storage cobble:global _cobble_value_"
     ));
     assert!(
         content.contains("run say storage assignment target ok"),
@@ -2834,7 +2870,7 @@ def test():
     let all_functions = read_all_functions(&output_dir);
 
     assert!(
-        all_functions.contains("vars.root.groups[$(idx0)].values[$(idx1)]"),
+        all_functions.contains("locals.test.root.groups[$(idx0)].values[$(idx1)]"),
         "{all_functions}"
     );
     assert!(
@@ -2877,7 +2913,7 @@ def test():
         "{test_content}"
     );
     assert!(
-        test_content.contains("execute store result score result cobble.vars run function cobble:add with storage cobble:global args"),
+        test_content.contains("execute store result score #test.result cobble.vars run function cobble:add with storage cobble:global args"),
         "{test_content}"
     );
     assert!(
@@ -3048,7 +3084,7 @@ def test():
         "{all_functions}"
     );
     assert!(
-        all_functions.contains("vars.groups[$(idx0)]"),
+        all_functions.contains("locals.find_in_dynamic_path.groups[$(idx0)]"),
         "{all_functions}"
     );
     assert!(
@@ -3296,7 +3332,7 @@ def imported_value():
 
     assert!(
         content.contains(
-            "execute store result score result cobble.vars run function cobble:imported_value"
+            "execute store result score #test.result cobble.vars run function cobble:imported_value"
         ),
         "{content}"
     );
@@ -3332,7 +3368,7 @@ def double(value):
     assert!(content.contains("function cobble:side_effect"), "{content}");
     assert!(
         content.contains(
-            "execute store result score result cobble.vars run function cobble:double with storage cobble:global args"
+            "execute store result score #test.result cobble.vars run function cobble:double with storage cobble:global args"
         ),
         "{content}"
     );
@@ -3365,11 +3401,11 @@ def test():
         "{content}"
     );
     assert!(
-        all_functions.contains("vars.matrix[$(idx0)]"),
+        all_functions.contains("locals.test.matrix[$(idx0)]"),
         "{all_functions}"
     );
     assert!(
-        all_functions.contains("vars.matrix[$(idx0)][$("),
+        all_functions.contains("locals.test.matrix[$(idx0)][$("),
         "{all_functions}"
     );
     assert!(content.contains("run say dynamic iterable ok"), "{content}");
@@ -3405,7 +3441,7 @@ def test():
     );
     assert!(
         all_functions.contains("_cobble_for_iter_")
-            && all_functions.contains("$data modify storage cobble:global vars.value set from storage cobble:global _cobble_for_iter_"),
+            && all_functions.contains("$data modify storage cobble:global locals.test.value set from storage cobble:global _cobble_for_iter_"),
         "{all_functions}"
     );
     assert!(
@@ -3599,8 +3635,8 @@ def func2():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let func2_content = read_function(&output_dir, "func2");
 
-    // In func2, 'i' should be a regular temp variable, not loop_counter
-    assert!(func2_content.contains("scoreboard players set i cobble.vars 10"));
+    // In func2, 'i' is func2's own local variable.
+    assert!(func2_content.contains("scoreboard players set #func2.i cobble.vars 10"));
 
     // It should NOT reference loop_counter
     assert!(!func2_content.contains("loop_counter"));
@@ -3683,11 +3719,11 @@ def test():
     // `Mth.positiveModulo` (a floor modulus): -5 % 3 is 1, not Rust's -2.
     let test_content = read_function(&output_dir, "test");
     assert!(
-        test_content.contains("scoreboard players set y cobble.vars 1"),
+        test_content.contains("scoreboard players set #test.y cobble.vars 1"),
         "{test_content}"
     );
     assert!(
-        test_content.contains("scoreboard players set z cobble.vars 1"),
+        test_content.contains("scoreboard players set #test.z cobble.vars 1"),
         "{test_content}"
     );
 }
@@ -3708,18 +3744,18 @@ def test():
     let content = read_function(&output_dir, "test");
     assert_eq!(content.matches("say done").count(), 4, "{content}");
     assert!(
-        content.contains("scoreboard players set result cobble.vars 0"),
+        content.contains("scoreboard players set #test.result cobble.vars 0"),
         "{content}"
     );
     assert_eq!(
         content
-            .matches("scoreboard players set result cobble.vars 1")
+            .matches("scoreboard players set #test.result cobble.vars 1")
             .count(),
         2,
         "{content}"
     );
     assert!(
-        content.contains("scoreboard players set result cobble.vars 2"),
+        content.contains("scoreboard players set #test.result cobble.vars 2"),
         "{content}"
     );
     assert!(!content.contains("loop_"), "{content}");
@@ -3744,10 +3780,10 @@ def test():
     assert_eq!(
         lines,
         vec![
-            "scoreboard players set result cobble.vars 0",
-            "scoreboard players set result cobble.vars 1",
-            "scoreboard players set result cobble.vars 1",
-            "scoreboard players set result cobble.vars 2",
+            "scoreboard players set #test.result cobble.vars 0",
+            "scoreboard players set #test.result cobble.vars 1",
+            "scoreboard players set #test.result cobble.vars 1",
+            "scoreboard players set #test.result cobble.vars 2",
         ]
     );
 }
@@ -3792,11 +3828,11 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // 10-5 should compile-time evaluate to 5
-    assert!(content.contains("scoreboard players set a cobble.vars 5"));
+    assert!(content.contains("scoreboard players set #test.a cobble.vars 5"));
     // (5-3)*2 should compile-time evaluate to 4
-    assert!(content.contains("scoreboard players set b cobble.vars 4"));
+    assert!(content.contains("scoreboard players set #test.b cobble.vars 4"));
     // -10+5 should compile-time evaluate to -5
-    assert!(content.contains("scoreboard players set c cobble.vars -5"));
+    assert!(content.contains("scoreboard players set #test.c cobble.vars -5"));
 }
 
 #[test]
@@ -3814,11 +3850,11 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // 2^3 should compile-time evaluate to 8
-    assert!(content.contains("scoreboard players set a cobble.vars 8"));
+    assert!(content.contains("scoreboard players set #test.a cobble.vars 8"));
     // (2+3)^2 should compile-time evaluate to 25
-    assert!(content.contains("scoreboard players set b cobble.vars 25"));
+    assert!(content.contains("scoreboard players set #test.b cobble.vars 25"));
     // 10^2 should compile-time evaluate to 100
-    assert!(content.contains("scoreboard players set c cobble.vars 100"));
+    assert!(content.contains("scoreboard players set #test.c cobble.vars 100"));
 }
 
 #[test]
@@ -4040,7 +4076,7 @@ def test():
     // Should generate an always-false condition
     // Uses "matches 0 unless matches 0" pattern
     assert!(content.contains(
-        "if score max_val cobble.vars matches 0 unless score max_val cobble.vars matches 0"
+        "if score #test.max_val cobble.vars matches 0 unless score #test.max_val cobble.vars matches 0"
     ));
 }
 
@@ -4151,7 +4187,9 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(
-        content.contains("execute as @a unless score y cobble.vars matches 1.. run say reachable"),
+        content.contains(
+            "execute as @a unless score #test.y cobble.vars matches 1.. run say reachable"
+        ),
         "{}",
         content
     );
@@ -4173,11 +4211,11 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(
-        content.contains("execute as @a if score y cobble.vars matches 0 run say reachable"),
+        content.contains("execute as @a if score #test.y cobble.vars matches 0 run say reachable"),
         "{}",
         content
     );
-    assert!(!content.contains("unless score y cobble.vars matches 0 run say reachable"));
+    assert!(!content.contains("unless score #test.y cobble.vars matches 0 run say reachable"));
     assert!(!content.contains("-2147483648.."));
 }
 
@@ -4194,13 +4232,12 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(
-        content.contains("execute as @a if score x cobble.vars matches 0 run say reachable"),
+        content.contains("execute as @a if score #test.x cobble.vars matches 0 run say reachable"),
         "{}",
         content
     );
-    assert!(
-        !content.contains("execute as @a unless score x cobble.vars matches 0 run say reachable")
-    );
+    assert!(!content
+        .contains("execute as @a unless score #test.x cobble.vars matches 0 run say reachable"));
 }
 
 #[test]
@@ -4223,22 +4260,24 @@ def test():
     assert!(!content.contains("b == 1 unless"), "{}", content);
     assert!(
         content.contains(
-            "execute as @a if score a cobble.vars matches 1 run scoreboard players set @s cblx"
+            "execute as @a if score #test.a cobble.vars matches 1 run scoreboard players set @s cblx"
         ),
         "{}",
         content
     );
     assert!(
         content.contains(
-            "execute as @a if score b cobble.vars matches 1 run scoreboard players set @s cblx"
+            "execute as @a if score #test.b cobble.vars matches 1 run scoreboard players set @s cblx"
         ),
         "{}",
         content
     );
     assert!(
-        content.contains("if score a cobble.vars matches 1 if score b cobble.vars matches 1")
-            || content
-                .contains("if score c cobble.vars matches 1 if score d cobble.vars matches 1"),
+        content.contains(
+            "if score #test.a cobble.vars matches 1 if score #test.b cobble.vars matches 1"
+        ) || content.contains(
+            "if score #test.c cobble.vars matches 1 if score #test.d cobble.vars matches 1"
+        ),
         "{}",
         content
     );
@@ -4269,12 +4308,12 @@ def test():
     assert!(!content.contains("UNLESS_AND"), "{}", content);
     assert!(!content.contains("b == 1 unless"), "{}", content);
     assert!(
-        content.contains("execute as @a if score a cobble.vars matches 1 if score b cobble.vars matches 1 run scoreboard players set @s cblx"),
+        content.contains("execute as @a if score #test.a cobble.vars matches 1 if score #test.b cobble.vars matches 1 run scoreboard players set @s cblx"),
         "{}",
         content
     );
     assert!(
-        content.contains("execute as @a if score c cobble.vars matches 1 if score d cobble.vars matches 1 run scoreboard players set @s cblx"),
+        content.contains("execute as @a if score #test.c cobble.vars matches 1 if score #test.d cobble.vars matches 1 run scoreboard players set @s cblx"),
         "{}",
         content
     );
@@ -4305,7 +4344,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(
-        content.contains("execute as @a if score x cobble.vars matches 1 if score y cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"),
+        content.contains("execute as @a if score #test.x cobble.vars matches 1 if score #test.y cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"),
         "{}",
         content
     );
@@ -4316,7 +4355,7 @@ def test():
     );
     assert!(
         !content.contains(
-            "execute as @a if score x cobble.vars matches 1 if score y cobble.vars matches 1 run say guarded"
+            "execute as @a if score #test.x cobble.vars matches 1 if score #test.y cobble.vars matches 1 run say guarded"
         ),
         "{}",
         content
@@ -4338,7 +4377,7 @@ def test():
 
     // Should generate an always-false condition
     assert!(content.contains(
-        "if score min_val cobble.vars matches 0 unless score min_val cobble.vars matches 0"
+        "if score #test.min_val cobble.vars matches 0 unless score #test.min_val cobble.vars matches 0"
     ));
 }
 
@@ -4356,7 +4395,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should generate correct condition (matches 2147483647..)
-    assert!(content.contains("if score max_val cobble.vars matches 2147483647.."));
+    assert!(content.contains("if score #test.max_val cobble.vars matches 2147483647.."));
 }
 
 #[test]
@@ -4373,7 +4412,7 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Should generate correct condition (matches ..-2147483648)
-    assert!(content.contains("if score min_val cobble.vars matches ..-2147483648"));
+    assert!(content.contains("if score #test.min_val cobble.vars matches ..-2147483648"));
 }
 
 #[test]
@@ -4392,9 +4431,9 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // a > 5 should be "matches 6.."
-    assert!(content.contains("if score a cobble.vars matches 6.."));
+    assert!(content.contains("if score #test.a cobble.vars matches 6.."));
     // a < 20 should be "matches ..19"
-    assert!(content.contains("if score a cobble.vars matches ..19"));
+    assert!(content.contains("if score #test.a cobble.vars matches ..19"));
 }
 
 #[test]
@@ -4420,7 +4459,7 @@ def test():
 
     // x = MY_CONST should be folded to x = 42
     assert!(
-        content.contains("scoreboard players set x cobble.vars 42"),
+        content.contains("scoreboard players set #test.x cobble.vars 42"),
         "Const should be substituted at compile time"
     );
 
@@ -4489,13 +4528,13 @@ def test():
     // its `extra` so they inherit that style.
     assert!(
         content.contains(
-            r#"tellraw @a [{"color":"gold","extra":[{"score":{"name":"score","objective":"cobble.vars"}}],"text":"Score: "},{"extra":[{"nbt":"vars.message","storage":"cobble:global"}],"italic":true,"text":" Message: "}]"#
+            r##"tellraw @a [{"color":"gold","extra":[{"score":{"name":"#test.score","objective":"cobble.vars"}}],"text":"Score: "},{"extra":[{"nbt":"locals.test.message","storage":"cobble:global"}],"italic":true,"text":" Message: "}]"##
         ),
         "{content}"
     );
     assert!(
         content.contains(
-            r#"title @a actionbar [{"color":"aqua","extra":[{"score":{"name":"score","objective":"cobble.vars"}}],"text":"Action "}]"#
+            r##"title @a actionbar [{"color":"aqua","extra":[{"score":{"name":"#test.score","objective":"cobble.vars"}}],"text":"Action "}]"##
         ),
         "{content}"
     );
@@ -4608,7 +4647,8 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(
-        content.contains("execute store result score x cobble.vars run function cobble:helper"),
+        content
+            .contains("execute store result score #test.x cobble.vars run function cobble:helper"),
         "{content}"
     );
     assert!(content.contains("run say function call assignment ok"));
@@ -4683,7 +4723,7 @@ def test():
         content
     );
     assert!(
-        content.contains("nbt") && content.contains("vars.message"),
+        content.contains("nbt") && content.contains("locals.test.message"),
         "Should reference string via nbt storage path: {}",
         content
     );
@@ -4704,12 +4744,12 @@ def test():
 
     // Booleans are stored as scoreboard values and displayed via score components
     assert!(
-        content.contains("scoreboard players set enabled cobble.vars 1"),
+        content.contains("scoreboard players set #test.enabled cobble.vars 1"),
         "Boolean true should be set to 1: {}",
         content
     );
     assert!(
-        content.contains("scoreboard players set disabled cobble.vars 0"),
+        content.contains("scoreboard players set #test.disabled cobble.vars 0"),
         "Boolean false should be set to 0: {}",
         content
     );

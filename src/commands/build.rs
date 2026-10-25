@@ -5,7 +5,9 @@ use crate::commands::output_safety::{
 };
 use crate::commands::validate::{print_validation_report, resolve_commands_json, run_validation};
 use crate::config::CobbleConfig;
-use crate::diagnostics::{format_file_diagnostics, parse_source_files};
+use crate::diagnostics::{
+    format_file_diagnostics, parse_source_files, warning_diagnostics, ParsedSourceFile,
+};
 use crate::fs_safety::{
     copy_file_atomic, create_temp_output_file, replace_with_temp_file, write_file_atomic,
 };
@@ -13,7 +15,7 @@ use crate::pack_format::{
     PackFormat, COBBLE_VERSION, SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT,
 };
 use crate::transpiler::{
-    BuildManifestInput, BuildManifestValidation, Transpiler, TranspilerOptions,
+    BuildManifestInput, BuildManifestValidation, TranspileWarning, Transpiler, TranspilerOptions,
 };
 use crate::validator::ValidationReport;
 use std::collections::HashSet;
@@ -405,6 +407,10 @@ fn compile_project(
 
     // Compile all files
     for (file_path, parsed) in project.files_to_compile.iter().zip(parsed_files.iter()) {
+        // A file that an earlier file imports was compiled with it.
+        if transpiler.has_compiled(file_path) {
+            continue;
+        }
         if !options.quiet {
             println!(
                 "  • Compiling: {:?}",
@@ -415,21 +421,56 @@ fn compile_project(
         // Set current file for import resolution and source tracking
         transpiler.set_current_file_with_source_spans(file_path, &parsed.source, &parsed.spans);
 
-        transpiler
-            .transpile(&parsed.program)
-            .map_err(|e| match &e.location {
-                Some(location) => format!(
-                    "Transpilation failed at {}:{}:{}: {}",
-                    path_display_relative(&location.file, source_display_root),
-                    location.line,
-                    location.column,
-                    e
-                ),
-                None => format!("Transpilation failed for {:?}: {}", file_path, e),
-            })?;
+        let result = transpiler.transpile(&parsed.program);
+        print_warnings(
+            &transpiler.take_warnings(),
+            file_path,
+            parsed,
+            project,
+            &parsed_files,
+        );
+        result.map_err(|e| match &e.location {
+            Some(location) => format!(
+                "Transpilation failed at {}:{}:{}: {}",
+                path_display_relative(&location.file, source_display_root),
+                location.line,
+                location.column,
+                e
+            ),
+            None => format!("Transpilation failed for {:?}: {}", file_path, e),
+        })?;
     }
 
     Ok(transpiler)
+}
+
+/// Prints the warnings that compiling `file_path` found. A warning can be
+/// about a file that `file_path` imports.
+fn print_warnings(
+    warnings: &[TranspileWarning],
+    file_path: &Path,
+    parsed: &ParsedSourceFile,
+    project: &BuildProject,
+    parsed_files: &[ParsedSourceFile],
+) {
+    if warnings.is_empty() {
+        return;
+    }
+    let root = &project.source_display_root;
+    let report_file = |file: &Path| {
+        let source = project
+            .files_to_compile
+            .iter()
+            .zip(parsed_files)
+            .find(|(path, _)| path.canonicalize().ok().as_deref() == Some(file))
+            .map(|(_, parsed)| parsed.source.clone())
+            .or_else(|| fs::read_to_string(file).ok())?;
+        Some((PathBuf::from(path_display_relative(file, root)), source))
+    };
+    let current = path_display_relative(file_path, root);
+    let diagnostics =
+        warning_diagnostics(warnings, Path::new(&current), &parsed.source, report_file);
+    eprintln!("{}", format_file_diagnostics(&diagnostics));
 }
 
 struct ResourcePackAssets {

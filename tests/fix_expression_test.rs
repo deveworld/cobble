@@ -273,7 +273,7 @@ def compute():
     // Inside a function, `w = w - 2` keeps the optimized single-command form.
     let body = read_function(&output_dir, "compute");
     assert!(
-        body.contains("scoreboard players remove w cobble.vars 2"),
+        body.contains("scoreboard players remove #compute.w cobble.vars 2"),
         "fast path lost in function body:\n{body}"
     );
     assert!(
@@ -290,7 +290,7 @@ def compute():
     );
     run_pack_function(&functions, "compute", &mut scores);
     assert_eq!(
-        get_score(&scores, "w", "cobble.vars"),
+        get_score(&scores, "#compute.w", "cobble.vars"),
         3,
         "w = w - 2 with w=5"
     );
@@ -348,14 +348,18 @@ def compute():
 
     let mut scores = Scores::new();
     run_pack_function(&functions, "compute", &mut scores);
-    assert_eq!(get_score(&scores, "a", "cobble.vars"), 4, "math.sqrt(16)");
     assert_eq!(
-        get_score(&scores, "b", "cobble.vars"),
+        get_score(&scores, "#compute.a", "cobble.vars"),
+        4,
+        "math.sqrt(16)"
+    );
+    assert_eq!(
+        get_score(&scores, "#compute.b", "cobble.vars"),
         4,
         "math.sqrt(math.sqrt(256))"
     );
     assert_eq!(
-        get_score(&scores, "c", "cobble.vars"),
+        get_score(&scores, "#compute.c", "cobble.vars"),
         5,
         "math.max(math.abs(-5), 3)"
     );
@@ -416,12 +420,12 @@ def compute():
     let mut scores = Scores::new();
     run_pack_function(&functions, "compute", &mut scores);
     assert_eq!(
-        get_score(&scores, "r", "cobble.vars"),
+        get_score(&scores, "#compute.r", "cobble.vars"),
         9,
         "math.max(2, math.abs(-9))"
     );
     assert_eq!(
-        get_score(&scores, "s", "cobble.vars"),
+        get_score(&scores, "#compute.s", "cobble.vars"),
         4,
         "math.min(math.abs(-4), math.max(1, 6))"
     );

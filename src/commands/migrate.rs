@@ -4,7 +4,7 @@ use crate::config::CobbleConfig;
 use crate::diagnostics::{parse_source, python_compat_suggestion_for_kind};
 use crate::fs_safety::write_file_atomic_with_permissions;
 use crate::pack_format::{PackFormat, SUPPORTED_PACK_FORMAT};
-use crate::transpiler::vars_objective;
+use crate::transpiler::{module_variables_made_local, vars_objective};
 use serde::Serialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -1124,7 +1124,30 @@ fn analyze_source(source: &str, file: &str, report_temp: bool) -> SourceSignals 
         }
     }
 
-    if let Err(diagnostics) = parse_source(source) {
+    let parsed = parse_source(source);
+    if report_temp {
+        if let Ok(program) = &parsed {
+            for (function, name) in module_variables_made_local(program) {
+                let (line, column) = local_assignment_position(source, &function, &name);
+                locations.push(MigrationSourceLocation {
+                    file: file.to_string(),
+                    line,
+                    column,
+                    kind: "function-local-variable".to_string(),
+                    message: format!(
+                        "`{function}` assigns `{name}` without `global`, so `{name}` is a local \
+                         variable of `{function}` (since 0.11) and the module variable `{name}` \
+                         keeps its value."
+                    ),
+                    suggested_cobble_alternative: Some(format!(
+                        "Add `global {name}` at the start of `{function}` to keep changing the \
+                         module variable."
+                    )),
+                });
+            }
+        }
+    }
+    if let Err(diagnostics) = parsed {
         for diagnostic in diagnostics {
             if !migration_python_diagnostic_kind(&diagnostic.kind) {
                 continue;
@@ -1156,6 +1179,44 @@ fn analyze_source(source: &str, file: &str, report_temp: bool) -> SourceSignals 
         temp_objective_references,
         locations,
     }
+}
+
+/// The 1-based line and column of the first line in the top-level function
+/// `function` that assigns `name` or uses it as a `for` target, or of the
+/// `def` line when no such line is found.
+fn local_assignment_position(source: &str, function: &str, name: &str) -> (usize, usize) {
+    let lines: Vec<&str> = source.lines().collect();
+    let Some(def_index) = lines.iter().position(|line| {
+        line.strip_prefix("def ")
+            .and_then(|rest| rest.trim_start().strip_prefix(function))
+            .is_some_and(|rest| rest.trim_start().starts_with('('))
+    }) else {
+        return (1, 1);
+    };
+    for (index, raw_line) in lines.iter().enumerate().skip(def_index + 1) {
+        let trimmed = raw_line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.len() == raw_line.len() {
+            break;
+        }
+        let leading = raw_line.len() - trimmed.len();
+        let assigned = trimmed.strip_prefix(name).is_some_and(|rest| {
+            let rest = rest.trim_start();
+            ["=", "+=", "-=", "*=", "/=", "%=", "^="]
+                .iter()
+                .any(|op| rest.starts_with(op) && !rest.starts_with("=="))
+        });
+        let for_target = trimmed
+            .strip_prefix("for ")
+            .and_then(|rest| rest.trim_start().strip_prefix(name))
+            .is_some_and(|rest| rest.starts_with(' '));
+        if assigned || for_target {
+            return (index + 1, leading + 1);
+        }
+    }
+    (def_index + 1, 1)
 }
 
 /// The 1-based column of the first `temp` objective reference in a raw

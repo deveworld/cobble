@@ -22,7 +22,8 @@ pub use python_compat::{
 };
 pub use reporting::{
     format_diagnostics, format_diagnostics_with_source, format_file_diagnostics,
-    DiagnosticSeverity, FileSourceDiagnostics, ParsedSourceFile, SourceDiagnostic,
+    warning_diagnostics, DiagnosticSeverity, FileSourceDiagnostics, ParsedSourceFile,
+    SourceDiagnostic,
 };
 pub use text::byte_offset_for_line_column;
 
@@ -875,8 +876,12 @@ fn check_assignment_target(
         return;
     }
 
+    // `a, b = ...` unpacks a tuple. A comma inside brackets, as in
+    // `items[f(0, 1)] = 2`, is part of the target.
+    let unpacks = |target: &str| split_top_level_arg_spans(&mask_non_code(target)).len() > 1;
+
     if let Some(compound) = compound_assignment_span(trimmed) {
-        if compound.target.contains(',') {
+        if unpacks(&compound.target) {
             diagnostics.push(
                 SourceDiagnostic::error(
                     "unsupported-assignment-target",
@@ -900,7 +905,7 @@ fn check_assignment_target(
         .unwrap_or(raw_target)
         .trim();
 
-    if target.contains(',') {
+    if unpacks(target) {
         diagnostics.push(
             SourceDiagnostic::error(
                 "unsupported-assignment-target",
@@ -1922,18 +1927,22 @@ def main():
 
     #[test]
     fn reports_type_mismatch_for_module_variables_inside_functions() {
+        // Without `global`, `score` in `main` is a local of its own type.
+        assert!(analyze_source("score = 1\n\ndef main():\n    score = \"done\"\n").is_empty());
+
         let diagnostics = analyze_source(
             r#"
 score = 1
 
 def main():
+    global score
     score = "done"
 "#,
         );
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].kind, "type-mismatch");
-        assert_eq!(diagnostics[0].line, 5);
+        assert_eq!(diagnostics[0].line, 6);
         assert!(diagnostics[0]
             .help
             .as_deref()

@@ -1886,9 +1886,16 @@ fn is_expression_keyword(name: &str) -> bool {
 /// a function definition's body, or analyze the assignment statement whose
 /// header starts on `line`.
 enum AssignmentScanEvent {
-    EnterFunction,
+    /// A function starts. Its parameters and locals are its own names, so
+    /// they don't take the types of module variables with the same names.
+    EnterFunction {
+        params: Vec<String>,
+        locals: Vec<String>,
+    },
     LeaveFunction,
-    Assignment { line: usize },
+    Assignment {
+        line: usize,
+    },
 }
 
 /// Assignment statements and function-scope boundaries in source order,
@@ -1930,7 +1937,14 @@ fn collect_assignment_scan_events_into(
                 }
             }
             Statement::FunctionDef(function_def) => {
-                events.push(AssignmentScanEvent::EnterFunction);
+                events.push(AssignmentScanEvent::EnterFunction {
+                    params: function_def
+                        .params
+                        .iter()
+                        .map(|param| param.name.clone())
+                        .collect(),
+                    locals: crate::transpiler::function_locals(function_def),
+                });
                 collect_assignment_scan_events_into(
                     context,
                     &function_def.body,
@@ -2013,8 +2027,19 @@ pub(super) fn check_storage_backed_access(
 
     for event in collect_assignment_scan_events(context) {
         match event {
-            AssignmentScanEvent::EnterFunction => {
-                function_scopes.push((module_types.clone(), module_constants.clone()));
+            AssignmentScanEvent::EnterFunction { params, locals } => {
+                let mut types = module_types.clone();
+                let mut constants = module_constants.clone();
+                for local in locals {
+                    constants.remove(&local);
+                    types.remove(&local);
+                }
+                // A parameter holds whatever the caller passes.
+                for param in params {
+                    constants.remove(&param);
+                    types.insert(param, CobbleType::Unknown);
+                }
+                function_scopes.push((types, constants));
             }
             AssignmentScanEvent::LeaveFunction => {
                 function_scopes.pop();
@@ -2096,8 +2121,12 @@ pub(super) fn check_type_mismatches(
 
     for event in collect_assignment_scan_events(context) {
         match event {
-            AssignmentScanEvent::EnterFunction => {
-                function_scopes.push(module_types.clone());
+            AssignmentScanEvent::EnterFunction { params, locals } => {
+                let mut types = module_types.clone();
+                for name in params.iter().chain(&locals) {
+                    types.remove(name);
+                }
+                function_scopes.push(types);
             }
             AssignmentScanEvent::LeaveFunction => {
                 function_scopes.pop();
@@ -2205,6 +2234,11 @@ fn unsupported_subscript_access(
         };
         let index_expression = expression[index + 1..close_index].trim();
         let (base_type, nested_storage_chain) = match type_env.get(base) {
+            // A parameter or a value of unknown type: the compiler decides.
+            Some(CobbleType::Unknown) => {
+                index = close_index + 1;
+                continue;
+            }
             Some(base_type) => (base_type.clone(), false),
             None => {
                 let Some((root, _root_start)) =
@@ -2803,6 +2837,16 @@ fn infer_expression_type_for_diagnostics(
     }
     if is_simple_module_name(expression) {
         return type_env.get(expression).cloned();
+    }
+    // A character of a string is a string.
+    if let Some(open) = expression.find('[') {
+        let base = &expression[..open];
+        if is_simple_module_name(base)
+            && matching_close_bracket(expression, open) == Some(expression.len() - 1)
+            && type_env.get(base) == Some(&CobbleType::String)
+        {
+            return Some(CobbleType::String);
+        }
     }
     if expression_contains_boolean_operator(expression)
         && expression_references_are_known(expression, type_env)

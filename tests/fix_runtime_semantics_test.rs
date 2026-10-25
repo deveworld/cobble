@@ -120,7 +120,7 @@ def bump():
     );
     sim.call("bump");
     // 0 -> 1 -> 3 -> 7: each entity applies the whole assignment once.
-    assert_eq!(sim.var("total"), 7);
+    assert_eq!(sim.var("#bump.total"), 7);
 }
 
 #[test]
@@ -140,7 +140,7 @@ def probe():
     );
     sim.set_score("alex", "lvl", 4);
     sim.call("probe");
-    assert_eq!(sim.var("result"), 1);
+    assert_eq!(sim.var("#probe.result"), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ def run_case():
         &[],
     );
     sim.call("run_case");
-    sim.var("result") == 1
+    sim.var("#run_case.result") == 1
 }
 
 #[test]
@@ -221,7 +221,7 @@ def count():
         &[],
     );
     sim.call("count");
-    assert_eq!(sim.var("result"), 3);
+    assert_eq!(sim.var("#count.result"), 3);
 }
 
 #[test]
@@ -236,7 +236,7 @@ def compute():
         &[],
     );
     sim.call("compute");
-    assert_eq!(sim.var("flag"), 1);
+    assert_eq!(sim.var("#compute.flag"), 1);
 }
 
 #[test]
@@ -305,9 +305,9 @@ def toggle():
         &[],
     );
     sim.call("toggle");
-    assert_eq!(sim.var("a"), 0);
-    assert_eq!(sim.var("b"), 1);
-    assert_eq!(sim.var("done"), 0);
+    assert_eq!(sim.var("#toggle.a"), 0);
+    assert_eq!(sim.var("#toggle.b"), 1);
+    assert_eq!(sim.var("#toggle.done"), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -401,12 +401,12 @@ def compute():
         &[],
     );
     sim.call("compute");
-    assert_eq!(sim.var("a"), 7, "x = 10 - x with x = 3");
-    assert_eq!(sim.var("b"), 13, "x = y - x with x = 7, y = 20");
-    assert_eq!(sim.var("c"), 17, "x = C + x with x = 13");
-    assert_eq!(sim.var("d"), 0, "x = 12 / x with x = 17");
-    assert_eq!(sim.var("e"), 1, "x = 50 % x with x = 7");
-    assert_eq!(sim.var("f"), 10, "x = x + x with x = 5");
+    assert_eq!(sim.var("#compute.a"), 7, "x = 10 - x with x = 3");
+    assert_eq!(sim.var("#compute.b"), 13, "x = y - x with x = 7, y = 20");
+    assert_eq!(sim.var("#compute.c"), 17, "x = C + x with x = 13");
+    assert_eq!(sim.var("#compute.d"), 0, "x = 12 / x with x = 17");
+    assert_eq!(sim.var("#compute.e"), 1, "x = 50 % x with x = 7");
+    assert_eq!(sim.var("#compute.f"), 10, "x = x + x with x = 5");
 }
 
 // ---------------------------------------------------------------------------
@@ -431,11 +431,11 @@ def compute():
     );
     sim.call("compute");
     assert_eq!(
-        sim.var("folded"),
+        sim.var("#compute.folded"),
         sim.var("folded_module"),
         "module-level and function folding disagree for {expr_with_literals}"
     );
-    (sim.var("folded"), sim.var("runtime"))
+    (sim.var("#compute.folded"), sim.var("#compute.runtime"))
 }
 
 #[test]
@@ -480,9 +480,13 @@ def compute():
         &[],
     );
     sim.call("compute");
-    assert_eq!(sim.var("q"), -4);
-    assert_eq!(sim.var("r"), 2);
-    assert_eq!(sim.var("total"), 4, "range(-4, 0) unrolls four times");
+    assert_eq!(sim.var("#compute.q"), -4);
+    assert_eq!(sim.var("#compute.r"), 2);
+    assert_eq!(
+        sim.var("#compute.total"),
+        4,
+        "range(-4, 0) unrolls four times"
+    );
 }
 
 #[test]
@@ -499,8 +503,27 @@ def compute():
         &[],
     );
     sim.call("compute");
-    assert_eq!(sim.var("area"), 314);
-    assert_eq!(sim.var("half"), 0);
+    assert_eq!(sim.var("#compute.area"), 314);
+    assert_eq!(sim.var("#compute.half"), 0);
+}
+
+#[test]
+fn const_powers_keep_real_arithmetic() {
+    let sim = Sim::load(
+        r#"
+const BIG = 2 ^ 40
+const SMALL = 3 ^ 4
+
+def show():
+    /say {BIG} {SMALL}
+"#,
+        &[],
+    );
+    assert!(
+        sim.function_text("show").contains("say 1099511627776 81"),
+        "{}",
+        sim.function_text("show")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -522,9 +545,9 @@ def compute():
         &[],
     );
     sim.call("compute");
-    assert_eq!(sim.var("x"), 4);
-    assert_eq!(sim.var("y"), 5);
-    assert_eq!(sim.var("z"), 2);
+    assert_eq!(sim.var("#compute.x"), 4);
+    assert_eq!(sim.var("#compute.y"), 5);
+    assert_eq!(sim.var("#compute.z"), 2);
     assert_eq!(sim.log, vec!["Server: done"]);
 }
 
@@ -559,7 +582,7 @@ def util():
         "execute as @a if block ~ ~-1 ~ minecraft:stone[snowy=false] run say block",
         "execute as @a if function sim:util/check run say fn",
         "execute as @a if data storage sim:global vars.items[0] run say path",
-        "execute as @a if score x sim.vars matches 2.. run say python",
+        "execute as @a if score #f.x sim.vars matches 2.. run say python",
     ] {
         assert!(f.contains(expected), "missing `{expected}` in:\n{f}");
     }
@@ -798,5 +821,5 @@ def f():
     );
     sim.call("f");
     assert_eq!(sim.log, vec!["Server: 0.5"]);
-    assert_eq!(sim.var("whole"), 0);
+    assert_eq!(sim.var("#f.whole"), 0);
 }

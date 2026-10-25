@@ -175,9 +175,13 @@ fn compile(
         ..TranspilerOptions::new(namespace.to_string(), PathBuf::from("cobble-web-demo"))
     });
     transpiler.set_current_file_with_source(Path::new("demo.cbl"), source);
-    transpiler
-        .transpile(&program)
-        .map_err(|error| transpile_error_diagnostics(&error, source))?;
+    let result = transpiler.transpile(&program);
+    let warnings = warning_details(&transpiler.take_warnings(), source);
+    if let Err(error) = result {
+        let mut details = transpile_error_diagnostics(&error, source);
+        details.extend(warnings);
+        return Err(details);
+    }
 
     let mut files = materialize_files(&transpiler, namespace)?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -198,9 +202,9 @@ fn compile(
     Ok(CompileResponse {
         ok: true,
         files,
-        diagnostics: Vec::new(),
-        diagnostic_details: Vec::new(),
+        diagnostics: formatted_diagnostics(&warnings),
         experimental_python_compat: python_compat_report(experimental_python_compat, source, &[]),
+        diagnostic_details: warnings,
         summary: CompileSummary {
             namespace: namespace.to_string(),
             pack_format: SUPPORTED_PACK_FORMAT.to_string(),
@@ -707,6 +711,22 @@ fn transpile_error_diagnostics(
     )]
 }
 
+/// The compiler's warnings. The browser compiles one file, so they are all
+/// about it.
+fn warning_details(
+    warnings: &[transpiler::TranspileWarning],
+    source: &str,
+) -> Vec<CompileDiagnostic> {
+    source_diagnostics(
+        "demo.cbl",
+        source,
+        warnings
+            .iter()
+            .map(diagnostics::SourceDiagnostic::from_transpile_warning)
+            .collect(),
+    )
+}
+
 fn formatted_diagnostics(diagnostics: &[CompileDiagnostic]) -> Vec<String> {
     diagnostics
         .iter()
@@ -1192,6 +1212,24 @@ def main():
         assert_eq!(diagnostics[0].kind, "unroll-limit-exceeded");
         assert_eq!(diagnostics[0].line, 5);
         assert_eq!(diagnostics[0].column, 5);
+    }
+
+    #[test]
+    fn compile_returns_warnings_with_a_successful_pack() {
+        let response = compile_default(
+            "score = 0\n\ndef tick():\n    /say tick\n    score = 5\n",
+            "web_test",
+            "Web test",
+        )
+        .expect("a warning does not stop the build");
+
+        assert!(response.ok);
+        assert_eq!(response.diagnostic_details.len(), 1);
+        let warning = &response.diagnostic_details[0];
+        assert_eq!(warning.severity, "warning");
+        assert_eq!(warning.kind, "local-shadows-module-variable");
+        assert_eq!((warning.line, warning.column), (5, 5));
+        assert_eq!(response.diagnostics, vec![warning.formatted.clone()]);
     }
 
     #[test]

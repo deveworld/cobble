@@ -39,15 +39,18 @@ impl Transpiler {
             return Ok(());
         }
 
-        // Check for duplicate definition (warning only)
         if self
             .symbols
             .selector_aliases
             .contains_key(&selector_def.name)
         {
-            eprintln!(
-                "⚠️  Warning: Selector '@{}' redefined. Previous definition will be overwritten.",
-                selector_def.name
+            self.warn(
+                "selector-redefined",
+                format!(
+                    "`@{}` is already defined. This definition replaces the earlier one.",
+                    selector_def.name
+                ),
+                None,
             );
         }
 

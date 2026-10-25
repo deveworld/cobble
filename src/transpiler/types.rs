@@ -80,6 +80,13 @@ impl Transpiler {
                 CobbleType::Integer
             }
             Expression::Call(_, _) => CobbleType::Unknown,
+            // A character of a string is a string.
+            Expression::Subscript(base, _)
+                if matches!(&**base, Expression::Identifier(name)
+                    if self.symbols.variable_types.get(name) == Some(&CobbleType::String)) =>
+            {
+                CobbleType::String
+            }
             _ => CobbleType::Unknown,
         }
     }

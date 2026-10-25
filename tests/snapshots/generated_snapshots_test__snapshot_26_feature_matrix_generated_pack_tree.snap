@@ -1737,7 +1737,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/load.mcfunction",
       "generated_line": 26,
-      "command": "scoreboard players operation root cobble_26_feature_matrix.vars = #math_result cobble_26_feature_matrix.vars",
+      "command": "scoreboard players operation #load.root cobble_26_feature_matrix.vars = #math_result cobble_26_feature_matrix.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 48,
@@ -2034,7 +2034,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 2,
-      "command": "scoreboard players operation doubled cobble_26_feature_matrix.vars = score cobble_26_feature_matrix.vars",
+      "command": "scoreboard players operation #tick.doubled cobble_26_feature_matrix.vars = score cobble_26_feature_matrix.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 65,
@@ -2056,7 +2056,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 4,
-      "command": "scoreboard players operation doubled cobble_26_feature_matrix.vars *= #multiplier cobble_26_feature_matrix.vars",
+      "command": "scoreboard players operation #tick.doubled cobble_26_feature_matrix.vars *= #multiplier cobble_26_feature_matrix.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 65,
@@ -2067,7 +2067,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 5,
-      "command": "scoreboard players operation combined cobble_26_feature_matrix.vars = doubled cobble_26_feature_matrix.vars",
+      "command": "scoreboard players operation #tick.combined cobble_26_feature_matrix.vars = #tick.doubled cobble_26_feature_matrix.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 66,
@@ -2078,7 +2078,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 6,
-      "command": "scoreboard players add combined cobble_26_feature_matrix.vars 5",
+      "command": "scoreboard players add #tick.combined cobble_26_feature_matrix.vars 5",
       "source": {
         "file": "src/main.cbl",
         "line": 66,
@@ -2089,7 +2089,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 7,
-      "command": "scoreboard players operation remainder cobble_26_feature_matrix.vars = combined cobble_26_feature_matrix.vars",
+      "command": "scoreboard players operation #tick.remainder cobble_26_feature_matrix.vars = #tick.combined cobble_26_feature_matrix.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 67,
@@ -2111,7 +2111,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 9,
-      "command": "scoreboard players operation remainder cobble_26_feature_matrix.vars %= #modulus cobble_26_feature_matrix.vars",
+      "command": "scoreboard players operation #tick.remainder cobble_26_feature_matrix.vars %= #modulus cobble_26_feature_matrix.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 67,
@@ -2122,7 +2122,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 10,
-      "command": "scoreboard players set power cobble_26_feature_matrix.vars 27",
+      "command": "scoreboard players set #tick.power cobble_26_feature_matrix.vars 27",
       "source": {
         "file": "src/main.cbl",
         "line": 68,
@@ -2298,7 +2298,7 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/tick.mcfunction",
       "generated_line": 26,
-      "command": "scoreboard players operation match_temp_5 cobble_26_feature_matrix.vars = remainder cobble_26_feature_matrix.vars",
+      "command": "scoreboard players operation match_temp_5 cobble_26_feature_matrix.vars = #tick.remainder cobble_26_feature_matrix.vars",
       "source": {
         "file": "src/main.cbl",
         "line": 81,
@@ -2806,7 +2806,7 @@ schedule function cobble_26_feature_matrix:tick 20t replace
 tag @a add matrix_loader
 scoreboard players set #math_input cobble_26_feature_matrix.vars 100
 function cobble_26_feature_matrix:_cobble_math_sqrt
-scoreboard players operation root cobble_26_feature_matrix.vars = #math_result cobble_26_feature_matrix.vars
+scoreboard players operation #load.root cobble_26_feature_matrix.vars = #math_result cobble_26_feature_matrix.vars
 datapack list enabled
 random roll 1..6
 dialog clear @a
@@ -2845,15 +2845,15 @@ bossbar set cobble_26_feature_matrix:matrix players @a
 
 ===== data/cobble_26_feature_matrix/function/tick.mcfunction =====
 scoreboard players add score cobble_26_feature_matrix.vars 3
-scoreboard players operation doubled cobble_26_feature_matrix.vars = score cobble_26_feature_matrix.vars
+scoreboard players operation #tick.doubled cobble_26_feature_matrix.vars = score cobble_26_feature_matrix.vars
 scoreboard players set #multiplier cobble_26_feature_matrix.vars 2
-scoreboard players operation doubled cobble_26_feature_matrix.vars *= #multiplier cobble_26_feature_matrix.vars
-scoreboard players operation combined cobble_26_feature_matrix.vars = doubled cobble_26_feature_matrix.vars
-scoreboard players add combined cobble_26_feature_matrix.vars 5
-scoreboard players operation remainder cobble_26_feature_matrix.vars = combined cobble_26_feature_matrix.vars
+scoreboard players operation #tick.doubled cobble_26_feature_matrix.vars *= #multiplier cobble_26_feature_matrix.vars
+scoreboard players operation #tick.combined cobble_26_feature_matrix.vars = #tick.doubled cobble_26_feature_matrix.vars
+scoreboard players add #tick.combined cobble_26_feature_matrix.vars 5
+scoreboard players operation #tick.remainder cobble_26_feature_matrix.vars = #tick.combined cobble_26_feature_matrix.vars
 scoreboard players set #modulus cobble_26_feature_matrix.vars 4
-scoreboard players operation remainder cobble_26_feature_matrix.vars %= #modulus cobble_26_feature_matrix.vars
-scoreboard players set power cobble_26_feature_matrix.vars 27
+scoreboard players operation #tick.remainder cobble_26_feature_matrix.vars %= #modulus cobble_26_feature_matrix.vars
+scoreboard players set #tick.power cobble_26_feature_matrix.vars 27
 data modify storage cobble_26_feature_matrix:global vars.status set value "running"
 execute if score matrix_timer cobble_26_feature_matrix.vars matches 1.. run scoreboard players remove matrix_timer cobble_26_feature_matrix.vars 1
 scoreboard players set matrix_timer_done cobble_26_feature_matrix.vars 0
@@ -2869,7 +2869,7 @@ execute unless score if_branch_2 cobble_26_feature_matrix.vars matches 1 if scor
 execute if score elif_taken_4 cobble_26_feature_matrix.vars matches 1 run scoreboard players set if_branch_2 cobble_26_feature_matrix.vars 1
 execute if score elif_taken_4 cobble_26_feature_matrix.vars matches 1 run tellraw @a[gamemode=!spectator] {"text":"Threshold reached","color":"yellow"}
 execute unless score if_branch_2 cobble_26_feature_matrix.vars matches 1 run tellraw @a[gamemode=!spectator] {"text":"Matrix warming","color":"gray"}
-scoreboard players operation match_temp_5 cobble_26_feature_matrix.vars = remainder cobble_26_feature_matrix.vars
+scoreboard players operation match_temp_5 cobble_26_feature_matrix.vars = #tick.remainder cobble_26_feature_matrix.vars
 execute if score match_temp_5 cobble_26_feature_matrix.vars matches 0 run function cobble_26_feature_matrix:match_case_0_6
 execute if score match_temp_5 cobble_26_feature_matrix.vars matches 1..2 run function cobble_26_feature_matrix:match_case_1_7
 execute unless score match_temp_5 cobble_26_feature_matrix.vars matches 0..0 unless score match_temp_5 cobble_26_feature_matrix.vars matches 1..2 run function cobble_26_feature_matrix:match_default_8

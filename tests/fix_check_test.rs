@@ -1,9 +1,9 @@
 //! Regression tests for `cobble check` semantic-error reporting:
-//! multi-file checks keep going past the first failing file (with
-//! cascading-import duplicates removed, while unrelated files that raise
-//! byte-identical errors are all reported), and the shared transpiler-error
-//! classifier keeps emitting the documented diagnostic kinds through
-//! `check --json`.
+//! multi-file checks keep going past the first failing file, report an
+//! error in an imported file once and in that file, report byte-identical
+//! errors in unrelated files separately, report warnings without failing,
+//! and the shared transpiler-error classifier keeps emitting the documented
+//! diagnostic kinds through `check --json`.
 
 use std::fs;
 use std::path::Path;
@@ -83,8 +83,8 @@ fn cli_check_json_deduplicates_cascading_import_errors() {
         "def alpha():\n    for i in range(1025):\n        /say bad {i}\n",
     )
     .unwrap();
-    // b.cbl imports the failing file; its transpile replays the same
-    // underlying error, which must not appear a second time.
+    // b.cbl imports the failing file, which was already checked; its error
+    // must not appear a second time.
     fs::write(
         temp_dir.path().join("b.cbl"),
         "import a\n\ndef beta():\n    /say ok\n",
@@ -103,6 +103,153 @@ fn cli_check_json_deduplicates_cascading_import_errors() {
     assert_eq!(diagnostics.len(), 1, "diagnostics: {diagnostics:?}");
     assert!(diagnostics[0]["file"].as_str().unwrap().ends_with("a.cbl"));
     assert_eq!(diagnostics[0]["kind"], "unroll-limit-exceeded");
+}
+
+#[test]
+fn cli_check_json_reports_an_imported_files_error_in_that_file() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    // b.cbl is checked first and imports z.cbl, so z.cbl fails while b.cbl
+    // is being checked.
+    fs::write(
+        temp_dir.path().join("b.cbl"),
+        "import z\n\ndef beta():\n    /say ok\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("z.cbl"),
+        "def alpha():\n    for i in range(1025):\n        /say bad {i}\n",
+    )
+    .unwrap();
+
+    for input in [temp_dir.path().to_path_buf(), temp_dir.path().join("b.cbl")] {
+        let (value, stderr, success) = check_json(&input);
+
+        assert!(!success);
+        assert!(
+            stderr.contains("Validation failed with 1 error(s)"),
+            "stderr: {stderr}"
+        );
+        let diagnostics = value["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "diagnostics: {diagnostics:?}");
+        assert!(diagnostics[0]["file"].as_str().unwrap().ends_with("z.cbl"));
+        assert_eq!(diagnostics[0]["kind"], "unroll-limit-exceeded");
+        assert_eq!(diagnostics[0]["line"], 2);
+        assert_eq!(diagnostics[0]["column"], 5);
+    }
+}
+
+#[test]
+fn cli_check_json_reports_warnings_without_failing() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        temp_dir.path().join("main.cbl"),
+        "score = 0\n\ndef tick():\n    /say tick\n    score = 5\n\ndef spin():\n    while True:\n        /say spin\n\ndef wait():\n    while True:\n        return 1\n",
+    )
+    .unwrap();
+
+    let (value, stderr, success) = check_json(temp_dir.path());
+
+    assert!(success, "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["error_count"], 0);
+    assert_eq!(value["warning_count"], 2);
+    let diagnostics = value["diagnostics"].as_array().unwrap();
+    let found: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic["severity"].as_str().unwrap(),
+                diagnostic["kind"].as_str().unwrap(),
+                diagnostic["line"].as_u64().unwrap(),
+                diagnostic["column"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    // `wait` has a `return` in its loop, so only `spin` warns.
+    assert_eq!(
+        found,
+        [
+            ("warning", "local-shadows-module-variable", 5, 5),
+            ("warning", "infinite-loop", 8, 5),
+        ]
+    );
+    assert!(diagnostics[0]["help"]
+        .as_str()
+        .unwrap()
+        .contains("global score"));
+}
+
+#[test]
+fn cli_check_json_points_a_warning_without_a_compiled_assignment_at_the_def() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    // The loop runs no passes, so its body is never compiled.
+    fs::write(
+        temp_dir.path().join("main.cbl"),
+        "score = 0\n\ndef reset(a):\n    for i in range(0):\n        score = 5\n",
+    )
+    .unwrap();
+
+    let (value, stderr, success) = check_json(temp_dir.path());
+
+    assert!(success, "stderr: {stderr}");
+    let diagnostics = value["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["kind"], "local-shadows-module-variable");
+    assert_eq!(diagnostics[0]["line"], 3);
+}
+
+#[test]
+fn cli_check_json_gives_locals_and_parameters_their_own_types() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    // `label` and `values` are a module number and a module string, but
+    // the function's own `label` and `values` hold other types.
+    fs::write(
+        temp_dir.path().join("main.cbl"),
+        "label = 5\nvalues = \"none\"\n\ndef show(values):\n    first = values[0]\n    label = \"x\"\n    /say {label} {first}\n\ndef main():\n    show([1, 2])\n",
+    )
+    .unwrap();
+
+    let (value, stderr, success) = check_json(temp_dir.path());
+
+    assert!(success, "stderr: {stderr}\n{value}");
+    assert_eq!(value["error_count"], 0);
+}
+
+#[test]
+fn build_prints_warnings_with_their_location() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    // The warning is in the imported file.
+    fs::write(
+        temp_dir.path().join("main.cbl"),
+        "import util\n\ndef main():\n    util.bump()\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.path().join("util.cbl"),
+        "level = 1\n\ndef bump():\n    level = 2\n",
+    )
+    .unwrap();
+
+    let output = cobble()
+        .arg("build")
+        .arg(temp_dir.path())
+        .arg("-o")
+        .arg(temp_dir.path().join("out"))
+        .output()
+        .unwrap();
+    let (_, stderr) = output_text(&output);
+
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert_eq!(
+        stderr
+            .matches("warning[local-shadows-module-variable]")
+            .count(),
+        1,
+        "{stderr}"
+    );
+    assert!(stderr.contains("util.cbl:4:5: warning["), "{stderr}");
+    assert!(stderr.contains("4 |     level = 2"), "{stderr}");
 }
 
 #[test]
@@ -151,8 +298,8 @@ fn cli_check_json_deduplicates_diamond_import_errors() {
         "def alpha():\n    for i in range(1025):\n        /say bad {i}\n",
     )
     .unwrap();
-    // b.cbl and c.cbl both import the failing file; each transpile replays
-    // the same underlying error, which must be reported exactly once.
+    // b.cbl and c.cbl both import the failing file; its error must be
+    // reported exactly once.
     fs::write(
         temp_dir.path().join("b.cbl"),
         "import a\n\ndef beta():\n    /say ok\n",

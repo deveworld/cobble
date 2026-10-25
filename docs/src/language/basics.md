@@ -121,7 +121,7 @@ Error: type-mismatch: Type mismatch for variable 'x'.
 
 Numbers are scoreboard integers, so they range from `-2147483648` to
 `2147483647`. A float literal is truncated to an integer and a literal outside
-the range is clamped, each with a warning:
+the range is clamped, each with a [warning](../reference/diagnostics.md#warnings):
 
 ```python
 pi = 3.14159       # warning: truncated to 3

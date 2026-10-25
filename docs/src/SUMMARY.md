@@ -31,6 +31,7 @@
 
 - [CLI Commands](reference/cli.md)
 - [Project Configuration](reference/config.md)
+- [Calling Convention](reference/calling-convention.md)
 - [Diagnostics](reference/diagnostics.md)
 - [Metadata Files](reference/metadata.md)
 - [Experimental Features](reference/experimental.md)

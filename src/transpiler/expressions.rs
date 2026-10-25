@@ -11,6 +11,7 @@ impl Transpiler {
         expr: &Expression,
         target: &str,
     ) -> Result<Vec<String>, TranspileError> {
+        let caller_recursive = self.in_recursive_function();
         let mut evaluator = ExpressionEvaluator {
             data_pack: &mut self.data_pack,
             symbols: &self.symbols,
@@ -18,7 +19,8 @@ impl Transpiler {
             current_params: &self.current_context.params,
             temp_counter: &mut self.temp_counter,
             source: self.current_statement_source.clone(),
-            current_function_name: self.current_function_name.as_deref(),
+            caller_recursive,
+            warnings: &self.warnings,
         };
         evaluator.evaluate_expression_to_target(expr, target)
     }

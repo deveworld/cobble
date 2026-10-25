@@ -1,7 +1,7 @@
 use crate::ast::{Program, SourceSpan};
 use crate::parser::ProgramSpanTable;
-use crate::transpiler::{TranspileError, TranspileErrorKind};
-use std::path::PathBuf;
+use crate::transpiler::{TranspileError, TranspileErrorKind, TranspileWarning};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticSeverity {
@@ -88,6 +88,22 @@ impl SourceDiagnostic {
         message: impl Into<String>,
     ) -> Self {
         Self::error(kind, span.line, span.column, message)
+    }
+
+    /// A compiler warning, at the statement it is about or at 1:1.
+    pub fn from_transpile_warning(warning: &TranspileWarning) -> Self {
+        let (line, column) = warning
+            .location
+            .as_ref()
+            .map_or((1, 1), |location| (location.line, location.column));
+        Self {
+            severity: DiagnosticSeverity::Warning,
+            kind: warning.kind.to_string(),
+            line: line.max(1),
+            column: column.max(1),
+            message: warning.message.clone(),
+            help: warning.help.clone(),
+        }
     }
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
@@ -339,6 +355,40 @@ pub fn format_diagnostics_with_source(
         .map(|diagnostic| diagnostic.format_with_source(filename, source))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Compiler warnings grouped by file, in the order they were found.
+/// `report_file` gives the path to report and the source of a file that a
+/// warning's location names. A warning without a location, or in a file
+/// `report_file` can't give, belongs to `current_file` at 1:1.
+pub fn warning_diagnostics(
+    warnings: &[TranspileWarning],
+    current_file: &Path,
+    current_source: &str,
+    report_file: impl Fn(&Path) -> Option<(PathBuf, String)>,
+) -> Vec<FileSourceDiagnostics> {
+    let mut files: Vec<FileSourceDiagnostics> = Vec::new();
+    for warning in warnings {
+        let mut diagnostic = SourceDiagnostic::from_transpile_warning(warning);
+        let reported = warning
+            .location
+            .as_ref()
+            .and_then(|location| report_file(&location.file));
+        let (path, source) = reported.unwrap_or_else(|| {
+            (diagnostic.line, diagnostic.column) = (1, 1);
+            (current_file.to_path_buf(), current_source.to_string())
+        });
+        match files.iter_mut().find(|file| file.path == path) {
+            Some(file) => file.diagnostics.push(diagnostic),
+            None => files.push(FileSourceDiagnostics::new(path, source, vec![diagnostic])),
+        }
+    }
+    // Module variables are set up after the functions are compiled.
+    for file in &mut files {
+        file.diagnostics
+            .sort_by_key(|diagnostic| (diagnostic.line, diagnostic.column));
+    }
+    files
 }
 
 pub fn format_file_diagnostics(diagnostics: &[FileSourceDiagnostics]) -> String {

@@ -82,16 +82,9 @@ impl Transpiler {
                                 .to_string()
                                 .into());
                         }
-                        match base.checked_pow(exp as u32) {
-                            Some(result) => Ok(result as f64),
-                            None => {
-                                eprintln!(
-                                    "⚠️  Warning: Const power operation {}^{} overflows i32, clamping to i32::MAX",
-                                    base, exp
-                                );
-                                Ok(i32::MAX as f64)
-                            }
-                        }
+                        // Real arithmetic, like `*`. A score that stores the
+                        // result warns when it can't hold it.
+                        Ok(f64::from(base).powi(exp))
                     }
                     _ => {
                         Err(format!("Operator {:?} not supported in const expressions", op).into())

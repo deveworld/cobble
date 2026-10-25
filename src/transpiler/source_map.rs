@@ -14,6 +14,8 @@ pub(in crate::transpiler) struct SourceLocations {
         HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
     pub(in crate::transpiler) statements:
         HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
+    /// Where each top-level import of each file starts, in import order.
+    pub(in crate::transpiler) imports: HashMap<PathBuf, Vec<SourceLocation>>,
 }
 
 impl Transpiler {
@@ -31,6 +33,16 @@ impl Transpiler {
             self.imports.files.insert(canonical_path.clone());
         }
         self.imports.current_file = Some(canonical_path);
+    }
+
+    /// Whether this transpiler already compiled `file_path`, either as the
+    /// current file or through an import. A project build skips such a file
+    /// when it reaches it in the source folder.
+    pub fn has_compiled(&self, file_path: &Path) -> bool {
+        let canonical_path = file_path
+            .canonicalize()
+            .unwrap_or_else(|_| file_path.to_path_buf());
+        self.imports.files.contains(&canonical_path)
     }
 
     pub fn set_current_file_with_source(&mut self, file_path: &Path, source: &str) {
@@ -59,11 +71,21 @@ impl Transpiler {
         let mut raw_locations: HashMap<String, VecDeque<SourceLocation>> = HashMap::new();
         let mut statement_locations: HashMap<String, VecDeque<SourceLocation>> = HashMap::new();
         let mut pending_statement: Option<(String, SourceLocation, i32)> = None;
+        let mut import_locations = Vec::new();
 
         for (line_index, line) in source.lines().enumerate() {
             let trimmed = line.trim_start();
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
+            }
+            if pending_statement.is_none()
+                && (line.starts_with("import ") || line.starts_with("from "))
+            {
+                import_locations.push(SourceLocation {
+                    file: canonical_path.clone(),
+                    line: line_index + 1,
+                    column: 1,
+                });
             }
 
             if let Some(command) = trimmed.strip_prefix('/') {
@@ -143,7 +165,10 @@ impl Transpiler {
             .insert(canonical_path.clone(), raw_locations);
         self.source_locations
             .statements
-            .insert(canonical_path, statement_locations);
+            .insert(canonical_path.clone(), statement_locations);
+        self.source_locations
+            .imports
+            .insert(canonical_path, import_locations);
     }
 
     pub(in crate::transpiler) fn register_source_locations_from_spans(
@@ -168,12 +193,25 @@ impl Transpiler {
             );
         }
 
+        let import_locations = spans
+            .imports
+            .iter()
+            .map(|span| SourceLocation {
+                file: canonical_path.clone(),
+                line: span.line,
+                column: span.column,
+            })
+            .collect();
+
         self.source_locations
             .raw_commands
             .insert(canonical_path.clone(), raw_locations);
         self.source_locations
             .statements
-            .insert(canonical_path, statement_locations);
+            .insert(canonical_path.clone(), statement_locations);
+        self.source_locations
+            .imports
+            .insert(canonical_path, import_locations);
     }
 
     fn register_statement_span_source(
@@ -226,6 +264,38 @@ impl Transpiler {
                 statement_locations,
             );
         }
+    }
+
+    /// Where the `def` line of `func` in the current file is. Function
+    /// definitions take no location while they are lowered, so this only
+    /// looks it up.
+    pub(in crate::transpiler) fn function_def_source(
+        &self,
+        func: &FunctionDef,
+    ) -> Option<SourceLocation> {
+        let params: Vec<&str> = func
+            .params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect();
+        let key = Self::normalize_source_key(&format!("def {}({}):", func.name, params.join(",")));
+        let file_path = self.imports.current_file.as_ref()?;
+        self.source_locations
+            .statements
+            .get(file_path)?
+            .get(&key)?
+            .front()
+            .cloned()
+    }
+
+    /// Where the current file's import number `index` starts.
+    pub(in crate::transpiler) fn import_source(&self, index: usize) -> Option<SourceLocation> {
+        let file_path = self.imports.current_file.as_ref()?;
+        self.source_locations
+            .imports
+            .get(file_path)?
+            .get(index)
+            .cloned()
     }
 
     pub(in crate::transpiler) fn take_raw_command_source(
@@ -283,6 +353,19 @@ impl Transpiler {
             return Vec::new();
         };
         let mut keys = vec![primary];
+        // `x += 5` parses to `x = x + 5`, but its source line keys as `x+=5`.
+        if let Statement::Assignment(assign) = statement {
+            if let Expression::Binary(left, op, right) = &assign.value {
+                if matches!(left.as_ref(), Expression::Identifier(name) if name == &assign.target) {
+                    keys.push(format!(
+                        "{}{}={}",
+                        assign.target,
+                        Self::binary_op_source_key(op),
+                        Self::expression_source_key(right)
+                    ));
+                }
+            }
+        }
         if let Statement::Execute(exec_block) = statement {
             if let [ExecuteModifier::As(selector), ExecuteModifier::At(at), rest @ ..] =
                 exec_block.modifiers.as_slice()

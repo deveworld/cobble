@@ -1,6 +1,6 @@
 use crate::ast::{CobbleType, EntityDef, Expression};
-use crate::transpiler::{FunctionReturnKind, TranspileError};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use crate::transpiler::FunctionReturnKind;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// What each name in the program refers to. Variables are module-wide
 /// scores or storage paths; a function saves and restores parts of this
@@ -23,6 +23,28 @@ pub(in crate::transpiler) struct Symbols {
     /// `@Name = @a[...]` definitions.
     pub(in crate::transpiler) selector_aliases: HashMap<String, String>,
     pub(in crate::transpiler) entity_templates: HashMap<String, EntityDef>,
+    /// Names assigned at module level in any compiled file. A function
+    /// assigning one of them without `global` gets a local variable instead.
+    pub(in crate::transpiler) module_variables: BTreeSet<String>,
+}
+
+impl Symbols {
+    /// The objective of the score behind `name`, when a score holds it.
+    pub(in crate::transpiler) fn scoreboard_objective(&self, name: &str) -> Option<&str> {
+        if self.scoreboard_variables.contains(name)
+            || self.variable_objectives.contains_key(name)
+            || self.variables.contains_key(name)
+        {
+            Some(
+                self.variable_objectives
+                    .get(name)
+                    .map(String::as_str)
+                    .unwrap_or("temp"),
+            )
+        } else {
+            None
+        }
+    }
 }
 
 /// User functions seen so far.
@@ -34,33 +56,10 @@ pub(in crate::transpiler) struct FunctionTable {
     pub(in crate::transpiler) returns: HashMap<String, FunctionReturnKind>,
     /// `module.func` calls of imported modules, mapped to `func`.
     pub(in crate::transpiler) qualified_aliases: HashMap<String, String>,
-    /// Caller -> callees edges for every lowered user-function call, used to
-    /// reject mutually recursive call cycles at the end of `transpile()`.
-    /// BTree containers keep the reported cycle deterministic.
-    pub(in crate::transpiler) call_edges: BTreeMap<String, BTreeSet<String>>,
-}
-
-impl FunctionTable {
-    /// Record that `caller` calls `callee`, rejecting a direct self-call at
-    /// the call site. Module-level calls (no `caller`) record nothing.
-    pub(in crate::transpiler) fn record_call(
-        &mut self,
-        caller: Option<&str>,
-        callee: &str,
-    ) -> Result<(), TranspileError> {
-        let Some(caller) = caller else {
-            return Ok(());
-        };
-        if caller == callee {
-            return Err(format!(
-                "Recursive call to '{}' is not supported. Rewrite the recursion as a loop (while/for) instead.",
-                callee
-            ).into());
-        }
-        self.call_edges
-            .entry(caller.to_string())
-            .or_default()
-            .insert(callee.to_string());
-        Ok(())
-    }
+    /// Functions that can call themselves, directly or through other
+    /// functions. Their calls save state on storage stacks.
+    pub(in crate::transpiler) recursive: HashSet<String>,
+    /// The user function each generated function was lowered for, such as
+    /// `main` for `if_temp_3`.
+    pub(in crate::transpiler) owners: HashMap<String, String>,
 }

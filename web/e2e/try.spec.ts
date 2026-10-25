@@ -67,6 +67,24 @@ test("try page renders structured diagnostics for invalid source", async ({ page
   await expect(page.locator(".diagnostic-snippet")).toContainText("^");
 });
 
+test("try page shows warnings for a pack that compiles", async ({ page }) => {
+  await page.goto("/cobble/try/");
+
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page
+    .getByLabel("Cobble source")
+    .fill("score = 0\n\ndef tick():\n    /say tick\n    score = 5\n");
+  await page.getByRole("button", { name: /compile/i }).click();
+
+  await expect(page.getByText("1 warning")).toBeVisible();
+  await page.getByRole("button", { name: "Diagnostics" }).click();
+  await expect(page.locator(".diagnostic-severity")).toHaveText("warning");
+  await expect(page.locator(".diagnostic-heading code")).toHaveText(
+    "local-shadows-module-variable"
+  );
+  await expect(page.locator(".diagnostic-location")).toHaveText("demo.cbl:5:5");
+});
+
 test("try page exposes the experimental Python compatibility report", async ({ page }) => {
   await page.goto("/cobble/try/");
 

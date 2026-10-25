@@ -388,7 +388,7 @@ def use_math():
     assert!(content.contains("scoreboard players set #math_input stdlib_v1.vars 100"));
     assert!(content.contains("function stdlib_v1:_cobble_math_sqrt"));
     assert!(content.contains(
-        "scoreboard players operation root stdlib_v1.vars = #math_result stdlib_v1.vars"
+        "scoreboard players operation #use_math.root stdlib_v1.vars = #math_result stdlib_v1.vars"
     ));
     // Binary math arguments are staged into unique scratches and copied into
     // the shared helper inputs right before the call.
@@ -402,7 +402,7 @@ def use_math():
     ));
     assert!(content.contains("function stdlib_v1:_cobble_math_min"));
     assert!(content.contains(
-        "scoreboard players operation lower stdlib_v1.vars = #math_result stdlib_v1.vars"
+        "scoreboard players operation #use_math.lower stdlib_v1.vars = #math_result stdlib_v1.vars"
     ));
 }
 

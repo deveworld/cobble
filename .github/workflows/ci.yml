@@ -36,6 +36,9 @@ jobs:
       # missing; this setting makes any other --validate run fail instead of
       # downloading a Mojang server.jar and running `java --reports`.
       COBBLE_COMMANDS_JSON_AUTO_DOWNLOAD: "0"
+      # tests/differential_test.rs compares random programs with Python and
+      # is skipped when python3 is missing. The runner has it; fail without.
+      COBBLE_DIFF_REQUIRE_PYTHON: "1"
 
     steps:
       - name: Checkout

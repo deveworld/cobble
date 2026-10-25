@@ -345,7 +345,7 @@ fn compiler_errors_point_at_the_failing_statement() {
 }
 
 #[test]
-fn errors_in_imported_files_keep_the_importer_location_unclaimed() {
+fn errors_in_imported_files_point_at_the_imported_file() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let main = temp_dir.path().join("main.cbl");
     fs::write(&main, "import helper\n\ndef main():\n    /say ok\n").unwrap();
@@ -364,8 +364,12 @@ fn errors_in_imported_files_keep_the_importer_location_unclaimed() {
             .contains("Cannot interpolate"),
         "{report}"
     );
-    // Line 6 belongs to helper.cbl; main.cbl has only four lines.
-    assert_ne!(diagnostic["line"], 6, "{report}");
+    assert!(
+        diagnostic["file"].as_str().unwrap().ends_with("helper.cbl"),
+        "{report}"
+    );
+    assert_eq!(diagnostic["line"], 6, "{report}");
+    assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -543,6 +547,73 @@ resource_pack.item_model("main:wand", {"parent": "minecraft:item/handheld"})
             (20, 1, "load-function-tag".to_string()),
             (21, 1, "item-model-definition".to_string()),
         ],
+        "{report}"
+    );
+}
+
+#[test]
+fn migrate_to_0_11_reports_module_variables_that_become_function_locals() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let source_dir = temp_dir.path().join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        source_dir.join("main.cbl"),
+        r#"score = 0
+rounds = 0
+
+def add():
+    /say hi
+    score += 5
+
+def keep():
+    global rounds
+    rounds += 1
+
+def count():
+    for score in range(3):
+        rounds = score
+"#,
+    )
+    .unwrap();
+
+    let output = cobble()
+        .arg("migrate")
+        .arg(temp_dir.path())
+        .arg("--json")
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let mut found = Vec::new();
+    fn walk(value: &serde_json::Value, found: &mut Vec<(u64, u64, String)>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if map.get("kind").and_then(|v| v.as_str()) == Some("function-local-variable") {
+                    found.push((
+                        map["line"].as_u64().unwrap(),
+                        map["column"].as_u64().unwrap(),
+                        map["message"].as_str().unwrap().to_string(),
+                    ));
+                }
+                map.values().for_each(|v| walk(v, found));
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(v, found)),
+            _ => {}
+        }
+    }
+    walk(&report, &mut found);
+    found.sort();
+    let locations: Vec<_> = found
+        .iter()
+        .map(|(line, column, _)| (*line, *column))
+        .collect();
+    assert_eq!(locations, [(6, 5), (13, 5), (14, 9)], "{report}");
+    assert!(found[0].2.starts_with("`add` assigns `score`"), "{report}");
+    assert!(
+        found[1].2.starts_with("`count` assigns `score`"),
+        "{report}"
+    );
+    assert!(
+        found[2].2.starts_with("`count` assigns `rounds`"),
         "{report}"
     );
 }

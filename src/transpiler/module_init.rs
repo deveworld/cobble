@@ -156,36 +156,39 @@ impl Transpiler {
     ) -> Result<Vec<String>, TranspileError> {
         if let Some(const_value) = self.try_eval_const(value) {
             let truncated = const_value as i32;
-
-            if const_value > i32::MAX as f64 || const_value < i32::MIN as f64 {
-                eprintln!(
-                    "⚠️  Warning: Module-level value {} for variable '{}' exceeds Minecraft scoreboard range.\n\
-                    Scoreboard range: {} to {}\n\
-                    Value will be clamped to: {}",
-                    const_value,
-                    var_name,
-                    i32::MIN,
-                    i32::MAX,
-                    if const_value > i32::MAX as f64 {
-                        i32::MAX
-                    } else {
-                        i32::MIN
-                    }
-                );
-            }
-
-            if const_value.fract() != 0.0 {
-                eprintln!(
-                    "⚠️  Warning: Module-level value {} for variable '{}' will lose precision.\n\
-                    Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                    const_value, var_name, truncated
-                );
-            }
+            self.warn_score_value(const_value);
 
             return Ok(vec![format!(
                 "scoreboard players set {} temp {}",
                 var_name, truncated
             )]);
+        }
+
+        // A copy of a string, list, or map variable, or a character of a
+        // string, is stored like a literal.
+        let storage_source = match value {
+            Expression::Identifier(name) => self
+                .symbols
+                .variable_storage_paths
+                .get(name)
+                .map(|path| (path.clone(), None)),
+            Expression::Subscript(base, index) => self
+                .string_variable_path(base)
+                .map(|path| (path, Some(index))),
+            _ => None,
+        };
+        if let Some((source_path, index)) = storage_source {
+            let storage_path = format!("vars.{}", var_name);
+            self.symbols
+                .variable_storage_paths
+                .insert(var_name.to_string(), storage_path.clone());
+            return match index {
+                Some(index) => self.string_char_commands(&storage_path, &source_path, index),
+                None => Ok(vec![format!(
+                    "data modify storage {ns}:global {storage_path} set from storage {ns}:global {source_path}",
+                    ns = self.data_pack.namespace
+                )]),
+            };
         }
 
         match value {

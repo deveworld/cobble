@@ -12,6 +12,7 @@ mod function_context;
 mod intrinsics;
 mod module_init;
 mod resource_format;
+mod score_holders;
 mod source_map;
 mod statement_processors;
 mod stdlib_modules;
@@ -25,7 +26,7 @@ pub use data_pack::{
     BuildManifestValidation, DataPack, GeneratedCommand, GeneratedCommandKind, SourceLocation,
     SourceMap, SourceMapEntry, INIT_FUNCTION,
 };
-pub use error::{TranspileError, TranspileErrorKind};
+pub use error::{TranspileError, TranspileErrorKind, TranspileWarning};
 
 use crate::ast::*;
 use crate::pack_format::PackFormat;
@@ -33,12 +34,15 @@ use crate::stdlib::EventType;
 use command_processor::CommandProcessor;
 use source_map::SourceLocations;
 use statement_processors::{ImportState, UnrollState};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use stdlib_modules::StdlibState;
 use symbols::{FunctionTable, Symbols};
 
 pub(crate) use condition_lowering::raw_minecraft_condition_verdict;
+pub(crate) use function_context::function_locals;
+pub use function_context::module_variables_made_local;
 
 pub(in crate::transpiler) use capture::FunctionCapture;
 pub(in crate::transpiler) use const_eval::const_mod;
@@ -87,7 +91,6 @@ pub struct Transpiler {
     current_context: FunctionContext,
     current_return: Option<ReturnContext>,
     /// Name of the user function whose body is currently being lowered.
-    /// Used to reject recursive calls at the call site.
     current_function_name: Option<String>,
     current_statement_source: Option<SourceLocation>,
     temp_counter: u32,
@@ -106,6 +109,53 @@ pub struct Transpiler {
     /// condition holders scoped to `@s` so their objectives can be pooled by
     /// (nesting depth, slot) instead of allocated per call site.
     execute_condition_slots: Vec<usize>,
+    /// Warnings found since the last [`Transpiler::take_warnings`]. Constant
+    /// folding finds some of them through `&self`.
+    warnings: RefCell<Vec<TranspileWarning>>,
+    /// Locals of the function being lowered that have the name of a module
+    /// variable and haven't warned yet. The first assignment warns. Block
+    /// helpers restore `current_context`, so this lives outside it.
+    unwarned_shadows: Vec<String>,
+}
+
+fn record_warning(warnings: &RefCell<Vec<TranspileWarning>>, warning: TranspileWarning) {
+    // Some expressions are evaluated more than once.
+    let mut warnings = warnings.borrow_mut();
+    if !warnings.contains(&warning) {
+        warnings.push(warning);
+    }
+}
+
+/// The warning for storing `value` in a score, when a score can't hold it.
+/// Scores are 32-bit integers.
+fn score_value_warning(value: f64, location: Option<SourceLocation>) -> Option<TranspileWarning> {
+    let (kind, message, help) = if value > i32::MAX as f64 || value < i32::MIN as f64 {
+        (
+            "number-out-of-range",
+            format!(
+                "{value} is outside the scoreboard range, so it is stored as {}.",
+                value as i32
+            ),
+            Some("Scores hold integers from -2147483648 to 2147483647.".to_string()),
+        )
+    } else if value.fract() != 0.0 {
+        (
+            "fractional-number",
+            format!(
+                "Scores hold integers, so {value} is stored as {}.",
+                value as i32
+            ),
+            None,
+        )
+    } else {
+        return None;
+    };
+    Some(TranspileWarning {
+        kind,
+        message,
+        help,
+        location,
+    })
 }
 
 /// Build settings for a [`Transpiler`]. [`TranspilerOptions::new`] gives the
@@ -188,11 +238,54 @@ impl Transpiler {
             experimental_resource_pack: options.experimental_resource_pack,
             unroll: UnrollState::default(),
             execute_condition_slots: Vec::new(),
+            warnings: RefCell::new(Vec::new()),
+            unwarned_shadows: Vec::new(),
         };
         if let Some(version) = options.stdlib_version {
             transpiler.set_stdlib_version(version);
         }
         transpiler
+    }
+
+    /// The warnings found since the last call, in the order they were
+    /// found.
+    pub fn take_warnings(&mut self) -> Vec<TranspileWarning> {
+        std::mem::take(self.warnings.get_mut())
+    }
+
+    /// Records a warning about the statement being lowered.
+    pub(in crate::transpiler) fn warn(
+        &self,
+        kind: &'static str,
+        message: impl Into<String>,
+        help: Option<&str>,
+    ) {
+        self.warn_at(kind, message, help, self.current_statement_source.clone());
+    }
+
+    pub(in crate::transpiler) fn warn_at(
+        &self,
+        kind: &'static str,
+        message: impl Into<String>,
+        help: Option<&str>,
+        location: Option<SourceLocation>,
+    ) {
+        record_warning(
+            &self.warnings,
+            TranspileWarning {
+                kind,
+                message: message.into(),
+                help: help.map(str::to_string),
+                location,
+            },
+        );
+    }
+
+    /// Warns when `value` is stored in a score that can't hold it.
+    pub(in crate::transpiler) fn warn_score_value(&self, value: f64) {
+        if let Some(warning) = score_value_warning(value, self.current_statement_source.clone()) {
+            record_warning(&self.warnings, warning);
+        }
     }
 
     fn is_current_macro_param(&self, name: &str) -> bool {
@@ -215,10 +308,7 @@ impl Transpiler {
             }
         }
 
-        // Process imports
-        for import in &program.imports {
-            self.process_import(import)?;
-        }
+        self.process_imports(program)?;
 
         // PASS 1: Register all function signatures first (to handle forward references)
         self.register_program_function_metadata(program);
@@ -230,7 +320,6 @@ impl Transpiler {
 
         // Direct self-calls error at the call site; this rejects mutual
         // recursion (a -> b -> a) across everything lowered so far.
-        self.check_recursive_call_cycles()?;
 
         let module_init = if self.module_level_vars.is_empty() {
             None
@@ -296,11 +385,23 @@ impl Transpiler {
                 .or_else(|| previous_statement_source.clone())
         };
         self.current_statement_source = statement_source.clone();
+        if let Some(name) = function_context::direct_binding(statement) {
+            if let Some(index) = self.unwarned_shadows.iter().position(|local| local == name) {
+                let local = self.unwarned_shadows.remove(index);
+                self.warn_shadowed_module_variable(&local, statement_source.clone());
+            }
+        }
 
         let start_index = self.current_function.as_ref().map(Vec::len);
         let default_kind = Self::default_generated_kind_for_statement(statement);
         let result = self
             .process_statement_inner(statement)
+            .and_then(|()| match &self.current_context.unbound_read {
+                Some(read) if read.top_level == function_context::statement_address(statement) => {
+                    Err(self.unbound_local_error(&read.name.clone()))
+                }
+                _ => Ok(()),
+            })
             .map_err(|error| error.with_location_if_missing(statement_source.clone()));
 
         if result.is_ok() {
@@ -314,7 +415,17 @@ impl Transpiler {
         result
     }
 
+    fn unbound_local_error(&self, name: &str) -> TranspileError {
+        let function = self.current_function_name.as_deref().unwrap_or_default();
+        function_context::unbound_local_message(name, function).into()
+    }
+
     fn process_statement_inner(&mut self, statement: &Statement) -> Result<(), TranspileError> {
+        if let Some(read) = &self.current_context.unbound_read {
+            if read.statement == function_context::statement_address(statement) {
+                return Err(self.unbound_local_error(&read.name.clone()));
+            }
+        }
         match statement {
             Statement::Import(import) => {
                 self.process_import(import)?;
@@ -370,6 +481,13 @@ impl Transpiler {
                 } else {
                     self.take_raw_command_source(clean_cmd.trim())
                 };
+                if Self::is_raw_return_command(cmd) && self.in_recursive_function() {
+                    let function = self.current_function_name.as_deref().unwrap_or_default();
+                    return Err(TranspileError::from(format!(
+                        "A raw `/return` in the recursive function `{function}` would skip restoring the caller's variables. Use Cobble's `return` instead."
+                    ))
+                    .with_location_if_missing(source_location));
+                }
                 let processor = CommandProcessor {
                     namespace: self.data_pack.namespace.clone(),
                     current_params: &self.current_context.params,

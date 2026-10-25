@@ -91,7 +91,7 @@ def check():
     );
     assert!(
         free.contains(
-            "execute as @a if score x cobble.vars matches 6.. if score y cobble.vars matches ..1 run say both"
+            "execute as @a if score #check.x cobble.vars matches 6.. if score #check.y cobble.vars matches ..1 run say both"
         ),
         "{free}"
     );
@@ -124,9 +124,9 @@ def check():
     );
     assert!(
         free.contains(
-            "if score x cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"
+            "if score #check.x cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"
         ) && free.contains(
-            "if score y cobble.vars matches 2 run scoreboard players set @s cobble.vars 1"
+            "if score #check.y cobble.vars matches 2 run scoreboard players set @s cobble.vars 1"
         ) && free.contains("execute as @a if score @s cobble.vars matches 1 run say either"),
         "{free}"
     );
@@ -156,7 +156,7 @@ def check():
         "paren-free and parenthesized forms must match"
     );
     assert!(
-        free.contains("execute as @a if score done cobble.vars matches 0 run say idle"),
+        free.contains("execute as @a if score #check.done cobble.vars matches 0 run say idle"),
         "{free}"
     );
 }
@@ -185,7 +185,7 @@ def check():
         "paren-free and parenthesized forms must match"
     );
     assert!(
-        free.contains("execute as @a unless score x cobble.vars matches 3 run say differs"),
+        free.contains("execute as @a unless score #check.x cobble.vars matches 3 run say differs"),
         "{free}"
     );
 }
@@ -254,7 +254,8 @@ def lookup(key):
     let all_functions = read_all_functions(&output_dir);
 
     assert!(
-        content.contains("data modify storage cobble:global vars.config.chance set value 9"),
+        content
+            .contains("data modify storage cobble:global locals.lookup.config.chance set value 9"),
         "{content}"
     );
     assert!(
@@ -264,7 +265,7 @@ def lookup(key):
     );
     assert!(
         all_functions.contains(
-            "$execute store result score selected cobble.vars run data get storage cobble:global vars.config.$(key0)"
+            "$execute store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.$(key0)"
         ),
         "{all_functions}"
     );
@@ -307,7 +308,7 @@ def main():
     let range_loop = read_function(&output, "for_range_temp_1");
     assert_eq!(
         range_loop,
-        "execute if score i cobble.vars < #for_range_stop_0 cobble.vars run function cobble:for_range_body_2\n"
+        "execute if score #main.i cobble.vars < #for_range_stop_0 cobble.vars run function cobble:for_range_body_2\n"
     );
     assert!(
         read_function(&output, "for_range_body_2").ends_with("function cobble:for_range_temp_1\n")
@@ -322,10 +323,10 @@ def main():
     let while_loop = read_function(&output, "while_temp_8");
     assert_eq!(
         while_loop,
-        "scoreboard players operation expr_cond_temp_9 cobble.vars = k cobble.vars\n\
+        "scoreboard players operation expr_cond_temp_9 cobble.vars = #main.k cobble.vars\n\
          scoreboard players set #multiplier cobble.vars 2\n\
          scoreboard players operation expr_cond_temp_9 cobble.vars *= #multiplier cobble.vars\n\
-         execute if score expr_cond_temp_9 cobble.vars < n cobble.vars run function cobble:while_body_10\n"
+         execute if score expr_cond_temp_9 cobble.vars < #main.n cobble.vars run function cobble:while_body_10\n"
     );
     assert!(read_function(&output, "while_body_10").ends_with("function cobble:while_temp_8\n"));
 
@@ -364,16 +365,16 @@ def check():
     let content = read_function(&output_dir, "check");
     assert_eq!(
         content,
-        "scoreboard players set folded cobble.vars 1\n\
-         scoreboard players set x cobble.vars 10\n\
-         scoreboard players set flag cobble.vars 0\n\
-         execute if score x cobble.vars matches 6.. run scoreboard players set flag cobble.vars 1\n\
-         scoreboard players add x cobble.vars 1\n\
-         scoreboard players set y cobble.vars 7\n\
-         scoreboard players operation y cobble.vars -= x cobble.vars\n\
-         data modify storage cobble:global vars.items set value [1,2]\n\
-         data modify storage cobble:global vars.copy set from storage cobble:global vars.items\n\
-         scoreboard players operation b cobble.vars = x cobble.vars\n"
+        "scoreboard players set #check.folded cobble.vars 1\n\
+         scoreboard players set #check.x cobble.vars 10\n\
+         scoreboard players set #check.flag cobble.vars 0\n\
+         execute if score #check.x cobble.vars matches 6.. run scoreboard players set #check.flag cobble.vars 1\n\
+         scoreboard players add #check.x cobble.vars 1\n\
+         scoreboard players set #check.y cobble.vars 7\n\
+         scoreboard players operation #check.y cobble.vars -= #check.x cobble.vars\n\
+         data modify storage cobble:global locals.check.items set value [1,2]\n\
+         data modify storage cobble:global locals.check.copy set from storage cobble:global locals.check.items\n\
+         scoreboard players operation #check.b cobble.vars = #check.x cobble.vars\n"
     );
 }
 
@@ -391,11 +392,11 @@ def take(p):
     let content = read_function(&output_dir, "take");
     assert_eq!(
         content,
-        "execute store result score q cobble.vars run data get storage cobble:global args.p\n\
-         execute store result score z cobble.vars run data get storage cobble:global args.p\n\
-         scoreboard players add z cobble.vars 1\n\
+        "execute store result score #take.q cobble.vars run data get storage cobble:global args.p\n\
+         execute store result score #take.z cobble.vars run data get storage cobble:global args.p\n\
+         scoreboard players add #take.z cobble.vars 1\n\
          scoreboard players set #multiplier cobble.vars 2\n\
-         scoreboard players operation z cobble.vars *= #multiplier cobble.vars\n"
+         scoreboard players operation #take.z cobble.vars *= #multiplier cobble.vars\n"
     );
 }
 

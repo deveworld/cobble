@@ -14,6 +14,38 @@ Most runtime-behavior tests compile a pack and run it in the command simulator
 in `tests/common/mcsim.rs`, which executes the generated functions and checks
 scores and storage.
 
+## Differential Test
+
+`tests/differential_test.rs` generates random programs, runs each one in the
+simulator and as Python with the scoreboard's integer rules, and fails when the
+module variables, the return value of `main`, or the `say` output differ. The
+programs use arithmetic, comparisons, `and`, `or`, `not`, `if`/`elif`/`else`,
+`while` and `for` loops, functions with parameters, `global`, raw `scoreboard`
+commands, `say`, recursion, strings with `len` and indexes, and lists of
+numbers with `len`, indexes, item assignment, and `for` over a list. About
+four programs in ten are split into a `main` file and one or two files it
+imports with `import module` or `from module import ...`. Maps, selectors,
+and execute blocks are not generated.
+
+A list is a value in Cobble and an object in Python, so the programs never
+reach one list through two names: they don't copy list variables, pass module
+lists to functions, change a list a function received, or assign a module
+list.
+
+The test needs `python3` and is skipped without it. CI sets
+`COBBLE_DIFF_REQUIRE_PYTHON=1`, which makes a missing `python3` a failure.
+`COBBLE_DIFF_CASES` (default 300) and `COBBLE_DIFF_SEED` (default 1) choose
+the programs. After changing how statements or expressions compile, run a
+wider range:
+
+```bash
+COBBLE_DIFF_SEED=1000 COBBLE_DIFF_CASES=5000 cargo test --locked --test differential_test
+```
+
+A failure lists the seed of each program that differs and prints the first
+one, shrunk to a small program that still differs. `COBBLE_DIFF_SHRINK=0`
+prints it as generated.
+
 Generated pack snapshots live in `tests/snapshots/`. After an intended change
 to generated output, update and re-run them:
 

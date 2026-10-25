@@ -203,7 +203,8 @@ cobble check [SOURCE] [OPTIONS]
 
 **Options:**
 - `--json` - Print a machine-readable report with `schema_version`, `ok`,
-  `source`, `files_checked`, `files`, `diagnostics`, and `error_count`
+  `source`, `files_checked`, `files`, `diagnostics`, `error_count`, and
+  `warning_count`
 - `--symbols` - Include experimental document-symbol metadata; requires `--json`
 - `--experimental-plugins` - Enable the experimental diagnostics-only plugin
   host skeleton
@@ -219,6 +220,10 @@ cobble check --json --symbols src/main.cbl
 cobble check --json --experimental-plugins src/main.cbl
 cobble check --json --experimental-python-compat src/main.cbl
 ```
+
+`diagnostics` lists errors and [warnings](diagnostics.md#warnings); each
+entry's `severity` tells them apart. Warnings don't fail the check, so a run
+with only warnings reports `ok: true`.
 
 JSON output is written to stdout. On failure the process still exits non-zero;
 human-oriented error text may be written to stderr while stdout remains valid
@@ -588,7 +593,8 @@ change summaries and source-location details for migration-sensitive constructs
 such as `resource_pack.*`, legacy `import stdlib`, and unsupported Python-like
 syntax. Routes that end at 0.11 also list every raw command and execute header
 that names the `temp` objective (`temp-objective-reference`), with the total in
-`source.temp_objective_references`. Unsupported routes skip inspection, leave
+`source.temp_objective_references`, and each function that assigns a module
+variable without `global` (`function-local-variable`). Unsupported routes skip inspection, leave
 `changed` as `false`, and exit non-zero.
 
 See [Upgrading](../upgrading.md) for the steps for each release.

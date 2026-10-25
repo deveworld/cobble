@@ -126,14 +126,9 @@ impl Transpiler {
                         if exp < 0 {
                             None
                         } else {
-                            // Use checked_pow to detect overflow
-                            match base.checked_pow(exp as u32) {
-                                Some(result) => Some(result as f64),
-                                None => {
-                                    eprintln!("Warning: Power operation {}^{} would overflow i32, clamping to i32::MAX", base, exp);
-                                    Some(i32::MAX as f64)
-                                }
-                            }
+                            // Real arithmetic, like `*` on these values. A score
+                            // that stores the result warns when it can't hold it.
+                            Some(f64::from(base).powi(exp))
                         }
                     }
                     BinaryOp::Eq => Some((left_val == right_val) as i32 as f64),

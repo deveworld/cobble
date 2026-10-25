@@ -1,6 +1,7 @@
 use crate::ast::{Expression, Import, Program, Statement};
-use crate::transpiler::{TranspileError, Transpiler, MAX_IMPORT_DEPTH};
-use std::collections::HashSet;
+use crate::transpiler::function_context::called_functions;
+use crate::transpiler::{SourceLocation, TranspileError, Transpiler, MAX_IMPORT_DEPTH};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Files being compiled and the chain of imports that led to them.
@@ -26,6 +27,20 @@ impl Default for ImportState {
 }
 
 impl Transpiler {
+    /// Processes the imports of the current file. An error without a
+    /// location points at the import that failed.
+    pub(in crate::transpiler) fn process_imports(
+        &mut self,
+        program: &Program,
+    ) -> Result<(), TranspileError> {
+        for (index, import) in program.imports.iter().enumerate() {
+            let location = self.import_source(index);
+            self.process_import(import)
+                .map_err(|error| error.with_location_if_missing(location))?;
+        }
+        Ok(())
+    }
+
     pub(in crate::transpiler) fn process_import(
         &mut self,
         import: &Import,
@@ -72,9 +87,7 @@ impl Transpiler {
         self.register_source_locations_from_spans(&import_path, &source, &spans);
 
         // Nested imports first, then the imported statements.
-        for import in &program.imports {
-            self.process_import(import)?;
-        }
+        self.process_imports(&program)?;
         self.register_program_function_metadata(&program);
         if import.items.is_empty() {
             self.register_qualified_function_aliases(&import.module, &program);
@@ -147,7 +160,14 @@ impl Transpiler {
             )
         })?;
         let located = crate::parser::parse_located_with_diagnostics(&source).map_err(|errors| {
-            format!(
+            let location = errors.first().map(|error| SourceLocation {
+                file: import_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| import_path.to_path_buf()),
+                line: error.span.line,
+                column: error.span.column,
+            });
+            TranspileError::from(format!(
                 "Parse failed for '{}': {}",
                 module,
                 errors
@@ -158,7 +178,8 @@ impl Transpiler {
                     ))
                     .collect::<Vec<_>>()
                     .join(", ")
-            )
+            ))
+            .with_location_if_missing(location)
         })?;
         Ok((source, located))
     }
@@ -182,8 +203,45 @@ impl Transpiler {
         chain.join(" -> ")
     }
 
+    /// Marks the functions of `program` that can call themselves. Modules
+    /// can't import each other in a cycle, so every call cycle stays inside
+    /// one file.
+    fn register_recursive_functions(&mut self, program: &Program) {
+        let calls: HashMap<&str, BTreeSet<String>> = program
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::FunctionDef(func) => {
+                    Some((func.name.as_str(), called_functions(&func.body)))
+                }
+                _ => None,
+            })
+            .collect();
+        for &function in calls.keys() {
+            let mut seen = HashSet::new();
+            let mut pending: Vec<&str> = calls[function].iter().map(String::as_str).collect();
+            while let Some(callee) = pending.pop() {
+                if callee == function {
+                    self.functions.recursive.insert(function.to_string());
+                    break;
+                }
+                if seen.insert(callee) {
+                    if let Some(next) = calls.get(callee) {
+                        pending.extend(next.iter().map(String::as_str));
+                    }
+                }
+            }
+        }
+    }
+
     pub(in crate::transpiler) fn register_program_function_metadata(&mut self, program: &Program) {
+        self.register_recursive_functions(program);
         for statement in &program.statements {
+            if let Statement::Assignment(assign) = statement {
+                if assign.assigns_name() {
+                    self.symbols.module_variables.insert(assign.target.clone());
+                }
+            }
             if let Statement::FunctionDef(func) = statement {
                 let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
                 self.functions.params.insert(func.name.clone(), param_names);

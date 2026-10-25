@@ -1,0 +1,2306 @@
+//! Differential test: random programs run through the compiler and the
+//! command simulator, and as Python, must end with the same module
+//! variables, return value of `main`, and `say` output.
+//!
+//! Each program is generated once and printed twice. The Cobble text uses
+//! the language's own operators; the Python text spells each operator as a
+//! helper with the scoreboard's rules: 32-bit wrapping after every
+//! operation, floor division and modulo, and `^` as a power whose negative
+//! exponent gives 0. Divisors are never 0, loops are bounded, recursion
+//! counts a parameter down to 0, and indexes stay inside their list or
+//! string.
+//!
+//! Values are numbers, strings, and lists of numbers. A program is one file,
+//! or a `main` file and one or two files it imports. A list is a value in
+//! Cobble and an object in Python, so the generator never lets two names
+//! reach the same list where a change through one could show through the
+//! other: it doesn't copy list variables, pass module lists to functions,
+//! change a list a function received, or assign a module list. A
+//! parameter's type is unknown to Cobble, so a string parameter is never
+//! indexed, and is only copied into a variable that already holds a string.
+//!
+//! `COBBLE_DIFF_CASES` sets the number of programs (default 300) and
+//! `COBBLE_DIFF_SEED` the seed of the first one (default 1); program `i`
+//! uses seed `COBBLE_DIFF_SEED + i`. The first failing program is shrunk
+//! before it is printed; `COBBLE_DIFF_SHRINK=0` prints it as generated.
+//! Without `python3` the test is skipped, unless
+//! `COBBLE_DIFF_REQUIRE_PYTHON=1`, which CI sets.
+
+mod common;
+
+use common::mcsim::Sim;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+use std::io::{BufRead, BufReader, Write as _};
+use std::panic::{self, AssertUnwindSafe};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
+/// One source file and the module variables it defines.
+struct ModuleSpec {
+    name: &'static str,
+    ints: &'static [&'static str],
+    string: &'static str,
+    list: &'static str,
+    list_len: usize,
+}
+
+const MAIN: ModuleSpec = ModuleSpec {
+    name: "main",
+    ints: &["g0", "g1", "g2", "g3"],
+    string: "gs",
+    list: "gl",
+    list_len: 3,
+};
+const UTIL: ModuleSpec = ModuleSpec {
+    name: "util",
+    ints: &["h0", "h1", "h2"],
+    string: "hs",
+    list: "hl",
+    list_len: 2,
+};
+const EXTRA: ModuleSpec = ModuleSpec {
+    name: "extra",
+    ints: &["z0", "z1"],
+    string: "zs",
+    list: "zl",
+    list_len: 3,
+};
+
+// Generated names never collide: locals and parameters are the names
+// below, `w1`, `k2`, and `v3` are loop names, `f1` and `r2` are functions.
+const INT_LOCALS: [&str; 4] = ["a", "b", "c", "d"];
+const STR_LOCALS: [&str; 2] = ["s", "t"];
+/// List locals and their lengths.
+const LIST_LOCALS: [(&str, usize); 2] = [("xs", 3), ("ys", 2)];
+/// The strings a program uses. None is empty, so `s[0]` and `s[-1]` exist.
+const STRINGS: [&str; 6] = ["a", "ab", "xyz", "hello", "q r", "Mc"];
+/// The length of a list parameter.
+const PARAM_LIST_LEN: usize = 2;
+
+// ---------------------------------------------------------------------------
+// Random source
+// ---------------------------------------------------------------------------
+
+/// SplitMix64, so a seed gives the same program on every platform.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+
+    fn range(&mut self, low: i32, high: i32) -> i32 {
+        low + self.below((high - low + 1) as usize) as i32
+    }
+
+    fn chance(&mut self, percent: usize) -> bool {
+        self.below(100) < percent
+    }
+
+    fn pick<T: Clone>(&mut self, items: &[T]) -> T {
+        items[self.below(items.len())].clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Program model
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+}
+
+impl Op {
+    fn symbol(self) -> &'static str {
+        match self {
+            Op::Add => "+",
+            Op::Sub => "-",
+            Op::Mul => "*",
+            Op::Div => "/",
+            Op::Mod => "%",
+            Op::Pow => "^",
+        }
+    }
+
+    fn helper(self) -> &'static str {
+        match self {
+            Op::Add => "add",
+            Op::Sub => "sub",
+            Op::Mul => "mul",
+            Op::Div => "fdiv",
+            Op::Mod => "fmod",
+            Op::Pow => "pw",
+        }
+    }
+
+    fn precedence(self) -> u8 {
+        match self {
+            Op::Add | Op::Sub => 2,
+            Op::Mul | Op::Div | Op::Mod => 3,
+            Op::Pow => 4,
+        }
+    }
+}
+
+/// The type of a variable. A list's length never changes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Ty {
+    Int,
+    Str,
+    List(usize),
+}
+
+#[derive(Clone)]
+enum Expr {
+    Lit(i32),
+    Var(String),
+    Neg(Box<Expr>),
+    Bin(Op, Box<Expr>, Box<Expr>),
+    Call(String, Vec<Val>),
+    /// `list[index]`.
+    Item(String, Box<Expr>),
+    /// `len(name)` of a list or a string.
+    Len(String),
+}
+
+fn bin(op: Op, left: Expr, right: Expr) -> Expr {
+    Expr::Bin(op, Box::new(left), Box::new(right))
+}
+
+#[derive(Clone)]
+enum Str {
+    Lit(&'static str),
+    Var(String),
+    /// `name[index]`, a one-character string.
+    Char(String, Box<Expr>),
+}
+
+#[derive(Clone)]
+enum List {
+    Lit(Vec<Expr>),
+    Var(String),
+}
+
+#[derive(Clone)]
+enum Val {
+    Int(Expr),
+    Str(Str),
+    List(List),
+}
+
+#[derive(Clone)]
+enum Cond {
+    Cmp(&'static str, Expr, Expr),
+    Truthy(Expr),
+    /// `bool` asks for parentheses around the operand when they aren't
+    /// needed, so both spellings of `not a < b` get compiled.
+    Not(Box<Cond>, bool),
+    And(Box<Cond>, Box<Cond>),
+    Or(Box<Cond>, Box<Cond>),
+}
+
+#[derive(Clone)]
+enum Stmt {
+    Assign(String, Val),
+    Compound(String, Op, Expr),
+    /// `list[index] = value`.
+    SetItem(String, Expr, Expr),
+    Call(String, Vec<Val>),
+    /// `/scoreboard players add|remove|set <name> temp <value>`.
+    Raw(&'static str, String, i32),
+    Say(Vec<String>),
+    If(Vec<(Cond, Vec<Stmt>)>, Option<Vec<Stmt>>),
+    /// `counter = 0`, then `while counter < limit [and extra]:` with
+    /// `counter += 1` at the end of the body.
+    While {
+        counter: String,
+        limit: Expr,
+        extra: Option<Cond>,
+        body: Vec<Stmt>,
+    },
+    For {
+        target: String,
+        args: Vec<Expr>,
+        body: Vec<Stmt>,
+    },
+    /// `for target in list:`.
+    ForEach {
+        target: String,
+        list: List,
+        body: Vec<Stmt>,
+    },
+    Return(Expr),
+}
+
+#[derive(Clone)]
+struct Function {
+    name: String,
+    params: Vec<String>,
+    globals: Vec<String>,
+    body: Vec<Stmt>,
+}
+
+#[derive(Clone)]
+enum Import {
+    /// `import module`; calls spell `module.f`.
+    Module(&'static str),
+    /// `from module import f, g`.
+    Names(&'static str, Vec<String>),
+}
+
+#[derive(Clone)]
+struct Module {
+    name: &'static str,
+    imports: Vec<Import>,
+    vars: Vec<(String, Val)>,
+    functions: Vec<Function>,
+}
+
+/// The modules in the order Python runs them: each after the modules it
+/// imports, `main` last.
+#[derive(Clone)]
+struct Program {
+    modules: Vec<Module>,
+}
+
+// ---------------------------------------------------------------------------
+// Generator
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+struct Callee {
+    /// How the caller spells the function: `f2`, or `util.f2`.
+    name: String,
+    params: Vec<Ty>,
+    /// Recursive callees take a depth first, which must stay small.
+    recursive: bool,
+}
+
+/// What a function body may name while it is generated.
+#[derive(Clone)]
+struct Scope {
+    params: Vec<(String, Ty)>,
+    /// Parameters the body must not assign, such as a recursion depth.
+    fixed_params: Vec<String>,
+    globals: Vec<String>,
+    /// The variables of the function's module.
+    module_vars: Vec<(String, Ty)>,
+    /// Names the body may assign as locals, including module variable names
+    /// it shadows.
+    local_pool: Vec<(String, Ty)>,
+    /// Locals assigned on every path to the current statement.
+    assigned: BTreeSet<String>,
+    /// Loop counters and targets: readable, never assigned by the body.
+    loop_names: Vec<String>,
+    /// Lists that a loop around the current statement iterates. Python
+    /// keeps iterating the old list after an assignment, so the body
+    /// doesn't assign them.
+    iterated: Vec<String>,
+    callees: Vec<Callee>,
+    /// The calls left for this function; bounds the work a program does.
+    calls_left: usize,
+    loops: usize,
+}
+
+impl Scope {
+    fn hidden(&self, name: &str) -> bool {
+        self.params.iter().any(|(p, _)| p == name) || self.local_pool.iter().any(|(l, _)| l == name)
+    }
+
+    fn readable(&self, ty: Ty) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .params
+            .iter()
+            .filter(|(_, t)| *t == ty)
+            .map(|(p, _)| p.clone())
+            .collect();
+        names.extend(
+            self.local_pool
+                .iter()
+                .filter(|(name, t)| *t == ty && self.assigned.contains(name))
+                .map(|(name, _)| name.clone()),
+        );
+        if ty == Ty::Int {
+            names.extend(self.loop_names.iter().cloned());
+        }
+        for (var, t) in &self.module_vars {
+            if *t == ty && !self.hidden(var) {
+                names.push(var.clone());
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Readable lists of any length.
+    fn readable_lists(&self) -> Vec<(String, usize)> {
+        let mut lists = Vec::new();
+        for len in [2, 3] {
+            lists.extend(self.readable(Ty::List(len)).into_iter().map(|n| (n, len)));
+        }
+        lists
+    }
+
+    fn writable(&self, ty: Ty) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .params
+            .iter()
+            .filter(|(p, t)| *t == ty && !self.fixed_params.contains(p))
+            .map(|(p, _)| p.clone())
+            .collect();
+        // Module lists are never assigned; see the module docs.
+        if !matches!(ty, Ty::List(_)) {
+            names.extend(
+                self.globals
+                    .iter()
+                    .filter(|g| self.module_vars.iter().any(|(v, t)| v == *g && *t == ty))
+                    .cloned(),
+            );
+        }
+        names.extend(
+            self.local_pool
+                .iter()
+                .filter(|(_, t)| *t == ty)
+                .map(|(name, _)| name.clone()),
+        );
+        names.retain(|name| !self.iterated.contains(name));
+        names
+    }
+
+    /// Lists whose items a statement may set: the function's own lists and
+    /// module lists. A list the function received is not, since Python
+    /// would change the caller's list.
+    fn item_targets(&self) -> Vec<(String, usize)> {
+        self.readable_lists()
+            .into_iter()
+            .filter(|(name, _)| !self.params.iter().any(|(p, _)| p == name))
+            .collect()
+    }
+
+    /// Lists that may be passed to a function: the function's own lists and
+    /// the lists it received. A module list could change during the call.
+    fn passable_lists(&self, len: usize) -> Vec<String> {
+        self.readable(Ty::List(len))
+            .into_iter()
+            .filter(|name| !self.module_vars.iter().any(|(v, _)| v == name) || self.hidden(name))
+            .collect()
+    }
+
+    /// Strings that may be indexed: string parameters can't be.
+    fn indexable_strings(&self) -> Vec<String> {
+        self.readable(Ty::Str)
+            .into_iter()
+            .filter(|name| !self.params.iter().any(|(p, _)| p == name))
+            .collect()
+    }
+
+    /// Score-backed names a raw scoreboard command may change: assigned
+    /// number locals and declared number globals. Parameters live in
+    /// storage.
+    fn raw_targets(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .local_pool
+            .iter()
+            .filter(|(name, t)| *t == Ty::Int && self.assigned.contains(name))
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.extend(
+            self.globals
+                .iter()
+                .filter(|g| {
+                    self.module_vars
+                        .iter()
+                        .any(|(v, t)| v == *g && *t == Ty::Int)
+                })
+                .cloned(),
+        );
+        names
+    }
+
+    /// Whether `name` is a local that some path to here leaves unassigned.
+    fn is_unassigned_local(&self, name: &str) -> bool {
+        self.local_pool.iter().any(|(l, _)| l == name) && !self.assigned.contains(name)
+    }
+}
+
+struct Generator {
+    rng: Rng,
+    counter: usize,
+    functions: usize,
+}
+
+impl Generator {
+    fn fresh(&mut self, prefix: &str) -> String {
+        self.counter += 1;
+        format!("{prefix}{}", self.counter)
+    }
+
+    fn literal(&mut self) -> i32 {
+        match self.rng.below(20) {
+            0 => self.rng.pick(&[i32::MAX, -i32::MAX, 65536, -65536, 100000]),
+            1..=3 => self.rng.range(-1000, 1000),
+            _ => self.rng.range(-9, 9),
+        }
+    }
+
+    fn atom(&mut self, scope: &mut Scope, depth: usize) -> Expr {
+        if depth > 0 && scope.calls_left > 0 && !scope.callees.is_empty() && self.rng.chance(15) {
+            return self.call_expr(scope, depth);
+        }
+        if depth > 0 && self.rng.chance(12) {
+            let lists = scope.readable_lists();
+            let strings = scope.readable(Ty::Str);
+            match self.rng.below(3) {
+                0 if !lists.is_empty() => {
+                    let (name, len) = self.rng.pick(&lists);
+                    let index = self.list_index(scope, len, depth - 1);
+                    return Expr::Item(name, Box::new(index));
+                }
+                1 if !lists.is_empty() => return Expr::Len(self.rng.pick(&lists).0),
+                2 if !strings.is_empty() => return Expr::Len(self.rng.pick(&strings)),
+                _ => {}
+            }
+        }
+        let names = scope.readable(Ty::Int);
+        if !names.is_empty() && self.rng.chance(60) {
+            return Expr::Var(self.rng.pick(&names));
+        }
+        Expr::Lit(self.literal())
+    }
+
+    fn call_expr(&mut self, scope: &mut Scope, depth: usize) -> Expr {
+        scope.calls_left -= 1;
+        let callee = self.rng.pick(&scope.callees);
+        let mut args = Vec::new();
+        for (index, ty) in callee.params.iter().enumerate() {
+            let arg = self.val(scope, *ty, depth.saturating_sub(1), true, true);
+            args.push(match arg {
+                Val::Int(arg) if callee.recursive && index == 0 => {
+                    Val::Int(bin(Op::Mod, arg, Expr::Lit(4)))
+                }
+                arg => arg,
+            });
+        }
+        Expr::Call(callee.name, args)
+    }
+
+    /// A divisor that can't be 0: a non-zero literal, or
+    /// `e % 5 + 6` (6..10) or `e % -5 - 6` (-10..-6).
+    fn divisor(&mut self, scope: &mut Scope, depth: usize) -> Expr {
+        if self.rng.chance(50) {
+            let value = self.rng.pick(&[1, 2, 3, 7, -1, -2, -3, -7, 1000, -65536]);
+            return Expr::Lit(value);
+        }
+        let inner = self.expr(scope, depth);
+        if self.rng.chance(50) {
+            bin(Op::Add, bin(Op::Mod, inner, Expr::Lit(5)), Expr::Lit(6))
+        } else {
+            bin(Op::Sub, bin(Op::Mod, inner, Expr::Lit(-5)), Expr::Lit(6))
+        }
+    }
+
+    /// A small exponent: a literal 0..4 or `e % 5 - 1` (-1..3).
+    fn exponent(&mut self, scope: &mut Scope, depth: usize) -> Expr {
+        if self.rng.chance(60) {
+            return Expr::Lit(self.rng.range(0, 4));
+        }
+        let inner = self.expr(scope, depth);
+        bin(Op::Sub, bin(Op::Mod, inner, Expr::Lit(5)), Expr::Lit(1))
+    }
+
+    /// An index into a list of `len` items, counted from either end.
+    fn list_index(&mut self, scope: &mut Scope, len: usize, depth: usize) -> Expr {
+        let len = len as i32;
+        match self.rng.below(4) {
+            0 => Expr::Lit(self.rng.range(-len, len - 1)),
+            1 | 2 => bin(Op::Mod, self.expr(scope, depth), Expr::Lit(len)),
+            _ => bin(
+                Op::Sub,
+                bin(Op::Mod, self.expr(scope, depth), Expr::Lit(len)),
+                Expr::Lit(len),
+            ),
+        }
+    }
+
+    /// An index into the string `name`: its first or last character, or
+    /// `e % len(name)`.
+    fn string_index(&mut self, scope: &mut Scope, name: &str, depth: usize) -> Expr {
+        match self.rng.below(3) {
+            0 => Expr::Lit(0),
+            1 => Expr::Lit(-1),
+            _ => bin(
+                Op::Mod,
+                self.expr(scope, depth),
+                Expr::Len(name.to_string()),
+            ),
+        }
+    }
+
+    fn expr(&mut self, scope: &mut Scope, depth: usize) -> Expr {
+        if depth == 0 || self.rng.chance(30) {
+            return self.atom(scope, depth);
+        }
+        if self.rng.chance(6) {
+            return Expr::Neg(Box::new(self.expr(scope, depth - 1)));
+        }
+        let op = match self.rng.below(20) {
+            0..=5 => Op::Add,
+            6..=9 => Op::Sub,
+            10..=13 => Op::Mul,
+            14..=15 => Op::Div,
+            16..=17 => Op::Mod,
+            _ => Op::Pow,
+        };
+        let left = self.expr(scope, depth - 1);
+        let right = match op {
+            Op::Div | Op::Mod => self.divisor(scope, depth - 1),
+            Op::Pow => self.exponent(scope, depth - 1),
+            _ => self.expr(scope, depth - 1),
+        };
+        bin(op, left, right)
+    }
+
+    /// A string. `params` allows string parameters, which only a variable
+    /// that already holds a string or an argument can take.
+    fn str_expr(&mut self, scope: &mut Scope, depth: usize, params: bool) -> Str {
+        match self.rng.below(10) {
+            4..=6 => {
+                let names: Vec<String> = scope
+                    .readable(Ty::Str)
+                    .into_iter()
+                    .filter(|name| params || !scope.params.iter().any(|(p, _)| p == name))
+                    .collect();
+                if !names.is_empty() {
+                    return Str::Var(self.rng.pick(&names));
+                }
+            }
+            7..=9 => {
+                let names = scope.indexable_strings();
+                if !names.is_empty() {
+                    let name = self.rng.pick(&names);
+                    let index = self.string_index(scope, &name, depth.min(1));
+                    return Str::Char(name, Box::new(index));
+                }
+            }
+            _ => {}
+        }
+        Str::Lit(self.rng.pick(&STRINGS))
+    }
+
+    /// A value of type `ty`. An argument may also pass a list variable.
+    /// `typed` tells that the value goes to a parameter or a variable that
+    /// already holds a value of this type.
+    fn val(&mut self, scope: &mut Scope, ty: Ty, depth: usize, argument: bool, typed: bool) -> Val {
+        match ty {
+            Ty::Int => Val::Int(self.expr(scope, depth)),
+            Ty::Str => Val::Str(self.str_expr(scope, depth, argument || typed)),
+            Ty::List(len) => {
+                let names = scope.passable_lists(len);
+                if argument && !names.is_empty() && self.rng.chance(50) {
+                    return Val::List(List::Var(self.rng.pick(&names)));
+                }
+                let items = (0..len)
+                    .map(|_| {
+                        if self.rng.chance(50) {
+                            Expr::Lit(self.literal())
+                        } else {
+                            self.expr(scope, depth.min(2))
+                        }
+                    })
+                    .collect();
+                Val::List(List::Lit(items))
+            }
+        }
+    }
+
+    fn cond(&mut self, scope: &mut Scope, depth: usize) -> Cond {
+        if depth > 0 && self.rng.chance(35) {
+            return match self.rng.below(3) {
+                0 => Cond::Not(Box::new(self.cond(scope, depth - 1)), self.rng.chance(50)),
+                1 => Cond::And(
+                    Box::new(self.cond(scope, depth - 1)),
+                    Box::new(self.cond(scope, depth - 1)),
+                ),
+                _ => Cond::Or(
+                    Box::new(self.cond(scope, depth - 1)),
+                    Box::new(self.cond(scope, depth - 1)),
+                ),
+            };
+        }
+        if self.rng.chance(15) {
+            return Cond::Truthy(self.expr(scope, 1));
+        }
+        let op = self.rng.pick(&["==", "!=", "<", "<=", ">", ">="]);
+        Cond::Cmp(op, self.expr(scope, 2), self.expr(scope, 2))
+    }
+
+    /// Statements for one block. `depth` limits nesting; a block ends after
+    /// a `return`.
+    fn block(&mut self, scope: &mut Scope, depth: usize, length: usize) -> Vec<Stmt> {
+        let mut body = Vec::new();
+        for _ in 0..length.max(1) {
+            let statement = self.statement(scope, depth);
+            let returns = matches!(statement, Stmt::Return(_));
+            body.push(statement);
+            if returns {
+                break;
+            }
+        }
+        body
+    }
+
+    fn statement(&mut self, scope: &mut Scope, depth: usize) -> Stmt {
+        loop {
+            match self.rng.below(100) {
+                0..=29 => {
+                    let ty = match self.rng.below(10) {
+                        0 => Ty::Str,
+                        1 => self.rng.pick(&[Ty::List(2), Ty::List(3)]),
+                        _ => Ty::Int,
+                    };
+                    let targets = scope.writable(ty);
+                    if targets.is_empty() {
+                        continue;
+                    }
+                    let target = self.rng.pick(&targets);
+                    let typed = scope.assigned.contains(&target)
+                        || !scope.local_pool.iter().any(|(name, _)| *name == target);
+                    let value = self.val(scope, ty, 3, false, typed);
+                    scope.assigned.insert(target.clone());
+                    return Stmt::Assign(target, value);
+                }
+                30..=39 => {
+                    let targets: Vec<String> = scope
+                        .writable(Ty::Int)
+                        .into_iter()
+                        .filter(|name| !scope.is_unassigned_local(name))
+                        .collect();
+                    if targets.is_empty() {
+                        continue;
+                    }
+                    let target = self.rng.pick(&targets);
+                    let op = self
+                        .rng
+                        .pick(&[Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Mod, Op::Pow]);
+                    let value = match op {
+                        Op::Div | Op::Mod => self.divisor(scope, 1),
+                        Op::Pow => self.exponent(scope, 1),
+                        _ => self.expr(scope, 2),
+                    };
+                    return Stmt::Compound(target, op, value);
+                }
+                40..=43 => {
+                    let targets = scope.item_targets();
+                    if targets.is_empty() {
+                        continue;
+                    }
+                    let (name, len) = self.rng.pick(&targets);
+                    let index = self.list_index(scope, len, 1);
+                    let value = self.expr(scope, 2);
+                    return Stmt::SetItem(name, index, value);
+                }
+                44..=49 => {
+                    if scope.calls_left == 0 || scope.callees.is_empty() {
+                        continue;
+                    }
+                    let Expr::Call(name, args) = self.call_expr(scope, 2) else {
+                        unreachable!()
+                    };
+                    return Stmt::Call(name, args);
+                }
+                50..=54 => {
+                    let targets = scope.raw_targets();
+                    if targets.is_empty() {
+                        continue;
+                    }
+                    let action = self.rng.pick(&["add", "remove", "set"]);
+                    return Stmt::Raw(action, self.rng.pick(&targets), self.rng.range(0, 50));
+                }
+                55..=59 => {
+                    let mut names = scope.readable(Ty::Int);
+                    names.extend(scope.readable(Ty::Str));
+                    if names.is_empty() {
+                        continue;
+                    }
+                    let count = self.rng.range(1, 2) as usize;
+                    return Stmt::Say((0..count).map(|_| self.rng.pick(&names)).collect());
+                }
+                60..=73 if depth > 0 => return self.if_statement(scope, depth),
+                74..=79 if depth > 0 && scope.loops < 2 => {
+                    return self.while_statement(scope, depth)
+                }
+                80..=84 if depth > 0 && scope.loops < 2 => return self.for_statement(scope, depth),
+                85..=88 if depth > 0 && scope.loops < 2 => {
+                    return self.foreach_statement(scope, depth)
+                }
+                89..=92 if depth < 2 => return Stmt::Return(self.expr(scope, 2)),
+                _ => {}
+            }
+        }
+    }
+
+    fn if_statement(&mut self, scope: &mut Scope, depth: usize) -> Stmt {
+        let before = scope.assigned.clone();
+        let mut after: Option<BTreeSet<String>> = None;
+        let mut branches = Vec::new();
+        let mut merge = |scope: &mut Scope, returns: bool| {
+            // A branch that returns doesn't reach the code after the `if`.
+            if !returns {
+                after = Some(match after.take() {
+                    Some(set) => set.intersection(&scope.assigned).cloned().collect(),
+                    None => scope.assigned.clone(),
+                });
+            }
+            scope.assigned = before.clone();
+        };
+        for _ in 0..self.rng.range(1, 3) {
+            let condition = self.cond(scope, 2);
+            let length = self.rng.range(1, 3) as usize;
+            let body = self.block(scope, depth - 1, length);
+            let returns = matches!(body.last(), Some(Stmt::Return(_)));
+            merge(scope, returns);
+            branches.push((condition, body));
+        }
+        let else_branch = if self.rng.chance(50) {
+            let length = self.rng.range(1, 3) as usize;
+            let body = self.block(scope, depth - 1, length);
+            let returns = matches!(body.last(), Some(Stmt::Return(_)));
+            merge(scope, returns);
+            Some(body)
+        } else {
+            // No `else`: the code after the `if` may run with no branch taken.
+            merge(scope, false);
+            None
+        };
+        scope.assigned = after.unwrap_or(before);
+        Stmt::If(branches, else_branch)
+    }
+
+    fn loop_body(&mut self, scope: &mut Scope, depth: usize, loop_name: &str) -> Vec<Stmt> {
+        let before = scope.assigned.clone();
+        scope.loops += 1;
+        scope.loop_names.push(loop_name.to_string());
+        // A call in a loop runs on every pass, so a loop body gets at most
+        // one of the function's calls.
+        let calls_left = scope.calls_left;
+        let budget = calls_left.min(1);
+        scope.calls_left = budget;
+        let length = self.rng.range(1, 3) as usize;
+        let body = self.block(scope, depth - 1, length);
+        scope.calls_left = calls_left - (budget - scope.calls_left);
+        scope.loop_names.pop();
+        scope.loops -= 1;
+        // The body may not run at all.
+        scope.assigned = before;
+        body
+    }
+
+    fn while_statement(&mut self, scope: &mut Scope, depth: usize) -> Stmt {
+        let counter = self.fresh("w");
+        let limit = if self.rng.chance(50) {
+            Expr::Lit(self.rng.range(0, 3))
+        } else {
+            bin(Op::Mod, self.expr(scope, 2), Expr::Lit(4))
+        };
+        // `limit` is evaluated before each pass, so it may only read names
+        // the body can't change.
+        let limit = if Self::reads_writable(&limit, scope) {
+            Expr::Lit(self.rng.range(0, 3))
+        } else {
+            limit
+        };
+        let extra = self.rng.chance(30).then(|| {
+            let calls_left = scope.calls_left;
+            scope.calls_left = 0;
+            let extra = self.cond(scope, 1);
+            scope.calls_left = calls_left;
+            extra
+        });
+        let body = self.loop_body(scope, depth, &counter);
+        Stmt::While {
+            counter,
+            limit,
+            extra,
+            body,
+        }
+    }
+
+    fn reads_writable(expr: &Expr, scope: &Scope) -> bool {
+        match expr {
+            Expr::Lit(_) => false,
+            Expr::Var(name) => scope.writable(Ty::Int).contains(name),
+            Expr::Neg(inner) => Self::reads_writable(inner, scope),
+            Expr::Bin(_, left, right) => {
+                Self::reads_writable(left, scope) || Self::reads_writable(right, scope)
+            }
+            // A list's items and a string can change in the body.
+            Expr::Call(..) | Expr::Item(..) | Expr::Len(_) => true,
+        }
+    }
+
+    fn for_statement(&mut self, scope: &mut Scope, depth: usize) -> Stmt {
+        let target = self.fresh("k");
+        let bound = |generator: &mut Self, scope: &mut Scope| {
+            if generator.rng.chance(50) {
+                Expr::Lit(generator.rng.range(-2, 4))
+            } else {
+                bin(Op::Mod, generator.expr(scope, 2), Expr::Lit(4))
+            }
+        };
+        let args = match self.rng.below(3) {
+            0 => vec![bound(self, scope)],
+            1 => vec![bound(self, scope), bound(self, scope)],
+            _ => vec![
+                bound(self, scope),
+                bound(self, scope),
+                Expr::Lit(self.rng.pick(&[1, 2, -1, -2])),
+            ],
+        };
+        let body = self.loop_body(scope, depth, &target);
+        Stmt::For { target, args, body }
+    }
+
+    fn foreach_statement(&mut self, scope: &mut Scope, depth: usize) -> Stmt {
+        let target = self.fresh("v");
+        let lists = scope.readable_lists();
+        let list = if !lists.is_empty() && self.rng.chance(60) {
+            List::Var(self.rng.pick(&lists).0)
+        } else {
+            let length = self.rng.range(1, 3);
+            List::Lit(
+                (0..length)
+                    .map(|_| {
+                        if self.rng.chance(50) {
+                            Expr::Lit(self.literal())
+                        } else {
+                            self.expr(scope, 2)
+                        }
+                    })
+                    .collect(),
+            )
+        };
+        if let List::Var(name) = &list {
+            scope.iterated.push(name.clone());
+        }
+        let body = self.loop_body(scope, depth, &target);
+        if matches!(list, List::Var(_)) {
+            scope.iterated.pop();
+        }
+        Stmt::ForEach { target, list, body }
+    }
+
+    fn function(
+        &mut self,
+        spec: &ModuleSpec,
+        name: String,
+        params: Vec<(String, Ty)>,
+        callees: Vec<Callee>,
+        recursion: Option<&[Callee]>,
+    ) -> Function {
+        let module_vars = module_vars(spec);
+        let mut globals = Vec::new();
+        let mut local_pool: Vec<(String, Ty)> = INT_LOCALS
+            .iter()
+            .map(|s| (s.to_string(), Ty::Int))
+            .chain(STR_LOCALS.iter().map(|s| (s.to_string(), Ty::Str)))
+            .chain(
+                LIST_LOCALS
+                    .iter()
+                    .map(|(s, len)| (s.to_string(), Ty::List(*len))),
+            )
+            .collect();
+        for (var, ty) in &module_vars {
+            if params.iter().any(|(p, _)| p == var) {
+                continue;
+            }
+            let roll = self.rng.below(10);
+            match ty {
+                Ty::Int if roll <= 3 => globals.push(var.clone()),
+                Ty::Str if roll <= 2 => globals.push(var.clone()),
+                Ty::List(_) if roll <= 1 => globals.push(var.clone()),
+                _ if roll == 4 => local_pool.push((var.clone(), *ty)),
+                _ => {}
+            }
+        }
+        let mut scope = Scope {
+            fixed_params: if recursion.is_some() {
+                vec![params[0].0.clone()]
+            } else {
+                Vec::new()
+            },
+            params,
+            globals: globals.clone(),
+            module_vars,
+            local_pool,
+            assigned: BTreeSet::new(),
+            loop_names: Vec::new(),
+            iterated: Vec::new(),
+            callees,
+            calls_left: 3,
+            loops: 0,
+        };
+        let mut body = Vec::new();
+        match recursion {
+            None => {
+                let length = self.rng.range(2, 6) as usize;
+                body = self.block(&mut scope, 2, length);
+            }
+            Some(group) => {
+                let depth_param = scope.params[0].0.clone();
+                let length = self.rng.range(0, 2) as usize;
+                if length > 0 {
+                    body.extend(self.block(&mut scope, 1, length));
+                }
+                if matches!(body.last(), Some(Stmt::Return(_))) {
+                    body.pop();
+                }
+                let base = vec![Stmt::Return(self.expr(&mut scope, 2))];
+                body.push(Stmt::If(
+                    vec![(
+                        Cond::Cmp("<=", Expr::Var(depth_param.clone()), Expr::Lit(0)),
+                        base,
+                    )],
+                    None,
+                ));
+                for _ in 0..self.rng.range(1, 2) {
+                    let callee = self.rng.pick(group);
+                    let mut args = vec![Val::Int(bin(
+                        Op::Sub,
+                        Expr::Var(depth_param.clone()),
+                        Expr::Lit(self.rng.range(1, 2)),
+                    ))];
+                    for _ in 1..callee.params.len() {
+                        args.push(Val::Int(self.expr(&mut scope, 2)));
+                    }
+                    let targets: Vec<String> = scope
+                        .local_pool
+                        .iter()
+                        .filter(|(_, t)| *t == Ty::Int)
+                        .map(|(n, _)| n.clone())
+                        .collect();
+                    let target = self.rng.pick(&targets);
+                    scope.assigned.insert(target.clone());
+                    body.push(Stmt::Assign(
+                        target,
+                        Val::Int(Expr::Call(callee.name, args)),
+                    ));
+                    let length = self.rng.range(0, 2) as usize;
+                    if length > 0 {
+                        let more = self.block(&mut scope, 1, length);
+                        let returns = matches!(more.last(), Some(Stmt::Return(_)));
+                        body.extend(more);
+                        if returns {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if !matches!(body.last(), Some(Stmt::Return(_))) {
+            body.push(Stmt::Return(self.expr(&mut scope, 3)));
+        }
+        Function {
+            name,
+            params: scope.params.into_iter().map(|(p, _)| p).collect(),
+            globals,
+            body,
+        }
+    }
+
+    fn params(&mut self, spec: &ModuleSpec, count: usize) -> Vec<(String, Ty)> {
+        let mut params: Vec<(String, Ty)> = Vec::new();
+        for name in ["p", "q"].into_iter().take(count) {
+            if self.rng.chance(15) {
+                let var = self.rng.pick(spec.ints).to_string();
+                if !params.iter().any(|(p, _)| *p == var) {
+                    params.push((var, Ty::Int));
+                    continue;
+                }
+            }
+            params.push((name.to_string(), Ty::Int));
+        }
+        if self.rng.chance(20) {
+            params.push(("ps".to_string(), Ty::Str));
+        }
+        if self.rng.chance(20) {
+            params.push(("pl".to_string(), Ty::List(PARAM_LIST_LEN)));
+        }
+        params
+    }
+
+    /// One module. `imported` are the functions it can call from the
+    /// modules it imports. Returns the module and its own functions, as the
+    /// module itself spells them.
+    fn module(
+        &mut self,
+        spec: &ModuleSpec,
+        imports: Vec<Import>,
+        imported: Vec<Callee>,
+    ) -> (Module, Vec<Callee>) {
+        let mut vars = Vec::new();
+        for (index, var) in spec.ints.iter().enumerate() {
+            let value = if index > 0 && self.rng.chance(20) {
+                let other = spec.ints[self.rng.below(index)].to_string();
+                bin(Op::Add, Expr::Var(other), Expr::Lit(self.literal()))
+            } else {
+                Expr::Lit(self.literal())
+            };
+            vars.push((var.to_string(), Val::Int(value)));
+        }
+        vars.push((
+            spec.string.to_string(),
+            Val::Str(Str::Lit(self.rng.pick(&STRINGS))),
+        ));
+        let items = (0..spec.list_len)
+            .map(|_| {
+                if self.rng.chance(20) {
+                    Expr::Var(self.rng.pick(spec.ints).to_string())
+                } else {
+                    Expr::Lit(self.literal())
+                }
+            })
+            .collect();
+        vars.push((spec.list.to_string(), Val::List(List::Lit(items))));
+
+        let mut functions = Vec::new();
+        let mut own: Vec<Callee> = Vec::new();
+        let entry = spec.name == MAIN.name;
+        let plain = if entry {
+            self.rng.range(1, 3)
+        } else {
+            self.rng.range(1, 2)
+        };
+        let callees = |own: &[Callee]| {
+            let mut callees = imported.clone();
+            callees.extend(own.iter().cloned());
+            callees
+        };
+        for _ in 0..plain {
+            self.functions += 1;
+            let name = format!("f{}", self.functions);
+            let count = self.rng.below(3);
+            let params = self.params(spec, count);
+            let types = params.iter().map(|(_, t)| *t).collect();
+            functions.push(self.function(spec, name.clone(), params, callees(&own), None));
+            own.push(Callee {
+                name,
+                params: types,
+                recursive: false,
+            });
+        }
+        if self.rng.chance(if entry { 70 } else { 40 }) {
+            let mutual = self.rng.chance(40);
+            let group: Vec<Callee> = (0..if mutual { 2 } else { 1 })
+                .map(|_| {
+                    self.functions += 1;
+                    let arity = self.rng.range(1, 2) as usize;
+                    Callee {
+                        name: format!("r{}", self.functions),
+                        params: vec![Ty::Int; arity],
+                        recursive: true,
+                    }
+                })
+                .collect();
+            for callee in &group {
+                let mut params = vec![("n".to_string(), Ty::Int)];
+                if callee.params.len() > 1 {
+                    params.push(("x".to_string(), Ty::Int));
+                }
+                functions.push(self.function(
+                    spec,
+                    callee.name.clone(),
+                    params,
+                    callees(&own),
+                    Some(&group),
+                ));
+            }
+            own.extend(group);
+        }
+        if entry {
+            functions.push(self.function(
+                spec,
+                "main".to_string(),
+                Vec::new(),
+                callees(&own),
+                None,
+            ));
+        }
+        (
+            Module {
+                name: spec.name,
+                imports,
+                vars,
+                functions,
+            },
+            own,
+        )
+    }
+
+    /// An import of `module` and the functions it makes callable, as the
+    /// importer spells them.
+    fn import(&mut self, module: &'static str, exported: &[Callee]) -> (Import, Vec<Callee>) {
+        if self.rng.chance(50) {
+            let callees = exported
+                .iter()
+                .map(|callee| Callee {
+                    name: format!("{module}.{}", callee.name),
+                    ..callee.clone()
+                })
+                .collect();
+            return (Import::Module(module), callees);
+        }
+        let mut chosen: Vec<Callee> = exported
+            .iter()
+            .filter(|_| self.rng.chance(70))
+            .cloned()
+            .collect();
+        if chosen.is_empty() {
+            chosen.push(self.rng.pick(exported));
+        }
+        let names = chosen.iter().map(|callee| callee.name.clone()).collect();
+        (Import::Names(module, names), chosen)
+    }
+
+    fn program(&mut self) -> Program {
+        let files = match self.rng.below(10) {
+            0..=5 => 1,
+            6..=8 => 2,
+            _ => 3,
+        };
+        let mut modules = Vec::new();
+        let mut extra_functions = None;
+        if files == 3 {
+            let (module, exported) = self.module(&EXTRA, Vec::new(), Vec::new());
+            modules.push(module);
+            extra_functions = Some(exported);
+        }
+        let mut main_imports = Vec::new();
+        let mut main_callees = Vec::new();
+        if files >= 2 {
+            let mut imports = Vec::new();
+            let mut callees = Vec::new();
+            if let Some(exported) = &extra_functions {
+                if self.rng.chance(50) {
+                    let (import, imported) = self.import(EXTRA.name, exported);
+                    imports.push(import);
+                    callees.extend(imported);
+                }
+            }
+            let (module, exported) = self.module(&UTIL, imports, callees);
+            modules.push(module);
+            let (import, imported) = self.import(UTIL.name, &exported);
+            main_imports.push(import);
+            main_callees.extend(imported);
+        }
+        if let Some(exported) = &extra_functions {
+            if self.rng.chance(50) {
+                let (import, imported) = self.import(EXTRA.name, exported);
+                main_imports.push(import);
+                main_callees.extend(imported);
+            }
+        }
+        let (module, _) = self.module(&MAIN, main_imports, main_callees);
+        modules.push(module);
+        Program { modules }
+    }
+}
+
+fn module_vars(spec: &ModuleSpec) -> Vec<(String, Ty)> {
+    let mut vars: Vec<(String, Ty)> = spec.ints.iter().map(|v| (v.to_string(), Ty::Int)).collect();
+    vars.push((spec.string.to_string(), Ty::Str));
+    vars.push((spec.list.to_string(), Ty::List(spec.list_len)));
+    vars
+}
+
+// ---------------------------------------------------------------------------
+// Printing
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+enum Language {
+    Cobble,
+    Python,
+}
+
+/// Cobble text with only the parentheses that precedence needs, so the
+/// parser's precedence and associativity are part of the test.
+fn cobble_expr(expr: &Expr) -> String {
+    fn operand(expr: &Expr, parent: Op, right: bool) -> String {
+        let text = cobble_expr(expr);
+        let Expr::Bin(op, ..) = expr else {
+            return text;
+        };
+        let (child, outer) = (op.precedence(), parent.precedence());
+        // `^` groups to the right, the other operators to the left.
+        let needs =
+            child < outer || (child == outer && (if parent == Op::Pow { !right } else { right }));
+        if needs {
+            format!("({text})")
+        } else {
+            text
+        }
+    }
+    match expr {
+        Expr::Lit(value) if *value < 0 => format!("({value})"),
+        Expr::Lit(value) => value.to_string(),
+        Expr::Var(name) => name.clone(),
+        Expr::Neg(inner) => match inner.as_ref() {
+            Expr::Lit(_) | Expr::Var(_) | Expr::Call(..) | Expr::Item(..) | Expr::Len(_) => {
+                format!("(-{})", cobble_expr(inner))
+            }
+            _ => format!("(-({}))", cobble_expr(inner)),
+        },
+        Expr::Bin(op, left, right) => format!(
+            "{} {} {}",
+            operand(left, *op, false),
+            op.symbol(),
+            operand(right, *op, true)
+        ),
+        Expr::Call(name, args) => format!("{name}({})", vals(args, Language::Cobble)),
+        Expr::Item(name, index) => format!("{name}[{}]", cobble_expr(index)),
+        Expr::Len(name) => format!("len({name})"),
+    }
+}
+
+fn python_expr(expr: &Expr) -> String {
+    match expr {
+        Expr::Lit(value) if *value < 0 => format!("({value})"),
+        Expr::Lit(value) => value.to_string(),
+        Expr::Var(name) => name.clone(),
+        Expr::Neg(inner) => format!("neg({})", python_expr(inner)),
+        Expr::Bin(op, left, right) => format!(
+            "{}({}, {})",
+            op.helper(),
+            python_expr(left),
+            python_expr(right)
+        ),
+        Expr::Call(name, args) => format!("{name}({})", vals(args, Language::Python)),
+        Expr::Item(name, index) => format!("{name}[{}]", python_expr(index)),
+        Expr::Len(name) => format!("len({name})"),
+    }
+}
+
+fn expr_text(expr: &Expr, language: Language) -> String {
+    match language {
+        Language::Cobble => cobble_expr(expr),
+        Language::Python => python_expr(expr),
+    }
+}
+
+fn val_text(val: &Val, language: Language) -> String {
+    match val {
+        Val::Int(expr) => expr_text(expr, language),
+        Val::Str(Str::Lit(text)) => format!("\"{text}\""),
+        Val::Str(Str::Var(name)) => name.clone(),
+        Val::Str(Str::Char(name, index)) => format!("{name}[{}]", expr_text(index, language)),
+        Val::List(list) => list_text(list, language),
+    }
+}
+
+fn list_text(list: &List, language: Language) -> String {
+    match list {
+        List::Lit(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|item| expr_text(item, language))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        List::Var(name) => name.clone(),
+    }
+}
+
+fn vals(args: &[Val], language: Language) -> String {
+    args.iter()
+        .map(|arg| val_text(arg, language))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `level`: 0 for `or`, 1 for `and`, 2 for `not`, 3 for a comparison.
+fn cobble_cond(cond: &Cond, level: u8) -> String {
+    let (own, text) = match cond {
+        Cond::Cmp(op, left, right) => (
+            3,
+            format!("{} {op} {}", cobble_expr(left), cobble_expr(right)),
+        ),
+        Cond::Truthy(expr) => (3, cobble_expr(expr)),
+        Cond::Not(inner, parens) => {
+            let operand = cobble_cond(inner, 2);
+            let operand = if *parens && !operand.starts_with('(') {
+                format!("({operand})")
+            } else {
+                operand
+            };
+            (2, format!("not {operand}"))
+        }
+        Cond::And(left, right) => (
+            1,
+            format!("{} and {}", cobble_cond(left, 1), cobble_cond(right, 2)),
+        ),
+        Cond::Or(left, right) => (
+            0,
+            format!("{} or {}", cobble_cond(left, 0), cobble_cond(right, 1)),
+        ),
+    };
+    if own < level {
+        format!("({text})")
+    } else {
+        text
+    }
+}
+
+fn python_cond(cond: &Cond) -> String {
+    match cond {
+        Cond::Cmp(op, left, right) => {
+            format!("({} {op} {})", python_expr(left), python_expr(right))
+        }
+        Cond::Truthy(expr) => format!("({} != 0)", python_expr(expr)),
+        Cond::Not(inner, _) => format!("(not {})", python_cond(inner)),
+        Cond::And(left, right) => format!("({} and {})", python_cond(left), python_cond(right)),
+        Cond::Or(left, right) => format!("({} or {})", python_cond(left), python_cond(right)),
+    }
+}
+
+fn print_block(out: &mut String, body: &[Stmt], indent: usize, language: Language) {
+    let pad = "    ".repeat(indent);
+    let expr = |expr: &Expr| expr_text(expr, language);
+    let cond = |cond: &Cond| match language {
+        Language::Cobble => cobble_cond(cond, 0),
+        Language::Python => python_cond(cond),
+    };
+    for statement in body {
+        match statement {
+            Stmt::Assign(target, value) => {
+                writeln!(out, "{pad}{target} = {}", val_text(value, language)).unwrap();
+            }
+            Stmt::Compound(target, op, value) => match language {
+                Language::Cobble => {
+                    writeln!(out, "{pad}{target} {}= {}", op.symbol(), expr(value)).unwrap()
+                }
+                Language::Python => writeln!(
+                    out,
+                    "{pad}{target} = {}({target}, {})",
+                    op.helper(),
+                    expr(value)
+                )
+                .unwrap(),
+            },
+            Stmt::SetItem(target, index, value) => {
+                writeln!(out, "{pad}{target}[{}] = {}", expr(index), expr(value)).unwrap();
+            }
+            Stmt::Call(name, args) => {
+                writeln!(
+                    out,
+                    "{pad}{}",
+                    expr(&Expr::Call(name.clone(), args.clone()))
+                )
+                .unwrap();
+            }
+            Stmt::Raw(action, target, value) => match language {
+                Language::Cobble => writeln!(
+                    out,
+                    "{pad}/scoreboard players {action} {target} temp {value}"
+                )
+                .unwrap(),
+                Language::Python => {
+                    let value = match *action {
+                        "add" => format!("add({target}, {value})"),
+                        "remove" => format!("sub({target}, {value})"),
+                        _ => value.to_string(),
+                    };
+                    writeln!(out, "{pad}{target} = {value}").unwrap();
+                }
+            },
+            Stmt::Say(names) => {
+                let text: Vec<String> = names.iter().map(|n| format!("{{{n}}}")).collect();
+                match language {
+                    Language::Cobble => writeln!(out, "{pad}/say v {}", text.join(" ")).unwrap(),
+                    Language::Python => {
+                        writeln!(out, "{pad}LOG.append(f\"v {}\")", text.join(" ")).unwrap()
+                    }
+                }
+            }
+            Stmt::If(branches, else_branch) => {
+                for (index, (condition, body)) in branches.iter().enumerate() {
+                    let keyword = if index == 0 { "if" } else { "elif" };
+                    writeln!(out, "{pad}{keyword} {}:", cond(condition)).unwrap();
+                    print_block(out, body, indent + 1, language);
+                }
+                if let Some(body) = else_branch {
+                    writeln!(out, "{pad}else:").unwrap();
+                    print_block(out, body, indent + 1, language);
+                }
+            }
+            Stmt::While {
+                counter,
+                limit,
+                extra,
+                body,
+            } => {
+                writeln!(out, "{pad}{counter} = 0").unwrap();
+                let mut header = match language {
+                    Language::Cobble => format!("{counter} < {}", expr(limit)),
+                    Language::Python => format!("({counter} < {})", expr(limit)),
+                };
+                if let Some(extra) = extra {
+                    let extra = match language {
+                        Language::Cobble => cobble_cond(extra, 2),
+                        Language::Python => python_cond(extra),
+                    };
+                    header = format!("{header} and {extra}");
+                }
+                writeln!(out, "{pad}while {header}:").unwrap();
+                print_block(out, body, indent + 1, language);
+                if !matches!(body.last(), Some(Stmt::Return(_))) {
+                    match language {
+                        Language::Cobble => writeln!(out, "{pad}    {counter} += 1").unwrap(),
+                        Language::Python => {
+                            writeln!(out, "{pad}    {counter} = add({counter}, 1)").unwrap()
+                        }
+                    }
+                }
+            }
+            Stmt::For { target, args, body } => {
+                let args: Vec<String> = args.iter().map(expr).collect();
+                writeln!(out, "{pad}for {target} in range({}):", args.join(", ")).unwrap();
+                print_block(out, body, indent + 1, language);
+            }
+            Stmt::ForEach { target, list, body } => {
+                writeln!(out, "{pad}for {target} in {}:", list_text(list, language)).unwrap();
+                print_block(out, body, indent + 1, language);
+            }
+            Stmt::Return(value) => writeln!(out, "{pad}return {}", expr(value)).unwrap(),
+        }
+    }
+}
+
+fn print_module(module: &Module, language: Language) -> String {
+    let mut out = String::new();
+    for import in &module.imports {
+        match import {
+            Import::Module(name) => writeln!(out, "import {name}").unwrap(),
+            Import::Names(name, names) => {
+                writeln!(out, "from {name} import {}", names.join(", ")).unwrap()
+            }
+        }
+    }
+    for (name, value) in &module.vars {
+        writeln!(out, "{name} = {}", val_text(value, language)).unwrap();
+    }
+    for function in &module.functions {
+        writeln!(
+            out,
+            "\ndef {}({}):",
+            function.name,
+            function.params.join(", ")
+        )
+        .unwrap();
+        if !function.globals.is_empty() {
+            writeln!(out, "    global {}", function.globals.join(", ")).unwrap();
+        }
+        print_block(&mut out, &function.body, 1, language);
+    }
+    out
+}
+
+/// Every module of `program`, each after a line naming its file.
+fn print_program(program: &Program, language: Language) -> String {
+    if let [module] = program.modules.as_slice() {
+        return print_module(module, language);
+    }
+    let extension = match language {
+        Language::Cobble => "cbl",
+        Language::Python => "py",
+    };
+    program
+        .modules
+        .iter()
+        .map(|module| {
+            format!(
+                "# {}.{extension}\n{}",
+                module.name,
+                print_module(module, language)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// Shrinking
+// ---------------------------------------------------------------------------
+
+fn functions_mut(program: &mut Program) -> impl Iterator<Item = &mut Function> {
+    program
+        .modules
+        .iter_mut()
+        .flat_map(|module| module.functions.iter_mut())
+}
+
+/// Calls `visit` on every block, each block before the blocks inside it.
+fn for_each_block(program: &mut Program, visit: &mut dyn FnMut(&mut Vec<Stmt>)) {
+    fn walk(body: &mut Vec<Stmt>, visit: &mut dyn FnMut(&mut Vec<Stmt>)) {
+        visit(body);
+        for statement in body.iter_mut() {
+            match statement {
+                Stmt::If(branches, else_branch) => {
+                    for (_, body) in branches.iter_mut() {
+                        walk(body, visit);
+                    }
+                    if let Some(body) = else_branch {
+                        walk(body, visit);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } | Stmt::ForEach { body, .. } => {
+                    walk(body, visit)
+                }
+                _ => {}
+            }
+        }
+    }
+    for function in functions_mut(program) {
+        walk(&mut function.body, visit);
+    }
+}
+
+/// Calls `visit` on every number expression, parents before children. The
+/// flag marks loop bounds and exponents, which only shrink to small
+/// literals so that no candidate loops for long.
+fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) {
+    fn expr(e: &mut Expr, bound: bool, visit: &mut dyn FnMut(&mut Expr, bool)) {
+        visit(e, bound);
+        match e {
+            Expr::Neg(inner) => expr(inner, bound, visit),
+            // An exponent counts as a bound too: a large one makes the
+            // runtime power loop run for long.
+            Expr::Bin(op, left, right) => {
+                let exponent = *op == Op::Pow;
+                expr(left, bound, visit);
+                expr(right, bound || exponent, visit);
+            }
+            Expr::Call(_, args) => args.iter_mut().for_each(|arg| val(arg, visit)),
+            Expr::Item(_, index) => expr(index, bound, visit),
+            Expr::Lit(_) | Expr::Var(_) | Expr::Len(_) => {}
+        }
+    }
+    fn val(v: &mut Val, visit: &mut dyn FnMut(&mut Expr, bool)) {
+        match v {
+            Val::Int(e) => expr(e, false, visit),
+            Val::Str(Str::Char(_, index)) => expr(index, false, visit),
+            Val::Str(_) => {}
+            Val::List(l) => list_items(l, visit),
+        }
+    }
+    fn list_items(l: &mut List, visit: &mut dyn FnMut(&mut Expr, bool)) {
+        if let List::Lit(items) = l {
+            items.iter_mut().for_each(|item| expr(item, false, visit));
+        }
+    }
+    fn cond(c: &mut Cond, visit: &mut dyn FnMut(&mut Expr, bool)) {
+        match c {
+            Cond::Cmp(_, left, right) => {
+                expr(left, false, visit);
+                expr(right, false, visit);
+            }
+            Cond::Truthy(e) => expr(e, false, visit),
+            Cond::Not(inner, _) => cond(inner, visit),
+            Cond::And(left, right) | Cond::Or(left, right) => {
+                cond(left, visit);
+                cond(right, visit);
+            }
+        }
+    }
+    fn block(body: &mut [Stmt], visit: &mut dyn FnMut(&mut Expr, bool)) {
+        for statement in body {
+            match statement {
+                Stmt::Assign(_, v) => val(v, visit),
+                Stmt::Compound(_, _, e) | Stmt::Return(e) => expr(e, false, visit),
+                Stmt::SetItem(_, index, value) => {
+                    expr(index, false, visit);
+                    expr(value, false, visit);
+                }
+                Stmt::Call(_, args) => args.iter_mut().for_each(|arg| val(arg, visit)),
+                Stmt::If(branches, else_branch) => {
+                    for (condition, body) in branches.iter_mut() {
+                        cond(condition, visit);
+                        block(body, visit);
+                    }
+                    if let Some(body) = else_branch {
+                        block(body, visit);
+                    }
+                }
+                Stmt::While {
+                    limit, extra, body, ..
+                } => {
+                    expr(limit, true, visit);
+                    if let Some(extra) = extra {
+                        cond(extra, visit);
+                    }
+                    block(body, visit);
+                }
+                Stmt::For { args, body, .. } => {
+                    args.iter_mut().for_each(|arg| expr(arg, true, visit));
+                    block(body, visit);
+                }
+                Stmt::ForEach { list, body, .. } => {
+                    list_items(list, visit);
+                    block(body, visit);
+                }
+                Stmt::Raw(..) | Stmt::Say(_) => {}
+            }
+        }
+    }
+    for module in &mut program.modules {
+        for (_, value) in &mut module.vars {
+            val(value, visit);
+        }
+        for function in &mut module.functions {
+            block(&mut function.body, visit);
+        }
+    }
+}
+
+/// Calls `visit` on every condition of an `if` or `elif`, parents first.
+fn for_each_cond(program: &mut Program, visit: &mut dyn FnMut(&mut Cond)) {
+    fn cond(c: &mut Cond, visit: &mut dyn FnMut(&mut Cond)) {
+        visit(c);
+        match c {
+            Cond::Not(inner, _) => cond(inner, visit),
+            Cond::And(left, right) | Cond::Or(left, right) => {
+                cond(left, visit);
+                cond(right, visit);
+            }
+            Cond::Cmp(..) | Cond::Truthy(_) => {}
+        }
+    }
+    for_each_block(program, &mut |body| {
+        for statement in body.iter_mut() {
+            if let Stmt::If(branches, _) = statement {
+                for (condition, _) in branches.iter_mut() {
+                    cond(condition, visit);
+                }
+            }
+        }
+    });
+}
+
+/// Programs one step smaller than `program`. Some are not valid Python
+/// (a removed assignment leaves a read unbound); the caller drops those.
+fn shrink_candidates(program: &Program) -> Vec<Program> {
+    let mut candidates = smaller_programs(program);
+    // Generated functions end with `return`. Without it Python returns
+    // `None` where Cobble returns 0, which is not the difference to find.
+    for candidate in &mut candidates {
+        for function in functions_mut(candidate) {
+            if !matches!(function.body.last(), Some(Stmt::Return(_))) {
+                function.body.push(Stmt::Return(Expr::Lit(0)));
+            }
+        }
+    }
+    // Removing a final `return 0` gives the same program back.
+    let original = print_program(program, Language::Cobble);
+    candidates.retain(|candidate| print_program(candidate, Language::Cobble) != original);
+    // Python only looks a function up when the call runs, but Cobble
+    // rejects a call to a function that doesn't exist.
+    candidates.retain(calls_resolve);
+    candidates
+}
+
+/// Whether every call names a function that its module defines or imports.
+fn calls_resolve(program: &Program) -> bool {
+    let defined = |module: &str, function: &str| {
+        program
+            .modules
+            .iter()
+            .any(|m| m.name == module && m.functions.iter().any(|f| f.name == function))
+    };
+    program.modules.iter().all(|module| {
+        let mut copy = Program {
+            modules: vec![module.clone()],
+        };
+        let mut names = Vec::new();
+        for_each_expr(&mut copy, &mut |expr, _| {
+            if let Expr::Call(name, _) = expr {
+                names.push(name.clone());
+            }
+        });
+        // `for_each_expr` sees the arguments of a call statement, not its
+        // name.
+        let mut statement_calls = Vec::new();
+        for_each_block(&mut copy, &mut |body| {
+            for statement in body.iter() {
+                if let Stmt::Call(name, _) = statement {
+                    statement_calls.push(name.clone());
+                }
+            }
+        });
+        names.extend(statement_calls);
+        names.iter().all(|name| match name.split_once('.') {
+            Some((other, function)) => {
+                module
+                    .imports
+                    .iter()
+                    .any(|import| matches!(import, Import::Module(m) if *m == other))
+                    && defined(other, function)
+            }
+            None => {
+                defined(module.name, name)
+                    || module.imports.iter().any(|import| match import {
+                        Import::Names(other, listed) => {
+                            listed.contains(name) && defined(other, name)
+                        }
+                        Import::Module(_) => false,
+                    })
+            }
+        })
+    })
+}
+
+fn smaller_programs(program: &Program) -> Vec<Program> {
+    let mut candidates = Vec::new();
+    for (module_index, module) in program.modules.iter().enumerate() {
+        for index in 0..module.functions.len() {
+            if module.name == MAIN.name && index + 1 == module.functions.len() {
+                continue;
+            }
+            let mut candidate = program.clone();
+            candidate.modules[module_index].functions.remove(index);
+            candidates.push(candidate);
+        }
+        for index in 0..module.imports.len() {
+            let mut candidate = program.clone();
+            candidate.modules[module_index].imports.remove(index);
+            candidates.push(candidate);
+        }
+        if module.name != MAIN.name {
+            let mut candidate = program.clone();
+            candidate.modules.remove(module_index);
+            for other in &mut candidate.modules {
+                other.imports.retain(|import| match import {
+                    Import::Module(name) | Import::Names(name, _) => *name != module.name,
+                });
+            }
+            candidates.push(candidate);
+        }
+    }
+
+    let mut statements = 0;
+    for_each_block(&mut program.clone(), &mut |body| statements += body.len());
+    for target in 0..statements {
+        for mode in 0..4 {
+            let mut candidate = program.clone();
+            let mut seen = 0;
+            let mut changed = None;
+            for_each_block(&mut candidate, &mut |body| {
+                if changed.is_some() || target >= seen + body.len() {
+                    seen += body.len();
+                    return;
+                }
+                let at = target - seen;
+                seen = usize::MAX / 2;
+                changed = Some(match (mode, &mut body[at]) {
+                    (0, _) => {
+                        body.remove(at);
+                        true
+                    }
+                    // Replace a block statement with its first body.
+                    (1, Stmt::If(branches, _)) => {
+                        let inner = branches[0].1.clone();
+                        body.splice(at..=at, inner);
+                        true
+                    }
+                    (
+                        1,
+                        Stmt::While { body: inner, .. }
+                        | Stmt::For { body: inner, .. }
+                        | Stmt::ForEach { body: inner, .. },
+                    ) => {
+                        let inner = inner.clone();
+                        body.splice(at..=at, inner);
+                        true
+                    }
+                    (2, Stmt::If(_, else_branch)) => else_branch.take().is_some(),
+                    (3, Stmt::If(branches, _)) if branches.len() > 1 => {
+                        branches.pop();
+                        true
+                    }
+                    _ => false,
+                });
+            });
+            if changed == Some(true) {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    let mut conditions = 0;
+    for_each_cond(&mut program.clone(), &mut |_| conditions += 1);
+    for target in 0..conditions {
+        for mode in 0..3 {
+            let mut candidate = program.clone();
+            let mut seen = 0;
+            let mut changed = false;
+            for_each_cond(&mut candidate, &mut |c| {
+                if seen == target {
+                    let replacement = match (mode, &*c) {
+                        (0, Cond::Not(inner, _)) => Some((**inner).clone()),
+                        (0 | 1, Cond::And(left, right) | Cond::Or(left, right)) => {
+                            Some(if mode == 0 {
+                                (**left).clone()
+                            } else {
+                                (**right).clone()
+                            })
+                        }
+                        (2, Cond::Cmp(..) | Cond::Truthy(_)) => None,
+                        (2, _) => Some(Cond::Truthy(Expr::Lit(1))),
+                        _ => None,
+                    };
+                    if let Some(replacement) = replacement {
+                        *c = replacement;
+                        changed = true;
+                    }
+                }
+                seen += 1;
+            });
+            if changed {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    let mut expressions = 0;
+    for_each_expr(&mut program.clone(), &mut |_, _| expressions += 1);
+    for target in 0..expressions {
+        for mode in 0..4 {
+            let mut candidate = program.clone();
+            let mut seen = 0;
+            let mut changed = false;
+            for_each_expr(&mut candidate, &mut |e, bound| {
+                if seen == target {
+                    // Each replacement is smaller: 0 before 1 before
+                    // anything else, so shrinking can't go in circles.
+                    let replacement = match (mode, &*e) {
+                        (0, Expr::Lit(0)) | (1, Expr::Lit(0 | 1)) => None,
+                        (0, _) => Some(Expr::Lit(0)),
+                        (1, _) => Some(Expr::Lit(1)),
+                        (_, _) if bound => None,
+                        (2, Expr::Neg(inner)) => Some((**inner).clone()),
+                        (2, Expr::Bin(_, left, _)) => Some((**left).clone()),
+                        (3, Expr::Bin(_, _, right)) => Some((**right).clone()),
+                        _ => None,
+                    };
+                    if let Some(replacement) = replacement {
+                        *e = replacement;
+                        changed = true;
+                    }
+                }
+                seen += 1;
+            });
+            if changed {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates
+}
+
+/// What kind of failure an outcome is, so shrinking keeps the same one:
+/// the line of the first diagnostic, or the first line of the error,
+/// without numbers and temporary paths.
+fn failure_kind(actual: &Result<Outcome, String>, expected: &Outcome) -> Option<String> {
+    match actual {
+        Ok(outcome) if outcome == expected => None,
+        Ok(_) => Some("different result".to_string()),
+        Err(error) => {
+            let line = error
+                .lines()
+                .find(|line| line.contains("error["))
+                .or_else(|| error.lines().next())
+                .unwrap_or_default();
+            let words: Vec<&str> = line
+                .split_whitespace()
+                .filter(|word| !word.contains("/tmp/") && !word.contains(".cbl"))
+                .collect();
+            Some(
+                words
+                    .join(" ")
+                    .chars()
+                    .filter(|c| !c.is_ascii_digit())
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// Removes parts of a failing program while it keeps failing the same way.
+/// Each round starts where the last one found a smaller program, since the
+/// candidates before it failed recently.
+fn shrink(python: &mut Python, program: Program, kind: &str) -> Program {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut current = program;
+    let mut start = 0;
+    'rounds: while std::time::Instant::now() < deadline {
+        let mut candidates = shrink_candidates(&current);
+        let rotate = start.min(candidates.len());
+        candidates.rotate_left(rotate);
+        for (chunk_index, chunk) in candidates.chunks(32).enumerate() {
+            for (index, (candidate, expected)) in chunk.iter().zip(python.run(chunk)).enumerate() {
+                let Ok(expected) = expected else {
+                    continue;
+                };
+                let actual = run_cobble(candidate);
+                if failure_kind(&actual, &expected).as_deref() == Some(kind) {
+                    current = candidate.clone();
+                    start = rotate + chunk_index * 32 + index;
+                    continue 'rounds;
+                }
+            }
+        }
+        break;
+    }
+    current
+}
+
+// ---------------------------------------------------------------------------
+// Running
+// ---------------------------------------------------------------------------
+
+const PYTHON_RUNNER: &str = r#"
+import json, sys, types
+
+RUNTIME = '''
+def W(x):
+    x &= 0xFFFFFFFF
+    return x - 0x100000000 if x & 0x80000000 else x
+def add(a, b): return W(a + b)
+def sub(a, b): return W(a - b)
+def mul(a, b): return W(a * b)
+def fdiv(a, b): return W(a // b)
+def fmod(a, b): return W(a % b)
+def pw(a, b): return 0 if b < 0 else W(pow(a, b, 0x100000000))
+def neg(a): return W(-a)
+LOG = []
+'''
+
+def run(program):
+    before = set(sys.modules)
+    try:
+        runtime = types.ModuleType("cobble_runtime")
+        exec(RUNTIME, runtime.__dict__)
+        sys.modules["cobble_runtime"] = runtime
+        spaces = {}
+        for name, source in program["modules"]:
+            module = types.ModuleType(name)
+            sys.modules[name] = module
+            exec("from cobble_runtime import *\n" + source, module.__dict__)
+            spaces[name] = module.__dict__
+        value = spaces["main"]["main"]()
+        variables = {var: spaces[name].get(var) for name, var in program["vars"]}
+        return {"return": value, "vars": variables, "log": runtime.LOG}
+    except Exception as error:
+        return {"error": f"{type(error).__name__}: {error}"}
+    finally:
+        for name in set(sys.modules) - before:
+            del sys.modules[name]
+
+# One JSON list of programs per line in, one list of results per line out.
+for line in sys.stdin:
+    print(json.dumps([run(program) for program in json.loads(line)]), flush=True)
+"#;
+
+/// A module variable's value at the end of a run.
+#[derive(Debug, PartialEq)]
+enum Value {
+    Int(i64),
+    Str(String),
+    List(Vec<i64>),
+    Missing,
+}
+
+impl Value {
+    fn from_json(value: Option<&serde_json::Value>) -> Value {
+        match value {
+            Some(serde_json::Value::Number(n)) => Value::Int(n.as_f64().unwrap() as i64),
+            Some(serde_json::Value::String(s)) => Value::Str(s.clone()),
+            Some(serde_json::Value::Array(items)) => Value::List(
+                items
+                    .iter()
+                    .map(|item| item.as_f64().map_or(i64::MIN, |n| n as i64))
+                    .collect(),
+            ),
+            _ => Value::Missing,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct Outcome {
+    returned: Option<i32>,
+    vars: BTreeMap<String, Value>,
+    log: Vec<String>,
+}
+
+/// Each module variable with its module and whether a score holds it.
+fn program_vars(program: &Program) -> Vec<(&'static str, String, bool)> {
+    program
+        .modules
+        .iter()
+        .flat_map(|module| {
+            module
+                .vars
+                .iter()
+                .map(|(name, value)| (module.name, name.clone(), matches!(value, Val::Int(_))))
+        })
+        .collect()
+}
+
+/// One `python3` process that runs the generated programs in batches.
+struct Python {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    _dir: tempfile::TempDir,
+}
+
+impl Python {
+    /// `None` when `python3` can't be started.
+    fn start() -> Option<Python> {
+        let dir = tempfile::TempDir::new().unwrap();
+        let runner = dir.path().join("runner.py");
+        std::fs::write(&runner, PYTHON_RUNNER).unwrap();
+        let mut child = Command::new("python3")
+            .arg("-I")
+            .arg(&runner)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .ok()?;
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        Some(Python {
+            child,
+            stdin,
+            stdout,
+            _dir: dir,
+        })
+    }
+
+    fn run(&mut self, programs: &[Program]) -> Vec<Result<Outcome, String>> {
+        let input: Vec<serde_json::Value> = programs
+            .iter()
+            .map(|program| {
+                let modules: Vec<(&str, String)> = program
+                    .modules
+                    .iter()
+                    .map(|module| (module.name, print_module(module, Language::Python)))
+                    .collect();
+                let vars: Vec<(&str, String)> = program_vars(program)
+                    .into_iter()
+                    .map(|(module, name, _)| (module, name))
+                    .collect();
+                serde_json::json!({ "modules": modules, "vars": vars })
+            })
+            .collect();
+        writeln!(self.stdin, "{}", serde_json::to_string(&input).unwrap()).unwrap();
+        self.stdin.flush().unwrap();
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).unwrap();
+        assert!(
+            !line.is_empty(),
+            "python3 stopped while running the programs"
+        );
+        let results: Vec<serde_json::Value> = serde_json::from_str(&line).unwrap();
+        results.into_iter().map(python_outcome).collect()
+    }
+}
+
+impl Drop for Python {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn python_outcome(result: serde_json::Value) -> Result<Outcome, String> {
+    if let Some(error) = result.get("error") {
+        return Err(error.as_str().unwrap().to_string());
+    }
+    let vars = result["vars"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::from_json(Some(value))))
+        .collect();
+    Ok(Outcome {
+        returned: result["return"].as_i64().map(|v| v as i32),
+        vars,
+        log: result["log"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| line.as_str().unwrap().to_string())
+            .collect(),
+    })
+}
+
+fn run_cobble(program: &Program) -> Result<Outcome, String> {
+    let files: Vec<(String, String)> = program
+        .modules
+        .iter()
+        .map(|module| {
+            (
+                format!("{}.cbl", module.name),
+                print_module(module, Language::Cobble),
+            )
+        })
+        .collect();
+    let loaded = match files.as_slice() {
+        [(_, source)] => Sim::try_load(source, &[]),
+        files => {
+            let files: Vec<(&str, &str)> = files
+                .iter()
+                .map(|(name, source)| (name.as_str(), source.as_str()))
+                .collect();
+            Sim::try_load_project(&files, &[])
+        }
+    };
+    let mut sim = loaded.map_err(|error| format!("build failed: {error}"))?;
+    let returned =
+        panic::catch_unwind(AssertUnwindSafe(|| sim.call("main"))).map_err(|payload| {
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            format!("simulator panicked: {message}")
+        })?;
+    let vars = program_vars(program)
+        .into_iter()
+        .map(|(_, name, score)| {
+            let value = if score {
+                sim.try_score(&name, "sim.vars")
+                    .map_or(Value::Missing, |v| Value::Int(v.into()))
+            } else {
+                Value::from_json(sim.storage.get("vars").and_then(|vars| vars.get(&name)))
+            };
+            (name, value)
+        })
+        .collect();
+    Ok(Outcome {
+        returned,
+        vars,
+        log: sim
+            .log
+            .iter()
+            .map(|line| line.strip_prefix("Server: ").unwrap_or(line).to_string())
+            .collect(),
+    })
+}
+
+fn env_number(name: &str, default: u64) -> u64 {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} must be a number, got `{value}`")),
+        Err(_) => default,
+    }
+}
+
+#[test]
+fn random_programs_match_python() {
+    let Some(mut python) = Python::start() else {
+        assert!(
+            std::env::var("COBBLE_DIFF_REQUIRE_PYTHON").as_deref() != Ok("1"),
+            "python3 is required for the differential test"
+        );
+        eprintln!("skipping the differential test: python3 not found");
+        return;
+    };
+    let cases = env_number("COBBLE_DIFF_CASES", 300);
+    let first_seed = env_number("COBBLE_DIFF_SEED", 1);
+
+    let (seeds, programs): (Vec<u64>, Vec<Program>) = (0..cases)
+        .map(|index| {
+            let seed = first_seed + index;
+            let mut generator = Generator {
+                rng: Rng(seed),
+                counter: 0,
+                functions: 0,
+            };
+            (seed, generator.program())
+        })
+        .unzip();
+    let expected: Vec<Outcome> = python
+        .run(&programs)
+        .into_iter()
+        .zip(seeds.iter().zip(&programs))
+        .map(|(expected, (seed, program))| {
+            expected.unwrap_or_else(|error| {
+                panic!(
+                    "seed {seed}: the generated Python failed ({error}):\n{}",
+                    print_program(program, Language::Python)
+                )
+            })
+        })
+        .collect();
+
+    // The simulator panics on commands Minecraft would refuse; those
+    // panics are failures, reported below.
+    let default_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let mut failures = Vec::new();
+    for ((seed, program), expected) in seeds.iter().zip(&programs).zip(&expected) {
+        let actual = run_cobble(program);
+        if let Some(kind) = failure_kind(&actual, expected) {
+            failures.push((*seed, program, kind));
+        }
+    }
+    let shrinking = std::env::var("COBBLE_DIFF_SHRINK").as_deref() != Ok("0");
+    let first_report = failures.first().map(|(seed, program, kind)| {
+        let small = if shrinking {
+            shrink(&mut python, (*program).clone(), kind)
+        } else {
+            (*program).clone()
+        };
+        let expected = python.run(std::slice::from_ref(&small)).remove(0);
+        let actual = run_cobble(&small);
+        let label = if shrinking { "shrunk" } else { "as generated" };
+        format!(
+            "seed {seed}, {label}:\n--- cobble ---\n{}--- python ---\n{}\
+             --- python result ---\n{expected:?}\n--- cobble result ---\n{actual:?}\n",
+            print_program(&small, Language::Cobble),
+            print_program(&small, Language::Python)
+        )
+    });
+    panic::set_hook(default_hook);
+
+    let summaries: Vec<String> = failures
+        .iter()
+        .map(|(seed, _, kind)| format!("seed {seed}: {kind}"))
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} programs differ from Python. Rerun one with \
+         COBBLE_DIFF_SEED=<seed> COBBLE_DIFF_CASES=1.\n\n{}\n\n{}",
+        failures.len(),
+        summaries.join("\n"),
+        first_report.unwrap_or_default()
+    );
+}

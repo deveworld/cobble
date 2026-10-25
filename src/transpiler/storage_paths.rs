@@ -10,6 +10,7 @@
 use crate::ast::{CobbleType, Expression};
 use crate::transpiler::data_pack::DataPack;
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
+use crate::transpiler::statement_processors::serialize_snbt;
 use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{
     escape_quoted, GeneratedCommand, GeneratedCommandKind, SourceLocation, TranspileError,
@@ -263,6 +264,89 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
     /// Static SNBT serialization for literal/const expressions.
     fn storage_static_snbt(&self, expr: &Expression) -> Result<String, TranspileError>;
 
+    /// The storage path of `expr` when it names a string variable. A
+    /// parameter's type is unknown, so it is not one.
+    fn string_variable_path(&self, expr: &Expression) -> Option<String> {
+        let Expression::Identifier(name) = expr else {
+            return None;
+        };
+        let symbols = self.storage_symbols();
+        if symbols.variable_types.get(name) != Some(&CobbleType::String) {
+            return None;
+        }
+        symbols.variable_storage_paths.get(name).cloned()
+    }
+
+    /// Commands that store the character of the string at `base_path` that
+    /// `index` picks, as a one-character string at `target_path`. A
+    /// negative index counts from the end, as in Python. An index out of
+    /// range fails the command and leaves the target as it was.
+    fn string_char_commands(
+        &mut self,
+        target_path: &str,
+        base_path: &str,
+        index: &Expression,
+    ) -> Result<Vec<String>, TranspileError> {
+        let namespace = self.storage_data_pack().namespace.clone();
+        let set_string = format!(
+            "data modify storage {namespace}:global {target_path} set string storage {namespace}:global {base_path}"
+        );
+        let static_index = match index {
+            Expression::Number(value) if value.fract() == 0.0 => Some(*value as i32),
+            Expression::Unary(crate::ast::UnaryOp::Neg, inner) => match &**inner {
+                Expression::Number(value) if value.fract() == 0.0 => Some(-(*value as i32)),
+                _ => None,
+            },
+            Expression::Identifier(name) => self
+                .storage_symbols()
+                .compile_time_constants
+                .get(name)
+                .filter(|value| value.fract() == 0.0)
+                .map(|value| *value as i32),
+            _ => None,
+        };
+        if let Some(index) = static_index {
+            // `-1` has no end that counts from the end, so it runs to the end.
+            return Ok(vec![if index == -1 {
+                format!("{set_string} -1")
+            } else {
+                format!("{set_string} {index} {}", index + 1)
+            }]);
+        }
+
+        let id = self.storage_next_temp_id();
+        let start = format!("#char_start_{id}");
+        let end = format!("#char_end_{id}");
+        let args_path = format!("_cobble_char_{id}");
+        let helper = format!("_cobble_char_{id}");
+        let mut commands = self.storage_eval_to_target(index, &start)?;
+        commands.extend([
+            format!(
+                "execute store result score {end} temp run data get storage {namespace}:global {base_path}"
+            ),
+            format!(
+                "execute if score {start} temp matches ..-1 run scoreboard players operation {start} temp += {end} temp"
+            ),
+            format!("scoreboard players operation {end} temp = {start} temp"),
+            format!("scoreboard players add {end} temp 1"),
+            format!(
+                "execute store result storage {namespace}:global {args_path}.start int 1 run scoreboard players get {start} temp"
+            ),
+            format!(
+                "execute store result storage {namespace}:global {args_path}.end int 1 run scoreboard players get {end} temp"
+            ),
+            format!("function {namespace}:{helper} with storage {namespace}:global {args_path}"),
+            format!("data remove storage {namespace}:global {args_path}"),
+        ]);
+        self.add_generated_helper_function(
+            helper,
+            vec![format!("${set_string} $(start) $(end)")],
+            GeneratedCommandKind::ControlFlow,
+        );
+        self.storage_data_pack_mut().track_objective("temp");
+        Ok(commands)
+    }
+
     fn storage_value_commands(
         &mut self,
         target_path: &str,
@@ -474,20 +558,7 @@ impl StorageValueOps for Transpiler {
     }
 
     fn storage_scoreboard_objective(&self, name: &str) -> Option<&str> {
-        if self.symbols.scoreboard_variables.contains(name)
-            || self.symbols.variable_objectives.contains_key(name)
-            || self.symbols.variables.contains_key(name)
-        {
-            Some(
-                self.symbols
-                    .variable_objectives
-                    .get(name)
-                    .map(String::as_str)
-                    .unwrap_or("temp"),
-            )
-        } else {
-            None
-        }
+        self.symbols.scoreboard_objective(name)
     }
 
     fn storage_static_snbt(&self, expr: &Expression) -> Result<String, TranspileError> {
@@ -522,6 +593,24 @@ impl StoragePathOps for Transpiler {
         target: &str,
     ) -> Result<Vec<String>, TranspileError> {
         self.evaluate_expression_to_target(expr, target)
+    }
+}
+
+impl<'a> StorageValueOps for ExpressionEvaluator<'a> {
+    fn storage_next_temp_id(&mut self) -> u32 {
+        self.next_temp_id()
+    }
+
+    fn is_storage_macro_param(&self, name: &str) -> bool {
+        self.is_storage_current_param(name)
+    }
+
+    fn storage_scoreboard_objective(&self, name: &str) -> Option<&str> {
+        self.symbols.scoreboard_objective(name)
+    }
+
+    fn storage_static_snbt(&self, expr: &Expression) -> Result<String, TranspileError> {
+        serialize_snbt(self.symbols, expr)
     }
 }
 
