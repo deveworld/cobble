@@ -2483,9 +2483,9 @@ expression: datapack_tree_snapshot(&output_dir)
       "kind": "ControlFlow"
     },
     {
-      "generated_path": "data/cobble_26_feature_matrix/function/while_temp_9.mcfunction",
-      "generated_line": 1,
-      "command": "execute if score energy cobble_26_feature_matrix.vars matches 1.. run function cobble_26_feature_matrix:while_body_10",
+      "generated_path": "data/cobble_26_feature_matrix/function/while_body_10.mcfunction",
+      "generated_line": 4,
+      "command": "function cobble_26_feature_matrix:while_temp_9",
       "source": {
         "file": "src/main.cbl",
         "line": 92,
@@ -2495,8 +2495,8 @@ expression: datapack_tree_snapshot(&output_dir)
     },
     {
       "generated_path": "data/cobble_26_feature_matrix/function/while_temp_9.mcfunction",
-      "generated_line": 2,
-      "command": "execute if score energy cobble_26_feature_matrix.vars matches 1.. run function cobble_26_feature_matrix:while_temp_9",
+      "generated_line": 1,
+      "command": "execute if score energy cobble_26_feature_matrix.vars matches 1.. run function cobble_26_feature_matrix:while_body_10",
       "source": {
         "file": "src/main.cbl",
         "line": 92,
@@ -2888,10 +2888,10 @@ tellraw @a {"color":"blue","extra":[{"nbt":"vars.status","storage":"cobble_26_fe
 execute store result storage cobble_26_feature_matrix:global _say_args.energy int 1 run scoreboard players get energy cobble_26_feature_matrix.vars
 function cobble_26_feature_matrix:_cobble_say_11 with storage cobble_26_feature_matrix:global _say_args
 scoreboard players remove energy cobble_26_feature_matrix.vars 1
+function cobble_26_feature_matrix:while_temp_9
 
 ===== data/cobble_26_feature_matrix/function/while_temp_9.mcfunction =====
 execute if score energy cobble_26_feature_matrix.vars matches 1.. run function cobble_26_feature_matrix:while_body_10
-execute if score energy cobble_26_feature_matrix.vars matches 1.. run function cobble_26_feature_matrix:while_temp_9
 
 ===== data/cobble_26_feature_matrix/predicate/always_true.json =====
 {

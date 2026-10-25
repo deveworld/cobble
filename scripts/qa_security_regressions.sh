@@ -50,7 +50,7 @@ verify_pin build_validate_preserves_unrelated_files_after_prior_nonvalidated_bui
 verify_pin direct_datapack_writer_rejects_traversal_namespace_without_deleting_functions
 verify_pin direct_datapack_writer_rejects_traversal_json_resource_namespace_without_cleanup
 verify_pin --test cli_regression_test cli_build_validate_refuses_existing_file_output_without_deleting_it
-verify_pin --test cli_regression_test cli_build_refuses_symlink_output_parent_component
+verify_pin --test cli_regression_test cli_build_allows_symlink_output_parent_but_refuses_symlink_output
 verify_pin --test cli_regression_test cli_build_refuses_symlink_descendant_in_existing_output
 verify_pin --test integration_test --exact test_execute_raw_python_gt_max_does_not_overflow
 verify_pin --test integration_test --exact test_execute_raw_python_unless_gt_max_does_not_overflow
@@ -61,6 +61,22 @@ verify_pin --test integration_test --exact test_execute_raw_python_unless_negate
 verify_pin --test integration_test --exact test_execute_raw_python_or_and_unless_and_combination_is_composable
 verify_pin --test integration_test --exact test_execute_raw_python_multiple_unless_and_guards_are_all_preserved
 verify_pin --test integration_test --exact test_execute_raw_python_unless_and_does_not_become_positive_if_chain
+verify_pin symlinks_above_the_root_are_allowed_and_at_or_below_it_refused
+verify_pin build_validate_preserves_previous_output_on_validation_failure
+verify_pin --test cli_regression_test --exact cli_link_allows_symlinked_parent_but_refuses_symlinked_datapacks_folder
+verify_pin --test cli_regression_test --exact cli_link_status_doctor_and_clean_reject_tampered_pack_path
+verify_pin --test cli_regression_test --exact cli_link_watch_and_clean_reject_forged_same_namespace_marker
+verify_pin --test cli_regression_test --exact cli_watch_link_refuses_unmarked_existing_pack
+verify_pin --test cli_regression_test --exact cli_watch_link_refuses_mismatched_marker_namespace
+verify_pin --test cli_regression_test --exact cli_doctor_json_rejects_symlinked_link_marker_parent
+verify_pin --test cli_regression_test --exact cli_clean_refuses_unmarked_output
+verify_pin --test cli_regression_test --exact cli_clean_linked_requires_confirmation_and_removes_marked_linked_output
+verify_pin --test cli_regression_test --exact cli_clean_allows_symlink_parent_but_refuses_symlink_descendant
+verify_pin --test unrolling_test --exact rejects_unrolls_over_the_limit
+verify_pin --test unrolling_test --exact rejects_nested_unrolls_over_the_aggregate_limit
+verify_pin --test unrolling_test --exact rejects_unrolled_command_output_over_the_aggregate_limit
+verify_pin --test unrolling_test --exact large_unrolls_print_an_expansion_warning
+verify_pin --test cli_regression_test --exact cli_check_json_reports_unroll_budget_diagnostics
 echo "All pinned test names resolved"
 
 echo
@@ -72,7 +88,7 @@ run cargo test --locked build_validate_preserves_unrelated_files_after_prior_non
 run cargo test --locked direct_datapack_writer_rejects_traversal_namespace_without_deleting_functions
 run cargo test --locked direct_datapack_writer_rejects_traversal_json_resource_namespace_without_cleanup
 run cargo test --locked --test cli_regression_test cli_build_validate_refuses_existing_file_output_without_deleting_it
-run cargo test --locked --test cli_regression_test cli_build_refuses_symlink_output_parent_component
+run cargo test --locked --test cli_regression_test cli_build_allows_symlink_output_parent_but_refuses_symlink_output
 run cargo test --locked --test cli_regression_test cli_build_refuses_symlink_descendant_in_existing_output
 
 echo
@@ -89,11 +105,25 @@ run cargo test --locked --test integration_test test_execute_raw_python_unless_a
 
 echo
 echo "== Link, clean, symlink, and ownership regressions =="
-run scripts/qa_07_link_clean_safety.sh
+run cargo test --locked symlinks_above_the_root_are_allowed_and_at_or_below_it_refused
+run cargo test --locked build_validate_preserves_previous_output_on_validation_failure
+run cargo test --locked --test cli_regression_test cli_link_allows_symlinked_parent_but_refuses_symlinked_datapacks_folder -- --exact
+run cargo test --locked --test cli_regression_test cli_link_status_doctor_and_clean_reject_tampered_pack_path -- --exact
+run cargo test --locked --test cli_regression_test cli_link_watch_and_clean_reject_forged_same_namespace_marker -- --exact
+run cargo test --locked --test cli_regression_test cli_watch_link_refuses_unmarked_existing_pack -- --exact
+run cargo test --locked --test cli_regression_test cli_watch_link_refuses_mismatched_marker_namespace -- --exact
+run cargo test --locked --test cli_regression_test cli_doctor_json_rejects_symlinked_link_marker_parent -- --exact
+run cargo test --locked --test cli_regression_test cli_clean_refuses_unmarked_output -- --exact
+run cargo test --locked --test cli_regression_test cli_clean_linked_requires_confirmation_and_removes_marked_linked_output -- --exact
+run cargo test --locked --test cli_regression_test cli_clean_allows_symlink_parent_but_refuses_symlink_descendant -- --exact
 
 echo
 echo "== Compile-time expansion budget regressions =="
-run scripts/qa_08_unrolling.sh
+run cargo test --locked --test unrolling_test rejects_unrolls_over_the_limit -- --exact
+run cargo test --locked --test unrolling_test rejects_nested_unrolls_over_the_aggregate_limit -- --exact
+run cargo test --locked --test unrolling_test rejects_unrolled_command_output_over_the_aggregate_limit -- --exact
+run cargo test --locked --test unrolling_test large_unrolls_print_an_expansion_warning -- --exact
+run cargo test --locked --test cli_regression_test cli_check_json_reports_unroll_budget_diagnostics -- --exact
 (
   cd web
   run npm run test:wasm

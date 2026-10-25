@@ -266,6 +266,12 @@ impl Transpiler {
             return self.process_storage_target_assignment(target_expr, &assign.value);
         }
 
+        if matches!(target_kind, AssignTargetKind::LocalVar)
+            && self.current_context.is_param(&assign.target)
+        {
+            return self.process_parameter_assignment(assign);
+        }
+
         // Infer the type of the value being assigned
         let value_type = self.infer_type(&assign.value);
 
@@ -306,6 +312,40 @@ impl Transpiler {
             AssignValueKind::StorageLiteral => self.lower_storage_literal_assignment(assign),
             AssignValueKind::ScoreSimple => self.lower_simple_score_assignment(assign),
         }
+    }
+
+    /// Assign to a parameter of the current function. Parameters live in
+    /// the `args` storage the function was called with, so the new value is
+    /// written there and every later read of the parameter sees it.
+    fn process_parameter_assignment(&mut self, assign: &Assignment) -> Result<(), TranspileError> {
+        let path = format!("args.{}", assign.target);
+        let commands = match &assign.value {
+            Expression::String(_) => self.storage_value_commands(&path, &assign.value)?,
+            Expression::Array(_) | Expression::Map(_) | Expression::None => {
+                return Err(format!(
+                    "Parameter `{}` can only be assigned a number or a string. Store the list or map in a new variable instead.",
+                    assign.target
+                )
+                .into());
+            }
+            _ => {
+                let scratch = format!("#param_value_{}", self.next_temp_id());
+                self.process_assignment(&Assignment {
+                    target: scratch.clone(),
+                    target_expr: None,
+                    value: assign.value.clone(),
+                    persist: false,
+                })?;
+                vec![format!(
+                    "execute store result storage {}:global {} int 1 run scoreboard players get {} temp",
+                    self.data_pack.namespace, path, scratch
+                )]
+            }
+        };
+        if let Some(ref mut function_commands) = self.current_function {
+            function_commands.extend(commands);
+        }
+        Ok(())
     }
 
     /// Classify where an assignment's *target* routes it. See the

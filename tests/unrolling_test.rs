@@ -140,6 +140,92 @@ def test():
 }
 
 #[test]
+fn unrolls_several_literal_loops_in_one_function() {
+    let source = r#"
+def test():
+    for i in range(3):
+        /say range {i}
+    for n in range(1, 6, 2):
+        /say stepped {n}
+    for label in ["north", "south"]:
+        /say array {label}
+"#;
+
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    assert_eq!(
+        function_lines(&output_dir, "test"),
+        vec![
+            "say range 0",
+            "say range 1",
+            "say range 2",
+            "say stepped 1",
+            "say stepped 3",
+            "say stepped 5",
+            "say array north",
+            "say array south",
+        ]
+    );
+    assert_no_loop_helpers(&output_dir);
+
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["unrolled_loops"], 3);
+    let source_map: Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/source_map.json")).unwrap(),
+    )
+    .unwrap();
+    let unrolled = source_map["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["kind"] == "Unrolled")
+        .count();
+    assert_eq!(unrolled, 8);
+}
+
+#[test]
+fn large_unrolls_print_an_expansion_warning() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let input = temp_dir.path().join("main.cbl");
+    fs::write(
+        &input,
+        "def main():\n    for i in range(257):\n        /say big {i}\n",
+    )
+    .unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_cobble"))
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(temp_dir.path().join("output"))
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "build failed: {stderr}");
+    assert!(stderr.contains("unroll-large-expansion"), "{stderr}");
+    assert!(stderr.contains("257 iterations"), "{stderr}");
+}
+
+#[test]
+fn rejects_function_call_iterables() {
+    let error = compile_error(
+        r#"
+def gen():
+    /say gen
+
+def test():
+    for i in gen():
+        /say {i}
+"#,
+    );
+
+    assert!(error.contains("unroll-non-literal"), "{error}");
+}
+
+#[test]
 fn rejects_identifier_iterables_without_storage_backing() {
     let error = compile_error(
         r#"

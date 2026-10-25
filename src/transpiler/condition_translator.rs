@@ -104,21 +104,22 @@ impl<'a> ConditionTranslator<'a> {
                 self.reject_storage_backed_operand(condition)?;
 
                 // A compile-time constant has no score; fold its truthiness
-                // with the same "value > 0" rule a score variable uses.
+                // with the same "value != 0" rule a score variable uses.
                 if let Some(value) = self.compile_time_constants.get(var) {
                     return Ok(TranslatedCondition::Simple(Self::constant_condition(
-                        (*value as i32) >= 1,
+                        (*value as i32) != 0,
                     )));
                 }
 
-                // Simple boolean check: treat as "var > 0"
+                // A bare value is true when it is not 0, like Python, so
+                // negative numbers count as true.
                 let objective = self
                     .variable_objectives
                     .get(var)
                     .unwrap_or(&"temp".to_string())
                     .clone();
                 Ok(TranslatedCondition::Simple(format!(
-                    "score {} {} matches 1..",
+                    "unless score {} {} matches 0",
                     var, objective
                 )))
             }

@@ -107,14 +107,10 @@ def test():
 
     let manifest = read_manifest(&output_dir);
     assert_eq!(manifest["stdlib_version"], 2);
-    let modules = manifest["active_stdlib_modules"].as_array().unwrap();
-    assert!(modules.iter().any(|v| v == "text"));
-    assert!(modules.iter().any(|v| v == "score"));
-    assert!(!modules.iter().any(|v| v == "storage"));
-    assert!(!modules.iter().any(|v| v == "item_component"));
-    assert!(!modules.iter().any(|v| v == "selector"));
-    assert!(!modules.iter().any(|v| v == "position"));
-    assert!(!modules.iter().any(|v| v == "datapack"));
+    assert_eq!(
+        manifest["active_stdlib_modules"],
+        serde_json::json!(["score", "text"])
+    );
 }
 
 #[test]
@@ -398,6 +394,48 @@ def test():
     let modules = manifest["active_stdlib_modules"].as_array().unwrap();
     assert!(modules.iter().any(|v| v == "text"));
     assert!(modules.iter().any(|v| v == "score"));
+}
+
+#[test]
+fn stdlib_version_1_build_warns_that_it_is_deprecated() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir_all(project_dir.join("src")).unwrap();
+    fs::write(
+        project_dir.join("cobble.toml"),
+        r#"
+[project]
+name = "v1"
+description = "v1 test"
+namespace = "stdlib_v1"
+pack_format = "121.0"
+
+[build]
+source = "src"
+output = "output"
+
+[stdlib]
+version = 1
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("src/main.cbl"),
+        "def test():\n    text.tellraw('@a', 'hello')\n    score.set('points', 1)\n",
+    )
+    .unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_cobble"))
+        .arg("build")
+        .arg(&project_dir)
+        .arg("-o")
+        .arg(temp_dir.path().join("output"))
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "build failed: {stderr}");
+    assert!(stderr.contains("version = 1 is deprecated"), "{stderr}");
 }
 
 #[test]

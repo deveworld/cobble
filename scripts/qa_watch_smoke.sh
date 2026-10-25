@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
+# Runs `cobble watch --link --validate` and edits the source while it runs: a
+# failed rebuild keeps the last pack, a later edit recovers, and files written
+# into the linked pack do not start a rebuild.
+#
+# This stays a script because it depends on file-system events reaching the
+# watcher, which `cargo test` cannot wait for without sleeping. The parts that
+# do not need a running watcher are cargo tests: the first build of
+# `watch --link` (cli_watch_link_initial_build_writes_linked_pack), the
+# ignored output paths (rebuild_decision_ignores_sources_written_into_the_linked_pack),
+# and a failed validated build keeping the previous output
+# (build_validate_preserves_previous_output_on_validation_failure).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-work_dir="$(mktemp -d "${TMPDIR:-/tmp}/cobble-qa-07-watch.XXXXXX")"
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/cobble-qa-watch.XXXXXX")"
 cleanup() {
   if [[ "${watch_pid:-}" =~ ^[0-9]+$ ]] && kill -0 "$watch_pid" 2>/dev/null; then
     kill "$watch_pid" 2>/dev/null || true

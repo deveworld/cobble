@@ -132,6 +132,52 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
+    /// Whether evaluating `expr` can run a user function. `len()` and the
+    /// `math` helpers only run Cobble's own helpers, so only their arguments
+    /// count.
+    pub(in crate::transpiler) fn calls_user_code(expr: &Expression) -> bool {
+        match expr {
+            Expression::Call(func, args) => {
+                let builtin = matches!(&**func, Expression::Identifier(name) if name == "len")
+                    || matches!(&**func, Expression::Attribute(obj, _)
+                        if matches!(&**obj, Expression::Identifier(module) if module == "math"));
+                !builtin || args.iter().any(Self::calls_user_code)
+            }
+            Expression::Attribute(obj, _) => Self::calls_user_code(obj),
+            Expression::Subscript(obj, index) => {
+                Self::calls_user_code(obj) || Self::calls_user_code(index)
+            }
+            Expression::Binary(left, _, right) => {
+                Self::calls_user_code(left) || Self::calls_user_code(right)
+            }
+            Expression::Unary(_, inner) => Self::calls_user_code(inner),
+            Expression::Array(items) => items.iter().any(Self::calls_user_code),
+            Expression::Map(entries) => entries
+                .iter()
+                .any(|(_, value)| Self::calls_user_code(value)),
+            Expression::Identifier(_)
+            | Expression::Number(_)
+            | Expression::String(_)
+            | Expression::Boolean(_)
+            | Expression::None => false,
+        }
+    }
+
+    /// Whether lowering `expr` into a score writes that score before a user
+    /// function in `expr` runs. A binary operation puts its left operand
+    /// into the target first, so a call anywhere on a right side runs after
+    /// that write. A call's own result is stored after the call returns.
+    fn writes_target_before_call(expr: &Expression) -> bool {
+        match expr {
+            Expression::Call(..) => false,
+            Expression::Binary(left, _, right) => {
+                Self::writes_target_before_call(left) || Self::calls_user_code(right)
+            }
+            Expression::Unary(_, inner) => Self::writes_target_before_call(inner),
+            _ => Self::calls_user_code(expr),
+        }
+    }
+
     fn target_objective(&self, target: &str) -> &str {
         self.variable_objectives
             .get(target)
@@ -457,6 +503,23 @@ impl<'a> ExpressionEvaluator<'a> {
         if !matches!(expr, Expression::Identifier(name) if name == target)
             && Self::expression_reads_target(expr, target)
         {
+            let scratch = format!("#expr_result_{}", self.next_temp_id());
+            commands.extend(self.evaluate_expression_to_target(expr, &scratch)?);
+            commands.push(format!(
+                "scoreboard players operation {} {} = {} temp",
+                target, target_obj, scratch
+            ));
+            return Ok(commands);
+        }
+
+        // Every variable is a global score, so a function called inside the
+        // expression may change `target`. Writing the first operand into it
+        // before the call would let the call overwrite it
+        // (`result = 1 + square(3)` where `square` sets `result`). Python
+        // assigns after the whole right side runs; do the same through a
+        // scratch score. Compiler scratch scores start with `#` and are never
+        // written by a call, which also ends this recursion.
+        if !target.starts_with('#') && Self::writes_target_before_call(expr) {
             let scratch = format!("#expr_result_{}", self.next_temp_id());
             commands.extend(self.evaluate_expression_to_target(expr, &scratch)?);
             commands.push(format!(

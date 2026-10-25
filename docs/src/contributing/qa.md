@@ -31,15 +31,17 @@ The release gate runs everything below except the live command-tree check and
 the post-release smoke:
 
 ```bash
-scripts/qa_10_release_gate.sh
+scripts/qa_release_gate.sh
 ```
 
-It runs the Rust checks, the example and fixture checks, the focused QA
-scripts, validated builds of the release fixtures, `doctor`/`inspect`/
-`migrate` JSON checks, the web gate, the server gate when the EULA variable is
-set, and `cargo package` and `cargo publish --dry-run`. Run it on a clean
-worktree for a release. `COBBLE_QA_ALLOW_DIRTY=1` lets it run against
-uncommitted changes for a rehearsal.
+It runs the Rust checks, the example checks, the focused scripts, the snapshot
+and schema checks, the web gate, the server gate when the EULA variable is
+set, and `cargo package` and `cargo publish --dry-run`. It stops early when
+`data/commands.json` is missing, because the tests that validate the release
+fixtures against the command tree skip without it (see
+[Command Tree Check](#command-tree-check)). Run it on a clean worktree for a
+release. `COBBLE_QA_ALLOW_DIRTY=1` lets it run against uncommitted changes for
+a rehearsal.
 
 `examples/` holds the user-facing example packs. The release fixtures that the
 gates build and snapshot live in `tests/fixtures/projects/`.
@@ -49,19 +51,16 @@ duplicate names such as `on_load`.
 
 ## Focused Scripts
 
-Each script creates temporary projects under `/tmp` and deletes them on
-success. Set `COBBLE_QA_KEEP=1` to keep them.
+`cargo test` also runs the `cobble` binary against temporary projects: every
+`cobble init` template, `link`, `watch --link`, `doctor`, and `clean` against
+unmarked, tampered, forged, and symlinked outputs, stdlib imports, tag
+merging, loop unrolling, and the resource-pack opt-in. Most of these tests are
+in `tests/cli_regression_test.rs`.
 
 | Script | Covers |
 | --- | --- |
-| `qa_07_templates.sh` | Every `cobble init` template through `fmt --check`, `check`, `build --validate`, `inspect`, and cleanup. |
-| `qa_07_link_clean_safety.sh` | `link`, `doctor --json`, `watch --link`, and `clean --linked` against unmarked, tampered, forged, and symlinked outputs. |
-| `qa_07_watch_smoke.sh` | A bounded `watch --link --validate` run: a failed rebuild keeps the last pack, a later edit recovers, output noise does not trigger a rebuild. |
-| `qa_security_regressions.sh` | Output path safety, link and clean ownership, execute guard translation, and unroll limits. Run after touching any of these. |
-| `qa_08_stdlib_v2.sh` | Per-module stdlib imports, `missing-stdlib-module`, the `version = 1` warning, and the manifest stdlib fields. |
-| `qa_08_resource_authoring.sh` | Tag merging, dedup, and ordering, schema diagnostics, and path suggestions. |
-| `qa_08_unrolling.sh` | Literal loop unrolling, its limits and diagnostics, and the `Unrolled` source-map kind. |
-| `qa_08_resource_pack.sh` | The resource-pack opt-in, generated assets, ZIP contents, and manifest counts. |
+| `qa_watch_smoke.sh` | A `watch --link --validate` run that edits the source while it runs: a failed rebuild keeps the last pack, a later edit recovers, and files written into the pack do not start a rebuild. It is a script because it waits for file-system events. It creates temporary projects under `/tmp` and deletes them on success; set `COBBLE_QA_KEEP=1` to keep them. |
+| `qa_security_regressions.sh` | Runs the tests for output path safety, link and clean ownership, symlinks, execute guard translation, and unroll limits by name, then the WASM tests. Run it after touching any of these. It fails when a listed test name no longer matches exactly one test. |
 | `check_resource_snapshots.sh` | Regenerates the resource fixture snapshots and fails on unintended diffs. |
 | `check_resource_schemas.sh` | Validates generated tag JSON against the tag schema. |
 

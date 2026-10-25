@@ -126,6 +126,39 @@ objective.
   `unless` headers also stop splitting on `or` and `and` inside quotes and
   brackets, such as `@a[name="Tom and Jerry"]`.
 
+### Conditions, Parameters, And Evaluation Order
+
+0.11 follows Python's rules in several places where 0.10 did not. Review the
+lines that rely on the old behavior:
+
+- **Negative values are true.** 0.10 tested a bare value in a condition
+  (`if lives:`, `not lives`, `while ready():`) with `matches 1..`, so a
+  negative number counted as false. 0.11 treats every value other than 0 as
+  true.
+- **Parameters hide module variables.** In 0.10, a function whose parameter
+  had the name of a module variable read the module variable in conditions and
+  arithmetic, and the argument only in `{name}`. 0.11 reads the argument
+  everywhere. Declaring a parameter `global` is now an error.
+- **Assigning to a parameter.** 0.10 wrote the new value to a score that the
+  rest of the function didn't read, so `while n > 0: n = n - 1` never ended.
+  0.11 stores it with the call's arguments, and later reads, including
+  `{name}`, see it.
+- **Assignment order.** In `result = 1 + square(3)`, 0.10 wrote 1 into
+  `result` before calling `square`, so a `square` that also set `result`
+  changed the sum. 0.11 assigns after the whole right side.
+- **`while` conditions.** 0.10 evaluated the condition twice per iteration,
+  so a function in it ran twice. 0.11 evaluates it once.
+- **`return` in `as @a:`.** In 0.10 the entities after the one that returned
+  still ran the block. In 0.11 they skip it.
+- **`and`, `or`, and `elif`.** 0.10 called every function in a condition. In
+  0.11 the right side of `and` or `or` runs only when the left side doesn't
+  decide the result, and an `elif` condition runs only when no earlier branch
+  ran.
+- **Constant folding.** 0.10 folded constant expressions with real numbers,
+  so `100000 * 100000 / 100000` gave 100000 while the same expression on
+  variables gave 14100 after the 32-bit overflow. 0.11 folds with the
+  scoreboard's 32-bit arithmetic, and both give 14100.
+
 ### Tooling Changes
 
 - `cobble migrate` defaults to `--from 0.10 --to 0.11`. Routes from 0.8 and 0.9

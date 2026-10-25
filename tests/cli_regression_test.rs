@@ -766,6 +766,43 @@ fn cli_migrate_json_reports_unsupported_routes_without_changes() {
 }
 
 #[test]
+fn cli_migrate_json_dry_run_reports_fixture_config_without_changes() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/projects/resource_pack");
+    let project_dir = temp_dir.path().join("resource_pack");
+    fs::create_dir_all(project_dir.join("src")).unwrap();
+    for file in ["cobble.toml", "src/main.cbl"] {
+        fs::copy(fixture.join(file), project_dir.join(file)).unwrap();
+    }
+    let config_before = fs::read_to_string(project_dir.join("cobble.toml")).unwrap();
+    let source_before = fs::read_to_string(project_dir.join("src/main.cbl")).unwrap();
+
+    // The default route, so the test does not name a release.
+    let stdout = run_ok(
+        cobble().arg("migrate").arg(&project_dir).arg("--json"),
+        "migrate --json",
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["apply"], false);
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["config"]["status"], "found");
+    assert_eq!(value["config"]["experimental_resource_pack"], true);
+    assert_eq!(value["config"]["experimental_python_compat"], false);
+    assert_eq!(
+        fs::read_to_string(project_dir.join("cobble.toml")).unwrap(),
+        config_before
+    );
+    assert_eq!(
+        fs::read_to_string(project_dir.join("src/main.cbl")).unwrap(),
+        source_before
+    );
+}
+
+#[test]
 fn cli_doctor_json_reports_link_status_and_marker() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_dir = temp_dir.path().join("linked_pack");
@@ -832,6 +869,19 @@ fn cli_doctor_json_reports_link_status_and_marker() {
         build.status.success(),
         "build failed\nstdout:\n{build_stdout}\nstderr:\n{build_stderr}"
     );
+
+    let status = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--status")
+        .output()
+        .unwrap();
+    let (status_stdout, status_stderr) = output_text(&status);
+    assert!(
+        status.status.success(),
+        "link --status failed\nstdout:\n{status_stdout}\nstderr:\n{status_stderr}"
+    );
+    assert!(status_stdout.contains("Marker: present"), "{status_stdout}");
 
     let present_marker = cobble()
         .arg("doctor")
@@ -963,6 +1013,201 @@ fn cli_init_lists_templates_without_creating_project_files() {
     assert!(stdout.contains("web-demo"));
     assert!(stdout.contains("plugin-diagnostics"));
     assert!(!project_dir.exists());
+}
+
+/// The generated Minecraft command tree, when this checkout has one. Like the
+/// rest of the suite, tests skip validation against the real tree without it.
+fn repo_commands_json() -> Option<PathBuf> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/commands.json");
+    path.exists().then_some(path)
+}
+
+fn run_ok(command: &mut Command, label: &str) -> String {
+    let output = command.output().unwrap();
+    let (stdout, stderr) = output_text(&output);
+    assert!(
+        output.status.success(),
+        "{label} failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    stdout
+}
+
+#[test]
+fn cli_every_listed_template_passes_fmt_check_build_inspect_and_clean() {
+    let listing = run_ok(cobble().arg("init").arg("--list-templates"), "init");
+    let templates: Vec<&str> = listing
+        .lines()
+        .filter(|line| line.starts_with("  "))
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    assert!(templates.len() > 1, "no templates listed:\n{listing}");
+    let commands_json = repo_commands_json();
+
+    for template in templates {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join(template);
+        let source_dir = project_dir.join("src");
+        let output_dir = temp_dir.path().join("output");
+
+        run_ok(
+            cobble()
+                .arg("init")
+                .arg("--name")
+                .arg(&project_dir)
+                .arg("--template")
+                .arg(template),
+            &format!("{template}: init"),
+        );
+        run_ok(
+            cobble().arg("fmt").arg("--check").arg(&source_dir),
+            &format!("{template}: fmt --check"),
+        );
+        run_ok(
+            cobble().arg("check").arg(&source_dir),
+            &format!("{template}: check"),
+        );
+
+        let mut build = cobble();
+        build
+            .arg("build")
+            .arg(&project_dir)
+            .arg("-o")
+            .arg(&output_dir);
+        if let Some(commands_json) = &commands_json {
+            build
+                .arg("--validate")
+                .arg("--commands-json")
+                .arg(commands_json);
+        }
+        run_ok(&mut build, &format!("{template}: build"));
+
+        let inspect = run_ok(
+            cobble().arg("inspect").arg(&output_dir),
+            &format!("{template}: inspect"),
+        );
+        assert!(inspect.contains("Cobble inspect:"), "{template}: {inspect}");
+        let inspect_json = run_ok(
+            cobble().arg("inspect").arg(&output_dir).arg("--json"),
+            &format!("{template}: inspect --json"),
+        );
+        let value: serde_json::Value = serde_json::from_str(&inspect_json).unwrap();
+        assert_eq!(value["ok"], true, "{template}: {inspect_json}");
+        if commands_json.is_some() {
+            assert_eq!(
+                value["manifest"]["validation"]["enabled"], true,
+                "{template}: {inspect_json}"
+            );
+            assert_eq!(
+                value["manifest"]["validation"]["errors"], 0,
+                "{template}: {inspect_json}"
+            );
+        }
+
+        run_ok(
+            cobble().arg("clean").arg("--output").arg(&output_dir),
+            &format!("{template}: clean"),
+        );
+        assert!(!output_dir.exists(), "{template}: clean left the output");
+    }
+}
+
+/// Kills the child process when dropped, so a failed assertion cannot leave
+/// a `cobble watch` running.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// `watch` runs its first build before it starts watching, so this part of a
+/// watch session does not depend on file-system events. Edits during a
+/// running watch are covered by `scripts/qa_watch_smoke.sh`.
+#[test]
+fn cli_watch_link_initial_build_writes_linked_pack() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("watch_pack");
+    let datapacks_dir = temp_dir.path().join("world").join("datapacks");
+    let pack_dir = datapacks_dir.join("watch_pack");
+
+    run_ok(
+        cobble()
+            .arg("init")
+            .arg("--name")
+            .arg(&project_dir)
+            .arg("--template")
+            .arg("validation"),
+        "init",
+    );
+    run_ok(
+        cobble()
+            .arg("link")
+            .arg(&project_dir)
+            .arg("--datapacks")
+            .arg(&datapacks_dir),
+        "link",
+    );
+
+    let mut watch = cobble();
+    watch
+        .arg("watch")
+        .arg(project_dir.join("src"))
+        .arg("--link")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(commands_json) = repo_commands_json() {
+        watch
+            .arg("--validate")
+            .arg("--commands-json")
+            .arg(commands_json);
+    }
+    let mut child = KillOnDrop(watch.spawn().unwrap());
+    let stdout = child.0.stdout.take().unwrap();
+    let (lines_tx, lines_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if lines_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    // The timeout only stops a hung run from blocking the suite; the initial
+    // build finishes in well under a second.
+    let mut log = String::new();
+    loop {
+        let line = lines_rx
+            .recv_timeout(Duration::from_secs(120))
+            .unwrap_or_else(|error| panic!("watch output ended ({error}):\n{log}"));
+        log.push_str(&line);
+        log.push('\n');
+        assert!(!line.contains("Initial build failed"), "{log}");
+        if line.contains("Initial build succeeded") {
+            break;
+        }
+    }
+    drop(child);
+
+    assert!(log.contains("Linked output:"), "{log}");
+    assert!(pack_dir.join("pack.mcmeta").exists());
+    assert!(pack_dir
+        .join("data/watch_pack/function/init.mcfunction")
+        .exists());
+    // The marker the watch build wrote names this project.
+    let status = run_ok(
+        cobble().arg("link").arg(&project_dir).arg("--status"),
+        "link --status",
+    );
+    assert!(status.contains("Marker: present"), "{status}");
 }
 
 #[cfg(unix)]
@@ -1498,6 +1743,18 @@ fn cli_link_status_doctor_and_clean_reject_tampered_pack_path() {
     assert!(!clean.status.success());
     assert!(clean_stderr.contains("outside target datapacks directory"));
     assert!(outside_dir.join("important.txt").exists());
+
+    let watch = cobble()
+        .arg("watch")
+        .arg(project_dir.join("src"))
+        .arg("--link")
+        .output()
+        .unwrap();
+    let (_watch_stdout, watch_stderr) = output_text(&watch);
+    assert!(!watch.status.success());
+    assert!(watch_stderr.contains("outside target datapacks directory"));
+    assert!(outside_dir.join("important.txt").exists());
+    assert!(!outside_dir.join("pack.mcmeta").exists());
 }
 
 #[test]
@@ -1786,6 +2043,23 @@ fn cli_link_watch_and_clean_reject_forged_same_namespace_marker() {
     assert!(status_stdout.contains("missing project_id"));
     assert!(status_stdout.contains("Recovery: move the existing pack aside"));
 
+    let doctor = cobble()
+        .arg("doctor")
+        .arg("--json")
+        .arg(&project_dir)
+        .arg("--commands-json")
+        .arg(write_say_commands_json(temp_dir.path()))
+        .output()
+        .unwrap();
+    let (doctor_stdout, doctor_stderr) = output_text(&doctor);
+    assert!(
+        doctor.status.success(),
+        "doctor --json failed\nstdout:\n{doctor_stdout}\nstderr:\n{doctor_stderr}"
+    );
+    let doctor_json: serde_json::Value = serde_json::from_str(&doctor_stdout).unwrap();
+    assert_eq!(doctor_json["status"], "error");
+    assert_eq!(doctor_json["experimental_link"]["status"], "error");
+
     let watch = cobble()
         .arg("watch")
         .arg(project_dir.join("src"))
@@ -1978,9 +2252,162 @@ fn cli_build_allows_symlink_output_parent_but_refuses_symlink_output() {
             .arg(&spelled)
             .output()
             .unwrap();
+        let (_stdout, stderr) = output_text(&output);
         assert!(!output.status.success(), "clean {spelled} was accepted");
+        assert!(
+            stderr.contains("Refusing to clean through symlink"),
+            "clean {spelled}: {stderr}"
+        );
         assert!(real_parent.join("build_pack/pack.mcmeta").exists());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_clean_allows_symlink_parent_but_refuses_symlink_descendant() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def main():\n    /say clean\n");
+    let real_parent = temp_dir.path().join("real-parent");
+    let symlink_parent = temp_dir.path().join("symlink-parent");
+    let output_dir = real_parent.join("output");
+    let outside_dir = temp_dir.path().join("outside");
+    fs::create_dir_all(&real_parent).unwrap();
+    symlink(&real_parent, &symlink_parent).unwrap();
+
+    let build = cobble()
+        .arg("build")
+        .arg(&input)
+        .arg("--namespace")
+        .arg("clean_symlink")
+        .arg("--output")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+    let (build_stdout, build_stderr) = output_text(&build);
+    assert!(
+        build.status.success(),
+        "build failed\nstdout:\n{build_stdout}\nstderr:\n{build_stderr}"
+    );
+
+    // A link inside the output could send the delete somewhere else.
+    fs::create_dir_all(&outside_dir).unwrap();
+    fs::write(outside_dir.join("important.txt"), "keep\n").unwrap();
+    let leak = output_dir.join("data/clean_symlink/function/leak");
+    symlink(&outside_dir, &leak).unwrap();
+
+    let refused = cobble()
+        .arg("clean")
+        .arg("--output")
+        .arg(symlink_parent.join("output"))
+        .output()
+        .unwrap();
+    let (_stdout, stderr) = output_text(&refused);
+    assert!(!refused.status.success());
+    assert!(
+        stderr.contains("Refusing to clean through symlink"),
+        "{stderr}"
+    );
+    assert!(output_dir.join("pack.mcmeta").exists());
+    assert_eq!(
+        fs::read_to_string(outside_dir.join("important.txt")).unwrap(),
+        "keep\n"
+    );
+
+    // A linked folder above the output is where the user chose to build, so
+    // clean goes through it once the output itself holds no links.
+    fs::remove_file(&leak).unwrap();
+    let cleaned = cobble()
+        .arg("clean")
+        .arg("--output")
+        .arg(symlink_parent.join("output"))
+        .output()
+        .unwrap();
+    let (clean_stdout, clean_stderr) = output_text(&cleaned);
+    assert!(
+        cleaned.status.success(),
+        "clean failed\nstdout:\n{clean_stdout}\nstderr:\n{clean_stderr}"
+    );
+    assert!(!output_dir.exists());
+    assert!(outside_dir.join("important.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_link_allows_symlinked_parent_but_refuses_symlinked_datapacks_folder() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("linked_pack");
+    let real_minecraft = temp_dir.path().join("real-minecraft");
+    let real_datapacks = real_minecraft.join("world").join("datapacks");
+    fs::create_dir_all(&real_datapacks).unwrap();
+
+    let init = cobble()
+        .arg("init")
+        .arg("--name")
+        .arg(&project_dir)
+        .arg("--template")
+        .arg("minimal")
+        .output()
+        .unwrap();
+    let (init_stdout, init_stderr) = output_text(&init);
+    assert!(
+        init.status.success(),
+        "init failed\nstdout:\n{init_stdout}\nstderr:\n{init_stderr}"
+    );
+
+    let linked_datapacks = temp_dir.path().join("linked-datapacks");
+    symlink(&real_datapacks, &linked_datapacks).unwrap();
+    let refused = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&linked_datapacks)
+        .arg("--pack-name")
+        .arg("symlink_pack")
+        .output()
+        .unwrap();
+    let (_stdout, stderr) = output_text(&refused);
+    assert!(!refused.status.success());
+    assert!(
+        stderr.contains("Refusing to link through symlink"),
+        "{stderr}"
+    );
+    assert!(!project_dir.join(".cobble/link_state.json").exists());
+    assert!(!real_datapacks.join("symlink_pack").exists());
+
+    // A linked folder above the datapacks folder, such as a `.minecraft`
+    // moved to another drive, is allowed.
+    let linked_minecraft = temp_dir.path().join("linked-minecraft");
+    symlink(&real_minecraft, &linked_minecraft).unwrap();
+    let datapacks_via_link = linked_minecraft.join("world").join("datapacks");
+    let allowed = cobble()
+        .arg("link")
+        .arg(&project_dir)
+        .arg("--datapacks")
+        .arg(&datapacks_via_link)
+        .arg("--pack-name")
+        .arg("parent_pack")
+        .output()
+        .unwrap();
+    let (allowed_stdout, allowed_stderr) = output_text(&allowed);
+    assert!(
+        allowed.status.success(),
+        "link failed\nstdout:\n{allowed_stdout}\nstderr:\n{allowed_stderr}"
+    );
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project_dir.join(".cobble/link_state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        state["pack_path"],
+        datapacks_via_link
+            .join("parent_pack")
+            .to_string_lossy()
+            .as_ref()
+    );
 }
 
 #[cfg(unix)]
@@ -2337,6 +2764,36 @@ fn cli_check_json_reports_experimental_python_compat_when_enabled() {
         .as_array()
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn cli_check_json_combines_symbols_plugins_and_python_compat_on_a_fixture() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/projects/26_smoke");
+
+    let stdout = run_ok(
+        cobble()
+            .arg("check")
+            .arg(&fixture)
+            .arg("--json")
+            .arg("--symbols")
+            .arg("--experimental-plugins")
+            .arg("--experimental-python-compat"),
+        "check --json with every experimental report",
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["ok"], true);
+    assert!(!value["experimental_symbols"].as_array().unwrap().is_empty());
+    assert_eq!(value["experimental_plugins"]["enabled"], true);
+    let compat = &value["experimental_python_compat"];
+    assert_eq!(compat["enabled"], true);
+    assert_eq!(compat["mode"], "diagnostics-only");
+    assert!(compat["observed_constructs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|construct| construct == "def functions with Cobble-compatible bodies"));
 }
 
 #[test]
@@ -3885,6 +4342,28 @@ datapack.item_tag(
 }
 
 #[test]
+fn cli_check_reports_non_array_tag_values() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"from stdlib import datapack
+
+datapack.item_tag("bad", "minecraft:stone")
+
+def main():
+    /say bad values
+"#,
+    );
+
+    let output = cobble().arg("check").arg(&input).output().unwrap();
+
+    let (_stdout, stderr) = output_text(&output);
+    assert!(!output.status.success());
+    assert!(stderr.contains("datapack-resource-argument"), "{stderr}");
+    assert!(stderr.contains("Tag values must be an array"), "{stderr}");
+}
+
+#[test]
 fn cli_check_reports_user_function_argument_count() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(
@@ -4495,6 +4974,87 @@ resource_pack = true
                 && resource["namespace"] == "inspect_static"
                 && resource["path"] == "textures/item/icon.png"
         }));
+}
+
+#[test]
+fn cli_build_experimental_resource_pack_flag_writes_assets_zip_and_manifest() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"from stdlib import resource_pack
+
+resource_pack.item_model("qa:test_item", {"parent": "minecraft:item/generated"})
+resource_pack.block_model("test_block", {"parent": "minecraft:block/cube_all"})
+resource_pack.lang("qa:en_us", {"item.qa.test_item": "QA Test Item"})
+
+def main():
+    /say resource pack
+"#,
+    );
+
+    let refused = cobble()
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(temp_dir.path().join("no-opt-in"))
+        .output()
+        .unwrap();
+    let (_stdout, stderr) = output_text(&refused);
+    assert!(!refused.status.success());
+    assert!(
+        stderr.contains("resource_pack.* requires --experimental-resource-pack"),
+        "{stderr}"
+    );
+
+    let output_dir = temp_dir.path().join("with-flag");
+    run_ok(
+        cobble()
+            .arg("build")
+            .arg(&input)
+            .arg("--experimental-resource-pack")
+            .arg("--zip")
+            .arg("-o")
+            .arg(&output_dir),
+        "build --experimental-resource-pack --zip",
+    );
+    let asset_files = [
+        "assets/qa/models/item/test_item.json",
+        "assets/qa/items/test_item.json",
+        "assets/cobble/models/block/test_block.json",
+        "assets/qa/lang/en_us.json",
+    ];
+    for file in asset_files {
+        assert!(output_dir.join(file).is_file(), "missing {file}");
+    }
+
+    // The ZIP is written next to the output folder, named after the namespace.
+    let zip_file = fs::File::open(temp_dir.path().join("cobble.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+    for entry in ["pack.mcmeta", "data/cobble/function/main.mcfunction"]
+        .into_iter()
+        .chain(asset_files)
+    {
+        assert!(
+            names.iter().any(|name| name == entry),
+            "ZIP is missing {entry}: {names:?}"
+        );
+    }
+
+    let inspect = run_ok(
+        cobble().arg("inspect").arg(&output_dir).arg("--json"),
+        "inspect --json",
+    );
+    let value: serde_json::Value = serde_json::from_str(&inspect).unwrap();
+    let manifest = &value["manifest"];
+    assert!(manifest["experimental_features"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("resource_pack")));
+    assert_eq!(manifest["generated"]["resource_pack_models"], 2);
+    assert_eq!(manifest["generated"]["resource_pack_langs"], 1);
 }
 
 #[test]

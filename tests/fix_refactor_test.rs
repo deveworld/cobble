@@ -156,7 +156,7 @@ def check():
         "paren-free and parenthesized forms must match"
     );
     assert!(
-        free.contains("execute as @a unless score done cobble.vars matches 1.. run say idle"),
+        free.contains("execute as @a if score done cobble.vars matches 0 run say idle"),
         "{free}"
     );
 }
@@ -273,9 +273,9 @@ def lookup(key):
 #[test]
 fn test_runtime_loop_driver_names_and_shape_are_stable() {
     // Pins the shared runtime-loop driver behind `for range(...)`, storage-list
-    // `for`, and `while`: helper naming, temp-id allocation order, condition
-    // re-evaluation before the body call AND before the recursive call, and
-    // list-item binding at the top of the list body.
+    // `for`, and `while`: helper naming, temp-id allocation order, one
+    // condition check per iteration with the recursive call at the end of the
+    // body, and list-item binding at the top of the list body.
     let source = r#"
 config = {"count": 1}
 values = [1, 2, 3]
@@ -307,15 +307,16 @@ def main():
     let range_loop = read_function(&output, "for_range_temp_1");
     assert_eq!(
         range_loop,
-        "execute if score i cobble.vars < #for_range_stop_0 cobble.vars run function cobble:for_range_body_2\n\
-         execute if score i cobble.vars < #for_range_stop_0 cobble.vars run function cobble:for_range_temp_1\n"
+        "execute if score i cobble.vars < #for_range_stop_0 cobble.vars run function cobble:for_range_body_2\n"
+    );
+    assert!(
+        read_function(&output, "for_range_body_2").ends_with("function cobble:for_range_temp_1\n")
     );
 
     let list_loop = read_function(&output, "for_list_temp_5");
     assert_eq!(
         list_loop,
-        "execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_body_6\n\
-         execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_temp_5\n"
+        "execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_body_6\n"
     );
 
     let while_loop = read_function(&output, "while_temp_8");
@@ -324,19 +325,18 @@ def main():
         "scoreboard players operation expr_cond_temp_9 cobble.vars = k cobble.vars\n\
          scoreboard players set #multiplier cobble.vars 2\n\
          scoreboard players operation expr_cond_temp_9 cobble.vars *= #multiplier cobble.vars\n\
-         execute if score expr_cond_temp_9 cobble.vars < n cobble.vars run function cobble:while_body_10\n\
-         scoreboard players operation expr_cond_temp_9 cobble.vars = k cobble.vars\n\
-         scoreboard players set #multiplier cobble.vars 2\n\
-         scoreboard players operation expr_cond_temp_9 cobble.vars *= #multiplier cobble.vars\n\
-         execute if score expr_cond_temp_9 cobble.vars < n cobble.vars run function cobble:while_temp_8\n"
+         execute if score expr_cond_temp_9 cobble.vars < n cobble.vars run function cobble:while_body_10\n"
     );
+    assert!(read_function(&output, "while_body_10").ends_with("function cobble:while_temp_8\n"));
 
     let list_body = read_function(&output, "for_list_body_6");
     assert!(list_body.starts_with("data remove storage cobble:global _cobble_dyn_7\n"));
     assert!(list_body.contains(
         "function cobble:_cobble_storage_dyn_7 with storage cobble:global _cobble_dyn_7"
     ));
-    assert!(list_body.ends_with("scoreboard players add #for_list_index_3 cobble.vars 1\n"));
+    assert!(list_body.ends_with(
+        "scoreboard players add #for_list_index_3 cobble.vars 1\nfunction cobble:for_list_temp_5\n"
+    ));
 }
 
 #[test]

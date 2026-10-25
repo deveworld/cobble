@@ -1210,11 +1210,12 @@ impl Transpiler {
     }
 
     /// Shared skeleton behind the recursive runtime loops (`for range(...)`,
-    /// storage-list `for`, `while`): emit the init commands, capture the
-    /// condition, wrap the body in a helper function so the condition is
-    /// evaluated once per iteration (not per statement), then emit the
-    /// recursive loop helper that re-checks the condition after the body and
-    /// propagates early returns.
+    /// storage-list `for`, `while`): emit the init commands, then a loop
+    /// helper that evaluates the condition once and runs the body helper.
+    /// The body helper ends by calling the loop helper again, so each
+    /// iteration evaluates the condition once, and a condition that calls a
+    /// function calls it once per iteration. Early returns propagate after
+    /// the body call.
     fn emit_runtime_loop(&mut self, driver: RuntimeLoopDriver<'_>) -> Result<(), TranspileError> {
         let RuntimeLoopDriver {
             helper_prefix,
@@ -1253,6 +1254,16 @@ impl Transpiler {
         if !binding_commands.is_empty() {
             capture = self.prepend_runtime_list_item_commands(capture, binding_commands);
         }
+        let next_iteration = format!("function {}:{}", self.data_pack.namespace, loop_func_name);
+        capture.metadata.insert(
+            capture.commands.len(),
+            GeneratedCommand::new(
+                next_iteration.clone(),
+                self.current_statement_source.clone(),
+                GeneratedCommandKind::ControlFlow,
+            ),
+        );
+        capture.commands.push(next_iteration);
         self.add_captured_function(body_func_name.clone(), capture);
         self.current_context = saved_context;
 
@@ -1276,23 +1287,6 @@ impl Transpiler {
         if let Some(return_cmd) = self.return_propagation_command() {
             loop_commands.push(return_cmd);
         }
-
-        // Re-evaluate the condition after the body before deciding whether to
-        // recurse. This keeps loops with mutated or computed conditions correct.
-        Self::append_capture_to_buffers(&mut loop_commands, &mut loop_metadata, &condition_capture);
-        loop_commands.push(format!(
-            "execute {} run function {}:{}",
-            condition_execute_args, self.data_pack.namespace, loop_func_name
-        ));
-        let recurse_index = loop_commands.len() - 1;
-        loop_metadata.insert(
-            recurse_index,
-            GeneratedCommand::new(
-                loop_commands[recurse_index].clone(),
-                self.current_statement_source.clone(),
-                GeneratedCommandKind::ControlFlow,
-            ),
-        );
 
         self.data_pack.add_function_with_metadata(
             loop_func_name.clone(),

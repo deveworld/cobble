@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-work_dir="$(mktemp -d "${TMPDIR:-/tmp}/cobble-qa-08-resource-schemas.XXXXXX")"
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/cobble-qa-resource-schemas.XXXXXX")"
 cleanup() {
   if [[ "${COBBLE_QA_KEEP:-}" == "1" ]]; then
     echo "Keeping QA work directory: $work_dir"

@@ -34,6 +34,12 @@ Cobble evaluates complex operands into temporary scores before the comparison.
 A nested `if` inside an `if` compiles to a helper function when its body needs
 more than one command.
 
+A bare value in a condition, such as `if lives:` or `while cond():`, is true
+when it is not 0, so negative numbers count as true, as in Python.
+
+An `elif` condition is evaluated only when no earlier branch ran, so a
+function called in it runs only then.
+
 ## Boolean Operators
 
 `and`, `or`, and `not` combine conditions in `if`, `elif`, `while`, and
@@ -69,6 +75,13 @@ execute if score or_temp_0 mypack.vars matches 1 run say test
 `not (a and b)` compiles with De Morgan's laws, and `or` can nest inside `and`
 and the other way round.
 
+When the right side of `and` or `or` calls a function, the call runs only
+when the left side doesn't already decide the result, as in Python:
+`if ready() and claim():` calls `claim` only after `ready` returned true, and
+`if done() or retry():` calls `retry` only when `done` returned 0. Cobble
+evaluates the right side in a helper function behind the left side's result.
+Right sides without calls compile to the plain chains shown above.
+
 In an execute-block modifier, a condition that starts with a Minecraft
 condition keyword (`score `, `entity `, `block `, `data `, `predicate `, ...)
 is passed through as raw Minecraft syntax. Other conditions go through the same
@@ -102,6 +115,19 @@ entity. Blocks with a `store` modifier keep one `execute store ...` command per
 body command, because storing a helper call would capture only the helper's
 return value; bodies containing a raw `/return` also keep that form so the
 return still leaves the enclosing function.
+
+A Cobble `return` inside the body ends the enclosing function. Under
+`as @a:`, the entity that returns stops the block for the entities after it:
+
+```python
+def first_player_name():
+    as @a:
+        /say I'm first
+        return 1
+    return 0
+```
+
+Only one player says the line.
 
 Headers accept the same placeholders as raw commands: selector aliases,
 `{CONST}` values, and `{param}` macro arguments, anywhere in the header.
@@ -224,9 +250,11 @@ def count_down():
         counter = counter - 1
 ```
 
-A `while` loop compiles to a function that calls itself until the condition is
-false. All iterations run within one game tick, so a loop with many iterations
-can stall the server. Spread long work across ticks with a tick event handler
+A `while` loop compiles to a loop function that checks the condition and runs
+the body helper, and the body helper ends by calling the loop function again.
+The condition, including any function it calls, runs once per iteration. All
+iterations run within one game tick, so a loop with many iterations can stall
+the server. Spread long work across ticks with a tick event handler
 or `/schedule`.
 
 Minecraft caps how many commands one function run can execute, including the

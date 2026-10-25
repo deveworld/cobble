@@ -98,7 +98,9 @@ Minecraft scoreboards have no local scope. Every variable with the same name
 is the same fake player on the pack's objective, so a function that assigns
 `score` changes the module-level `score` with or without `global`. Use
 `global` to make that intent visible, and use distinct names for values that
-should stay separate.
+should stay separate. A function parameter is the exception: it hides the
+module variable with the same name inside its function (see
+[Functions with Parameters](functions.md#functions-with-parameters)).
 
 ## Compile-time Constants
 

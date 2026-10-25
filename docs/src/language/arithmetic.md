@@ -47,7 +47,12 @@ From highest to lowest:
   negative runtime exponent gives `0`, since scores cannot hold fractions.
 - Compound assignment works on variables and storage-backed targets.
   `x += y` compiles as `x = x + y`.
-- Expressions made only of constants are folded at compile time.
+- Expressions made only of constants are folded at compile time, with the
+  same 32-bit arithmetic as the scoreboard: a result past ±2,147,483,647 wraps
+  around, so `100000 * 100000 / 100000` gives 14100 whether it is folded or
+  computed from variables.
+- An assignment runs after its whole right side. In `result = 1 + bonus()`, a
+  `bonus` function that changes `result` doesn't affect the sum.
 
 ## Integer Division And Modulo
 

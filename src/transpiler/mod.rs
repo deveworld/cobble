@@ -111,10 +111,46 @@ pub(in crate::transpiler) fn const_mod(left: f64, right: f64) -> Option<f64> {
     }
 }
 
+/// A compile-time number that a score can hold exactly.
+fn score_integer(value: f64) -> Option<i32> {
+    (value.fract() == 0.0 && value >= f64::from(i32::MIN) && value <= f64::from(i32::MAX))
+        .then_some(value as i32)
+}
+
+/// `Mth.floorDiv` on scores. `i32::MIN / -1` wraps to `i32::MIN`, like Java.
+fn floor_div_i32(left: i32, right: i32) -> i32 {
+    let quotient = left.wrapping_div(right);
+    if left.wrapping_rem(right) != 0 && ((left < 0) != (right < 0)) {
+        quotient - 1
+    } else {
+        quotient
+    }
+}
+
+/// Folds one arithmetic step on two scores exactly as `scoreboard players
+/// operation` computes it: 32-bit wrapping, floor division, floor modulus,
+/// and a power that multiplies step by step. `None` means the step can't be
+/// folded (a zero divisor or a negative exponent).
+fn fold_score_operation(op: &BinaryOp, left: i32, right: i32) -> Option<i32> {
+    match op {
+        BinaryOp::Add => Some(left.wrapping_add(right)),
+        BinaryOp::Sub => Some(left.wrapping_sub(right)),
+        BinaryOp::Mul => Some(left.wrapping_mul(right)),
+        BinaryOp::Div => (right != 0).then(|| floor_div_i32(left, right)),
+        BinaryOp::Mod => {
+            (right != 0).then(|| left.wrapping_sub(floor_div_i32(left, right).wrapping_mul(right)))
+        }
+        BinaryOp::Pow => u32::try_from(right).ok().map(|exp| left.wrapping_pow(exp)),
+        _ => None,
+    }
+}
+
 /// Context for tracking function parameters and scope
 #[derive(Clone)]
 struct FunctionContext {
     params: Vec<String>,
+    /// Parameters the function assigns somewhere in its body.
+    reassigned_params: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -273,11 +309,60 @@ struct SavedCompilerState {
 
 impl FunctionContext {
     fn new() -> Self {
-        Self { params: Vec::new() }
+        Self {
+            params: Vec::new(),
+            reassigned_params: Vec::new(),
+        }
     }
 
-    fn with_params(params: Vec<String>) -> Self {
-        Self { params }
+    fn with_params(params: Vec<String>, body: &[Statement]) -> Self {
+        let mut assigned = HashSet::new();
+        Self::collect_assigned_names(body, &mut assigned);
+        let reassigned_params = params
+            .iter()
+            .filter(|param| assigned.contains(*param))
+            .cloned()
+            .collect();
+        Self {
+            params,
+            reassigned_params,
+        }
+    }
+
+    fn collect_assigned_names(body: &[Statement], names: &mut HashSet<String>) {
+        for statement in body {
+            match statement {
+                Statement::Assignment(assign)
+                    if assign.target_expr.as_ref().is_none_or(
+                        |target| matches!(target, Expression::Identifier(name) if name == &assign.target),
+                    ) =>
+                {
+                    names.insert(assign.target.clone());
+                }
+                Statement::If(if_stmt) => {
+                    Self::collect_assigned_names(&if_stmt.then_branch, names);
+                    for (_, branch) in &if_stmt.elif_branches {
+                        Self::collect_assigned_names(branch, names);
+                    }
+                    if let Some(branch) = &if_stmt.else_branch {
+                        Self::collect_assigned_names(branch, names);
+                    }
+                }
+                Statement::For(for_loop) => Self::collect_assigned_names(&for_loop.body, names),
+                Statement::While(while_loop) => {
+                    Self::collect_assigned_names(&while_loop.body, names)
+                }
+                Statement::Match(match_stmt) => {
+                    for case in &match_stmt.cases {
+                        Self::collect_assigned_names(&case.body, names);
+                    }
+                }
+                Statement::Execute(exec_block) => {
+                    Self::collect_assigned_names(&exec_block.body, names)
+                }
+                _ => {}
+            }
+        }
     }
 
     fn is_param(&self, name: &str) -> bool {
@@ -448,6 +533,24 @@ impl Transpiler {
                 let right_val = self.try_eval_const(right)?;
 
                 use crate::ast::BinaryOp;
+                // Integer operands fold with the scoreboard's own arithmetic,
+                // so a folded expression and the same expression computed
+                // from variables agree, overflow included.
+                if matches!(
+                    op,
+                    BinaryOp::Add
+                        | BinaryOp::Sub
+                        | BinaryOp::Mul
+                        | BinaryOp::Div
+                        | BinaryOp::Mod
+                        | BinaryOp::Pow
+                ) {
+                    if let (Some(left), Some(right)) =
+                        (score_integer(left_val), score_integer(right_val))
+                    {
+                        return fold_score_operation(op, left, right).map(f64::from);
+                    }
+                }
                 match op {
                     BinaryOp::Add => Some(left_val + right_val),
                     BinaryOp::Sub => Some(left_val - right_val),
@@ -1306,12 +1409,61 @@ impl Transpiler {
 
         if result.is_ok() {
             if let Some(start_index) = start_index {
+                self.call_reassigned_parameter_macros(start_index);
                 self.annotate_recent_commands(start_index, statement_source, default_kind);
             }
         }
 
         self.current_statement_source = previous_statement_source;
         result
+    }
+
+    /// A macro line reads the arguments the function was called with, so
+    /// after the function assigns a parameter, `$(name)` would still give the
+    /// old value. Lines from `start_index` on that read a reassigned
+    /// parameter move into a helper called with the current `args`.
+    /// `return run` keeps the command's result for `execute store`.
+    fn call_reassigned_parameter_macros(&mut self, start_index: usize) {
+        if self.current_context.reassigned_params.is_empty() {
+            return;
+        }
+        let Some(commands) = self.current_function.as_ref() else {
+            return;
+        };
+        let stale: Vec<(usize, String)> = commands
+            .iter()
+            .enumerate()
+            .skip(start_index)
+            .filter(|(_, command)| {
+                command.starts_with('$')
+                    && !Self::is_raw_return_command(command)
+                    && self
+                        .current_context
+                        .reassigned_params
+                        .iter()
+                        .any(|param| command.contains(&format!("$({})", param)))
+            })
+            .map(|(index, command)| (index, command.clone()))
+            .collect();
+        for (index, command) in stale {
+            let helper_name = format!("_cobble_macro_{}", self.next_temp_id());
+            self.add_generated_helper_function(
+                helper_name.clone(),
+                vec![format!("$return run {}", &command[1..])],
+                GeneratedCommandKind::UserCommand,
+            );
+            let call = self.function_call_command(&helper_name, true);
+            if let Some(commands) = self.current_function.as_mut() {
+                commands[index] = call.clone();
+            }
+            if let Some(generated) = self
+                .current_function_metadata
+                .as_mut()
+                .and_then(|metadata| metadata.get_mut(&index))
+            {
+                generated.text = call;
+            }
+        }
     }
 
     fn process_statement_inner(&mut self, statement: &Statement) -> Result<(), TranspileError> {
@@ -1352,6 +1504,13 @@ impl Transpiler {
             Statement::Global(vars) => {
                 // Mark variables as global in current function
                 for var in vars {
+                    if self.current_context.is_param(var) {
+                        return Err(format!(
+                            "`{}` is a parameter of this function, so it can't also be declared `global`. Rename the parameter to use the module variable.",
+                            var
+                        )
+                        .into());
+                    }
                     self.global_variables.insert(var.clone());
                 }
             }
@@ -1871,8 +2030,24 @@ impl Transpiler {
         // Extract parameter names from Parameter structs
         let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
 
+        // A parameter shadows a module variable or constant with the same
+        // name, like in Python. Without this, conditions and arithmetic
+        // would read the module score while `{name}` reads the argument.
+        // The tables are restored after the function below.
+        let mut shadowed_constants = Vec::new();
+        for name in &param_names {
+            self.variables.remove(name);
+            self.variable_objectives.remove(name);
+            self.scoreboard_variables.remove(name);
+            self.variable_storage_paths.remove(name);
+            self.variable_types.remove(name);
+            if let Some(value) = self.compile_time_constants.remove(name) {
+                shadowed_constants.push((name.clone(), value));
+            }
+        }
+
         // Set up new function context
-        self.current_context = FunctionContext::with_params(param_names.clone());
+        self.current_context = FunctionContext::with_params(param_names.clone(), &func.body);
         self.current_function = Some(Vec::new());
         self.current_function_metadata = Some(HashMap::new());
         self.current_function_name = Some(func.name.clone());
@@ -1936,6 +2111,7 @@ impl Transpiler {
         self.scoreboard_variables = previous_scoreboard_variables;
         self.variable_storage_paths = previous_variable_storage_paths;
         self.variable_types = previous_variable_types;
+        self.compile_time_constants.extend(shadowed_constants);
 
         Ok(())
     }
@@ -4765,6 +4941,11 @@ impl Transpiler {
                 } else {
                     // Not a comparison, might be And/Or - recursively preprocess
                     match op {
+                        BinaryOp::And | BinaryOp::Or
+                            if ExpressionEvaluator::calls_user_code(right) =>
+                        {
+                            self.lower_short_circuit_condition(left, op, right)
+                        }
                         BinaryOp::And | BinaryOp::Or => {
                             let new_left = self.preprocess_condition(left)?;
                             let new_right = self.preprocess_condition(right)?;
@@ -4791,6 +4972,80 @@ impl Transpiler {
             }
             _ => Ok(condition.clone()),
         }
+    }
+
+    /// `a and f()` / `a or f()` where the right side calls a function: like
+    /// Python, the call runs only when the left side doesn't decide the
+    /// result. The right side is evaluated in a helper that runs under the
+    /// left side's condition and returns 0 or 1 into a flag, which the
+    /// caller then tests. The flag is written outside the helper, so under
+    /// `as @a` it can be scoped to each entity like the other condition
+    /// scores. Right sides without calls keep the plain `if A if B` chain;
+    /// evaluating them eagerly has no visible effect.
+    fn lower_short_circuit_condition(
+        &mut self,
+        left: &Expression,
+        op: &BinaryOp,
+        right: &Expression,
+    ) -> Result<Expression, TranspileError> {
+        let is_and = matches!(op, BinaryOp::And);
+        let id = self.next_temp_id();
+        let flag = format!("cond_{}_{}", if is_and { "and" } else { "or" }, id);
+        self.data_pack.track_objective("temp");
+        self.variable_objectives
+            .insert(flag.clone(), "temp".to_string());
+        self.scoreboard_variables.insert(flag.clone());
+
+        let left_condition = self.lower_condition_to_execute_args(left)?;
+        let (right_condition, mut right_capture) =
+            self.capture_commands_with_result(|transpiler| {
+                transpiler.lower_condition_to_execute_args(right)
+            })?;
+        right_capture
+            .commands
+            .push(format!("execute {} run return 1", right_condition));
+        right_capture.commands.push("return 0".to_string());
+        let helper_name = format!("cond_rhs_{}", id);
+        let needs_storage = right_capture.requires_macro_context();
+        self.add_captured_function(helper_name.clone(), right_capture);
+        let call = self.function_call_command(&helper_name, needs_storage);
+
+        let mut commands = vec![format!("scoreboard players set {} temp 0", flag)];
+        let evaluate_right = if is_and {
+            left_condition
+        } else {
+            commands.push(format!(
+                "execute {} run scoreboard players set {} temp 1",
+                left_condition, flag
+            ));
+            format!("if score {} temp matches 0", flag)
+        };
+        commands.push(format!(
+            "execute {} store result score {} temp run {}",
+            evaluate_right, flag, call
+        ));
+        if let Some(ref mut function_commands) = self.current_function {
+            function_commands.extend(commands.into_iter().map(|command| {
+                if command.contains("$(") {
+                    format!("${}", command)
+                } else {
+                    command
+                }
+            }));
+        }
+        Ok(Expression::Identifier(flag))
+    }
+
+    /// Preprocess, translate, and lower a condition to `if ...`/`unless ...`
+    /// execute arguments, emitting any setup commands it needs.
+    pub(in crate::transpiler) fn lower_condition_to_execute_args(
+        &mut self,
+        condition: &Expression,
+    ) -> Result<String, TranspileError> {
+        let processed = self.preprocess_condition(condition)?;
+        let translated = self.translate_condition(&processed)?;
+        let lowered = self.lower_translated_condition(translated)?;
+        Ok(Self::condition_execute_args(&lowered))
     }
 
     /// Folds a literal-only comparison operand, such as `step - 1` inside an

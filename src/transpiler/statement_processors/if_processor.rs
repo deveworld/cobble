@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::transpiler::expression_evaluator::ExpressionEvaluator;
 use crate::transpiler::{TranspileError, Transpiler};
 
 impl Transpiler {
@@ -74,35 +75,52 @@ impl Transpiler {
             })?;
         }
 
-        // Handle elif branches
+        // Handle elif branches. Each one runs only when no earlier branch
+        // was taken, so its condition is evaluated only then: a condition
+        // that needs setup commands (a function call, say) runs them in a
+        // helper behind the branch flag.
+        let Some(branch_var) = branch_var else {
+            return Ok(());
+        };
         for (elif_condition, elif_branch) in &if_stmt.elif_branches {
-            let processed_elif_condition = self.preprocess_condition(elif_condition)?;
-            let translated = self.translate_condition(&processed_elif_condition)?;
-            let elif_condition_cmd = self.lower_translated_condition(translated)?;
-            let elif_execute_args = Self::condition_execute_args(&elif_condition_cmd);
-            let compound_condition = if let Some(ref var) = branch_var {
-                format!("unless score {} temp matches 1 {}", var, elif_execute_args)
+            let not_taken = format!("unless score {} temp matches 1", branch_var);
+            let (elif_execute_args, setup) = if ExpressionEvaluator::calls_user_code(elif_condition)
+            {
+                let (args, setup) = self.capture_commands_with_result(|transpiler| {
+                    transpiler.lower_condition_to_execute_args(elif_condition)
+                })?;
+                (args, Some(setup))
             } else {
-                elif_execute_args
+                (self.lower_condition_to_execute_args(elif_condition)?, None)
             };
-            let body_condition = if let Some(ref var) = branch_var {
-                let elif_taken_var = format!("elif_taken_{}", self.next_temp_id());
-                self.data_pack.track_objective("temp");
-                if let Some(ref mut commands) = self.current_function {
-                    commands.push(format!("scoreboard players set {} temp 0", elif_taken_var));
-                    commands.push(format!(
-                        "execute {} run scoreboard players set {} temp 1",
-                        compound_condition, elif_taken_var
-                    ));
-                    commands.push(format!(
-                        "execute if score {} temp matches 1 run scoreboard players set {} temp 1",
-                        elif_taken_var, var
-                    ));
+            let elif_taken_var = format!("elif_taken_{}", self.next_temp_id());
+            let set_taken = format!("scoreboard players set {} temp 1", elif_taken_var);
+            let mut commands = vec![format!("scoreboard players set {} temp 0", elif_taken_var)];
+            match setup {
+                Some(mut helper) => {
+                    helper
+                        .commands
+                        .push(format!("execute {} run {}", elif_execute_args, set_taken));
+                    let helper_name = format!("elif_cond_{}", self.next_temp_id());
+                    let needs_storage = helper.requires_macro_context();
+                    self.add_captured_function(helper_name.clone(), helper);
+                    let call = self.function_call_command(&helper_name, needs_storage);
+                    commands.push(format!("execute {} run {}", not_taken, call));
                 }
-                format!("if score {} temp matches 1", elif_taken_var)
-            } else {
-                compound_condition.clone()
-            };
+                None => commands.push(format!(
+                    "execute {} {} run {}",
+                    not_taken, elif_execute_args, set_taken
+                )),
+            }
+            self.data_pack.track_objective("temp");
+            commands.push(format!(
+                "execute if score {} temp matches 1 run scoreboard players set {} temp 1",
+                elif_taken_var, branch_var
+            ));
+            if let Some(ref mut function_commands) = self.current_function {
+                function_commands.extend(commands);
+            }
+            let body_condition = format!("if score {} temp matches 1", elif_taken_var);
 
             // Same capture-first rule as the then branch: inline only a
             // single-command body, otherwise route through a helper function.
@@ -133,11 +151,7 @@ impl Transpiler {
 
         // Handle else branch
         if let Some(else_branch) = &if_stmt.else_branch {
-            let else_condition = if let Some(ref var) = branch_var {
-                format!("unless score {} temp matches 1", var)
-            } else {
-                format!("unless {}", condition_cmd)
-            };
+            let else_condition = format!("unless score {} temp matches 1", branch_var);
 
             // Same capture-first rule as the then branch: inline only a
             // single-command body, otherwise route through a helper function.

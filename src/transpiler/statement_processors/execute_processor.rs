@@ -3,7 +3,10 @@ use crate::transpiler::command_processor::expand_selector_aliases;
 use crate::transpiler::condition_translator::{
     condition_clauses, negate_clause, TranslatedCondition,
 };
-use crate::transpiler::{FunctionCapture, TranspileError, Transpiler};
+use crate::transpiler::{
+    FunctionCapture, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, TranspileError,
+    Transpiler,
+};
 
 /// Execute conditions that cannot be spliced into the execute prefix
 /// directly and are lowered to a flag variable after all modifiers are
@@ -550,6 +553,7 @@ impl Transpiler {
         {
             let helper_name = format!("execute_temp_{}", self.next_temp_id());
             let needs_storage = capture.requires_macro_context();
+            let capture = self.stop_forks_after_return(capture, &exec_block.body);
             self.add_captured_function(helper_name.clone(), capture);
 
             let call_cmd = self.function_call_command(&helper_name, needs_storage);
@@ -587,6 +591,44 @@ impl Transpiler {
         Ok(())
     }
 
+    /// `as @a:` runs the helper once per entity. A `return` from one entity
+    /// sets the function's return flag and ends only that entity's run, so
+    /// the helper checks the flag first and skips the entities after it.
+    fn stop_forks_after_return(
+        &self,
+        mut capture: FunctionCapture,
+        body: &[Statement],
+    ) -> FunctionCapture {
+        let Some(context) = self.current_return.as_ref() else {
+            return capture;
+        };
+        if matches!(
+            Self::analyze_function_return_kind(body),
+            FunctionReturnKind::None
+        ) {
+            return capture;
+        }
+        let guard = format!(
+            "execute if score {} temp matches 1 run return 0",
+            context.flag_score
+        );
+        capture.metadata = capture
+            .metadata
+            .into_iter()
+            .map(|(index, generated)| (index + 1, generated))
+            .collect();
+        capture.metadata.insert(
+            0,
+            GeneratedCommand::new(
+                guard.clone(),
+                self.current_statement_source.clone(),
+                GeneratedCommandKind::ControlFlow,
+            ),
+        );
+        capture.commands.insert(0, guard);
+        capture
+    }
+
     /// Prefix `$` for a command in a macro context, but only when the line
     /// actually carries a `$(variable)`: Minecraft refuses to load a function
     /// with a macro line that has no variables ("No variables in macro").
@@ -600,7 +642,7 @@ impl Transpiler {
 
     /// Whether a raw command returns from the function it runs in
     /// (`/return ...`, or an `execute ... run return ...` chain).
-    fn is_raw_return_command(command: &str) -> bool {
+    pub(in crate::transpiler) fn is_raw_return_command(command: &str) -> bool {
         let command = command
             .trim_start_matches('/')
             .trim_start_matches('$')
@@ -634,15 +676,22 @@ impl Transpiler {
             return (conditions, capture);
         }
 
+        // Scores that the condition reads, and scores that its setup
+        // commands pass between each other (the left side of a
+        // short-circuit `and`), hold one entity's value each.
         let mut holders: Vec<String> = Vec::new();
-        for condition in &conditions {
-            condition.for_each_simple(&mut |text| {
-                for holder in Self::condition_temp_holders(text) {
-                    if !holders.contains(&holder) {
-                        holders.push(holder);
-                    }
+        let mut add_holders = |text: &str| {
+            for holder in Self::condition_temp_holders(text) {
+                if !holders.contains(&holder) {
+                    holders.push(holder);
                 }
-            });
+            }
+        };
+        for condition in &conditions {
+            condition.for_each_simple(&mut |text| add_holders(text));
+        }
+        for command in &capture.commands {
+            add_holders(command);
         }
         for holder in holders {
             let objective = self.next_condition_scope_objective();
@@ -812,7 +861,7 @@ impl Transpiler {
     /// (`expr_cond_temp_N`) and materialized OR flags (`or_temp_N`).
     fn condition_temp_holders(text: &str) -> Vec<String> {
         let mut holders = Vec::new();
-        for prefix in ["expr_cond_temp_", "or_temp_"] {
+        for prefix in ["expr_cond_temp_", "or_temp_", "cond_and_", "cond_or_"] {
             let mut start = 0;
             while let Some(relative_index) = text[start..].find(prefix) {
                 let holder_start = start + relative_index;

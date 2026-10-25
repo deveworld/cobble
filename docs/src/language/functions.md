@@ -27,6 +27,32 @@ literal.
 Parameter names must be unique. Default parameter values, `*args`, and
 `**kwargs` are not supported.
 
+A parameter hides a module variable or constant with the same name inside its
+function, as in Python. Conditions, arithmetic, and `{name}` all read the
+argument:
+
+```python
+amount = 100
+
+def reward(amount):
+    if amount > 50:
+        /say big reward {amount}
+    return amount * 2      # reward(5) returns 10
+```
+
+A function can assign to its parameters. The new value is stored with the
+call's arguments, so later conditions, arithmetic, and `{name}` read it:
+
+```python
+def countdown(n):
+    while n > 0:
+        /say {n}
+        n = n - 1
+```
+
+A parameter can hold a number or a string. A parameter can't also be declared
+`global`.
+
 ## Calling Functions
 
 ```python

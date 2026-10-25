@@ -116,7 +116,7 @@ def test():
     assert!(content.contains(
         "execute if score x cobble.vars matches 1 run scoreboard players set flag cobble.vars 1"
     ));
-    assert!(content.contains("execute if score flag cobble.vars matches 1.. run say true"));
+    assert!(content.contains("execute unless score flag cobble.vars matches 0 run say true"));
 }
 
 #[test]
@@ -592,8 +592,10 @@ def test():
     let while_content = read_first_function_with_prefix(&output_dir, "while_temp_");
     assert!(while_content
         .contains("execute if score i cobble.vars matches ..4 run function cobble:while_body"));
-    assert!(while_content
-        .contains("execute if score i cobble.vars matches ..4 run function cobble:while_temp_"));
+    // The body ends by starting the next iteration, so the condition is
+    // checked once per iteration.
+    assert!(!while_content.contains("run function cobble:while_temp_"));
+    assert!(body_content.contains("function cobble:while_temp_"));
 }
 
 #[test]
@@ -640,9 +642,17 @@ def test():
             && loop_content.contains("run function cobble:for_range_body_"),
         "{loop_content}"
     );
-    assert!(loop_content.contains("run function cobble:for_range_temp_"));
+    assert!(!loop_content.contains("run function cobble:for_range_temp_"));
 
     let body_content = read_first_function_with_prefix(&output_dir, "for_range_body_");
+    assert!(
+        body_content
+            .trim_end()
+            .rsplit('\n')
+            .next()
+            .is_some_and(|last| last.starts_with("function cobble:for_range_temp_")),
+        "{body_content}"
+    );
     assert!(
         body_content.contains("scoreboard players operation total cobble.vars += i cobble.vars")
     );
@@ -1955,9 +1965,8 @@ def test():
     // Should check condition and call body
     assert!(while_content
         .contains("execute if score i cobble.vars matches ..2 run function cobble:while_body"));
-    // Should recursively call itself
-    assert!(while_content
-        .contains("execute if score i cobble.vars matches ..2 run function cobble:while_temp"));
+    // The body starts the next iteration
+    assert!(body_content.contains("function cobble:while_temp"));
 }
 
 #[test]
@@ -1983,9 +1992,10 @@ def test():
         .filter(|e| e.file_name().to_string_lossy().starts_with("while_temp_"))
         .collect();
     let while_content = fs::read_to_string(while_files[0].path()).unwrap();
-    assert!(
-        while_content.matches("expr_cond_temp_").count() >= 4,
-        "while condition should be computed before body and before recursion: {}",
+    assert_eq!(
+        while_content.matches("expr_cond_temp_").count(),
+        3,
+        "while condition should be computed once per iteration, before the body: {}",
         while_content
     );
     assert!(!while_content.contains("OR("));
@@ -3197,18 +3207,19 @@ def test():
         "{content}"
     );
     assert!(
-        content.contains("execute if score expr_cond_temp_")
-            && content.contains("run say if call condition ok"),
-        "{content}"
-    );
-    assert!(
         content.contains("execute unless score expr_cond_temp_")
-            && content.contains("run say not call condition ok"),
+            && content.contains("matches 0 run say if call condition ok"),
         "{content}"
     );
     assert!(
-        content.contains(" if score expr_cond_temp_")
-            && content.contains(" unless score expr_cond_temp_")
+        content.contains("execute if score expr_cond_temp_")
+            && content.contains("matches 0 run say not call condition ok"),
+        "{content}"
+    );
+    // `blocked()` on the right of `and` runs only after `ready()` passed.
+    assert!(
+        content.contains("store result score cond_and_")
+            && content.contains("run function cobble:cond_rhs_")
             && content.contains("run say and call condition ok"),
         "{content}"
     );
@@ -3218,7 +3229,7 @@ def test():
         "{content}"
     );
     assert!(
-        content.contains("execute as @a if score @s cblc")
+        content.contains("execute as @a unless score @s cblc")
             && content.contains("run say execute call condition ok"),
         "{content}"
     );
@@ -3251,8 +3262,15 @@ def test():
         "{loop_content}"
     );
     assert!(
-        loop_content.contains("execute if score expr_cond_temp_")
-            && loop_content.contains("run function cobble:while_body_"),
+        loop_content.contains("execute unless score expr_cond_temp_")
+            && loop_content.contains("matches 0 run function cobble:while_body_"),
+        "{loop_content}"
+    );
+    assert_eq!(
+        loop_content
+            .matches("run function cobble:keep_running")
+            .count(),
+        1,
         "{loop_content}"
     );
 }

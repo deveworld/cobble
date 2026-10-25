@@ -726,6 +726,26 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_decision_ignores_sources_written_into_the_linked_pack() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let linked_pack = temp_dir.path().join("world/datapacks/watch_pack");
+        let source = temp_dir.path().join("watch_pack/src/main.cbl");
+        // `watch --link` passes the linked pack as the output folder.
+        let ignored_roots = watch_ignored_roots(Some(&linked_pack), None, temp_dir.path());
+
+        let noise = vec![create_event(
+            linked_pack.join("data/watch_pack/function/generated_noise.cbl"),
+        )];
+        let decision = rebuild_decision(&noise, None, &ignored_roots);
+        assert!(!decision.should_rebuild, "{decision:?}");
+
+        let edit = vec![modify_event(&source)];
+        let decision = rebuild_decision(&edit, None, &ignored_roots);
+        assert!(decision.should_rebuild);
+        assert_eq!(decision.changed_paths, vec![source]);
+    }
+
+    #[test]
     fn rebuild_decision_keeps_real_source_changes_after_ignored_events() {
         let ignored_roots = vec![PathBuf::from("output")];
         let events = vec![

@@ -384,6 +384,59 @@ datapack.function_tag("utility", ["resources:tick", "resources:init"])
 }
 
 #[test]
+fn typed_datapack_tags_merge_dedup_and_sort_for_each_registry() {
+    let (_temp, output_dir) = compile_source(
+        r#"
+from stdlib import datapack, event
+
+datapack.function_tag("minecraft:load", ["qa:extra", "qa:load"])
+datapack.function_tag("minecraft:load", ["qa:load", "qa:setup"])
+datapack.block_tag("mineable/test", ["minecraft:stone"])
+datapack.block_tag("mineable/test", ["minecraft:deepslate", "minecraft:stone"])
+datapack.item_tag("rewards", ["minecraft:emerald", "minecraft:diamond"])
+datapack.item_tag("rewards", ["minecraft:diamond"])
+datapack.entity_type_tag("targets", ["minecraft:skeleton", "minecraft:zombie"])
+
+def load():
+    /say load
+
+def setup():
+    /say setup
+
+def extra():
+    /say extra
+
+stdlib.addEventListener(event.LOAD, load)
+"#,
+    )
+    .unwrap();
+
+    let tag_values = |relative_path: &str| -> serde_json::Value {
+        let tag: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(output_dir.join(relative_path)).unwrap())
+                .unwrap();
+        tag["values"].clone()
+    };
+    // The event listener's entry merges with the declared ones.
+    assert_eq!(
+        tag_values("data/minecraft/tags/function/load.json"),
+        serde_json::json!(["qa:extra", "qa:load", "qa:setup", "resources:load"])
+    );
+    assert_eq!(
+        tag_values("data/resources/tags/block/mineable/test.json"),
+        serde_json::json!(["minecraft:deepslate", "minecraft:stone"])
+    );
+    assert_eq!(
+        tag_values("data/resources/tags/item/rewards.json"),
+        serde_json::json!(["minecraft:diamond", "minecraft:emerald"])
+    );
+    assert_eq!(
+        tag_values("data/resources/tags/entity_type/targets.json"),
+        serde_json::json!(["minecraft:skeleton", "minecraft:zombie"])
+    );
+}
+
+#[test]
 fn datapack_tag_replace_argument_merges_with_true_wins_semantics() {
     let (_temp, output_dir) = compile_source(
         r#"

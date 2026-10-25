@@ -193,7 +193,7 @@ def check():
         "{content}"
     );
     assert!(
-        content.contains("execute as @a if score @s cblc") && content.contains("run say go"),
+        content.contains("execute as @a unless score @s cblc0_0 matches 0 run say go"),
         "{content}"
     );
 }
@@ -247,8 +247,14 @@ def tick():
         1,
         "{tick}"
     );
+    // `ready() and ready()` calls the right side only for entities whose
+    // left side passed, and stores its result per entity.
     assert!(
-        tick.contains("if score @s cblc0_0 matches 1.. if score @s cblc0_1 matches 1.. run say d"),
+        tick.contains("execute as @a unless score @s cblc0_1 matches 0 store result score @s cblc0_0 run function cobble:cond_rhs_"),
+        "{tick}"
+    );
+    assert!(
+        tick.contains("execute as @a unless score @s cblc0_0 matches 0 run say d"),
         "{tick}"
     );
 }

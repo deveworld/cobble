@@ -1822,6 +1822,7 @@ mod tests {
         let content =
             fs::read_to_string(output_dir.join("data/cobble/function/test.mcfunction")).unwrap();
         assert_eq!(without_return_prologue(&content).trim(), "say valid");
+        assert!(output_dir.join(".cobble/build_manifest.json").is_file());
     }
 
     #[test]

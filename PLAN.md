@@ -591,9 +591,8 @@ cargo run --locked -- link /tmp/cobble-qa-init-resource --status
 cargo run --locked -- build /tmp/cobble-qa-init-resource -o /tmp/cobble-qa-world/datapacks/qa_resource
 cargo run --locked -- clean /tmp/cobble-qa-init-resource --linked --dry-run
 cargo run --locked -- doctor --json
-scripts/qa_07_templates.sh
-scripts/qa_07_link_clean_safety.sh
-scripts/qa_07_watch_smoke.sh
+cargo test --locked --test cli_regression_test -- cli_every_listed_template cli_link cli_clean cli_watch cli_doctor
+scripts/qa_watch_smoke.sh
 ```
 
 Default QA must use temporary directories for `link` and must not write into a
@@ -648,8 +647,8 @@ Decided for 0.11.0 (2026-10-22):
 
 1. Finish 0.11.0. Per-pack objectives and `persist` are done, with snapshot,
    simulator, and server-gate tests and migration notes; more 0.11 work is
-   planned. The version bump, a 0.11 release gate script, and the CHANGELOG
-   date wait until the scope is final.
+   planned. The version bump and the CHANGELOG date wait until the scope is
+   final. `scripts/qa_release_gate.sh` runs the release checks.
 2. Start the 1.0.0 compatibility audit on top of 0.11.0.
 3. Keep plugin APIs, package management, full resource-pack pipelines,
    arbitrary Python/eval, and multi-target behavior deferred until the
