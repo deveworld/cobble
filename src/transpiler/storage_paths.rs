@@ -11,22 +11,16 @@
 use crate::ast::{CobbleType, Expression};
 use crate::transpiler::data_pack::DataPack;
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
+use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{
-    DynamicStoragePathArg, DynamicStoragePathArgKind, GeneratedCommand, GeneratedCommandKind,
-    SourceLocation, StoragePathPlan, TranspileError, Transpiler,
+    escape_quoted, GeneratedCommand, GeneratedCommandKind, SourceLocation, TranspileError,
+    Transpiler,
 };
-use std::collections::HashMap;
-
-/// Borrowed views of the tables the shared storage-path logic reads.
-pub(in crate::transpiler) struct StoragePathTables<'a> {
-    pub(in crate::transpiler) variable_storage_paths: &'a HashMap<String, String>,
-    pub(in crate::transpiler) variable_types: &'a HashMap<String, CobbleType>,
-    pub(in crate::transpiler) compile_time_constants: &'a HashMap<String, f64>,
-    pub(in crate::transpiler) current_params: &'a [String],
-}
 
 pub(in crate::transpiler) trait StoragePathOps {
-    fn storage_tables(&self) -> StoragePathTables<'_>;
+    fn storage_symbols(&self) -> &Symbols;
+    /// Parameters of the function currently being lowered.
+    fn storage_current_params(&self) -> &[String];
     fn storage_data_pack(&self) -> &DataPack;
     fn storage_data_pack_mut(&mut self) -> &mut DataPack;
     /// Source location attached to generated helper-function commands.
@@ -39,15 +33,16 @@ pub(in crate::transpiler) trait StoragePathOps {
 
     /// Whether `name` is a parameter of the function currently being lowered.
     fn is_storage_current_param(&self, name: &str) -> bool {
-        self.storage_tables()
-            .current_params
+        self.storage_current_params()
             .iter()
             .any(|param| param == name)
     }
 
     fn storage_expr_type(&self, expr: &Expression) -> Option<CobbleType> {
         match expr {
-            Expression::Identifier(name) => self.storage_tables().variable_types.get(name).cloned(),
+            Expression::Identifier(name) => {
+                self.storage_symbols().variable_types.get(name).cloned()
+            }
             Expression::Attribute(obj, _) => {
                 if matches!(self.storage_expr_type(obj), Some(CobbleType::Map)) {
                     Some(CobbleType::Unknown)
@@ -73,7 +68,7 @@ pub(in crate::transpiler) trait StoragePathOps {
         match expr {
             Expression::String(_) => true,
             Expression::Identifier(name) => {
-                self.storage_tables()
+                self.storage_symbols()
                     .variable_types
                     .get(name)
                     .is_some_and(|ty| matches!(ty, CobbleType::String))
@@ -96,7 +91,7 @@ pub(in crate::transpiler) trait StoragePathOps {
     fn resolve_storage_path_plan(&self, expr: &Expression) -> Option<StoragePathPlan> {
         match expr {
             Expression::Identifier(name) => self
-                .storage_tables()
+                .storage_symbols()
                 .variable_storage_paths
                 .get(name)
                 .cloned()
@@ -123,13 +118,13 @@ pub(in crate::transpiler) trait StoragePathOps {
                     Expression::Identifier(name) => {
                         if self.should_use_dynamic_storage_key(base_type.clone(), index)
                             && self
-                                .storage_tables()
+                                .storage_symbols()
                                 .compile_time_constants
                                 .contains_key(name)
                         {
                             Some(base_path.append_dynamic_key((**index).clone()))
                         } else if let Some(value) =
-                            self.storage_tables().compile_time_constants.get(name)
+                            self.storage_symbols().compile_time_constants.get(name)
                         {
                             Some(base_path.append_static_index(*value as i32))
                         } else if self.should_use_dynamic_storage_key(base_type.clone(), index) {
@@ -205,12 +200,12 @@ pub(in crate::transpiler) trait StoragePathOps {
         args_path: &str,
         arg: &DynamicStoragePathArg,
     ) -> Result<Vec<String>, TranspileError> {
-        let tables = self.storage_tables();
+        let tables = self.storage_symbols();
         let namespace = &self.storage_data_pack().namespace;
         let target_path = format!("{}.{}", args_path, arg.placeholder);
         match &arg.expr {
             Expression::String(value) => {
-                let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+                let escaped = escape_quoted(value);
                 Ok(vec![format!(
                     "data modify storage {}:global {} set value \"{}\"",
                     namespace, target_path, escaped
@@ -317,7 +312,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
             | Expression::None => self.storage_static_snbt(expr),
             Expression::Identifier(name) => {
                 if self
-                    .storage_tables()
+                    .storage_symbols()
                     .compile_time_constants
                     .contains_key(name)
                 {
@@ -355,7 +350,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
     }
 
     fn default_snbt_for_runtime_identifier(&self, name: &str) -> String {
-        match self.storage_tables().variable_types.get(name) {
+        match self.storage_symbols().variable_types.get(name) {
             Some(CobbleType::String) => "\"\"".to_string(),
             Some(CobbleType::List) => "[]".to_string(),
             Some(CobbleType::Map) => "{}".to_string(),
@@ -396,7 +391,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
             | Expression::None => Ok(Vec::new()),
             Expression::Identifier(name)
                 if self
-                    .storage_tables()
+                    .storage_symbols()
                     .compile_time_constants
                     .contains_key(name) =>
             {
@@ -414,7 +409,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
         let namespace = self.storage_data_pack().namespace.clone();
         match expr {
             Expression::Identifier(name) => {
-                if let Some(source_path) = self.storage_tables().variable_storage_paths.get(name) {
+                if let Some(source_path) = self.storage_symbols().variable_storage_paths.get(name) {
                     return Ok(vec![format!(
                         "data modify storage {}:global {} set from storage {}:global {}",
                         namespace, target_path, namespace, source_path
@@ -465,7 +460,7 @@ fn storage_child_path(base: &str, key: &str) -> String {
     {
         format!("{}.{}", base, key)
     } else {
-        let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+        let escaped = escape_quoted(key);
         format!("{}.\"{}\"", base, escaped)
     }
 }
@@ -480,12 +475,13 @@ impl StorageValueOps for Transpiler {
     }
 
     fn storage_scoreboard_objective(&self, name: &str) -> Option<&str> {
-        if self.scoreboard_variables.contains(name)
-            || self.variable_objectives.contains_key(name)
-            || self.variables.contains_key(name)
+        if self.symbols.scoreboard_variables.contains(name)
+            || self.symbols.variable_objectives.contains_key(name)
+            || self.symbols.variables.contains_key(name)
         {
             Some(
-                self.variable_objectives
+                self.symbols
+                    .variable_objectives
                     .get(name)
                     .map(String::as_str)
                     .unwrap_or("temp"),
@@ -501,13 +497,12 @@ impl StorageValueOps for Transpiler {
 }
 
 impl StoragePathOps for Transpiler {
-    fn storage_tables(&self) -> StoragePathTables<'_> {
-        StoragePathTables {
-            variable_storage_paths: &self.variable_storage_paths,
-            variable_types: &self.variable_types,
-            compile_time_constants: &self.compile_time_constants,
-            current_params: &self.current_context.params,
-        }
+    fn storage_symbols(&self) -> &Symbols {
+        &self.symbols
+    }
+
+    fn storage_current_params(&self) -> &[String] {
+        &self.current_context.params
     }
 
     fn storage_data_pack(&self) -> &DataPack {
@@ -532,13 +527,12 @@ impl StoragePathOps for Transpiler {
 }
 
 impl<'a> StoragePathOps for ExpressionEvaluator<'a> {
-    fn storage_tables(&self) -> StoragePathTables<'_> {
-        StoragePathTables {
-            variable_storage_paths: self.variable_storage_paths,
-            variable_types: self.variable_types,
-            compile_time_constants: self.compile_time_constants,
-            current_params: self.current_params,
-        }
+    fn storage_symbols(&self) -> &Symbols {
+        self.symbols
+    }
+
+    fn storage_current_params(&self) -> &[String] {
+        self.current_params
     }
 
     fn storage_data_pack(&self) -> &DataPack {
@@ -559,5 +553,108 @@ impl<'a> StoragePathOps for ExpressionEvaluator<'a> {
         target: &str,
     ) -> Result<Vec<String>, TranspileError> {
         self.evaluate_expression_to_target(expr, target)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::transpiler) struct DynamicStoragePathArg {
+    pub(in crate::transpiler) placeholder: String,
+    pub(in crate::transpiler) expr: Expression,
+    pub(in crate::transpiler) kind: DynamicStoragePathArgKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::transpiler) enum DynamicStoragePathArgKind {
+    Index,
+    Key,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::transpiler) enum StoragePathPlan {
+    Static(String),
+    Dynamic {
+        template: String,
+        args: Vec<DynamicStoragePathArg>,
+    },
+}
+
+impl StoragePathPlan {
+    pub(in crate::transpiler) fn static_path(path: impl Into<String>) -> Self {
+        Self::Static(path.into())
+    }
+
+    pub(in crate::transpiler) fn as_static(&self) -> Option<&str> {
+        match self {
+            Self::Static(path) => Some(path),
+            Self::Dynamic { .. } => None,
+        }
+    }
+
+    pub(in crate::transpiler) fn template(&self) -> &str {
+        match self {
+            Self::Static(path) => path,
+            Self::Dynamic { template, .. } => template,
+        }
+    }
+
+    pub(in crate::transpiler) fn dynamic_args(&self) -> &[DynamicStoragePathArg] {
+        match self {
+            Self::Static(_) => &[],
+            Self::Dynamic { args, .. } => args,
+        }
+    }
+
+    pub(in crate::transpiler) fn append_field(self, field: &str) -> Self {
+        match self {
+            Self::Static(path) => Self::Static(format!("{}.{}", path, field)),
+            Self::Dynamic { template, args } => Self::Dynamic {
+                template: format!("{}.{}", template, field),
+                args,
+            },
+        }
+    }
+
+    pub(in crate::transpiler) fn append_static_index(self, index: i32) -> Self {
+        match self {
+            Self::Static(path) => Self::Static(format!("{}[{}]", path, index)),
+            Self::Dynamic { template, args } => Self::Dynamic {
+                template: format!("{}[{}]", template, index),
+                args,
+            },
+        }
+    }
+
+    pub(in crate::transpiler) fn append_dynamic_index(self, expr: Expression) -> Self {
+        let (template, mut args) = match self {
+            Self::Static(path) => (path, Vec::new()),
+            Self::Dynamic { template, args } => (template, args),
+        };
+        let placeholder = format!("idx{}", args.len());
+        args.push(DynamicStoragePathArg {
+            placeholder: placeholder.clone(),
+            expr,
+            kind: DynamicStoragePathArgKind::Index,
+        });
+        Self::Dynamic {
+            template: format!("{}[$({})]", template, placeholder),
+            args,
+        }
+    }
+
+    pub(in crate::transpiler) fn append_dynamic_key(self, expr: Expression) -> Self {
+        let (template, mut args) = match self {
+            Self::Static(path) => (path, Vec::new()),
+            Self::Dynamic { template, args } => (template, args),
+        };
+        let placeholder = format!("key{}", args.len());
+        args.push(DynamicStoragePathArg {
+            placeholder: placeholder.clone(),
+            expr,
+            kind: DynamicStoragePathArgKind::Key,
+        });
+        Self::Dynamic {
+            template: format!("{}.$({})", template, placeholder),
+            args,
+        }
     }
 }

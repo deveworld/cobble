@@ -31,6 +31,7 @@ impl Transpiler {
         // Re-processing an imported file as a directory entry can encounter the
         // same alias again. Identical definitions are idempotent.
         if self
+            .symbols
             .selector_aliases
             .get(&selector_def.name)
             .is_some_and(|selector| selector == &selector_def.selector)
@@ -39,7 +40,11 @@ impl Transpiler {
         }
 
         // Check for duplicate definition (warning only)
-        if self.selector_aliases.contains_key(&selector_def.name) {
+        if self
+            .symbols
+            .selector_aliases
+            .contains_key(&selector_def.name)
+        {
             eprintln!(
                 "⚠️  Warning: Selector '@{}' redefined. Previous definition will be overwritten.",
                 selector_def.name
@@ -48,7 +53,8 @@ impl Transpiler {
 
         // Store the selector alias
         // @Player -> @a[type=player,gamemode=survival]
-        self.selector_aliases
+        self.symbols
+            .selector_aliases
             .insert(selector_def.name.clone(), selector_def.selector.clone());
 
         Ok(())

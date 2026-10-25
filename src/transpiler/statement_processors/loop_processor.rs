@@ -6,6 +6,26 @@ use crate::transpiler::{
 };
 use std::collections::HashMap;
 
+/// State of the compile-time `for` unrolling in progress.
+pub(in crate::transpiler) struct UnrollState {
+    /// Current nesting depth.
+    pub(in crate::transpiler) depth: usize,
+    /// Product of literal iteration counts across the active unroll stack.
+    pub(in crate::transpiler) iteration_factor: usize,
+    /// Generated command count at the start of the outermost unroll.
+    pub(in crate::transpiler) command_baseline: Option<usize>,
+}
+
+impl Default for UnrollState {
+    fn default() -> Self {
+        Self {
+            depth: 0,
+            iteration_factor: 1,
+            command_baseline: None,
+        }
+    }
+}
+
 const UNROLL_LIMIT: usize = 1024;
 const UNROLL_WARNING_THRESHOLD: usize = 256;
 const UNROLL_NESTED_ITERATION_LIMIT: usize = 65_536;
@@ -151,7 +171,7 @@ impl Transpiler {
                 ));
             }
         };
-        let previous_iteration_factor = self.unroll_iteration_factor;
+        let previous_iteration_factor = self.unroll.iteration_factor;
         let projected_iterations = previous_iteration_factor
             .checked_mul(values.len())
             .ok_or_else(|| {
@@ -184,12 +204,12 @@ impl Transpiler {
             );
         }
 
-        let is_outermost_unroll = self.unroll_depth == 0;
+        let is_outermost_unroll = self.unroll.depth == 0;
         if is_outermost_unroll {
-            self.unroll_command_baseline = Some(self.generated_command_count());
+            self.unroll.command_baseline = Some(self.generated_command_count());
         }
-        self.unroll_depth += 1;
-        self.unroll_iteration_factor = projected_iterations;
+        self.unroll.depth += 1;
+        self.unroll.iteration_factor = projected_iterations;
 
         let result = (|| {
             self.data_pack.unrolled_loops += 1;
@@ -218,10 +238,10 @@ impl Transpiler {
             Ok(())
         })();
 
-        self.unroll_depth -= 1;
-        self.unroll_iteration_factor = previous_iteration_factor;
+        self.unroll.depth -= 1;
+        self.unroll.iteration_factor = previous_iteration_factor;
         if is_outermost_unroll {
-            self.unroll_command_baseline = None;
+            self.unroll.command_baseline = None;
         }
 
         result.map_err(|error| {
@@ -463,8 +483,11 @@ impl Transpiler {
     fn runtime_storage_list_candidate(&self, iter: &Expression) -> bool {
         match iter {
             Expression::Identifier(name) => {
-                self.variable_storage_paths.contains_key(name)
-                    || matches!(self.variable_types.get(name), Some(CobbleType::List))
+                self.symbols.variable_storage_paths.contains_key(name)
+                    || matches!(
+                        self.symbols.variable_types.get(name),
+                        Some(CobbleType::List)
+                    )
             }
             Expression::Attribute(_, _) | Expression::Subscript(_, _) => {
                 self.resolve_storage_path_plan(iter).is_some()
@@ -480,14 +503,14 @@ impl Transpiler {
     ) -> Result<RuntimeStorageListPlan, TranspileError> {
         match iter {
             Expression::Identifier(name) => {
-                let value_type = self.variable_types.get(name);
+                let value_type = self.symbols.variable_types.get(name);
                 if matches!(value_type, Some(CobbleType::Map | CobbleType::String)) {
                     return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
                         "runtime-for-unsupported: '{}' is not a storage-backed list.",
                         name
                     )));
                 }
-                self.variable_storage_paths
+                self.symbols.variable_storage_paths
                     .get(name)
                     .cloned()
                     .map(|path| RuntimeStorageListPlan {
@@ -840,58 +863,68 @@ impl Transpiler {
 
     fn save_variable_binding(&self, name: &str) -> VariableBindingSnapshot {
         VariableBindingSnapshot {
-            value: self.variables.get(name).cloned(),
-            objective: self.variable_objectives.get(name).cloned(),
-            is_scoreboard: self.scoreboard_variables.contains(name),
-            storage_path: self.variable_storage_paths.get(name).cloned(),
-            compile_time_constant: self.compile_time_constants.get(name).copied(),
-            value_type: self.variable_types.get(name).cloned(),
+            value: self.symbols.variables.get(name).cloned(),
+            objective: self.symbols.variable_objectives.get(name).cloned(),
+            is_scoreboard: self.symbols.scoreboard_variables.contains(name),
+            storage_path: self.symbols.variable_storage_paths.get(name).cloned(),
+            compile_time_constant: self.symbols.compile_time_constants.get(name).copied(),
+            value_type: self.symbols.variable_types.get(name).cloned(),
         }
     }
 
     fn restore_variable_binding(&mut self, name: &str, snapshot: VariableBindingSnapshot) {
-        restore_optional(&mut self.variables, name, snapshot.value);
-        restore_optional(&mut self.variable_objectives, name, snapshot.objective);
+        restore_optional(&mut self.symbols.variables, name, snapshot.value);
+        restore_optional(
+            &mut self.symbols.variable_objectives,
+            name,
+            snapshot.objective,
+        );
         if snapshot.is_scoreboard {
-            self.scoreboard_variables.insert(name.to_string());
+            self.symbols.scoreboard_variables.insert(name.to_string());
         } else {
-            self.scoreboard_variables.remove(name);
+            self.symbols.scoreboard_variables.remove(name);
         }
         restore_optional(
-            &mut self.variable_storage_paths,
+            &mut self.symbols.variable_storage_paths,
             name,
             snapshot.storage_path,
         );
         restore_optional(
-            &mut self.compile_time_constants,
+            &mut self.symbols.compile_time_constants,
             name,
             snapshot.compile_time_constant,
         );
-        restore_optional(&mut self.variable_types, name, snapshot.value_type);
+        restore_optional(&mut self.symbols.variable_types, name, snapshot.value_type);
     }
 
     fn bind_runtime_integer_variable(&mut self, name: &str) {
         self.data_pack.track_objective("temp");
-        self.variables.remove(name);
-        self.variable_objectives
+        self.symbols.variables.remove(name);
+        self.symbols
+            .variable_objectives
             .insert(name.to_string(), "temp".to_string());
-        self.scoreboard_variables.insert(name.to_string());
-        self.variable_storage_paths.remove(name);
-        self.compile_time_constants.remove(name);
-        self.variable_types
+        self.symbols.scoreboard_variables.insert(name.to_string());
+        self.symbols.variable_storage_paths.remove(name);
+        self.symbols.compile_time_constants.remove(name);
+        self.symbols
+            .variable_types
             .insert(name.to_string(), CobbleType::Integer);
     }
 
     fn bind_runtime_storage_loop_value(&mut self, name: &str, element_type: CobbleType) {
         self.data_pack.track_objective("temp");
-        self.variables.remove(name);
-        self.variable_objectives
+        self.symbols.variables.remove(name);
+        self.symbols
+            .variable_objectives
             .insert(name.to_string(), "temp".to_string());
-        self.scoreboard_variables.insert(name.to_string());
-        self.variable_storage_paths
+        self.symbols.scoreboard_variables.insert(name.to_string());
+        self.symbols
+            .variable_storage_paths
             .insert(name.to_string(), format!("vars.{}", name));
-        self.compile_time_constants.remove(name);
-        self.variable_types.insert(name.to_string(), element_type);
+        self.symbols.compile_time_constants.remove(name);
+        self.symbols
+            .variable_types
+            .insert(name.to_string(), element_type);
     }
 
     /// Best-effort element type for a runtime list loop target. A literal
@@ -902,7 +935,7 @@ impl Transpiler {
     fn runtime_list_element_type(&self, iter: &Expression) -> CobbleType {
         let items = match iter {
             Expression::Array(items) => items,
-            Expression::Identifier(name) => match self.variables.get(name) {
+            Expression::Identifier(name) => match self.symbols.variables.get(name) {
                 Some(Expression::Array(items)) => items,
                 _ => return CobbleType::Unknown,
             },
@@ -1146,7 +1179,7 @@ impl Transpiler {
     }
 
     fn ensure_unroll_command_budget(&self) -> Result<(), TranspileError> {
-        let Some(baseline) = self.unroll_command_baseline else {
+        let Some(baseline) = self.unroll.command_baseline else {
             return Ok(());
         };
         let generated = self.generated_command_count().saturating_sub(baseline);

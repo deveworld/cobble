@@ -13,18 +13,21 @@ impl Transpiler {
         self.check_type_assignment(&const_assign.target, &value_type)?;
 
         // Record the variable's type
-        self.variable_types
+        self.symbols
+            .variable_types
             .insert(const_assign.target.clone(), value_type);
 
         // Evaluate the expression at compile time
         let value = self.evaluate_const_expr(&const_assign.value)?;
 
         // Store the constant value
-        self.compile_time_constants
+        self.symbols
+            .compile_time_constants
             .insert(const_assign.target.clone(), value);
 
         // Also store as a regular variable so it can be used in expressions
-        self.variables
+        self.symbols
+            .variables
             .insert(const_assign.target.clone(), Expression::Number(value));
 
         // Constants are compile-time only, no runtime initialization needed
@@ -39,7 +42,8 @@ impl Transpiler {
             Expression::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
             Expression::Identifier(name) => {
                 // Look up in compile-time constants
-                self.compile_time_constants
+                self.symbols
+                    .compile_time_constants
                     .get(name)
                     .copied()
                     .ok_or_else(|| {

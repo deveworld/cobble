@@ -60,12 +60,12 @@ impl Transpiler {
         let Some(selector_name) = selector.strip_prefix('@') else {
             return Ok(selector.to_string());
         };
-        if let Some(actual_selector) = self.selector_aliases.get(selector_name) {
+        if let Some(actual_selector) = self.symbols.selector_aliases.get(selector_name) {
             return Ok(actual_selector.clone());
         }
         let variable = selector_name.split('[').next().unwrap_or("");
         if !matches!(variable, "a" | "e" | "p" | "r" | "s" | "n") {
-            let hint = if self.entity_templates.contains_key(selector_name) {
+            let hint = if self.symbols.entity_templates.contains_key(selector_name) {
                 format!(
                     " `@{}` is an entity template, which only works with `create`; \
                      add a selector alias `@Name = @e[...]` to target its entities.",
@@ -385,14 +385,14 @@ impl Transpiler {
         // Selector aliases, `{CONST}`, and `{param}` placeholders may sit
         // anywhere in the header, such as `if entity @Spawn`,
         // `as @a[distance=..{RADIUS}]`, or `positioned {x} 100 0`.
-        let aliases = &self.selector_aliases;
+        let aliases = &self.symbols.selector_aliases;
         for part in &mut execute_parts {
             *part = expand_selector_aliases(part, aliases);
         }
         for special in &mut special_conditions {
             special.map_text(|text| expand_selector_aliases(text, aliases));
         }
-        for (name, value) in &self.compile_time_constants {
+        for (name, value) in &self.symbols.compile_time_constants {
             let from = format!("{{{}}}", name);
             let to = if value.fract() == 0.0 {
                 format!("{}", *value as i64)

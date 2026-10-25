@@ -2504,16 +2504,17 @@ fn direct_datapack_writer_rejects_traversal_tag_paths() {
 /// instead of the generic `semantic` fallback.
 #[test]
 fn resource_pack_failures_carry_their_documented_diagnostic_kinds() {
-    use cobble::transpiler::TranspileErrorKind;
+    use cobble::transpiler::{TranspileErrorKind, Transpiler, TranspilerOptions};
 
     fn kind_of(source: &str, experimental: bool) -> TranspileErrorKind {
         let program = cobble::parser::parse(source)
             .map_err(|errors| errors.join("\n"))
             .expect("fixture parses");
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let mut transpiler =
-            cobble::transpiler::Transpiler::new("resources".to_string(), temp_dir.path().join("o"));
-        transpiler.set_experimental_resource_pack(experimental);
+        let mut transpiler = Transpiler::with_options(TranspilerOptions {
+            experimental_resource_pack: experimental,
+            ..TranspilerOptions::new("resources".to_string(), temp_dir.path().join("o"))
+        });
         transpiler
             .transpile(&program)
             .expect_err("fixture must fail")

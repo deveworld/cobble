@@ -1,68 +1,26 @@
 use crate::ast::{BinaryOp, CobbleType, Expression, UnaryOp};
 use crate::transpiler::data_pack::DataPack;
 use crate::transpiler::storage_paths::StoragePathOps;
+use crate::transpiler::symbols::{FunctionTable, Symbols};
 use crate::transpiler::{
-    FunctionReturnKind, GeneratedCommandKind, SourceLocation, StoragePathPlan, TranspileError,
-    MAX_POWER_EXPONENT,
+    escape_quoted, FunctionReturnKind, GeneratedCommandKind, SourceLocation, StoragePathPlan,
+    TranspileError, MAX_POWER_EXPONENT,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-/// Evaluate expressions and translate conditions for Minecraft commands
+/// Lowers an expression into commands that compute it into a score.
 pub struct ExpressionEvaluator<'a> {
-    pub data_pack: &'a mut DataPack,
-    pub variable_objectives: &'a HashMap<String, String>,
-    pub variable_storage_paths: &'a HashMap<String, String>,
-    pub compile_time_constants: &'a HashMap<String, f64>,
-    pub function_params: &'a HashMap<String, Vec<String>>,
-    pub function_returns: &'a HashMap<String, FunctionReturnKind>,
-    pub qualified_function_aliases: &'a HashMap<String, String>,
-    pub current_params: &'a [String],
-    pub variable_types: &'a HashMap<String, CobbleType>,
-    pub temp_counter: &'a mut u32,
-    pub source: Option<SourceLocation>,
+    pub(in crate::transpiler) data_pack: &'a mut DataPack,
+    pub(in crate::transpiler) symbols: &'a Symbols,
+    pub(in crate::transpiler) functions: &'a mut FunctionTable,
+    pub(in crate::transpiler) current_params: &'a [String],
+    pub(in crate::transpiler) temp_counter: &'a mut u32,
+    pub(in crate::transpiler) source: Option<SourceLocation>,
     /// Name of the user function whose body is currently being lowered, for
     /// rejecting recursive calls at the call site.
-    pub current_function_name: Option<&'a str>,
-    /// Caller -> callees edges shared with the transpiler's cycle check.
-    pub call_edges: &'a mut BTreeMap<String, BTreeSet<String>>,
+    pub(in crate::transpiler) current_function_name: Option<&'a str>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
-    // Mirrors the transpiler's borrowed tables one-to-one; grouping them into a context
-    // struct would require changing the only construction site in mod.rs.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        data_pack: &'a mut DataPack,
-        variable_objectives: &'a HashMap<String, String>,
-        variable_storage_paths: &'a HashMap<String, String>,
-        compile_time_constants: &'a HashMap<String, f64>,
-        function_params: &'a HashMap<String, Vec<String>>,
-        function_returns: &'a HashMap<String, FunctionReturnKind>,
-        qualified_function_aliases: &'a HashMap<String, String>,
-        current_params: &'a [String],
-        variable_types: &'a HashMap<String, CobbleType>,
-        temp_counter: &'a mut u32,
-        source: Option<SourceLocation>,
-        current_function_name: Option<&'a str>,
-        call_edges: &'a mut BTreeMap<String, BTreeSet<String>>,
-    ) -> Self {
-        Self {
-            data_pack,
-            variable_objectives,
-            variable_storage_paths,
-            compile_time_constants,
-            function_params,
-            function_returns,
-            qualified_function_aliases,
-            current_params,
-            variable_types,
-            temp_counter,
-            source,
-            current_function_name,
-            call_edges,
-        }
-    }
-
     fn expression_path(expr: &Expression) -> Option<String> {
         match expr {
             Expression::Identifier(name) => Some(name.clone()),
@@ -75,13 +33,14 @@ impl<'a> ExpressionEvaluator<'a> {
 
     fn resolve_user_function_call_name<'b>(&'b self, func: &'b Expression) -> Option<&'b str> {
         match func {
-            Expression::Identifier(name) if self.function_params.contains_key(name) => {
+            Expression::Identifier(name) if self.functions.params.contains_key(name) => {
                 Some(name.as_str())
             }
             Expression::Attribute(obj, method) => {
                 let module_name = Self::expression_path(obj)?;
                 let key = format!("{}.{}", module_name, method);
-                self.qualified_function_aliases
+                self.functions
+                    .qualified_aliases
                     .get(&key)
                     .map(String::as_str)
             }
@@ -179,7 +138,8 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     fn target_objective(&self, target: &str) -> &str {
-        self.variable_objectives
+        self.symbols
+            .variable_objectives
             .get(target)
             .map(String::as_str)
             .unwrap_or("temp")
@@ -189,6 +149,7 @@ impl<'a> ExpressionEvaluator<'a> {
         match expr {
             Expression::Number(value) => Some(*value as i32),
             Expression::Identifier(name) => self
+                .symbols
                 .compile_time_constants
                 .get(name)
                 .map(|value| *value as i32),
@@ -301,19 +262,9 @@ impl<'a> ExpressionEvaluator<'a> {
         target: &str,
         target_obj: &str,
     ) -> Result<Vec<String>, TranspileError> {
-        if let Some(caller) = self.current_function_name {
-            if caller == func_name {
-                return Err(format!(
-                    "Recursive call to '{}' is not supported. Rewrite the recursion as a loop (while/for) instead.",
-                    func_name
-                ).into());
-            }
-            self.call_edges
-                .entry(caller.to_string())
-                .or_default()
-                .insert(func_name.to_string());
-        }
-        let Some(param_names) = self.function_params.get(func_name).cloned() else {
+        self.functions
+            .record_call(self.current_function_name, func_name)?;
+        let Some(param_names) = self.functions.params.get(func_name).cloned() else {
             return Err(format!(
                 "Undefined function `{}` in expression. Define it before using its return value.",
                 func_name
@@ -332,79 +283,30 @@ impl<'a> ExpressionEvaluator<'a> {
         }
 
         let namespace = self.data_pack.namespace.clone();
-        let mut commands = Vec::new();
-        let preserve_caller_args = !self.current_params.is_empty();
-        let staged_args_path = if !param_names.is_empty() {
-            let id = self.next_temp_id();
-            let call_path = format!("_call_args_{}", id);
-            let caller_path = if preserve_caller_args {
-                let caller_path = format!("_caller_args_{}", id);
-                commands.push(format!(
-                    "data remove storage {}:global {}",
-                    namespace, caller_path
-                ));
-                commands.push(format!(
-                    "data modify storage {}:global {} set from storage {}:global args",
-                    namespace, caller_path, namespace
-                ));
-                Some(caller_path)
-            } else {
-                None
-            };
-            commands.push(format!(
-                "data remove storage {}:global {}",
-                namespace, call_path
-            ));
-            Some((call_path, caller_path))
-        } else {
-            None
-        };
-
-        for (param_name, arg) in param_names.iter().zip(args.iter()) {
-            let target_path = staged_args_path
-                .as_ref()
-                .map(|(path, _)| format!("{}.{}", path, param_name))
-                .unwrap_or_else(|| format!("args.{}", param_name));
-            commands.extend(self.function_argument_to_storage_commands(&target_path, arg)?);
-        }
-
-        if let Some((call_path, _)) = staged_args_path.as_ref() {
-            commands.push(format!(
-                "data modify storage {}:global args set from storage {}:global {}",
-                namespace, namespace, call_path
-            ));
-        }
-
         if param_names.is_empty() {
-            commands.push(format!(
+            return Ok(vec![format!(
                 "execute store result score {} {} run function {}:{}",
                 target, target_obj, namespace, func_name
-            ));
-        } else {
-            commands.push(format!(
+            )]);
+        }
+
+        let id = self.next_temp_id();
+        let mut argument_commands = Vec::new();
+        for (param_name, arg) in param_names.iter().zip(args.iter()) {
+            let target_path = format!("{}.{}", call_args_path(id), param_name);
+            argument_commands
+                .extend(self.function_argument_to_storage_commands(&target_path, arg)?);
+        }
+        Ok(staged_call_commands(
+            &namespace,
+            id,
+            !self.current_params.is_empty(),
+            argument_commands,
+            format!(
                 "execute store result score {} {} run function {}:{} with storage {}:global args",
                 target, target_obj, namespace, func_name, namespace
-            ));
-        }
-
-        if let Some((call_path, caller_path)) = staged_args_path {
-            if let Some(caller_path) = caller_path {
-                commands.push(format!(
-                    "data modify storage {}:global args set from storage {}:global {}",
-                    namespace, namespace, caller_path
-                ));
-                commands.push(format!(
-                    "data remove storage {}:global {}",
-                    namespace, caller_path
-                ));
-            }
-            commands.push(format!(
-                "data remove storage {}:global {}",
-                namespace, call_path
-            ));
-        }
-
-        Ok(commands)
+            ),
+        ))
     }
 
     fn function_argument_to_storage_commands(
@@ -415,12 +317,7 @@ impl<'a> ExpressionEvaluator<'a> {
         let namespace = self.data_pack.namespace.clone();
         match arg {
             Expression::String(value) => {
-                let escaped = value
-                    .replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('\n', "\\n")
-                    .replace('\r', "\\r")
-                    .replace('\t', "\\t");
+                let escaped = escape_quoted(value);
                 Ok(vec![format!(
                     "data modify storage {}:global {} set value \"{}\"",
                     namespace, target_path, escaped
@@ -449,19 +346,20 @@ impl<'a> ExpressionEvaluator<'a> {
                         namespace, target_path, namespace, name
                     )]);
                 }
-                if let Some(source_path) = self.variable_storage_paths.get(name) {
+                if let Some(source_path) = self.symbols.variable_storage_paths.get(name) {
                     return Ok(vec![format!(
                         "data modify storage {}:global {} set from storage {}:global {}",
                         namespace, target_path, namespace, source_path
                     )]);
                 }
-                if let Some(value) = self.compile_time_constants.get(name) {
+                if let Some(value) = self.symbols.compile_time_constants.get(name) {
                     return Ok(vec![format!(
                         "data modify storage {}:global {} set value {}",
                         namespace, target_path, *value as i32
                     )]);
                 }
                 let objective = self
+                    .symbols
                     .variable_objectives
                     .get(name)
                     .map(String::as_str)
@@ -544,16 +442,19 @@ impl<'a> ExpressionEvaluator<'a> {
                 ));
             }
             Expression::Identifier(var) => {
-                if let Some(const_value) = self.compile_time_constants.get(var) {
+                if let Some(const_value) = self.symbols.compile_time_constants.get(var) {
                     let truncated = *const_value as i32;
                     commands.push(format!(
                         "scoreboard players set {} {} {}",
                         target, target_obj, truncated
                     ));
-                } else if let Some(storage_path) = self.variable_storage_paths.get(var) {
+                } else if let Some(storage_path) = self.symbols.variable_storage_paths.get(var) {
                     // A string's scoreboard mirror only holds its length, so
                     // evaluating it as a score value is always a bug.
-                    if matches!(self.variable_types.get(var), Some(CobbleType::String)) {
+                    if matches!(
+                        self.symbols.variable_types.get(var),
+                        Some(CobbleType::String)
+                    ) {
                         return Err(format!(
                             "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
                             var
@@ -565,8 +466,8 @@ impl<'a> ExpressionEvaluator<'a> {
                         "execute store result score {} {} run data get storage {}:global {}",
                         target, target_obj, namespace, storage_path
                     ));
-                } else if self.variable_objectives.contains_key(var) {
-                    let var_obj = self.variable_objectives.get(var).unwrap().clone();
+                } else if self.symbols.variable_objectives.contains_key(var) {
+                    let var_obj = self.symbols.variable_objectives.get(var).unwrap().clone();
                     if !(var == target && var_obj == target_obj) {
                         commands.push(format!(
                             "scoreboard players operation {} {} = {} {}",
@@ -581,6 +482,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     ));
                 } else {
                     let var_obj = self
+                        .symbols
                         .variable_objectives
                         .get(var)
                         .unwrap_or(&"temp".to_string())
@@ -753,7 +655,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     .resolve_user_function_call_name(func)
                     .map(str::to_string)
                 {
-                    match self.function_returns.get(&func_name) {
+                    match self.functions.returns.get(&func_name) {
                         Some(FunctionReturnKind::Integer) => {}
                         Some(FunctionReturnKind::NonInteger) => {
                             return Err(format!(
@@ -795,10 +697,11 @@ impl<'a> ExpressionEvaluator<'a> {
                         Expression::String(s) => base_path.append_field(s),
                         Expression::Identifier(name) => {
                             if self.should_use_dynamic_storage_key(base_type.clone(), index)
-                                && self.compile_time_constants.contains_key(name)
+                                && self.symbols.compile_time_constants.contains_key(name)
                             {
                                 base_path.append_dynamic_key((**index).clone())
-                            } else if let Some(val) = self.compile_time_constants.get(name) {
+                            } else if let Some(val) = self.symbols.compile_time_constants.get(name)
+                            {
                                 base_path.append_static_index(*val as i32)
                             } else if self.should_use_dynamic_storage_key(base_type.clone(), index)
                             {
@@ -1012,7 +915,7 @@ impl<'a> ExpressionEvaluator<'a> {
                         }
                     }
                     Expression::Identifier(var) => {
-                        if let Some(const_value) = self.compile_time_constants.get(var) {
+                        if let Some(const_value) = self.symbols.compile_time_constants.get(var) {
                             let value = *const_value as i32;
                             match op {
                                 BinaryOp::Add => {
@@ -1176,8 +1079,11 @@ impl<'a> ExpressionEvaluator<'a> {
                                 }
                             }
                         } else {
-                            if self.variable_storage_paths.contains_key(var)
-                                && matches!(self.variable_types.get(var), Some(CobbleType::String))
+                            if self.symbols.variable_storage_paths.contains_key(var)
+                                && matches!(
+                                    self.symbols.variable_types.get(var),
+                                    Some(CobbleType::String)
+                                )
                             {
                                 return Err(format!(
                                     "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
@@ -1185,6 +1091,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                 ).into());
                             }
                             let var_obj = self
+                                .symbols
                                 .variable_objectives
                                 .get(var)
                                 .unwrap_or(&"temp".to_string())
@@ -1365,4 +1272,60 @@ impl<'a> ExpressionEvaluator<'a> {
 
         Ok(commands)
     }
+}
+
+/// Storage path that holds the arguments of call `id` while they are built.
+pub(in crate::transpiler) fn call_args_path(id: u32) -> String {
+    format!("_call_args_{}", id)
+}
+
+/// The commands around a call to a function with parameters. The arguments
+/// are built under [`call_args_path`] by `argument_commands`, then copied to
+/// `args` for `call`. A caller that has parameters of its own saves its
+/// `args` first and gets them back after the call.
+pub(in crate::transpiler) fn staged_call_commands(
+    namespace: &str,
+    id: u32,
+    preserve_caller_args: bool,
+    argument_commands: Vec<String>,
+    call: String,
+) -> Vec<String> {
+    let call_path = call_args_path(id);
+    let caller_path = format!("_caller_args_{}", id);
+    let mut commands = Vec::new();
+    if preserve_caller_args {
+        commands.push(format!(
+            "data remove storage {}:global {}",
+            namespace, caller_path
+        ));
+        commands.push(format!(
+            "data modify storage {}:global {} set from storage {}:global args",
+            namespace, caller_path, namespace
+        ));
+    }
+    commands.push(format!(
+        "data remove storage {}:global {}",
+        namespace, call_path
+    ));
+    commands.extend(argument_commands);
+    commands.push(format!(
+        "data modify storage {}:global args set from storage {}:global {}",
+        namespace, namespace, call_path
+    ));
+    commands.push(call);
+    if preserve_caller_args {
+        commands.push(format!(
+            "data modify storage {}:global args set from storage {}:global {}",
+            namespace, namespace, caller_path
+        ));
+        commands.push(format!(
+            "data remove storage {}:global {}",
+            namespace, caller_path
+        ));
+    }
+    commands.push(format!(
+        "data remove storage {}:global {}",
+        namespace, call_path
+    ));
+    commands
 }

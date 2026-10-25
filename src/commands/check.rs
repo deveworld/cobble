@@ -7,7 +7,7 @@ use crate::diagnostics::{
 };
 use crate::error::report_file_source_diagnostics;
 use crate::pack_format::{PackFormat, SUPPORTED_PACK_FORMAT};
-use crate::transpiler::Transpiler;
+use crate::transpiler::{Transpiler, TranspilerOptions};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -505,11 +505,13 @@ fn semantic_check_diagnostics(
         .map(|config| config_dir.join(&config.build.output))
         .unwrap_or_else(|| config_dir.join(".cobble-check-output"));
 
-    let mut transpiler = Transpiler::new(namespace, output_dir);
-    transpiler.set_pack_format(pack_format);
-    transpiler.set_stdlib_version(stdlib_version);
-    transpiler.set_experimental_resource_pack(experimental_resource_pack);
-    transpiler.set_source_display_root(config_dir.to_path_buf());
+    let mut transpiler = Transpiler::with_options(TranspilerOptions {
+        pack_format,
+        stdlib_version: Some(stdlib_version),
+        experimental_resource_pack,
+        source_display_root: Some(config_dir.to_path_buf()),
+        ..TranspilerOptions::new(namespace, output_dir)
+    });
 
     // Keep checking the remaining files after a failure so one run reveals
     // every file's first semantic error. A file whose imports failed replays

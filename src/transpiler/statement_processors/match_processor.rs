@@ -27,7 +27,7 @@ impl Transpiler {
                     .params
                     .iter()
                     .any(|param| param == name)
-                    || self.compile_time_constants.contains_key(name)
+                    || self.symbols.compile_time_constants.contains_key(name)
                 {
                     let commands =
                         self.evaluate_expression_to_target(&match_stmt.value, &temp_var)?;
@@ -37,7 +37,7 @@ impl Transpiler {
                 } else {
                     // A storage-backed string/list/map has no meaningful score,
                     // so copying it as one would silently always hit `case _`.
-                    if let Some(var_type) = self.variable_types.get(name) {
+                    if let Some(var_type) = self.symbols.variable_types.get(name) {
                         if matches!(
                             var_type,
                             CobbleType::String | CobbleType::List | CobbleType::Map
@@ -50,6 +50,7 @@ impl Transpiler {
                         }
                     }
                     let obj = self
+                        .symbols
                         .variable_objectives
                         .get(name)
                         .unwrap_or(&"temp".to_string())

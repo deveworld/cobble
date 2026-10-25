@@ -18,6 +18,16 @@ def my_function():
     /say Hello, world!
 ```
 
+In a block header, a `#` that starts a name before the closing `:` is part of
+the header, so fake players and tags work there. A `#` after the `:` starts a
+comment:
+
+```python
+def check():
+    if score #round game matches 3:  # the last round
+        /say Final round
+```
+
 ## Data Types
 
 ### Numbers
@@ -32,6 +42,11 @@ Numbers are internally stored as Minecraft scoreboard values.
 ```python
 message = "Hello, world!"
 ```
+
+Strings take the escapes Python takes: `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, and
+`\uXXXX`, such as `\u00a7` for `§`. A backslash before any other character
+stays in the string. Generated commands keep the escapes, so a `\n` reaches
+storage and text components as a line break.
 
 ### Booleans
 ```python

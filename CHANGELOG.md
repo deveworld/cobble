@@ -54,7 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compiler errors report the file, line, and column of the statement that
   caused them in `cobble build`, `cobble check`, and the browser compiler, and
   the variable placeholder error shows its example with indentation.
-- Library users: `TranspileError` gains a `location` field.
+- Library users: `TranspileError` gains a `location` field, and
+  `Transpiler::with_options(TranspilerOptions { .. })` replaces the
+  `set_description`, `set_pack_format`, `set_stdlib_version`, and other build
+  setters. Set the validation summary on `transpiler.data_pack`.
 - Each pack keeps its numeric variables and internal helper scores on its own
   objective, `<namespace>.vars`, so Cobble packs no longer overwrite each
   other's variables. The shared `temp`, `math`, and `__internal__` objectives
@@ -86,6 +89,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch ran.
 - Constant folding uses the scoreboard's 32-bit arithmetic, so a folded
   expression and the same expression on variables agree on overflow.
+- A `#name` in a block header, such as the fake player in
+  `if score #round game matches 3:` or the tag in `as @a[tag=#x]:`, is part
+  of the header instead of starting a comment.
+- A raw command with an apostrophe, such as `/say it's done # note`, drops
+  its trailing comment.
+- A `]` inside a quoted selector value (`@e[name="a]b"]`) no longer ends the
+  selector.
+- String escapes decode as in Python: `"a\nb"` holds a line break, and a
+  backslash before another character stays. The escape used to be dropped,
+  leaving `anb`. Storage values and map keys keep the escape in the
+  generated command.
+- Parse errors after indentation with wide spaces such as U+3000 report the
+  character column.
+- `cobble build --validate` removes its staging folder when writing the pack
+  fails, and `--zip` writes the entries in a stable order.
 - A raw execute header `unless A or B:` compiles to `unless A unless B`
   instead of being written unchanged as an invalid command.
 - Raw `if`/`unless` headers no longer split on `or` or `and` inside quotes or

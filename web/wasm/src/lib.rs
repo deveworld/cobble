@@ -21,7 +21,7 @@ pub mod transpiler;
 use pack_format::{SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
 use transpiler::{
     BuildManifestInput, GeneratedCommand, GeneratedCommandKind, SourceMap, SourceMapEntry,
-    Transpiler,
+    Transpiler, TranspilerOptions,
 };
 
 const DEFAULT_NAMESPACE: &str = "cobble";
@@ -163,14 +163,16 @@ fn compile(
     }
     let program = located.program;
 
-    let mut transpiler = Transpiler::new(namespace.to_string(), PathBuf::from("cobble-web-demo"));
-    transpiler.set_description(description.to_string());
-    transpiler.set_pack_format(SUPPORTED_PACK_FORMAT);
-    transpiler.set_experimental_resource_pack(experimental_resource_pack);
-    transpiler.set_build_input(BuildManifestInput {
-        source: "demo.cbl".to_string(),
-        entry_points: Vec::new(),
-        compiled_files: vec!["demo.cbl".to_string()],
+    let mut transpiler = Transpiler::with_options(TranspilerOptions {
+        description: Some(description.to_string()),
+        pack_format: SUPPORTED_PACK_FORMAT,
+        experimental_resource_pack,
+        build_input: Some(BuildManifestInput {
+            source: "demo.cbl".to_string(),
+            entry_points: Vec::new(),
+            compiled_files: vec!["demo.cbl".to_string()],
+        }),
+        ..TranspilerOptions::new(namespace.to_string(), PathBuf::from("cobble-web-demo"))
     });
     transpiler.set_current_file_with_source(Path::new("demo.cbl"), source);
     transpiler

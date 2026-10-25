@@ -9,7 +9,9 @@ def setup():
     /gamerule spawn_mobs false
 ```
 
-A `#` comment after a command is removed from the output.
+A `#` comment after a command is removed from the output. The `#` needs a
+space before and after it, so `#` inside a name, such as the fake player
+`#count`, stays in the command.
 
 ## JSON Text
 

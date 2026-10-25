@@ -3,23 +3,34 @@ use crate::parser::{ProgramSpanTable, StatementSpan};
 
 use super::{GeneratedCommand, GeneratedCommandKind, SourceLocation, Transpiler};
 use std::collections::{HashMap, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Where each statement and raw command of each source file starts, queued
+/// in source order. Lowering takes the next location for the text it is
+/// compiling.
+#[derive(Default)]
+pub(in crate::transpiler) struct SourceLocations {
+    pub(in crate::transpiler) raw_commands:
+        HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
+    pub(in crate::transpiler) statements:
+        HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
+}
 
 impl Transpiler {
     pub fn set_current_file(&mut self, file_path: &Path) {
         if let Some(parent) = file_path.parent() {
-            self.current_file_dir = parent.to_path_buf();
+            self.imports.current_dir = parent.to_path_buf();
         }
 
         // Add main file to import stack and imported_files for circular import detection.
         let canonical_path = file_path
             .canonicalize()
             .unwrap_or_else(|_| file_path.to_path_buf());
-        if !self.import_stack.contains(&canonical_path) {
-            self.import_stack.push(canonical_path.clone());
-            self.imported_files.insert(canonical_path.clone());
+        if !self.imports.stack.contains(&canonical_path) {
+            self.imports.stack.push(canonical_path.clone());
+            self.imports.files.insert(canonical_path.clone());
         }
-        self.current_file_path = Some(canonical_path);
+        self.imports.current_file = Some(canonical_path);
     }
 
     pub fn set_current_file_with_source(&mut self, file_path: &Path, source: &str) {
@@ -127,9 +138,11 @@ impl Transpiler {
                 .push_back(source_location);
         }
 
-        self.raw_command_locations
+        self.source_locations
+            .raw_commands
             .insert(canonical_path.clone(), raw_locations);
-        self.statement_locations
+        self.source_locations
+            .statements
             .insert(canonical_path, statement_locations);
     }
 
@@ -155,9 +168,11 @@ impl Transpiler {
             );
         }
 
-        self.raw_command_locations
+        self.source_locations
+            .raw_commands
             .insert(canonical_path.clone(), raw_locations);
-        self.statement_locations
+        self.source_locations
+            .statements
             .insert(canonical_path, statement_locations);
     }
 
@@ -217,8 +232,9 @@ impl Transpiler {
         &mut self,
         command: &str,
     ) -> Option<SourceLocation> {
-        let file_path = self.current_file_path.as_ref()?;
-        self.raw_command_locations
+        let file_path = self.imports.current_file.as_ref()?;
+        self.source_locations
+            .raw_commands
             .get_mut(file_path)
             .and_then(|commands| commands.get_mut(command))
             .and_then(VecDeque::pop_front)
@@ -229,8 +245,9 @@ impl Transpiler {
         command: &str,
     ) -> Option<SourceLocation> {
         let key = Self::source_line_key(command);
-        let file_path = self.current_file_path.as_ref()?;
-        self.statement_locations
+        let file_path = self.imports.current_file.as_ref()?;
+        self.source_locations
+            .statements
             .get_mut(file_path)
             .and_then(|statements| statements.get_mut(&key))
             .and_then(VecDeque::pop_front)
@@ -241,8 +258,8 @@ impl Transpiler {
         statement: &Statement,
     ) -> Option<SourceLocation> {
         let keys = Self::statement_source_keys(statement);
-        let file_path = self.current_file_path.as_ref()?;
-        let statements = self.statement_locations.get_mut(file_path)?;
+        let file_path = self.imports.current_file.as_ref()?;
+        let statements = self.source_locations.statements.get_mut(file_path)?;
         // Statements are lowered in source order, so the earliest pending
         // location among the candidate keys is this statement's. Taking the
         // first key with any location could hand `asat @p:` the location of a
@@ -309,8 +326,7 @@ impl Transpiler {
 
             match ch {
                 '"' | '\'' => quote = Some(ch),
-                '#' if crate::parser::tokenizer::tag_reference_len(&line[index + 1..])
-                    .is_some() => {}
+                '#' if !crate::parser::tokenizer::hash_starts_comment(line, index) => {}
                 '#' => return Some(&line[..index]),
                 _ => {}
             }

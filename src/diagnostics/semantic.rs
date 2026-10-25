@@ -2877,7 +2877,7 @@ fn strip_comment_preserving_strings(text: &str) -> String {
                 quote = Some(ch);
                 output.push(ch);
             }
-            '#' if crate::parser::tokenizer::tag_reference_len(&text[index + 1..]).is_some() => {
+            '#' if !crate::parser::tokenizer::hash_starts_comment(text, index) => {
                 output.push(ch);
             }
             '#' => break,

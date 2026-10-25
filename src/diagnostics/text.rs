@@ -301,7 +301,7 @@ pub(super) fn mask_non_code(line: &str) -> String {
                 quote = Some(ch);
                 output.push('_');
             }
-            '#' if crate::parser::tokenizer::tag_reference_len(&line[index + 1..]).is_some() => {
+            '#' if !crate::parser::tokenizer::hash_starts_comment(line, index) => {
                 output.push(ch);
             }
             '#' => {

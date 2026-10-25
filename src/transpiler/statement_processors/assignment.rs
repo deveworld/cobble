@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
-use crate::transpiler::{GeneratedCommandKind, ModuleLevelAssignment};
+use crate::transpiler::{escape_quoted, GeneratedCommandKind, ModuleLevelAssignment};
 use crate::transpiler::{TranspileError, Transpiler};
 
 /// How an assignment's *target* routes it. Produced by
@@ -279,11 +279,13 @@ impl Transpiler {
         self.check_type_assignment(&assign.target, &value_type)?;
 
         // Record the variable's type
-        self.variable_types
+        self.symbols
+            .variable_types
             .insert(assign.target.clone(), value_type);
 
         // Store the variable value for later use
-        self.variables
+        self.symbols
+            .variables
             .insert(assign.target.clone(), assign.value.clone());
 
         // If we're not in a function, store as module-level variable
@@ -297,7 +299,7 @@ impl Transpiler {
             &assign.value,
             Expression::Array(_) | Expression::Map(_) | Expression::String(_)
         ) {
-            self.variable_storage_paths.remove(&assign.target);
+            self.symbols.variable_storage_paths.remove(&assign.target);
         }
 
         match self.classify_assignment_value(&assign.target, &assign.value) {
@@ -433,14 +435,18 @@ impl Transpiler {
         match &assign.value {
             Expression::Array(_) | Expression::Map(_) | Expression::String(_) => {
                 let storage_path = format!("vars.{}", assign.target);
-                self.variable_storage_paths
+                self.symbols
+                    .variable_storage_paths
                     .insert(assign.target.clone(), storage_path);
             }
             _ => {
                 self.data_pack.track_objective("temp");
-                self.variable_objectives
+                self.symbols
+                    .variable_objectives
                     .insert(assign.target.clone(), "temp".to_string());
-                self.scoreboard_variables.insert(assign.target.clone());
+                self.symbols
+                    .scoreboard_variables
+                    .insert(assign.target.clone());
             }
         }
         self.module_level_vars
@@ -458,9 +464,12 @@ impl Transpiler {
         // The expression is a constant - fold it at compile time
         if let Some(ref mut commands) = self.current_function {
             self.data_pack.track_objective("temp");
-            self.variable_objectives
+            self.symbols
+                .variable_objectives
                 .insert(assign.target.clone(), "temp".to_string());
-            self.scoreboard_variables.insert(assign.target.clone());
+            self.symbols
+                .scoreboard_variables
+                .insert(assign.target.clone());
 
             // Warn if number exceeds scoreboard range
             if const_value > i32::MAX as f64 || const_value < i32::MIN as f64 {
@@ -501,9 +510,12 @@ impl Transpiler {
         assign: &Assignment,
     ) -> Result<(), TranspileError> {
         self.data_pack.track_objective("temp");
-        self.variable_objectives
+        self.symbols
+            .variable_objectives
             .insert(assign.target.clone(), "temp".to_string());
-        self.scoreboard_variables.insert(assign.target.clone());
+        self.symbols
+            .scoreboard_variables
+            .insert(assign.target.clone());
 
         let processed_condition = self.preprocess_condition(&assign.value)?;
         let translated = self.translate_condition(&processed_condition)?;
@@ -545,9 +557,12 @@ impl Transpiler {
         assign: &Assignment,
     ) -> Result<(), TranspileError> {
         self.data_pack.track_objective("temp");
-        self.variable_objectives
+        self.symbols
+            .variable_objectives
             .insert(assign.target.clone(), "temp".to_string());
-        self.scoreboard_variables.insert(assign.target.clone());
+        self.symbols
+            .scoreboard_variables
+            .insert(assign.target.clone());
         let expr_commands = self.evaluate_expression_to_target(&assign.value, &assign.target)?;
 
         if let Some(ref mut commands) = self.current_function {
@@ -564,7 +579,8 @@ impl Transpiler {
         assign: &Assignment,
     ) -> Result<(), TranspileError> {
         let storage_path = format!("vars.{}", assign.target);
-        self.variable_storage_paths
+        self.symbols
+            .variable_storage_paths
             .insert(assign.target.clone(), storage_path.clone());
 
         let value_commands = self.storage_value_commands(&storage_path, &assign.value)?;
@@ -627,9 +643,12 @@ impl Transpiler {
                 // This means they were effectively compile-time only or broken.
                 // Let's fix it by using scoreboard for boolean.
                 self.data_pack.track_objective("temp");
-                self.variable_objectives
+                self.symbols
+                    .variable_objectives
                     .insert(assign.target.clone(), "temp".to_string());
-                self.scoreboard_variables.insert(assign.target.clone());
+                self.symbols
+                    .scoreboard_variables
+                    .insert(assign.target.clone());
                 let val = if *b { 1 } else { 0 };
                 commands.push(format!(
                     "scoreboard players set {} temp {}",
@@ -639,9 +658,12 @@ impl Transpiler {
             Expression::Number(n) => {
                 // Direct number assignment
                 self.data_pack.track_objective("temp");
-                self.variable_objectives
+                self.symbols
+                    .variable_objectives
                     .insert(assign.target.clone(), "temp".to_string());
-                self.scoreboard_variables.insert(assign.target.clone());
+                self.symbols
+                    .scoreboard_variables
+                    .insert(assign.target.clone());
 
                 // Warn if number exceeds scoreboard range
                 if *n > i32::MAX as f64 || *n < i32::MIN as f64 {
@@ -676,12 +698,13 @@ impl Transpiler {
             }
             Expression::Identifier(var) => {
                 // Check if source is a storage variable (Array/Map)
-                let src_path_opt = self.variable_storage_paths.get(var).cloned();
+                let src_path_opt = self.symbols.variable_storage_paths.get(var).cloned();
                 if let Some(src_path) = src_path_opt {
                     // Storage copy: target = src
                     // Mark target as storage variable
                     let target_path = format!("vars.{}", assign.target);
-                    self.variable_storage_paths
+                    self.symbols
+                        .variable_storage_paths
                         .insert(assign.target.clone(), target_path.clone());
 
                     let namespace = self.data_pack.namespace.clone();
@@ -692,11 +715,15 @@ impl Transpiler {
                 } else {
                     // Variable-to-variable assignment (Scoreboard)
                     self.data_pack.track_objective("temp");
-                    self.variable_objectives
+                    self.symbols
+                        .variable_objectives
                         .insert(assign.target.clone(), "temp".to_string());
-                    self.scoreboard_variables.insert(assign.target.clone());
+                    self.symbols
+                        .scoreboard_variables
+                        .insert(assign.target.clone());
 
                     let var_obj = self
+                        .symbols
                         .variable_objectives
                         .get(var)
                         .unwrap_or(&"temp".to_string())
@@ -715,9 +742,12 @@ impl Transpiler {
                 // routes every Pow assignment to the expression evaluator, which
                 // handles both constant and runtime exponents.
                 self.data_pack.track_objective("temp");
-                self.variable_objectives
+                self.symbols
+                    .variable_objectives
                     .insert(assign.target.clone(), "temp".to_string());
-                self.scoreboard_variables.insert(assign.target.clone());
+                self.symbols
+                    .scoreboard_variables
+                    .insert(assign.target.clone());
 
                 match (&**left, &**right) {
                     (Expression::Identifier(var), Expression::Number(n)) => {
@@ -835,6 +865,7 @@ impl Transpiler {
         }
         let value = *n as i32;
         let var_obj = self
+            .symbols
             .variable_objectives
             .get(var)
             .unwrap_or(&"temp".to_string())
@@ -1007,7 +1038,9 @@ impl Transpiler {
         // Handle Number + Variable (e.g., score = 5 + x)
         self.data_pack.track_objective("temp");
         // Mark target as scoreboard-backed
-        self.scoreboard_variables.insert(assign.target.clone());
+        self.symbols
+            .scoreboard_variables
+            .insert(assign.target.clone());
         if n.fract() != 0.0 {
             eprintln!(
                                     "⚠️  Warning: Float value {} in binary operation will lose precision.\n\
@@ -1017,6 +1050,7 @@ impl Transpiler {
         }
         let value = *n as i32;
         let var_obj = self
+            .symbols
             .variable_objectives
             .get(var)
             .unwrap_or(&"temp".to_string())
@@ -1067,7 +1101,7 @@ impl Transpiler {
             BinaryOp::Div => {
                 // score = value / var (not commonly used, but implemented)
                 // Check if var is a compile-time constant with value 0
-                if let Some(const_val) = self.compile_time_constants.get(var) {
+                if let Some(const_val) = self.symbols.compile_time_constants.get(var) {
                     if *const_val == 0.0 {
                         return Err(format!(
                                                 "Division by zero: Variable '{}' has constant value 0.\n\
@@ -1093,7 +1127,7 @@ impl Transpiler {
             BinaryOp::Mod => {
                 // score = value % var
                 // Check if var is a compile-time constant with value 0
-                if let Some(const_val) = self.compile_time_constants.get(var) {
+                if let Some(const_val) = self.symbols.compile_time_constants.get(var) {
                     if *const_val == 0.0 {
                         return Err(format!(
                                                 "Modulo by zero: Variable '{}' has constant value 0.\n\
@@ -1131,12 +1165,13 @@ impl Transpiler {
         op: &BinaryOp,
         var2: &str,
     ) -> Result<(), TranspileError> {
-        let left_const = self.compile_time_constants.get(var1).copied();
-        let right_const = self.compile_time_constants.get(var2).copied();
+        let left_const = self.symbols.compile_time_constants.get(var1).copied();
+        let right_const = self.symbols.compile_time_constants.get(var2).copied();
 
         if let Some(value) = left_const {
             let num = value as i32;
             let var_obj = self
+                .symbols
                 .variable_objectives
                 .get(var2)
                 .unwrap_or(&"temp".to_string())
@@ -1199,6 +1234,7 @@ impl Transpiler {
         } else if let Some(value) = right_const {
             let num = value as i32;
             let var1_obj = self
+                .symbols
                 .variable_objectives
                 .get(var1)
                 .unwrap_or(&"temp".to_string())
@@ -1270,11 +1306,13 @@ impl Transpiler {
         } else {
             // Handle variable op variable (e.g., z = x * y)
             let var1_obj = self
+                .symbols
                 .variable_objectives
                 .get(var1)
                 .unwrap_or(&"temp".to_string())
                 .clone();
             let var2_obj = self
+                .symbols
                 .variable_objectives
                 .get(var2)
                 .unwrap_or(&"temp".to_string())
@@ -1308,7 +1346,7 @@ impl Transpiler {
                 }
                 BinaryOp::Div => {
                     // Check if var2 is a compile-time constant with value 0
-                    if let Some(const_val) = self.compile_time_constants.get(var2) {
+                    if let Some(const_val) = self.symbols.compile_time_constants.get(var2) {
                         if *const_val == 0.0 {
                             return Err(format!(
                                                     "Division by zero: Variable '{}' has constant value 0.\n\
@@ -1329,7 +1367,7 @@ impl Transpiler {
                 }
                 BinaryOp::Mod => {
                     // Check if var2 is a compile-time constant with value 0
-                    if let Some(const_val) = self.compile_time_constants.get(var2) {
+                    if let Some(const_val) = self.symbols.compile_time_constants.get(var2) {
                         if *const_val == 0.0 {
                             return Err(format!(
                                                     "Modulo by zero: Variable '{}' has constant value 0.\n\
@@ -1412,7 +1450,7 @@ impl Transpiler {
                 }
             }
             Expression::String(s) => {
-                let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                let escaped = escape_quoted(s);
                 Ok(format!("\"{}\"", escaped))
             }
             Expression::Boolean(b) => Ok(if *b {
@@ -1448,7 +1486,7 @@ impl Transpiler {
                 Ok(result)
             }
             Expression::Identifier(name) => {
-                if let Some(val) = self.compile_time_constants.get(name) {
+                if let Some(val) = self.symbols.compile_time_constants.get(name) {
                     Ok(format!("{}", val))
                 } else {
                     Err(format!("Runtime variable '{}' cannot be serialized as static SNBT. Use the storage runtime materialization path or a compile-time constant.", name).into())
@@ -1470,7 +1508,7 @@ impl Transpiler {
             return key.to_string();
         }
 
-        let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+        let escaped = escape_quoted(key);
         format!("\"{}\"", escaped)
     }
 }

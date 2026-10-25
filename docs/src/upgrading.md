@@ -119,6 +119,14 @@ objective.
   to use the model. A static file at that path replaces the generated one.
   Models in the `minecraft` namespace get no definition, so vanilla items keep
   theirs.
+- **String escapes.** 0.10 dropped the backslash of every escape, so
+  `"a\nb"` became `anb`. 0.11 decodes `\n`, `\t`, `\r`, and `\uXXXX` as
+  Python does and keeps a backslash before any other character. Check strings
+  that contain a backslash, such as Windows paths.
+- **`#` in block headers.** 0.10 read every `#` in a header as the start of a
+  comment unless it began a namespaced tag, so `if score #round game matches
+  3:` failed to parse. 0.11 reads a `#name` before the header's `:` as part of
+  the header.
 - **`unless A or B`.** A raw execute header such as
   `unless entity @a[tag=x] or entity @a[tag=y]:` was written unchanged, which
   is not a valid command. It now compiles to

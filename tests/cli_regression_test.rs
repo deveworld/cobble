@@ -4977,6 +4977,46 @@ resource_pack = true
 }
 
 #[test]
+fn cli_build_zip_lists_entries_in_a_stable_order() {
+    // Entries follow the folder tree with each folder's children sorted by
+    // name, so the same pack always gives the same ZIP.
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(
+        temp_dir.path(),
+        r#"def zeta():
+    /say z
+
+def alpha():
+    /say a
+
+def middle():
+    if score x temp matches 1:
+        /say one
+        /say two
+"#,
+    );
+    let output_dir = temp_dir.path().join("pack");
+    run_ok(
+        cobble()
+            .arg("build")
+            .arg(&input)
+            .arg("--zip")
+            .arg("-o")
+            .arg(&output_dir),
+        "build --zip",
+    );
+    let zip_file = fs::File::open(temp_dir.path().join("cobble.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect();
+    let mut sorted = names.clone();
+    sorted.sort_by(|a, b| a.split('/').cmp(b.split('/')));
+    assert_eq!(names, sorted);
+    assert!(names.len() > 3, "{names:?}");
+}
+
+#[test]
 fn cli_build_experimental_resource_pack_flag_writes_assets_zip_and_manifest() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(

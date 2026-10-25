@@ -1,6 +1,7 @@
 use crate::ast::Expression;
-use crate::transpiler::TranspileError;
-use std::collections::{HashMap, HashSet};
+use crate::transpiler::symbols::Symbols;
+use crate::transpiler::{escape_quoted, TranspileError};
+use std::collections::HashMap;
 
 /// A `say` command that shows Cobble variables, run as a macro in a helper
 /// function. See [`CommandProcessor::say_macro`].
@@ -62,40 +63,12 @@ fn macro_argument_names(text: &str) -> Vec<String> {
 
 /// Process Minecraft command strings with variable substitution
 pub struct CommandProcessor<'a> {
-    pub namespace: String,
-    pub current_params: &'a [String],
-    pub scoreboard_variables: &'a HashSet<String>,
-    pub variables: &'a HashMap<String, Expression>,
-    pub variable_objectives: &'a HashMap<String, String>,
-    pub variable_storage_paths: &'a HashMap<String, String>,
-    pub selector_aliases: &'a HashMap<String, String>,
-    pub compile_time_constants: &'a HashMap<String, f64>,
+    pub(in crate::transpiler) namespace: String,
+    pub(in crate::transpiler) current_params: &'a [String],
+    pub(in crate::transpiler) symbols: &'a Symbols,
 }
 
 impl<'a> CommandProcessor<'a> {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        namespace: String,
-        current_params: &'a [String],
-        scoreboard_variables: &'a HashSet<String>,
-        variables: &'a HashMap<String, Expression>,
-        variable_objectives: &'a HashMap<String, String>,
-        variable_storage_paths: &'a HashMap<String, String>,
-        selector_aliases: &'a HashMap<String, String>,
-        compile_time_constants: &'a HashMap<String, f64>,
-    ) -> Self {
-        Self {
-            namespace,
-            current_params,
-            scoreboard_variables,
-            variables,
-            variable_objectives,
-            variable_storage_paths,
-            selector_aliases,
-            compile_time_constants,
-        }
-    }
-
     fn is_param(&self, name: &str) -> bool {
         self.current_params.contains(&name.to_string())
     }
@@ -122,7 +95,10 @@ impl<'a> CommandProcessor<'a> {
             result = format!("${}", result);
         }
 
-        Ok(expand_selector_aliases(&result, self.selector_aliases))
+        Ok(expand_selector_aliases(
+            &result,
+            &self.symbols.selector_aliases,
+        ))
     }
 
     /// Plans a `say` command whose text shows Cobble variables. `say` adds
@@ -145,10 +121,11 @@ impl<'a> CommandProcessor<'a> {
             if arguments.iter().any(|argument| argument.name == name) {
                 continue;
             }
-            let source = match self.variable_storage_paths.get(&name) {
+            let source = match self.symbols.variable_storage_paths.get(&name) {
                 Some(path) => SayMacroSource::Storage { path: path.clone() },
                 None => SayMacroSource::Score {
                     objective: self
+                        .symbols
                         .variable_objectives
                         .get(&name)
                         .cloned()
@@ -178,7 +155,10 @@ impl<'a> CommandProcessor<'a> {
         let text = text.trim();
         let text = text.strip_prefix('$').unwrap_or(text);
         Ok(Some(SayMacro {
-            command: format!("${}", expand_selector_aliases(text, self.selector_aliases)),
+            command: format!(
+                "${}",
+                expand_selector_aliases(text, &self.symbols.selector_aliases)
+            ),
             arguments,
         }))
     }
@@ -271,13 +251,14 @@ impl<'a> CommandProcessor<'a> {
                             replacements.push((i, j, replacement));
                             has_macro_vars = true;
                             i = j; // Skip past this replacement
-                        } else if let Some(const_value) = self.compile_time_constants.get(var_name)
+                        } else if let Some(const_value) =
+                            self.symbols.compile_time_constants.get(var_name)
                         {
                             let replacement = self.format_constant(*const_value);
                             replacements.push((i, j, replacement));
                             i = j;
-                        } else if self.variable_storage_paths.contains_key(var_name)
-                            || self.scoreboard_variables.contains(var_name)
+                        } else if self.symbols.variable_storage_paths.contains_key(var_name)
+                            || self.symbols.scoreboard_variables.contains(var_name)
                         {
                             // Storage or scoreboard variable found - collect for special handling
                             scoreboard_vars_found.push((i, j, var_name.to_string()));
@@ -285,7 +266,7 @@ impl<'a> CommandProcessor<'a> {
                                 replacements.push((i, j, format!("$({})", var_name)));
                             }
                             i = j; // Skip past this variable
-                        } else if let Some(value) = self.variables.get(var_name) {
+                        } else if let Some(value) = self.symbols.variables.get(var_name) {
                             // Constant variable - inline the value
                             let replacement = match value {
                                 Expression::Number(n) => n.to_string(),
@@ -329,12 +310,7 @@ impl<'a> CommandProcessor<'a> {
                                     let inside_quotes = is_inside_quotes(&chars[..i]);
 
                                     // Escape quotes, backslashes, and special characters
-                                    let escaped = s
-                                        .replace('\\', "\\\\")
-                                        .replace('"', "\\\"")
-                                        .replace('\n', "\\n")
-                                        .replace('\r', "\\r")
-                                        .replace('\t', "\\t");
+                                    let escaped = escape_quoted(s);
 
                                     // Only wrap in quotes if we're NOT already inside quotes
                                     if inside_quotes {
@@ -441,13 +417,14 @@ impl<'a> CommandProcessor<'a> {
     }
 
     fn variable_text_component(&self, var_name: &str) -> serde_json::Value {
-        if let Some(storage_path) = self.variable_storage_paths.get(var_name) {
+        if let Some(storage_path) = self.symbols.variable_storage_paths.get(var_name) {
             serde_json::json!({
                 "nbt": storage_path,
                 "storage": format!("{}:global", self.namespace)
             })
         } else {
             let objective = self
+                .symbols
                 .variable_objectives
                 .get(var_name)
                 .map(|s| s.as_str())
@@ -779,19 +756,13 @@ impl<'a> CommandProcessor<'a> {
                 // Add text before variable
                 if pos > 0 {
                     let text_before = &remaining[..pos];
-                    json_components.push(format!(
-                        "{{\"text\":\"{}\"}}",
-                        text_before
-                            .replace('\\', "\\\\")
-                            .replace('"', "\\\"")
-                            .replace('\n', "\\n")
-                            .replace('\r', "\\r")
-                            .replace('\t', "\\t")
-                    ));
+                    json_components
+                        .push(format!("{{\"text\":\"{}\"}}", escape_quoted(text_before)));
                 }
 
                 // Check if it's a storage variable
-                if let Some(storage_path) = self.variable_storage_paths.get(&next_var_name) {
+                if let Some(storage_path) = self.symbols.variable_storage_paths.get(&next_var_name)
+                {
                     json_components.push(format!(
                         "{{\"nbt\":\"{}\",\"storage\":\"{}:global\"}}",
                         storage_path, self.namespace
@@ -799,6 +770,7 @@ impl<'a> CommandProcessor<'a> {
                 } else {
                     // Add score component - use variable name as the score holder (fake player)
                     let objective = self
+                        .symbols
                         .variable_objectives
                         .get(&next_var_name)
                         .map(|s| s.as_str())
@@ -815,15 +787,7 @@ impl<'a> CommandProcessor<'a> {
             } else {
                 // No more variables, add remaining text
                 if !remaining.is_empty() {
-                    json_components.push(format!(
-                        "{{\"text\":\"{}\"}}",
-                        remaining
-                            .replace('\\', "\\\\")
-                            .replace('"', "\\\"")
-                            .replace('\n', "\\n")
-                            .replace('\r', "\\r")
-                            .replace('\t', "\\t")
-                    ));
+                    json_components.push(format!("{{\"text\":\"{}\"}}", escape_quoted(remaining)));
                 }
                 break;
             }
@@ -943,45 +907,19 @@ fn quoted_text_contents(after_text: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
-    type ProcessorFixture = (
-        Vec<String>,
-        HashSet<String>,
-        HashMap<String, Expression>,
-        HashMap<String, String>,
-        HashMap<String, String>,
-        HashMap<String, String>,
-        HashMap<String, f64>,
-    );
-
-    fn empty_processor_fixture() -> ProcessorFixture {
-        (
-            Vec::new(),
-            HashSet::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-        )
-    }
-
     #[test]
     fn inline_string_variable_after_non_ascii_text_is_char_safe() {
         // Regression: `&result[..i]` used a char index on a byte String and
         // panicked mid-character when non-ASCII text preceded the variable.
-        let (params, scoreboard, mut variables, objectives, storage, aliases, constants) =
-            empty_processor_fixture();
-        variables.insert("msg".to_string(), Expression::String("hello".to_string()));
-        let processor = CommandProcessor::new(
-            "test".to_string(),
-            &params,
-            &scoreboard,
-            &variables,
-            &objectives,
-            &storage,
-            &aliases,
-            &constants,
-        );
+        let mut symbols = Symbols::default();
+        symbols
+            .variables
+            .insert("msg".to_string(), Expression::String("hello".to_string()));
+        let processor = CommandProcessor {
+            namespace: "test".to_string(),
+            current_params: &[],
+            symbols: &symbols,
+        };
 
         let result = processor
             .process_command_string("tellraw @a {\"text\":\"안녕하세요 {msg}\"}")

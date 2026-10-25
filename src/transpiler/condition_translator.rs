@@ -1,4 +1,5 @@
 use crate::ast::{BinaryOp, CobbleType, Expression, UnaryOp};
+use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{TranspileError, Transpiler};
 use std::collections::HashMap;
 
@@ -57,27 +58,10 @@ impl TranslatedCondition {
 
 /// Translates Python-like conditions to Minecraft execute conditions
 pub struct ConditionTranslator<'a> {
-    pub variable_objectives: &'a HashMap<String, String>,
-    pub compile_time_constants: &'a HashMap<String, f64>,
-    pub variable_storage_paths: &'a HashMap<String, String>,
-    pub variable_types: &'a HashMap<String, CobbleType>,
+    pub(in crate::transpiler) symbols: &'a Symbols,
 }
 
 impl<'a> ConditionTranslator<'a> {
-    pub fn new(
-        variable_objectives: &'a HashMap<String, String>,
-        compile_time_constants: &'a HashMap<String, f64>,
-        variable_storage_paths: &'a HashMap<String, String>,
-        variable_types: &'a HashMap<String, CobbleType>,
-    ) -> Self {
-        Self {
-            variable_objectives,
-            compile_time_constants,
-            variable_storage_paths,
-            variable_types,
-        }
-    }
-
     pub fn translate(&self, condition: &Expression) -> Result<TranslatedCondition, TranspileError> {
         // Translate Python-like conditions to Minecraft execute conditions
         match condition {
@@ -105,7 +89,7 @@ impl<'a> ConditionTranslator<'a> {
 
                 // A compile-time constant has no score; fold its truthiness
                 // with the same "value != 0" rule a score variable uses.
-                if let Some(value) = self.compile_time_constants.get(var) {
+                if let Some(value) = self.symbols.compile_time_constants.get(var) {
                     return Ok(TranslatedCondition::Simple(Self::constant_condition(
                         (*value as i32) != 0,
                     )));
@@ -114,6 +98,7 @@ impl<'a> ConditionTranslator<'a> {
                 // A bare value is true when it is not 0, like Python, so
                 // negative numbers count as true.
                 let objective = self
+                    .symbols
                     .variable_objectives
                     .get(var)
                     .unwrap_or(&"temp".to_string())
@@ -273,6 +258,7 @@ impl<'a> ConditionTranslator<'a> {
             Expression::Number(n) => Some(*n as i32),
             Expression::Boolean(b) => Some(if *b { 1 } else { 0 }),
             Expression::Identifier(name) => self
+                .symbols
                 .compile_time_constants
                 .get(name)
                 .map(|value| *value as i32),
@@ -282,10 +268,11 @@ impl<'a> ConditionTranslator<'a> {
 
     fn extract_scoreboard(&self, expr: &Expression) -> Option<(String, String)> {
         if let Expression::Identifier(name) = expr {
-            if self.compile_time_constants.contains_key(name) {
+            if self.symbols.compile_time_constants.contains_key(name) {
                 None
             } else {
                 let objective = self
+                    .symbols
                     .variable_objectives
                     .get(name)
                     .cloned()
@@ -300,8 +287,8 @@ impl<'a> ConditionTranslator<'a> {
     fn reject_storage_backed_operand(&self, expr: &Expression) -> Result<(), TranspileError> {
         if let Expression::Identifier(name) = expr {
             if let Some(message) = Self::storage_backed_condition_error(
-                self.variable_storage_paths,
-                self.variable_types,
+                &self.symbols.variable_storage_paths,
+                &self.symbols.variable_types,
                 name,
             ) {
                 return Err(message.into());

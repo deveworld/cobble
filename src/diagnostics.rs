@@ -388,10 +388,8 @@ fn check_structural_syntax(source: &str, diagnostics: &mut Vec<SourceDiagnostic>
             let next_index = index + ch.len_utf8();
 
             match ch {
-                '#' => match crate::parser::tokenizer::tag_reference_len(&line[next_index..]) {
-                    Some(len) => index = next_index + len,
-                    None => break,
-                },
+                '#' if crate::parser::tokenizer::hash_starts_comment(line, index) => break,
+                '#' => index = next_index,
                 '"' | '\'' => {
                     if line[index..].starts_with(triple_quote_pattern(ch)) {
                         let after_open = index + 3;
