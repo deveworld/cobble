@@ -31,19 +31,20 @@ use crate::ast::*;
 use crate::pack_format::PackFormat;
 use crate::stdlib::EventType;
 use command_processor::CommandProcessor;
+use source_map::SourceLocations;
+use statement_processors::{ImportState, UnrollState};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use stdlib_modules::StdlibState;
+use symbols::{FunctionTable, Symbols};
+
+pub(crate) use condition_lowering::raw_minecraft_condition_verdict;
 
 pub(in crate::transpiler) use capture::FunctionCapture;
-pub(crate) use condition_lowering::raw_minecraft_condition_verdict;
 pub(in crate::transpiler) use const_eval::const_mod;
 pub(in crate::transpiler) use function_context::{FunctionContext, ReturnContext};
 pub(in crate::transpiler) use module_init::ModuleLevelAssignment;
-use source_map::SourceLocations;
-use statement_processors::{ImportState, UnrollState};
-use stdlib_modules::StdlibState;
 pub(in crate::transpiler) use storage_paths::StoragePathPlan;
-use symbols::{FunctionTable, Symbols};
 pub(in crate::transpiler) use types::FunctionReturnKind;
 
 /// Escapes text for a double-quoted JSON or SNBT string. Newlines, tabs, and

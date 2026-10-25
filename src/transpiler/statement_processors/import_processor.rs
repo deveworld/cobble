@@ -44,20 +44,64 @@ impl Transpiler {
             return Ok(());
         }
 
-        // Security: Validate module name to prevent path traversal
-        if import.module.contains("..")
-            || import.module.contains('/')
-            || import.module.contains('\\')
-        {
+        let (import_path, canonical_path) = self.resolve_import_path(&import.module)?;
+
+        // A later `import module` may follow an earlier `from module import ...`.
+        // Re-read just enough metadata to enable qualified `module.func()` calls
+        // without processing the imported statements twice.
+        if self.imports.files.contains(&canonical_path) {
+            if import.items.is_empty() {
+                let (_, located) = Self::read_import(&import_path, &import.module)?;
+                self.register_qualified_function_aliases(&import.module, &located.program);
+            }
+            return Ok(());
+        }
+
+        self.imports.stack.push(canonical_path.clone());
+        self.imports.files.insert(canonical_path.clone());
+        let (source, located) = Self::read_import(&import_path, &import.module)?;
+        let crate::parser::LocatedProgram { program, spans } = located;
+
+        // Nested imports resolve against the imported file's folder.
+        let saved_dir = self.imports.current_dir.clone();
+        let saved_file = self.imports.current_file.clone();
+        if let Some(parent) = import_path.parent() {
+            self.imports.current_dir = parent.to_path_buf();
+        }
+        self.imports.current_file = Some(canonical_path);
+        self.register_source_locations_from_spans(&import_path, &source, &spans);
+
+        // Nested imports first, then the imported statements.
+        for import in &program.imports {
+            self.process_import(import)?;
+        }
+        self.register_program_function_metadata(&program);
+        if import.items.is_empty() {
+            self.register_qualified_function_aliases(&import.module, &program);
+        }
+        for statement in &program.statements {
+            self.process_statement(statement)?;
+        }
+
+        self.imports.current_dir = saved_dir;
+        self.imports.current_file = saved_file;
+        self.imports.stack.pop();
+        Ok(())
+    }
+
+    /// The path of the module file `module` imported from the current file,
+    /// and its canonical form. Rejects names that would leave the folder,
+    /// import chains that are too deep or circular, and missing files.
+    fn resolve_import_path(&self, module: &str) -> Result<(PathBuf, PathBuf), TranspileError> {
+        if module.contains("..") || module.contains('/') || module.contains('\\') {
             return Err(format!(
                 "Invalid module name '{}': Cannot contain path separators or '..'\n\
                 Module names must be simple identifiers (e.g., 'utils', 'helpers')",
-                import.module
+                module
             )
             .into());
         }
 
-        // Security: Limit import depth to prevent stack overflow
         if self.imports.stack.len() >= MAX_IMPORT_DEPTH {
             return Err(format!(
                 "Maximum import depth exceeded ({}).\n\
@@ -67,13 +111,7 @@ impl Transpiler {
             .into());
         }
 
-        // Handle file imports
-        let import_path = self
-            .imports
-            .current_dir
-            .join(format!("{}.cbl", import.module));
-
-        // Canonicalize path for accurate comparison
+        let import_path = self.imports.current_dir.join(format!("{}.cbl", module));
         let canonical_path = import_path.canonicalize().unwrap_or(import_path.clone());
 
         if self.imports.stack.contains(&canonical_path) {
@@ -85,114 +123,44 @@ impl Transpiler {
             .into());
         }
 
-        // Check if file exists
         if !canonical_path.exists() && !import_path.exists() {
             return Err(format!(
                 "Cannot import '{}' from '{}': file '{}' not found",
-                import.module,
+                module,
                 self.current_importer_display(),
                 import_path.display()
             )
             .into());
         }
+        Ok((import_path, canonical_path))
+    }
 
-        // A later `import module` may follow an earlier `from module import ...`.
-        // Re-read just enough metadata to enable qualified `module.func()` calls
-        // without processing the imported statements twice.
-        if self.imports.files.contains(&canonical_path) {
-            if import.items.is_empty() {
-                let source = std::fs::read_to_string(&import_path).map_err(|e| {
-                    format!(
-                        "Failed to read import file '{}': {}",
-                        import_path.display(),
-                        e
-                    )
-                })?;
-                let located =
-                    crate::parser::parse_located_with_diagnostics(&source).map_err(|errors| {
-                        format!(
-                            "Parse failed for '{}': {}",
-                            import.module,
-                            errors
-                                .iter()
-                                .map(|error| format!(
-                                    "{}:{} {}",
-                                    error.span.line, error.span.column, error.message
-                                ))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    })?;
-                self.register_qualified_function_aliases(&import.module, &located.program);
-            }
-            return Ok(()); // Already imported, skip to avoid duplicate generated output
-        }
-
-        // Add to import stack and mark as imported
-        self.imports.stack.push(canonical_path.clone());
-        self.imports.files.insert(canonical_path.clone());
-
-        // Read the file
-        let source = std::fs::read_to_string(&import_path).map_err(|e| {
+    fn read_import(
+        import_path: &Path,
+        module: &str,
+    ) -> Result<(String, crate::parser::LocatedProgram), TranspileError> {
+        let source = std::fs::read_to_string(import_path).map_err(|e| {
             format!(
                 "Failed to read import file '{}': {}",
                 import_path.display(),
                 e
             )
         })?;
-
-        // Parse the imported file
         let located = crate::parser::parse_located_with_diagnostics(&source).map_err(|errors| {
             format!(
                 "Parse failed for '{}': {}",
-                import.module,
+                module,
                 errors
                     .iter()
-                    .map(|error| {
-                        format!(
-                            "{}:{} {}",
-                            error.span.line, error.span.column, error.message
-                        )
-                    })
+                    .map(|error| format!(
+                        "{}:{} {}",
+                        error.span.line, error.span.column, error.message
+                    ))
                     .collect::<Vec<_>>()
                     .join(", ")
             )
         })?;
-        let crate::parser::LocatedProgram { program, spans } = located;
-
-        // Save current file dir
-        let saved_dir = self.imports.current_dir.clone();
-        let saved_file = self.imports.current_file.clone();
-
-        // Set directory for nested imports
-        if let Some(parent) = import_path.parent() {
-            self.imports.current_dir = parent.to_path_buf();
-        }
-        self.imports.current_file = Some(canonical_path.clone());
-        self.register_source_locations_from_spans(&import_path, &source, &spans);
-
-        // Process nested imports first
-        for import in &program.imports {
-            self.process_import(import)?;
-        }
-
-        // Then process imported program statements
-        self.register_program_function_metadata(&program);
-        if import.items.is_empty() {
-            self.register_qualified_function_aliases(&import.module, &program);
-        }
-        for statement in &program.statements {
-            self.process_statement(statement)?;
-        }
-
-        // Restore previous directory
-        self.imports.current_dir = saved_dir;
-        self.imports.current_file = saved_file;
-
-        // Pop from import stack after processing
-        self.imports.stack.pop();
-
-        Ok(())
+        Ok((source, located))
     }
 
     pub(in crate::transpiler) fn current_importer_display(&self) -> String {

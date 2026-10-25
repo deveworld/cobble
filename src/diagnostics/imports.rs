@@ -138,26 +138,27 @@ fn parse_source_file_tree(
     let program = located.program.clone();
 
     let canonical_path = canonical_or_original(path);
-    let mut visited = HashSet::from([canonical_path.clone()]);
-    let mut stack = vec![canonical_path];
-    let mut diagnostics = Vec::new();
-    let mut imported_files = Vec::new();
+    let mut walk = ImportWalk {
+        visited: HashSet::from([canonical_path.clone()]),
+        stack: vec![canonical_path],
+        output: Vec::new(),
+        parsed_imports: Vec::new(),
+    };
     analyze_import_tree(
-        path,
-        &source,
-        &program,
-        &located.spans,
-        &mut visited,
-        &mut stack,
-        &mut diagnostics,
-        &mut imported_files,
+        SourceFileRef {
+            path,
+            source: &source,
+            program: &program,
+            spans: &located.spans,
+        },
+        &mut walk,
     );
 
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
+    if !walk.output.is_empty() {
+        return Err(walk.output);
     }
 
-    let mut parsed_files = imported_files;
+    let mut parsed_files = walk.parsed_imports;
     parsed_files.push(ParsedSourceFile {
         path: path.to_path_buf(),
         source: source.clone(),
@@ -173,20 +174,10 @@ fn parse_source_file_tree(
     Ok(parsed_files)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn analyze_import_tree(
-    current_path: &Path,
-    current_source: &str,
-    current_program: &Program,
-    current_spans: &ProgramSpanTable,
-    visited: &mut HashSet<PathBuf>,
-    stack: &mut Vec<PathBuf>,
-    output: &mut Vec<FileSourceDiagnostics>,
-    parsed_imports: &mut Vec<ParsedSourceFile>,
-) {
-    let current_dir = current_path.parent().unwrap_or_else(|| Path::new("."));
-    let imports = &current_program.imports;
-    let import_spans = &current_spans.imports;
+fn analyze_import_tree(file: SourceFileRef<'_>, walk: &mut ImportWalk) {
+    let current_dir = file.path.parent().unwrap_or_else(|| Path::new("."));
+    let imports = &file.program.imports;
+    let import_spans = &file.spans.imports;
     // The span table's import spans are built 1:1, in order, with the
     // parsed program's imports.
     debug_assert_eq!(imports.len(), import_spans.len());
@@ -197,12 +188,12 @@ fn analyze_import_tree(
         }
 
         let import_span = import_spans.get(import_index).copied();
-        let (line, column) = import_site_position(current_source, import_span, import);
+        let (line, column) = import_site_position(file.source, import_span, import);
 
         if !is_simple_module_name(&import.module) {
-            output.push(FileSourceDiagnostics::new(
-                current_path,
-                current_source,
+            walk.output.push(FileSourceDiagnostics::new(
+                file.path,
+                file.source,
                 vec![SourceDiagnostic::error(
                     "unsupported-import",
                     line,
@@ -219,10 +210,10 @@ fn analyze_import_tree(
         let import_path = current_dir.join(format!("{}.cbl", import.module));
         let canonical_path = canonical_or_original(&import_path);
 
-        if stack.contains(&canonical_path) {
-            output.push(FileSourceDiagnostics::new(
-                current_path,
-                current_source,
+        if walk.stack.contains(&canonical_path) {
+            walk.output.push(FileSourceDiagnostics::new(
+                file.path,
+                file.source,
                 vec![
                     SourceDiagnostic::error(
                         "circular-import",
@@ -232,32 +223,26 @@ fn analyze_import_tree(
                     )
                     .with_help(format!(
                         "Import chain: {}. Import cycles are not supported because they make initialization order ambiguous.",
-                        format_import_chain(stack, &canonical_path)
+                        format_import_chain(&walk.stack, &canonical_path)
                     )),
                 ],
             ));
             continue;
         }
 
-        if visited.contains(&canonical_path) {
-            if let Some(diagnostics) = validate_import_items_from_path(
-                current_path,
-                current_source,
-                current_program,
-                current_spans,
-                import,
-                import_span,
-                &import_path,
-            ) {
-                output.push(diagnostics);
+        if walk.visited.contains(&canonical_path) {
+            if let Some(diagnostics) =
+                validate_import_items_from_path(file, import, import_span, &import_path)
+            {
+                walk.output.push(diagnostics);
             }
             continue;
         }
 
-        if stack.len() >= MAX_IMPORT_DEPTH {
-            output.push(FileSourceDiagnostics::new(
-                current_path,
-                current_source,
+        if walk.stack.len() >= MAX_IMPORT_DEPTH {
+            walk.output.push(FileSourceDiagnostics::new(
+                file.path,
+                file.source,
                 vec![SourceDiagnostic::error(
                     "maximum-import-depth",
                     line,
@@ -266,16 +251,16 @@ fn analyze_import_tree(
                 )
                 .with_help(format!(
                     "Import chain: {}. This usually indicates a circular or excessively deep import chain.",
-                    format_import_chain(stack, &canonical_path)
+                    format_import_chain(&walk.stack, &canonical_path)
                 ))],
             ));
             continue;
         }
 
         if !canonical_path.exists() && !import_path.exists() {
-            output.push(FileSourceDiagnostics::new(
-                current_path,
-                current_source,
+            walk.output.push(FileSourceDiagnostics::new(
+                file.path,
+                file.source,
                 vec![SourceDiagnostic::error(
                     "missing-import",
                     line,
@@ -288,7 +273,7 @@ fn analyze_import_tree(
                 )
                 .with_help(format!(
                     "Importing file: {}. Create the missing `.cbl` file or remove the import.",
-                    current_path.display()
+                    file.path.display()
                 ))],
             ));
             continue;
@@ -297,9 +282,9 @@ fn analyze_import_tree(
         let imported_source = match fs::read_to_string(&import_path) {
             Ok(source) => source,
             Err(error) => {
-                output.push(FileSourceDiagnostics::new(
-                    current_path,
-                    current_source,
+                walk.output.push(FileSourceDiagnostics::new(
+                    file.path,
+                    file.source,
                     vec![SourceDiagnostic::error(
                         "import-read",
                         line,
@@ -310,7 +295,7 @@ fn analyze_import_tree(
                             import_path.display()
                         ),
                     )
-                    .with_help(format!("Importing file: {}", current_path.display()))],
+                    .with_help(format!("Importing file: {}", file.path.display()))],
                 ));
                 continue;
             }
@@ -319,8 +304,8 @@ fn analyze_import_tree(
         let imported_located = match super::parse_source_located(&imported_source) {
             Ok(located) => located,
             Err(mut diagnostics) => {
-                add_import_chain_help(&mut diagnostics, stack, &canonical_path);
-                output.push(FileSourceDiagnostics::new(
+                add_import_chain_help(&mut diagnostics, &walk.stack, &canonical_path);
+                walk.output.push(FileSourceDiagnostics::new(
                     &import_path,
                     imported_source,
                     diagnostics,
@@ -330,34 +315,27 @@ fn analyze_import_tree(
         };
         let imported_program = imported_located.program.clone();
 
-        if let Some(diagnostics) = validate_import_items(
-            current_path,
-            current_source,
-            current_program,
-            current_spans,
-            import,
-            import_span,
-            &imported_located.program,
-        ) {
-            output.push(diagnostics);
+        if let Some(diagnostics) =
+            validate_import_items(file, import, import_span, &imported_located.program)
+        {
+            walk.output.push(diagnostics);
             continue;
         }
 
-        visited.insert(canonical_path.clone());
-        stack.push(canonical_path.clone());
+        walk.visited.insert(canonical_path.clone());
+        walk.stack.push(canonical_path.clone());
         analyze_import_tree(
-            &import_path,
-            &imported_source,
-            &imported_program,
-            &imported_located.spans,
-            visited,
-            stack,
-            output,
-            parsed_imports,
+            SourceFileRef {
+                path: &import_path,
+                source: &imported_source,
+                program: &imported_program,
+                spans: &imported_located.spans,
+            },
+            walk,
         );
-        stack.pop();
+        walk.stack.pop();
 
-        parsed_imports.push(ParsedSourceFile {
+        walk.parsed_imports.push(ParsedSourceFile {
             path: import_path,
             source: imported_source,
             program: imported_program,
@@ -367,8 +345,7 @@ fn analyze_import_tree(
 }
 
 fn analyze_cross_file_functions(files: &[ParsedSourceFile]) -> Vec<FileSourceDiagnostics> {
-    // One AST/span context per file; every cross-file pass below walks the
-    // parsed programs through these instead of re-scanning source lines.
+    // One AST/span context per file, shared by every cross-file pass below.
     let contexts = files
         .iter()
         .map(|file| SemanticContext::new(&file.source, &file.program, &file.spans))
@@ -481,12 +458,8 @@ fn analyze_cross_file_named_symbols(
     file_diagnostics_from_map(files, duplicate_diagnostics)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_import_items_from_path(
-    current_path: &Path,
-    current_source: &str,
-    current_program: &Program,
-    current_spans: &ProgramSpanTable,
+    file: SourceFileRef<'_>,
     import: &Import,
     import_span: Option<SourceSpan>,
     import_path: &Path,
@@ -496,28 +469,15 @@ fn validate_import_items_from_path(
     }
 
     // A module that cannot be read (or re-parsed) here is silently skipped
-    // (`.ok()?`), preserving this re-validation pass's long-standing
-    // behavior: the module was read and parsed successfully when it was
-    // first visited in this run, so a failure here is a mid-run race.
+    // (`.ok()?`): it was read and parsed successfully when it was first
+    // visited in this run, so a failure here is a mid-run race.
     let imported_source = fs::read_to_string(import_path).ok()?;
     let imported_program = crate::parser::parse(&imported_source).ok()?;
-    validate_import_items(
-        current_path,
-        current_source,
-        current_program,
-        current_spans,
-        import,
-        import_span,
-        &imported_program,
-    )
+    validate_import_items(file, import, import_span, &imported_program)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_import_items(
-    current_path: &Path,
-    current_source: &str,
-    current_program: &Program,
-    current_spans: &ProgramSpanTable,
+    file: SourceFileRef<'_>,
     import: &Import,
     import_span: Option<SourceSpan>,
     imported_program: &Program,
@@ -528,7 +488,7 @@ fn validate_import_items(
 
     // The importing file's own AST/span context locates raw command
     // placeholders that reference non-value imported symbols.
-    let current_context = SemanticContext::new(current_source, current_program, current_spans);
+    let current_context = SemanticContext::new(file.source, file.program, file.spans);
 
     let exported_symbol_kinds = collect_exported_symbol_kinds(imported_program);
     let exported_symbols = exported_symbol_kinds
@@ -564,8 +524,8 @@ fn validate_import_items(
                 }
             }
             None => {
-                let (line, column) = import_item_position(current_source, import_span, item)
-                    .unwrap_or_else(|| import_site_position(current_source, import_span, import));
+                let (line, column) = import_item_position(file.source, import_span, item)
+                    .unwrap_or_else(|| import_site_position(file.source, import_span, import));
 
                 diagnostics.push(
                     SourceDiagnostic::error(
@@ -590,8 +550,8 @@ fn validate_import_items(
         None
     } else {
         Some(FileSourceDiagnostics::new(
-            current_path,
-            current_source,
+            file.path,
+            file.source,
             diagnostics,
         ))
     }
@@ -621,9 +581,8 @@ impl ExportedSymbolKind {
 }
 
 /// Importable symbols a module defines, keyed by name, collected from its
-/// parsed AST (nested statements included — the old line scan had no indent
-/// filter either). A later definition of the same name overrides the
-/// earlier kind, mirroring the old scan's insert order.
+/// parsed AST (nested statements included). A later definition of the same
+/// name overrides the earlier kind.
 fn collect_exported_symbol_kinds(program: &Program) -> HashMap<String, ExportedSymbolKind> {
     let mut symbol_kinds = HashMap::new();
 
@@ -638,7 +597,7 @@ fn collect_exported_symbol_kinds(program: &Program) -> HashMap<String, ExportedS
             symbol_kinds.insert(entity_def.name.clone(), ExportedSymbolKind::EntityTemplate);
         }
         // `target` is the raw target text (`x`, `x[0]`, `x.y`); the simple-
-        // name filter keeps plain names only, like the old line scan.
+        // name filter keeps plain names only.
         Statement::Assignment(assignment) if is_simple_module_name(&assignment.target) => {
             symbol_kinds.insert(assignment.target.clone(), ExportedSymbolKind::Value);
         }
@@ -695,8 +654,7 @@ fn collect_cross_file_call_diagnostics(
             qualified_imported_function_signature(&call.name, &imported_modules, signatures);
         let Some(signature) = signatures.get(&call.name).or(qualified_signature) else {
             // Unresolved names are only reported when the call is an entire
-            // expression statement, matching the old scan's
-            // `is_user_function_call_statement` gate.
+            // expression statement.
             if !call.is_statement_expression {
                 continue;
             }
@@ -873,8 +831,7 @@ fn canonical_or_original(path: &Path) -> PathBuf {
 /// leading keyword). Every entry point threads the span table's import
 /// spans here (the wasm in-memory path included), so a missing span is a
 /// span-builder failure on parseable source — reported by the alignment
-/// `debug_assert`s at the call sites — and degrades to the 1:1 fallback
-/// position instead of a whole-source line scan.
+/// `debug_assert`s at the call sites — and falls back to line 1, column 1.
 fn import_site_position(source: &str, span: Option<SourceSpan>, import: &Import) -> (usize, usize) {
     let Some(span) = span else {
         return (1, 1);
@@ -945,6 +902,26 @@ fn format_import_chain(stack: &[PathBuf], next_path: &Path) -> String {
         .collect::<Vec<_>>();
     parts.push(next_path.display().to_string());
     parts.join(" -> ")
+}
+
+/// A source file that is being checked for its imports.
+#[derive(Clone, Copy)]
+struct SourceFileRef<'a> {
+    path: &'a Path,
+    source: &'a str,
+    program: &'a Program,
+    spans: &'a ProgramSpanTable,
+}
+
+/// State of the walk over an import tree.
+struct ImportWalk {
+    /// Files already checked, to check each one once.
+    visited: HashSet<PathBuf>,
+    /// The current import chain, to report circular imports.
+    stack: Vec<PathBuf>,
+    output: Vec<FileSourceDiagnostics>,
+    /// Imported files in the order their imports finished.
+    parsed_imports: Vec<ParsedSourceFile>,
 }
 
 #[cfg(test)]

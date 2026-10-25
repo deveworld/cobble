@@ -4503,23 +4503,57 @@ def test():
 
 #[test]
 fn test_stale_tag_cleanup() {
-    // This test would need to create files and rebuild to test cleanup
-    // For now, we just verify the basic functionality compiles
-    let source = r#"
-import stdlib
-from stdlib import event
+    // A rebuild into the same output removes the tick tag once its listener
+    // is gone.
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("main.cbl");
+    let output = temp.path().join("out");
+    let build = |text: &str| {
+        fs::write(&source, text).unwrap();
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_cobble"))
+            .arg("build")
+            .arg(&source)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    };
+    let tags = output.join("data/minecraft/tags/function");
+
+    build(
+        r#"from stdlib import event
 
 def on_load():
-    /say test
+    /say load
+
+def on_tick():
+    /say tick
 
 stdlib.addEventListener(event.LOAD, on_load)
-"#;
+stdlib.addEventListener(event.TICK, on_tick)
+"#,
+    );
+    assert!(tags.join("tick.json").exists());
 
-    let (_temp, output_dir) = compile_source(source).unwrap();
+    build(
+        r#"from stdlib import event
 
-    // Check that load.json was created
-    let load_tag = output_dir.join("data/minecraft/tags/function/load.json");
-    assert!(load_tag.exists(), "Load tag should be created");
+def on_load():
+    /say load
+
+stdlib.addEventListener(event.LOAD, on_load)
+"#,
+    );
+    assert!(tags.join("load.json").exists());
+    assert!(
+        !tags.join("tick.json").exists(),
+        "the tick tag survived the rebuild"
+    );
 }
 
 // ============================================================================

@@ -9,107 +9,120 @@ use std::path::Path;
 impl DataPack {
     pub fn write(&self) -> std::io::Result<()> {
         self.validate_write_paths()?;
-
-        let data_dir = self.output_dir.join("data");
-        let assets_dir = self.output_dir.join("assets");
-        let namespace_dir = data_dir.join(&self.namespace);
-        let function_dir = namespace_dir.join("function");
-        let legacy_function_dir = namespace_dir.join("functions");
-        let minecraft_tags_dir = self
-            .output_dir
-            .join("data")
-            .join("minecraft")
-            .join("tags")
-            .join("function");
-        let legacy_minecraft_tags_dir = self
-            .output_dir
-            .join("data")
-            .join("minecraft")
-            .join("tags")
-            .join("functions");
-        let source_map_dir = self.output_dir.join(".cobble");
-        let generated_namespaces_path = source_map_dir.join("generated_namespaces.json");
-        let generated_asset_namespaces_path =
-            source_map_dir.join("generated_asset_namespaces.json");
         let generated_namespaces = self.generated_namespaces();
         let generated_asset_namespaces = self.generated_asset_namespaces();
+        self.remove_previous_output(&generated_namespaces, &generated_asset_namespaces)?;
 
-        if let Ok(content) = fs::read_to_string(&generated_namespaces_path) {
-            if let Ok(previous_namespaces) = serde_json::from_str::<Vec<String>>(&content) {
-                for namespace in previous_namespaces {
-                    if !Self::is_safe_namespace_path(&namespace) {
-                        continue;
-                    }
-
-                    if !generated_namespaces.contains(&namespace) {
-                        let old_namespace_dir = data_dir.join(namespace);
-                        if old_namespace_dir.exists() {
-                            fs::remove_dir_all(old_namespace_dir)?;
-                        }
-                    } else if namespace != self.namespace {
-                        Self::clean_generated_function_dirs(&data_dir.join(namespace))?;
-                    }
-                }
-            }
-        }
-        if self.clean_previous_resource_pack_outputs {
-            if let Ok(content) = fs::read_to_string(&generated_asset_namespaces_path) {
-                if let Ok(previous_namespaces) = serde_json::from_str::<Vec<String>>(&content) {
-                    for namespace in previous_namespaces {
-                        if !Self::is_safe_namespace_path(&namespace) {
-                            continue;
-                        }
-
-                        if !generated_asset_namespaces.contains(&namespace) {
-                            let old_namespace_dir = assets_dir.join(namespace);
-                            if old_namespace_dir.exists() {
-                                fs::remove_dir_all(old_namespace_dir)?;
-                            }
-                        } else {
-                            Self::clean_generated_asset_dirs(&assets_dir.join(namespace))?;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Clean functions directory to remove stale .mcfunction files
-        // This prevents deleted or renamed functions from persisting in the datapack
-        if function_dir.exists() {
-            fs::remove_dir_all(&function_dir)?;
-        }
-        if legacy_function_dir.exists() {
-            fs::remove_dir_all(&legacy_function_dir)?;
-        }
-
-        // Clean generated metadata and JSON resource directories so rebuilds do
-        // not leave removed declarations behind in the output pack.
-        if source_map_dir.exists() {
-            fs::remove_dir_all(&source_map_dir)?;
-        }
-        if minecraft_tags_dir.exists() {
-            fs::remove_dir_all(&minecraft_tags_dir)?;
-        }
-        if legacy_minecraft_tags_dir.exists() {
-            fs::remove_dir_all(&legacy_minecraft_tags_dir)?;
-        }
-        for namespace in &generated_namespaces {
-            Self::clean_generated_resource_dirs(&data_dir.join(namespace))?;
-        }
-        if self.clean_previous_resource_pack_outputs {
-            for namespace in &generated_asset_namespaces {
-                Self::clean_generated_asset_dirs(&assets_dir.join(namespace))?;
-            }
-        }
-
+        let function_dir = self.namespace_dir().join("function");
         fs::create_dir_all(&function_dir)?;
-
-        // Write pack.mcmeta
         self.write_pack_mcmeta()?;
 
         let stdlib_tags = self.stdlib.generate_tags(&self.namespace);
+        let mut source_map_entries = self.write_functions(&function_dir)?;
+        self.extend_json_resource_source_map_entries(&mut source_map_entries, &stdlib_tags);
+        self.write_metadata(
+            source_map_entries,
+            &generated_namespaces,
+            &generated_asset_namespaces,
+        )?;
 
-        // Write all functions
+        let data_dir = self.output_dir.join("data");
+        for (tag_name, functions) in &stdlib_tags {
+            Self::write_function_tag(&data_dir, &self.namespace, tag_name, functions)?;
+        }
+        let mut custom_tag_names: Vec<_> = self.tags.keys().collect();
+        custom_tag_names.sort();
+        for tag_name in custom_tag_names {
+            Self::write_function_tag(&data_dir, &self.namespace, tag_name, &self.tags[tag_name])?;
+        }
+
+        for (folder, resources) in [
+            ("advancement", &self.advancements),
+            ("loot_table", &self.loot_tables),
+            ("recipe", &self.recipes),
+            ("predicate", &self.predicates),
+            ("item_modifier", &self.item_modifiers),
+        ] {
+            if !resources.is_empty() {
+                Self::write_json_resource_map(&self.namespace_dir().join(folder), resources)?;
+            }
+        }
+        self.write_declared_json_resources(&data_dir)?;
+
+        self.write_resource_pack_assets(&self.output_dir.join("assets"))
+    }
+
+    fn namespace_dir(&self) -> std::path::PathBuf {
+        self.output_dir.join("data").join(&self.namespace)
+    }
+
+    /// Removes what an earlier build generated, so deleted or renamed
+    /// functions, declarations, and namespaces don't stay in the pack.
+    fn remove_previous_output(
+        &self,
+        generated_namespaces: &[String],
+        generated_asset_namespaces: &[String],
+    ) -> std::io::Result<()> {
+        let data_dir = self.output_dir.join("data");
+        let assets_dir = self.output_dir.join("assets");
+        let metadata_dir = self.output_dir.join(".cobble");
+
+        for namespace in Self::previous_namespaces(&metadata_dir.join("generated_namespaces.json"))
+        {
+            if !generated_namespaces.contains(&namespace) {
+                remove_dir_if_exists(&data_dir.join(namespace))?;
+            } else if namespace != self.namespace {
+                Self::clean_generated_function_dirs(&data_dir.join(namespace))?;
+            }
+        }
+        if self.clean_previous_resource_pack_outputs {
+            for namespace in
+                Self::previous_namespaces(&metadata_dir.join("generated_asset_namespaces.json"))
+            {
+                if !generated_asset_namespaces.contains(&namespace) {
+                    remove_dir_if_exists(&assets_dir.join(namespace))?;
+                } else {
+                    Self::clean_generated_asset_dirs(&assets_dir.join(namespace))?;
+                }
+            }
+        }
+
+        let namespace_dir = self.namespace_dir();
+        let minecraft_function_tags = data_dir.join("minecraft").join("tags");
+        for dir in [
+            namespace_dir.join("function"),
+            namespace_dir.join("functions"),
+            metadata_dir,
+            minecraft_function_tags.join("function"),
+            minecraft_function_tags.join("functions"),
+        ] {
+            remove_dir_if_exists(&dir)?;
+        }
+        for namespace in generated_namespaces {
+            Self::clean_generated_resource_dirs(&data_dir.join(namespace))?;
+        }
+        if self.clean_previous_resource_pack_outputs {
+            for namespace in generated_asset_namespaces {
+                Self::clean_generated_asset_dirs(&assets_dir.join(namespace))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Namespaces an earlier build recorded in `path`. Unsafe names are
+    /// skipped, so a tampered record can't point outside the pack.
+    fn previous_namespaces(path: &Path) -> Vec<String> {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Vec<String>>(&content).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|namespace| Self::is_safe_namespace_path(namespace))
+            .collect()
+    }
+
+    /// Writes each function in name order and returns its source-map entries.
+    fn write_functions(&self, function_dir: &Path) -> std::io::Result<Vec<SourceMapEntry>> {
         let mut source_map_entries = Vec::new();
         let mut function_names: Vec<_> = self.functions.keys().collect();
         function_names.sort();
@@ -145,79 +158,50 @@ impl DataPack {
             }
             write_file_atomic(&file_path, file_content)?;
         }
-        self.extend_json_resource_source_map_entries(&mut source_map_entries, &stdlib_tags);
+        Ok(source_map_entries)
+    }
 
+    /// Writes `.cobble/`: the source map, the generated namespace records,
+    /// and the build manifest.
+    fn write_metadata(
+        &self,
+        source_map_entries: Vec<SourceMapEntry>,
+        generated_namespaces: &[String],
+        generated_asset_namespaces: &[String],
+    ) -> std::io::Result<()> {
+        let metadata_dir = self.output_dir.join(".cobble");
         let source_map_entry_count = source_map_entries.len();
+        fs::create_dir_all(&metadata_dir)?;
         if !source_map_entries.is_empty() {
             let source_map = SourceMap {
                 version: 1,
                 entries: source_map_entries,
             };
-            fs::create_dir_all(&source_map_dir)?;
             write_file_atomic(
-                &source_map_dir.join("source_map.json"),
+                &metadata_dir.join("source_map.json"),
                 serde_json::to_string_pretty(&source_map).unwrap(),
             )?;
         }
-        fs::create_dir_all(&source_map_dir)?;
         write_file_atomic(
-            &source_map_dir.join("generated_namespaces.json"),
+            &metadata_dir.join("generated_namespaces.json"),
             serde_json::to_string_pretty(&generated_namespaces).unwrap(),
         )?;
         if !generated_asset_namespaces.is_empty() {
             write_file_atomic(
-                &source_map_dir.join("generated_asset_namespaces.json"),
+                &metadata_dir.join("generated_asset_namespaces.json"),
                 serde_json::to_string_pretty(&generated_asset_namespaces).unwrap(),
             )?;
         }
-
-        let build_manifest = self.build_manifest(source_map_entry_count, &generated_namespaces);
+        let build_manifest = self.build_manifest(source_map_entry_count, generated_namespaces);
         write_file_atomic(
-            &source_map_dir.join("build_manifest.json"),
+            &metadata_dir.join("build_manifest.json"),
             serde_json::to_string_pretty(&build_manifest).unwrap(),
-        )?;
+        )
+    }
 
-        // Write tags from stdlib
-        for (tag_name, functions) in &stdlib_tags {
-            Self::write_function_tag(&data_dir, &self.namespace, tag_name, functions)?;
-        }
-        let mut custom_tag_names: Vec<_> = self.tags.keys().collect();
-        custom_tag_names.sort();
-        for tag_name in custom_tag_names {
-            Self::write_function_tag(&data_dir, &self.namespace, tag_name, &self.tags[tag_name])?;
-        }
-
-        // Write advancements
-        if !self.advancements.is_empty() {
-            let advancement_dir = namespace_dir.join("advancement");
-            Self::write_json_resource_map(&advancement_dir, &self.advancements)?;
-        }
-
-        // Write loot tables
-        if !self.loot_tables.is_empty() {
-            let loot_table_dir = namespace_dir.join("loot_table");
-            Self::write_json_resource_map(&loot_table_dir, &self.loot_tables)?;
-        }
-
-        // Write recipes
-        if !self.recipes.is_empty() {
-            let recipe_dir = namespace_dir.join("recipe");
-            Self::write_json_resource_map(&recipe_dir, &self.recipes)?;
-        }
-
-        // Write predicates
-        if !self.predicates.is_empty() {
-            let predicate_dir = namespace_dir.join("predicate");
-            Self::write_json_resource_map(&predicate_dir, &self.predicates)?;
-        }
-
-        // Write item modifiers
-        if !self.item_modifiers.is_empty() {
-            let item_modifier_dir = namespace_dir.join("item_modifier");
-            Self::write_json_resource_map(&item_modifier_dir, &self.item_modifiers)?;
-        }
-
-        // Write generic JSON resources generated by datapack.* declarations
+    /// Writes the JSON resources from `datapack.*` declarations, merging
+    /// tags with tag files already written in this build.
+    fn write_declared_json_resources(&self, data_dir: &Path) -> std::io::Result<()> {
         let mut json_resource_paths: Vec<_> = self.json_resources.keys().collect();
         json_resource_paths.sort();
         for key in json_resource_paths {
@@ -238,9 +222,6 @@ impl DataPack {
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
             write_file_atomic(&file_path, content)?;
         }
-
-        self.write_resource_pack_assets(&assets_dir)?;
-
         Ok(())
     }
 
@@ -503,4 +484,11 @@ impl DataPack {
             }
         }
     }
+}
+
+fn remove_dir_if_exists(path: &Path) -> std::io::Result<()> {
+    if path.exists() {
+        fs::remove_dir_all(path)?;
+    }
+    Ok(())
 }

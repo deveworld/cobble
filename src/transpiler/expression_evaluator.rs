@@ -145,6 +145,23 @@ impl<'a> ExpressionEvaluator<'a> {
             .unwrap_or("temp")
     }
 
+    /// A string's scoreboard mirror only holds its length, so evaluating it
+    /// as a score value is always a bug.
+    fn reject_string_score_operand(&self, var: &str) -> Result<(), TranspileError> {
+        if self.symbols.variable_storage_paths.contains_key(var)
+            && matches!(
+                self.symbols.variable_types.get(var),
+                Some(CobbleType::String)
+            )
+        {
+            return Err(format!(
+                "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
+                var
+            ).into());
+        }
+        Ok(())
+    }
+
     fn static_power_exponent(&self, expr: &Expression) -> Option<i32> {
         match expr {
             Expression::Number(value) => Some(*value as i32),
@@ -217,6 +234,21 @@ impl<'a> ExpressionEvaluator<'a> {
             helper_commands,
             GeneratedCommandKind::ControlFlow,
         );
+    }
+
+    fn read_storage_path_to_target(
+        &mut self,
+        plan: &StoragePathPlan,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        if let Some(path) = plan.as_static() {
+            return Ok(vec![format!(
+                "execute store result score {} {} run data get storage {}:global {}",
+                target, target_obj, self.data_pack.namespace, path
+            )]);
+        }
+        self.read_dynamic_storage_path_to_target(plan, target, target_obj)
     }
 
     fn read_dynamic_storage_path_to_target(
@@ -383,13 +415,11 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     /// Helper method to evaluate a complex expression into a target variable
-    #[allow(clippy::single_match)]
     pub fn evaluate_expression_to_target(
         &mut self,
         expr: &Expression,
         target: &str,
     ) -> Result<Vec<String>, TranspileError> {
-        let mut commands = Vec::new();
         let target_obj = self.target_objective(target).to_string();
         self.data_pack.track_objective("temp");
         self.data_pack.track_objective(&target_obj);
@@ -401,13 +431,7 @@ impl<'a> ExpressionEvaluator<'a> {
         if !matches!(expr, Expression::Identifier(name) if name == target)
             && Self::expression_reads_target(expr, target)
         {
-            let scratch = format!("#expr_result_{}", self.next_temp_id());
-            commands.extend(self.evaluate_expression_to_target(expr, &scratch)?);
-            commands.push(format!(
-                "scoreboard players operation {} {} = {} temp",
-                target, target_obj, scratch
-            ));
-            return Ok(commands);
+            return self.evaluate_through_scratch(expr, target, &target_obj);
         }
 
         // Every variable is a global score, so a function called inside the
@@ -418,859 +442,583 @@ impl<'a> ExpressionEvaluator<'a> {
         // scratch score. Compiler scratch scores start with `#` and are never
         // written by a call, which also ends this recursion.
         if !target.starts_with('#') && Self::writes_target_before_call(expr) {
-            let scratch = format!("#expr_result_{}", self.next_temp_id());
-            commands.extend(self.evaluate_expression_to_target(expr, &scratch)?);
-            commands.push(format!(
-                "scoreboard players operation {} {} = {} temp",
-                target, target_obj, scratch
-            ));
-            return Ok(commands);
+            return self.evaluate_through_scratch(expr, target, &target_obj);
         }
 
         match expr {
+            Expression::Number(n) => Ok(Self::number_to_target(*n, target, &target_obj)),
+            Expression::Identifier(var) => self.identifier_to_target(var, target, &target_obj),
+            Expression::Call(func, args) => self.call_to_target(func, args, target, &target_obj),
+            // Array/map access `base[index]` and attribute access `obj.attr`
+            // both read the storage path the expression resolves to.
+            Expression::Subscript(..) | Expression::Attribute(..) => {
+                self.storage_access_to_target(expr, target, &target_obj)
+            }
+            Expression::Binary(left, op, right) => {
+                self.binary_to_target(left, op, right, target, &target_obj)
+            }
+            Expression::Unary(op, inner) => self.unary_to_target(op, inner, target, &target_obj),
+            _ => Err("Unsupported expression type".into()),
+        }
+    }
+
+    fn evaluate_through_scratch(
+        &mut self,
+        expr: &Expression,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        let scratch = format!("#expr_result_{}", self.next_temp_id());
+        let mut commands = self.evaluate_expression_to_target(expr, &scratch)?;
+        commands.push(format!(
+            "scoreboard players operation {} {} = {} temp",
+            target, target_obj, scratch
+        ));
+        Ok(commands)
+    }
+
+    fn number_to_target(n: f64, target: &str, target_obj: &str) -> Vec<String> {
+        if n.fract() != 0.0 {
+            eprintln!(
+                "⚠️  Warning: Float value {} will lose precision.\n\
+                Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                n, n as i32
+            );
+        }
+        vec![format!(
+            "scoreboard players set {} {} {}",
+            target, target_obj, n as i32
+        )]
+    }
+
+    fn identifier_to_target(
+        &self,
+        var: &str,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        if let Some(const_value) = self.symbols.compile_time_constants.get(var) {
+            return Ok(vec![format!(
+                "scoreboard players set {} {} {}",
+                target, target_obj, *const_value as i32
+            )]);
+        }
+        if let Some(storage_path) = self.symbols.variable_storage_paths.get(var) {
+            self.reject_string_score_operand(var)?;
+            // Load from storage to scoreboard
+            return Ok(vec![format!(
+                "execute store result score {} {} run data get storage {}:global {}",
+                target, target_obj, self.data_pack.namespace, storage_path
+            )]);
+        }
+        let var_obj = match self.symbols.variable_objectives.get(var) {
+            Some(var_obj) => var_obj.as_str(),
+            None if self.is_current_param(var) => {
+                return Ok(vec![format!(
+                    "execute store result score {} {} run data get storage {}:global args.{}",
+                    target, target_obj, self.data_pack.namespace, var
+                )]);
+            }
+            None => "temp",
+        };
+        // Skip no-op self-assignment (e.g. target temp = target temp)
+        if var == target && var_obj == target_obj {
+            return Ok(Vec::new());
+        }
+        Ok(vec![format!(
+            "scoreboard players operation {} {} = {} {}",
+            target, target_obj, var, var_obj
+        )])
+    }
+
+    fn call_to_target(
+        &mut self,
+        func: &Expression,
+        args: &[Expression],
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        if matches!(func, Expression::Identifier(name) if name == "len") {
+            return self.len_to_target(args, target, target_obj);
+        }
+
+        // Handle intrinsics like math.sqrt
+        if let Expression::Attribute(obj, method) = func {
+            if matches!(&**obj, Expression::Identifier(module) if module == "math") {
+                return self.math_call_to_target(method, args, target, target_obj);
+            }
+        }
+
+        // Every other callee must be a user function with an integer return.
+        let Some(func_name) = self
+            .resolve_user_function_call_name(func)
+            .map(str::to_string)
+        else {
+            return Err(
+                "Only value intrinsics and user functions with `return` values can be used in expressions."
+                    .into(),
+            );
+        };
+        match self.functions.returns.get(&func_name) {
+            Some(FunctionReturnKind::Integer) => {}
+            Some(FunctionReturnKind::NonInteger) => {
+                return Err(format!(
+                    "Function '{}' cannot be used as an expression value because it returns non-integer data.",
+                    func_name
+                ).into());
+            }
+            _ => {
+                return Err(format!(
+                    "Function '{}' cannot be used as an expression value because it has no integer return value.",
+                    func_name
+                ).into());
+            }
+        }
+        self.user_function_call_to_target(&func_name, args, target, target_obj)
+    }
+
+    fn len_to_target(
+        &mut self,
+        args: &[Expression],
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        if args.len() != 1 {
+            return Err(format!("len() takes 1 argument, got {}", args.len()).into());
+        }
+        let literal_len = match &args[0] {
+            Expression::String(value) => Some(value.chars().count()),
+            Expression::Array(items) => Some(items.len()),
+            Expression::Map(entries) => Some(entries.len()),
+            _ => None,
+        };
+        if let Some(len) = literal_len {
+            return Ok(vec![format!(
+                "scoreboard players set {} {} {}",
+                target, target_obj, len
+            )]);
+        }
+
+        let Some(path_plan) = self.resolve_storage_path_plan(&args[0]) else {
+            return Err(
+                "len() argument must be a string, list, map, or storage-backed value"
+                    .to_string()
+                    .into(),
+            );
+        };
+        self.read_storage_path_to_target(&path_plan, target, target_obj)
+    }
+
+    fn math_call_to_target(
+        &mut self,
+        op: &str,
+        args: &[Expression],
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        let mut commands = match op {
+            "sqrt" | "abs" => {
+                if args.len() != 1 {
+                    return Err(format!("math.{} takes 1 argument", op).into());
+                }
+                self.data_pack.track_objective("temp");
+                // A call inside a larger argument may run another math
+                // helper, which overwrites `#math_input` after the rest of
+                // the argument is written there, so such an argument is
+                // computed into its own scratch first.
+                if !matches!(args[0], Expression::Call(..)) && contains_call(&args[0]) {
+                    let scratch = format!("#math_arg_{}", self.next_temp_id());
+                    let mut commands = self.evaluate_expression_to_target(&args[0], &scratch)?;
+                    commands.push(format!(
+                        "scoreboard players operation #math_input temp = {} temp",
+                        scratch
+                    ));
+                    commands
+                } else {
+                    self.evaluate_expression_to_target(&args[0], "#math_input")?
+                }
+            }
+            "min" | "max" => {
+                if args.len() != 2 {
+                    return Err(format!("math.{} takes 2 arguments", op).into());
+                }
+                self.data_pack.track_objective("temp");
+
+                // Evaluating an argument can itself run a math
+                // helper (a nested math.* call), which stages
+                // into the shared #math_input scores and would
+                // clobber an argument staged earlier. Stage each
+                // argument into a unique scratch and copy into
+                // the helper inputs right before the call.
+                let arg1_scratch = format!("#math_arg_{}", self.next_temp_id());
+                let arg2_scratch = format!("#math_arg_{}", self.next_temp_id());
+                let mut commands = self.evaluate_expression_to_target(&args[0], &arg1_scratch)?;
+                commands.extend(self.evaluate_expression_to_target(&args[1], &arg2_scratch)?);
+                commands.push(format!(
+                    "scoreboard players operation #math_input temp = {} temp",
+                    arg1_scratch
+                ));
+                commands.push(format!(
+                    "scoreboard players operation #math_input2 temp = {} temp",
+                    arg2_scratch
+                ));
+                commands
+            }
+            _ => return Err(format!("Unknown math function: {}", op).into()),
+        };
+
+        self.data_pack.ensure_math_helper(op);
+        commands.push(format!(
+            "function {}:_cobble_math_{}",
+            self.data_pack.namespace, op
+        ));
+        self.data_pack.track_objective("temp");
+        commands.push(format!(
+            "scoreboard players operation {} {} = #math_result temp",
+            target, target_obj
+        ));
+        Ok(commands)
+    }
+
+    fn storage_access_to_target(
+        &mut self,
+        expr: &Expression,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        let Some(path_plan) = self.resolve_storage_path_plan(expr) else {
+            let message = if matches!(expr, Expression::Subscript(..)) {
+                "Subscript base must resolve to a storage path (list/map)."
+            } else {
+                "Attribute base must resolve to a storage path"
+            };
+            return Err(message.to_string().into());
+        };
+        self.read_storage_path_to_target(&path_plan, target, target_obj)
+    }
+
+    fn binary_to_target(
+        &mut self,
+        left: &Expression,
+        op: &BinaryOp,
+        right: &Expression,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        if matches!(op, BinaryOp::Pow) && self.static_power_exponent(right).is_none() {
+            return self.runtime_power_to_target(left, right, target, target_obj);
+        }
+
+        // For nested binary expressions like (a + b) + c:
+        // First evaluate left side into target, then apply operation with right side
+        let mut commands = self.evaluate_expression_to_target(left, target)?;
+
+        // Now apply the operation with the right side
+        match right {
             Expression::Number(n) => {
                 if n.fract() != 0.0 {
                     eprintln!(
-                        "⚠️  Warning: Float value {} will lose precision.\n\
+                        "⚠️  Warning: Float value {} in expression will lose precision.\n\
                         Scoreboard only supports integers. Fractional part will be truncated to: {}",
                         n, *n as i32
                     );
                 }
-                commands.push(format!(
-                    "scoreboard players set {} {} {}",
-                    target, target_obj, *n as i32
-                ));
-            }
-            Expression::Identifier(var) => {
-                if let Some(const_value) = self.symbols.compile_time_constants.get(var) {
-                    let truncated = *const_value as i32;
-                    commands.push(format!(
-                        "scoreboard players set {} {} {}",
-                        target, target_obj, truncated
-                    ));
-                } else if let Some(storage_path) = self.symbols.variable_storage_paths.get(var) {
-                    // A string's scoreboard mirror only holds its length, so
-                    // evaluating it as a score value is always a bug.
-                    if matches!(
-                        self.symbols.variable_types.get(var),
-                        Some(CobbleType::String)
-                    ) {
+                let value = *n as i32;
+                // Check for division and modulo by zero at compile time
+                match op {
+                    BinaryOp::Div if value == 0 => {
                         return Err(format!(
-                            "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
-                            var
-                        ).into());
+                            "Division by zero in expression: dividing by {}",
+                            value
+                        )
+                        .into());
                     }
-                    // Load from storage to scoreboard
-                    let namespace = &self.data_pack.namespace;
-                    commands.push(format!(
-                        "execute store result score {} {} run data get storage {}:global {}",
-                        target, target_obj, namespace, storage_path
-                    ));
-                } else if self.symbols.variable_objectives.contains_key(var) {
-                    let var_obj = self.symbols.variable_objectives.get(var).unwrap().clone();
-                    if !(var == target && var_obj == target_obj) {
-                        commands.push(format!(
-                            "scoreboard players operation {} {} = {} {}",
-                            target, target_obj, var, var_obj
-                        ));
-                    }
-                } else if self.is_current_param(var) {
-                    let namespace = &self.data_pack.namespace;
-                    commands.push(format!(
-                        "execute store result score {} {} run data get storage {}:global args.{}",
-                        target, target_obj, namespace, var
-                    ));
-                } else {
-                    let var_obj = self
-                        .symbols
-                        .variable_objectives
-                        .get(var)
-                        .unwrap_or(&"temp".to_string())
-                        .clone();
-                    // Skip no-op self-assignment (e.g. target temp = target temp)
-                    if !(var == target && var_obj == target_obj) {
-                        commands.push(format!(
-                            "scoreboard players operation {} {} = {} {}",
-                            target, target_obj, var, var_obj
-                        ));
-                    }
-                }
-            }
-            Expression::Call(func, args) => {
-                if matches!(&**func, Expression::Identifier(name) if name == "len") {
-                    if args.len() != 1 {
-                        return Err(format!("len() takes 1 argument, got {}", args.len()).into());
-                    }
-                    match &args[0] {
-                        Expression::String(value) => {
-                            commands.push(format!(
-                                "scoreboard players set {} {} {}",
-                                target,
-                                target_obj,
-                                value.chars().count()
-                            ));
-                            return Ok(commands);
-                        }
-                        Expression::Array(items) => {
-                            commands.push(format!(
-                                "scoreboard players set {} {} {}",
-                                target,
-                                target_obj,
-                                items.len()
-                            ));
-                            return Ok(commands);
-                        }
-                        Expression::Map(entries) => {
-                            commands.push(format!(
-                                "scoreboard players set {} {} {}",
-                                target,
-                                target_obj,
-                                entries.len()
-                            ));
-                            return Ok(commands);
-                        }
-                        _ => {}
-                    }
-
-                    let Some(path_plan) = self.resolve_storage_path_plan(&args[0]) else {
+                    BinaryOp::Mod if value == 0 => {
                         return Err(
-                            "len() argument must be a string, list, map, or storage-backed value"
-                                .to_string()
-                                .into(),
+                            format!("Modulo by zero in expression: modulo by {}", value).into()
                         );
-                    };
-
-                    let namespace = &self.data_pack.namespace;
-                    if let Some(path) = path_plan.as_static() {
-                        commands.push(format!(
-                            "execute store result score {} {} run data get storage {}:global {}",
-                            target, target_obj, namespace, path
-                        ));
-                    } else {
-                        commands.extend(self.read_dynamic_storage_path_to_target(
-                            &path_plan,
-                            target,
-                            &target_obj,
-                        )?);
                     }
-                    return Ok(commands);
-                }
-
-                // Handle intrinsics like math.sqrt
-                match &**func {
-                    Expression::Attribute(obj, method) => {
-                        if let Expression::Identifier(module) = &**obj {
-                            if module == "math" {
-                                let op = method.as_str();
-                                match op {
-                                    "sqrt" | "abs" => {
-                                        if args.len() != 1 {
-                                            return Err(
-                                                format!("math.{} takes 1 argument", op).into()
-                                            );
-                                        }
-                                        let input_var = "#math_input";
-                                        self.data_pack.track_objective("temp");
-
-                                        let eval_cmds = self
-                                            .evaluate_expression_to_target(&args[0], input_var)?;
-                                        commands.extend(eval_cmds);
-
-                                        self.data_pack.ensure_math_helper(op);
-                                        commands.push(format!(
-                                            "function {}:_cobble_math_{}",
-                                            self.data_pack.namespace, op
-                                        ));
-
-                                        self.data_pack.track_objective("temp");
-                                        commands.push(format!(
-                                            "scoreboard players operation {} {} = #math_result temp",
-                                            target, target_obj
-                                        ));
-                                        return Ok(commands);
-                                    }
-                                    "min" | "max" => {
-                                        if args.len() != 2 {
-                                            return Err(
-                                                format!("math.{} takes 2 arguments", op).into()
-                                            );
-                                        }
-                                        let input1 = "#math_input";
-                                        let input2 = "#math_input2";
-                                        self.data_pack.track_objective("temp");
-
-                                        // Evaluating an argument can itself run a math
-                                        // helper (a nested math.* call), which stages
-                                        // into the shared #math_input scores and would
-                                        // clobber an argument staged earlier. Stage each
-                                        // argument into a unique scratch and copy into
-                                        // the helper inputs right before the call.
-                                        let arg1_scratch =
-                                            format!("#math_arg_{}", self.next_temp_id());
-                                        let arg2_scratch =
-                                            format!("#math_arg_{}", self.next_temp_id());
-                                        let mut eval_cmds = self.evaluate_expression_to_target(
-                                            &args[0],
-                                            &arg1_scratch,
-                                        )?;
-                                        eval_cmds.extend(self.evaluate_expression_to_target(
-                                            &args[1],
-                                            &arg2_scratch,
-                                        )?);
-                                        eval_cmds.push(format!(
-                                            "scoreboard players operation {} temp = {} temp",
-                                            input1, arg1_scratch
-                                        ));
-                                        eval_cmds.push(format!(
-                                            "scoreboard players operation {} temp = {} temp",
-                                            input2, arg2_scratch
-                                        ));
-                                        commands.extend(eval_cmds);
-
-                                        self.data_pack.ensure_math_helper(op);
-                                        commands.push(format!(
-                                            "function {}:_cobble_math_{}",
-                                            self.data_pack.namespace, op
-                                        ));
-
-                                        self.data_pack.track_objective("temp");
-                                        commands.push(format!(
-                                            "scoreboard players operation {} {} = #math_result temp",
-                                            target, target_obj
-                                        ));
-                                        return Ok(commands);
-                                    }
-                                    _ => {
-                                        return Err(format!("Unknown math function: {}", op).into())
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // Non-math callees fall through to the shared user-function
-                    // dispatch below this match.
                     _ => {}
                 }
-                if let Some(func_name) = self
-                    .resolve_user_function_call_name(func)
-                    .map(str::to_string)
-                {
-                    match self.functions.returns.get(&func_name) {
-                        Some(FunctionReturnKind::Integer) => {}
-                        Some(FunctionReturnKind::NonInteger) => {
-                            return Err(format!(
-                                "Function '{}' cannot be used as an expression value because it returns non-integer data.",
-                                func_name
-                            ).into());
-                        }
-                        _ => {
-                            return Err(format!(
-                                "Function '{}' cannot be used as an expression value because it has no integer return value.",
-                                func_name
-                            ).into());
-                        }
-                    }
-                    commands.extend(self.user_function_call_to_target(
-                        &func_name,
-                        args,
-                        target,
-                        &target_obj,
-                    )?);
-                    return Ok(commands);
-                }
-                return Err(
-                    "Only value intrinsics and user functions with `return` values can be used in expressions."
-                        .into(),
-                );
+                Self::apply_constant_operand(&mut commands, op, value, target, target_obj)?;
             }
-            Expression::Subscript(base, index) => {
-                // Handle array/map access: base[index]
-                if let Some(base_path) = self.resolve_storage_path_plan(base) {
-                    let base_type = self.storage_expr_type(base);
-                    let full_path = match &**index {
-                        Expression::Number(n)
-                            if self.should_use_dynamic_storage_key(base_type.clone(), index) =>
-                        {
-                            base_path.append_dynamic_key(Expression::Number(*n))
-                        }
-                        Expression::Number(n) => base_path.append_static_index(*n as i32),
-                        Expression::String(s) => base_path.append_field(s),
-                        Expression::Identifier(name) => {
-                            if self.should_use_dynamic_storage_key(base_type.clone(), index)
-                                && self.symbols.compile_time_constants.contains_key(name)
-                            {
-                                base_path.append_dynamic_key((**index).clone())
-                            } else if let Some(val) = self.symbols.compile_time_constants.get(name)
-                            {
-                                base_path.append_static_index(*val as i32)
-                            } else if self.should_use_dynamic_storage_key(base_type.clone(), index)
-                            {
-                                base_path.append_dynamic_key((**index).clone())
-                            } else {
-                                base_path.append_dynamic_index((**index).clone())
-                            }
-                        }
-                        _ if self.should_use_dynamic_storage_key(base_type, index) => {
-                            base_path.append_dynamic_key((**index).clone())
-                        }
-                        _ => base_path.append_dynamic_index((**index).clone()),
-                    };
-                    let namespace = &self.data_pack.namespace;
-
-                    if let Some(path) = full_path.as_static() {
-                        commands.push(format!(
-                            "execute store result score {} {} run data get storage {}:global {}",
-                            target, target_obj, namespace, path
-                        ));
-                    } else {
-                        commands.extend(self.read_dynamic_storage_path_to_target(
-                            &full_path,
-                            target,
-                            &target_obj,
-                        )?);
-                    }
-                } else {
-                    return Err("Subscript base must resolve to a storage path (list/map)."
-                        .to_string()
-                        .into());
-                }
+            Expression::Identifier(var) => {
+                self.apply_identifier_operand(&mut commands, op, var, target, target_obj)?;
             }
-            Expression::Attribute(obj, attr) => {
-                // Handle attribute access as map access: obj.attr
-                if let Some(storage_path) = self.resolve_storage_path_plan(obj) {
-                    let full_path = storage_path.append_field(attr);
-                    let namespace = &self.data_pack.namespace;
-                    if let Some(path) = full_path.as_static() {
-                        commands.push(format!(
-                            "execute store result score {} {} run data get storage {}:global {}",
-                            target, target_obj, namespace, path
-                        ));
-                    } else {
-                        commands.extend(self.read_dynamic_storage_path_to_target(
-                            &full_path,
-                            target,
-                            &target_obj,
-                        )?);
-                    }
-                } else {
-                    return Err("Attribute base must resolve to a storage path"
-                        .to_string()
-                        .into());
-                }
-            }
-            Expression::Binary(left, op, right) => {
-                if matches!(op, BinaryOp::Pow) && self.static_power_exponent(right).is_none() {
-                    let id = self.next_temp_id();
-                    let base_temp = format!("#expr_power_base_{}", id);
-                    let exponent_temp = format!("#expr_power_exp_{}", id);
-                    commands.extend(self.evaluate_expression_to_target(left, &base_temp)?);
-                    commands.extend(self.evaluate_expression_to_target(right, &exponent_temp)?);
-                    commands.push(format!(
-                        "scoreboard players operation {} {} = {} temp",
-                        target, target_obj, base_temp
-                    ));
-                    self.apply_runtime_power_to_target(
-                        &mut commands,
-                        target,
-                        &target_obj,
-                        &exponent_temp,
-                        "temp",
-                    );
-                    return Ok(commands);
-                }
-
-                // For nested binary expressions like (a + b) + c:
-                // First evaluate left side into target, then apply operation with right side
-
-                // Evaluate left side into target
-                let left_commands = self.evaluate_expression_to_target(left, target)?;
-                commands.extend(left_commands);
-
-                // Now apply the operation with the right side
-                match &**right {
-                    Expression::Number(n) => {
-                        if n.fract() != 0.0 {
-                            eprintln!(
-                                "⚠️  Warning: Float value {} in expression will lose precision.\n\
-                                Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                                n, *n as i32
-                            );
-                        }
-                        let value = *n as i32;
-                        match op {
-                            BinaryOp::Add => {
-                                if value < 0 {
-                                    commands.push(format!(
-                                        "scoreboard players remove {} {} {}",
-                                        target, target_obj, -value
-                                    ));
-                                } else {
-                                    commands.push(format!(
-                                        "scoreboard players add {} {} {}",
-                                        target, target_obj, value
-                                    ));
-                                }
-                            }
-                            BinaryOp::Sub => {
-                                if value < 0 {
-                                    commands.push(format!(
-                                        "scoreboard players add {} {} {}",
-                                        target, target_obj, -value
-                                    ));
-                                } else {
-                                    commands.push(format!(
-                                        "scoreboard players remove {} {} {}",
-                                        target, target_obj, value
-                                    ));
-                                }
-                            }
-                            BinaryOp::Mul => {
-                                commands.push(format!(
-                                    "scoreboard players set #multiplier temp {}",
-                                    value
-                                ));
-                                commands.push(format!(
-                                    "scoreboard players operation {} {} *= #multiplier temp",
-                                    target, target_obj
-                                ));
-                            }
-                            BinaryOp::Div => {
-                                // Check for division by zero at compile time
-                                if value == 0 {
-                                    return Err(format!(
-                                        "Division by zero in expression: dividing by {}",
-                                        value
-                                    )
-                                    .into());
-                                }
-                                commands.push(format!(
-                                    "scoreboard players set #divisor temp {}",
-                                    value
-                                ));
-                                commands.push(format!(
-                                    "scoreboard players operation {} {} /= #divisor temp",
-                                    target, target_obj
-                                ));
-                            }
-                            BinaryOp::Mod => {
-                                // Check for modulo by zero at compile time
-                                if value == 0 {
-                                    return Err(format!(
-                                        "Modulo by zero in expression: modulo by {}",
-                                        value
-                                    )
-                                    .into());
-                                }
-                                commands.push(format!(
-                                    "scoreboard players set #modulus temp {}",
-                                    value
-                                ));
-                                commands.push(format!(
-                                    "scoreboard players operation {} {} %= #modulus temp",
-                                    target, target_obj
-                                ));
-                            }
-                            BinaryOp::Pow => {
-                                // Compile-time expansion: x^n becomes x*x*...*x (n times)
-                                if value < 0 {
-                                    return Err("Power exponent must be non-negative"
-                                        .to_string()
-                                        .into());
-                                }
-                                if value > MAX_POWER_EXPONENT {
-                                    return Err(format!(
-                                        "Power exponent too large: {} > {}.\n\
-                                        \n\
-                                        Large exponents generate {} multiplication commands, which is excessive.\n\
-                                        Solution: Use a smaller exponent or implement iterative multiplication in a loop.",
-                                        value, MAX_POWER_EXPONENT, value - 1
-                                    ).into());
-                                }
-                                if value == 0 {
-                                    // x^0 = 1
-                                    commands.push(format!(
-                                        "scoreboard players set {} {} 1",
-                                        target, target_obj
-                                    ));
-                                } else if value == 1 {
-                                    // x^1 = x, no operation needed
-                                } else {
-                                    // Store original value for multiplication
-                                    commands.push(format!(
-                                        "scoreboard players operation #power_base temp = {} {}",
-                                        target, target_obj
-                                    ));
-                                    // Multiply (value - 1) times
-                                    for _ in 0..(value - 1) {
-                                        commands.push(format!(
-                                            "scoreboard players operation {} {} *= #power_base temp",
-                                            target, target_obj
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {
-                                return Err(format!("Unsupported binary operation: {:?}", op).into())
-                            }
-                        }
-                    }
-                    Expression::Identifier(var) => {
-                        if let Some(const_value) = self.symbols.compile_time_constants.get(var) {
-                            let value = *const_value as i32;
-                            match op {
-                                BinaryOp::Add => {
-                                    if value < 0 {
-                                        commands.push(format!(
-                                            "scoreboard players remove {} {} {}",
-                                            target, target_obj, -value
-                                        ));
-                                    } else {
-                                        commands.push(format!(
-                                            "scoreboard players add {} {} {}",
-                                            target, target_obj, value
-                                        ));
-                                    }
-                                }
-                                BinaryOp::Sub => {
-                                    if value < 0 {
-                                        commands.push(format!(
-                                            "scoreboard players add {} {} {}",
-                                            target, target_obj, -value
-                                        ));
-                                    } else {
-                                        commands.push(format!(
-                                            "scoreboard players remove {} {} {}",
-                                            target, target_obj, value
-                                        ));
-                                    }
-                                }
-                                BinaryOp::Mul => {
-                                    commands.push(format!(
-                                        "scoreboard players set #multiplier temp {}",
-                                        value
-                                    ));
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} *= #multiplier temp",
-                                        target, target_obj
-                                    ));
-                                }
-                                BinaryOp::Div => {
-                                    if value == 0 {
-                                        return Err("Division by zero in expression"
-                                            .to_string()
-                                            .into());
-                                    }
-                                    commands.push(format!(
-                                        "scoreboard players set #divisor temp {}",
-                                        value
-                                    ));
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} /= #divisor temp",
-                                        target, target_obj
-                                    ));
-                                }
-                                BinaryOp::Mod => {
-                                    if value == 0 {
-                                        return Err("Modulo by zero in expression"
-                                            .to_string()
-                                            .into());
-                                    }
-                                    commands.push(format!(
-                                        "scoreboard players set #modulus temp {}",
-                                        value
-                                    ));
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} %= #modulus temp",
-                                        target, target_obj
-                                    ));
-                                }
-                                BinaryOp::Pow => {
-                                    if value < 0 {
-                                        return Err("Power exponent must be non-negative"
-                                            .to_string()
-                                            .into());
-                                    }
-                                    if value > MAX_POWER_EXPONENT {
-                                        return Err(format!(
-                                            "Power exponent too large: {} > {}.\n\
-                                            \n\
-                                            Large exponents generate {} multiplication commands, which is excessive.\n\
-                                            Solution: Use a smaller exponent or implement iterative multiplication in a loop.",
-                                            value, MAX_POWER_EXPONENT, value - 1
-                                        ).into());
-                                    }
-                                    if value == 0 {
-                                        commands.push(format!(
-                                            "scoreboard players set {} {} 1",
-                                            target, target_obj
-                                        ));
-                                    } else if value == 1 {
-                                        // x^1 = x, nothing to do (target already holds left side)
-                                    } else {
-                                        commands.push(format!(
-                                            "scoreboard players operation #power_base temp = {} {}",
-                                            target, target_obj
-                                        ));
-                                        for _ in 0..(value - 1) {
-                                            commands.push(format!(
-                                                "scoreboard players operation {} {} *= #power_base temp",
-                                                target, target_obj
-                                            ));
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    return Err(
-                                        format!("Unsupported binary operation: {:?}", op).into()
-                                    )
-                                }
-                            }
-                        } else if self.is_current_param(var) {
-                            let namespace = &self.data_pack.namespace;
-                            let temp_param = "#expr_param";
-                            commands.push(format!(
-                                "execute store result score {} temp run data get storage {}:global args.{}",
-                                temp_param, namespace, var
-                            ));
-                            match op {
-                                BinaryOp::Add => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} += {} temp",
-                                        target, target_obj, temp_param
-                                    ));
-                                }
-                                BinaryOp::Sub => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} -= {} temp",
-                                        target, target_obj, temp_param
-                                    ));
-                                }
-                                BinaryOp::Mul => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} *= {} temp",
-                                        target, target_obj, temp_param
-                                    ));
-                                }
-                                BinaryOp::Div => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} /= {} temp",
-                                        target, target_obj, temp_param
-                                    ));
-                                }
-                                BinaryOp::Mod => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} %= {} temp",
-                                        target, target_obj, temp_param
-                                    ));
-                                }
-                                BinaryOp::Pow => {
-                                    self.apply_runtime_power_to_target(
-                                        &mut commands,
-                                        target,
-                                        &target_obj,
-                                        temp_param,
-                                        "temp",
-                                    );
-                                }
-                                _ => {
-                                    return Err(
-                                        format!("Unsupported binary operation: {:?}", op).into()
-                                    )
-                                }
-                            }
-                        } else {
-                            if self.symbols.variable_storage_paths.contains_key(var)
-                                && matches!(
-                                    self.symbols.variable_types.get(var),
-                                    Some(CobbleType::String)
-                                )
-                            {
-                                return Err(format!(
-                                    "Variable '{}' holds a storage-backed string and cannot be used in arithmetic; its scoreboard mirror only stores the string length. Use integer values instead.",
-                                    var
-                                ).into());
-                            }
-                            let var_obj = self
-                                .symbols
-                                .variable_objectives
-                                .get(var)
-                                .unwrap_or(&"temp".to_string())
-                                .clone();
-                            match op {
-                                BinaryOp::Add => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} += {} {}",
-                                        target, target_obj, var, var_obj
-                                    ));
-                                }
-                                BinaryOp::Sub => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} -= {} {}",
-                                        target, target_obj, var, var_obj
-                                    ));
-                                }
-                                BinaryOp::Mul => {
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} *= {} {}",
-                                        target, target_obj, var, var_obj
-                                    ));
-                                }
-                                BinaryOp::Div => {
-                                    // Add runtime warning for potential division by zero
-                                    eprintln!(
-                                        "⚠️  Warning: Runtime division by variable '{}'.\n\
-                                        If '{}' is 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
-                                        Consider adding a check: if {} != 0",
-                                        var, var, var
-                                    );
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} /= {} {}",
-                                        target, target_obj, var, var_obj
-                                    ));
-                                }
-                                BinaryOp::Mod => {
-                                    // Add runtime warning for potential modulo by zero
-                                    eprintln!(
-                                        "⚠️  Warning: Runtime modulo by variable '{}'.\n\
-                                        If '{}' is 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
-                                        Consider adding a check: if {} != 0",
-                                        var, var, var
-                                    );
-                                    commands.push(format!(
-                                        "scoreboard players operation {} {} %= {} {}",
-                                        target, target_obj, var, var_obj
-                                    ));
-                                }
-                                BinaryOp::Pow => {
-                                    self.apply_runtime_power_to_target(
-                                        &mut commands,
-                                        target,
-                                        &target_obj,
-                                        var,
-                                        &var_obj,
-                                    );
-                                }
-                                _ => {
-                                    return Err(
-                                        format!("Unsupported binary operation: {:?}", op).into()
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    Expression::Binary(_, _, _)
-                    | Expression::Unary(_, _)
-                    | Expression::Call(_, _)
-                    | Expression::Attribute(_, _)
-                    | Expression::Subscript(_, _) => {
-                        // Right side is also a complex expression - evaluate it first into
-                        // a scratch score unique to this call, so nested right-hand
-                        // evaluations cannot clobber each other's intermediate results.
-                        let right_temp = format!("#expr_temp_{}", self.next_temp_id());
-                        let right_commands =
-                            self.evaluate_expression_to_target(right, &right_temp)?;
-                        commands.extend(right_commands);
-
-                        // Now perform the operation
-                        match op {
-                            BinaryOp::Add => {
-                                commands.push(format!(
-                                    "scoreboard players operation {} {} += {} temp",
-                                    target, target_obj, right_temp
-                                ));
-                            }
-                            BinaryOp::Sub => {
-                                commands.push(format!(
-                                    "scoreboard players operation {} {} -= {} temp",
-                                    target, target_obj, right_temp
-                                ));
-                            }
-                            BinaryOp::Mul => {
-                                commands.push(format!(
-                                    "scoreboard players operation {} {} *= {} temp",
-                                    target, target_obj, right_temp
-                                ));
-                            }
-                            BinaryOp::Div => {
-                                // Add runtime warning for potential division by zero with complex expression
-                                eprintln!(
-                                    "⚠️  Warning: Runtime division by expression result.\n\
-                                    If the expression evaluates to 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
-                                    Consider validating the divisor before division."
-                                );
-                                commands.push(format!(
-                                    "scoreboard players operation {} {} /= {} temp",
-                                    target, target_obj, right_temp
-                                ));
-                            }
-                            BinaryOp::Mod => {
-                                // Add runtime warning for potential modulo by zero with complex expression
-                                eprintln!(
-                                    "⚠️  Warning: Runtime modulo by expression result.\n\
-                                    If the expression evaluates to 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
-                                    Consider validating the divisor before modulo."
-                                );
-                                commands.push(format!(
-                                    "scoreboard players operation {} {} %= {} temp",
-                                    target, target_obj, right_temp
-                                ));
-                            }
-                            BinaryOp::Pow => {
-                                self.apply_runtime_power_to_target(
-                                    &mut commands,
-                                    target,
-                                    &target_obj,
-                                    &right_temp,
-                                    "temp",
-                                );
-                            }
-                            _ => {
-                                return Err(format!("Unsupported binary operation: {:?}", op).into())
-                            }
-                        }
-                    }
-                    _ => {
-                        return Err("Unsupported expression type in binary operation"
-                            .to_string()
-                            .into());
-                    }
-                }
-            }
-            Expression::Unary(op, expr) => {
+            Expression::Binary(_, _, _)
+            | Expression::Unary(_, _)
+            | Expression::Call(_, _)
+            | Expression::Attribute(_, _)
+            | Expression::Subscript(_, _) => {
+                // Right side is also a complex expression - evaluate it first into
+                // a scratch score unique to this call, so nested right-hand
+                // evaluations cannot clobber each other's intermediate results.
+                let right_temp = format!("#expr_temp_{}", self.next_temp_id());
+                commands.extend(self.evaluate_expression_to_target(right, &right_temp)?);
                 match op {
-                    UnaryOp::Neg => {
-                        // Unary negation: -expr
-                        // Evaluate the expression first, then multiply by -1
-                        let expr_commands = self.evaluate_expression_to_target(expr, target)?;
-                        commands.extend(expr_commands);
+                    BinaryOp::Div => eprintln!(
+                        "⚠️  Warning: Runtime division by expression result.\n\
+                        If the expression evaluates to 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
+                        Consider validating the divisor before division."
+                    ),
+                    BinaryOp::Mod => eprintln!(
+                        "⚠️  Warning: Runtime modulo by expression result.\n\
+                        If the expression evaluates to 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
+                        Consider validating the divisor before modulo."
+                    ),
+                    _ => {}
+                }
+                self.apply_score_operand(
+                    &mut commands,
+                    op,
+                    &right_temp,
+                    "temp",
+                    target,
+                    target_obj,
+                )?;
+            }
+            _ => {
+                return Err("Unsupported expression type in binary operation"
+                    .to_string()
+                    .into());
+            }
+        }
+        Ok(commands)
+    }
 
-                        // Multiply by -1 using temp objective fake player
-                        commands.push("scoreboard players set #neg_const temp -1".to_string());
+    fn runtime_power_to_target(
+        &mut self,
+        base: &Expression,
+        exponent: &Expression,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        let id = self.next_temp_id();
+        let base_temp = format!("#expr_power_base_{}", id);
+        let exponent_temp = format!("#expr_power_exp_{}", id);
+        let mut commands = self.evaluate_expression_to_target(base, &base_temp)?;
+        commands.extend(self.evaluate_expression_to_target(exponent, &exponent_temp)?);
+        commands.push(format!(
+            "scoreboard players operation {} {} = {} temp",
+            target, target_obj, base_temp
+        ));
+        self.apply_runtime_power_to_target(
+            &mut commands,
+            target,
+            target_obj,
+            &exponent_temp,
+            "temp",
+        );
+        Ok(commands)
+    }
+
+    /// Right operand that names a compile-time constant, a parameter of the
+    /// current function, or a score variable.
+    fn apply_identifier_operand(
+        &mut self,
+        commands: &mut Vec<String>,
+        op: &BinaryOp,
+        var: &str,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<(), TranspileError> {
+        if let Some(const_value) = self.symbols.compile_time_constants.get(var) {
+            let value = *const_value as i32;
+            match op {
+                BinaryOp::Div if value == 0 => {
+                    return Err("Division by zero in expression".to_string().into());
+                }
+                BinaryOp::Mod if value == 0 => {
+                    return Err("Modulo by zero in expression".to_string().into());
+                }
+                _ => {}
+            }
+            return Self::apply_constant_operand(commands, op, value, target, target_obj);
+        }
+
+        if self.is_current_param(var) {
+            let temp_param = "#expr_param";
+            commands.push(format!(
+                "execute store result score {} temp run data get storage {}:global args.{}",
+                temp_param, self.data_pack.namespace, var
+            ));
+            return self.apply_score_operand(commands, op, temp_param, "temp", target, target_obj);
+        }
+
+        self.reject_string_score_operand(var)?;
+        // A list or map reads as its size, like on the left of an operator.
+        if let Some(path) = self.symbols.variable_storage_paths.get(var).cloned() {
+            let scratch = format!("#expr_temp_{}", self.next_temp_id());
+            commands.push(format!(
+                "execute store result score {} temp run data get storage {}:global {}",
+                scratch, self.data_pack.namespace, path
+            ));
+            return self.apply_score_operand(commands, op, &scratch, "temp", target, target_obj);
+        }
+        let var_obj = self.target_objective(var).to_string();
+        match op {
+            BinaryOp::Div => eprintln!(
+                "⚠️  Warning: Runtime division by variable '{}'.\n\
+                If '{}' is 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
+                Consider adding a check: if {} != 0",
+                var, var, var
+            ),
+            BinaryOp::Mod => eprintln!(
+                "⚠️  Warning: Runtime modulo by variable '{}'.\n\
+                If '{}' is 0 at runtime, the Minecraft command fails and the target keeps the left operand's value.\n\
+                Consider adding a check: if {} != 0",
+                var, var, var
+            ),
+            _ => {}
+        }
+        self.apply_score_operand(commands, op, var, &var_obj, target, target_obj)
+    }
+
+    /// Applies `op` with a right operand known at compile time to `target`,
+    /// which already holds the left operand. Callers reject a zero divisor
+    /// first, each with its own message.
+    fn apply_constant_operand(
+        commands: &mut Vec<String>,
+        op: &BinaryOp,
+        value: i32,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<(), TranspileError> {
+        match op {
+            BinaryOp::Add | BinaryOp::Sub if value == i32::MIN => {
+                commands.extend(min_constant_commands(target, target_obj));
+            }
+            BinaryOp::Add | BinaryOp::Sub => {
+                // `add` and `remove` only take amounts of 0 or more, so a
+                // negative constant switches to the other one.
+                let adds = matches!(op, BinaryOp::Add) == (value >= 0);
+                commands.push(format!(
+                    "scoreboard players {} {} {} {}",
+                    if adds { "add" } else { "remove" },
+                    target,
+                    target_obj,
+                    if value < 0 { -value } else { value }
+                ));
+            }
+            BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+                let (holder, operation) = match op {
+                    BinaryOp::Mul => ("#multiplier", "*="),
+                    BinaryOp::Div => ("#divisor", "/="),
+                    _ => ("#modulus", "%="),
+                };
+                commands.push(format!("scoreboard players set {} temp {}", holder, value));
+                commands.push(format!(
+                    "scoreboard players operation {} {} {} {} temp",
+                    target, target_obj, operation, holder
+                ));
+            }
+            BinaryOp::Pow => {
+                // Compile-time expansion: x^n becomes x*x*...*x (n times)
+                if value < 0 {
+                    return Err("Power exponent must be non-negative".to_string().into());
+                }
+                if value > MAX_POWER_EXPONENT {
+                    return Err(format!(
+                        "Power exponent too large: {} > {}.\n\
+                        \n\
+                        Large exponents generate {} multiplication commands, which is excessive.\n\
+                        Solution: Use a smaller exponent or implement iterative multiplication in a loop.",
+                        value, MAX_POWER_EXPONENT, value - 1
+                    ).into());
+                }
+                if value == 0 {
+                    // x^0 = 1
+                    commands.push(format!(
+                        "scoreboard players set {} {} 1",
+                        target, target_obj
+                    ));
+                } else if value == 1 {
+                    // x^1 = x, nothing to do (target already holds left side)
+                } else {
+                    // Store original value for multiplication
+                    commands.push(format!(
+                        "scoreboard players operation #power_base temp = {} {}",
+                        target, target_obj
+                    ));
+                    // Multiply (value - 1) times
+                    for _ in 0..(value - 1) {
                         commands.push(format!(
-                            "scoreboard players operation {} {} *= #neg_const temp",
+                            "scoreboard players operation {} {} *= #power_base temp",
                             target, target_obj
                         ));
                     }
-                    UnaryOp::Pos => {
-                        // Unary plus: +expr (no-op, just evaluate the expression)
-                        let expr_commands = self.evaluate_expression_to_target(expr, target)?;
-                        commands.extend(expr_commands);
-                    }
-                    UnaryOp::Not => {
-                        return Err(
-                            "Logical NOT operator cannot be used in arithmetic expressions"
-                                .to_string()
-                                .into(),
-                        );
-                    }
                 }
             }
-            _ => {
-                return Err("Unsupported expression type".into());
-            }
+            _ => return Err(format!("Unsupported binary operation: {:?}", op).into()),
         }
+        Ok(())
+    }
 
-        Ok(commands)
+    /// Applies `op` with the score `operand operand_obj` to `target`, which
+    /// already holds the left operand.
+    fn apply_score_operand(
+        &mut self,
+        commands: &mut Vec<String>,
+        op: &BinaryOp,
+        operand: &str,
+        operand_obj: &str,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<(), TranspileError> {
+        let operation = match op {
+            BinaryOp::Add => "+=",
+            BinaryOp::Sub => "-=",
+            BinaryOp::Mul => "*=",
+            BinaryOp::Div => "/=",
+            BinaryOp::Mod => "%=",
+            BinaryOp::Pow => {
+                self.apply_runtime_power_to_target(
+                    commands,
+                    target,
+                    target_obj,
+                    operand,
+                    operand_obj,
+                );
+                return Ok(());
+            }
+            _ => return Err(format!("Unsupported binary operation: {:?}", op).into()),
+        };
+        commands.push(format!(
+            "scoreboard players operation {} {} {} {} {}",
+            target, target_obj, operation, operand, operand_obj
+        ));
+        Ok(())
+    }
+
+    fn unary_to_target(
+        &mut self,
+        op: &UnaryOp,
+        inner: &Expression,
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        match op {
+            UnaryOp::Neg => {
+                // Unary negation: -expr
+                // Evaluate the expression first, then multiply by -1
+                let mut commands = self.evaluate_expression_to_target(inner, target)?;
+
+                // Multiply by -1 using temp objective fake player
+                commands.push("scoreboard players set #neg_const temp -1".to_string());
+                commands.push(format!(
+                    "scoreboard players operation {} {} *= #neg_const temp",
+                    target, target_obj
+                ));
+                Ok(commands)
+            }
+            // Unary plus: +expr (no-op, just evaluate the expression)
+            UnaryOp::Pos => self.evaluate_expression_to_target(inner, target),
+            UnaryOp::Not => Err(
+                "Logical NOT operator cannot be used in arithmetic expressions"
+                    .to_string()
+                    .into(),
+            ),
+        }
     }
 }
 
@@ -1328,4 +1076,28 @@ pub(in crate::transpiler) fn staged_call_commands(
         namespace, call_path
     ));
     commands
+}
+
+fn contains_call(expr: &Expression) -> bool {
+    match expr {
+        Expression::Call(..) => true,
+        Expression::Binary(left, _, right) => contains_call(left) || contains_call(right),
+        Expression::Unary(_, inner) => contains_call(inner),
+        Expression::Attribute(obj, _) => contains_call(obj),
+        Expression::Subscript(obj, index) => contains_call(obj) || contains_call(index),
+        _ => false,
+    }
+}
+
+/// `+ i32::MIN` or `- i32::MIN` on `target`. 2^31 doesn't fit `add` or
+/// `remove`; with 32-bit wrapping, adding and subtracting it give the same
+/// score.
+pub(in crate::transpiler) fn min_constant_commands(target: &str, target_obj: &str) -> Vec<String> {
+    vec![
+        format!("scoreboard players set #addend temp {}", i32::MIN),
+        format!(
+            "scoreboard players operation {} {} += #addend temp",
+            target, target_obj
+        ),
+    ]
 }

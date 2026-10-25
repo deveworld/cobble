@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `item-model-definition`.
 
 ### Changed
+- An execute block may start with `execute`, as in `execute as @a at @s:`.
 - `/say` text with variables runs as a macro `say` in a helper function
   instead of becoming `tellraw @a`, so it keeps the `[name]` prefix and shows
   selectors as names. The text after filling in the values is limited to 256
@@ -104,6 +105,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   character column.
 - `cobble build --validate` removes its staging folder when writing the pack
   fails, and `--zip` writes the entries in a stable order.
+- `math.sqrt` and `math.abs` keep their whole argument when it contains
+  another `math` call, as in `math.sqrt(1 + math.abs(a))`.
+- Adding or subtracting the constant -2147483648 compiles to valid commands.
+  The compiler used to emit an out-of-range `remove`.
+- A list or map on the right of an arithmetic operator reads its size, as it
+  does on the left. It used to read a score that was never set.
+- Nested map reads such as `cfg.inner.c` pass `cobble check`, which used to
+  report `inner` as an unknown base variable.
+- `positioned as <selector>:` and `rotated as <selector>:` keep the
+  `positioned`/`rotated` part. It used to be dropped without an error.
+- Two statements on one line, such as `x = 1 y = 2` or `return 1 2`, are a
+  parse error. They used to compile as two statements.
+- A parse error inside deeply nested parentheses or `if` blocks is reported
+  right away. The parse time used to double with each level.
+- A Python `if` header followed by a body on the same line (`if x: pass`)
+  reports the body as the problem.
 - A raw execute header `unless A or B:` compiles to `unless A unless B`
   instead of being written unchanged as an invalid command.
 - Raw `if`/`unless` headers no longer split on `or` or `and` inside quotes or

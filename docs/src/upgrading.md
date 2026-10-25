@@ -123,6 +123,9 @@ objective.
   `"a\nb"` became `anb`. 0.11 decodes `\n`, `\t`, `\r`, and `\uXXXX` as
   Python does and keeps a backslash before any other character. Check strings
   that contain a backslash, such as Windows paths.
+- **One statement per line.** 0.10 split `x = 1 y = 2` into two statements.
+  0.11 reports a parse error. `positioned as @s:` and `rotated as @s:` used
+  to lose their `positioned`/`rotated` part and now compile in full.
 - **`#` in block headers.** 0.10 read every `#` in a header as the start of a
   comment unless it began a namespaced tag, so `if score #round game matches
   3:` failed to parse. 0.11 reads a `#name` before the header's `:` as part of

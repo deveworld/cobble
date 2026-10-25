@@ -64,15 +64,8 @@ impl DataPack {
         &self,
         source: &SourceLocation,
     ) -> String {
-        Self::format_source_location_with_root(&self.source_display_root, source)
-    }
-
-    pub(in crate::transpiler::data_pack) fn format_source_location_with_root(
-        root: &Option<PathBuf>,
-        source: &SourceLocation,
-    ) -> String {
         let mut source = source.clone();
-        if let Some(root) = root {
+        if let Some(root) = &self.source_display_root {
             source.file = stable_relative_path(&source.file, root);
         }
         format!(

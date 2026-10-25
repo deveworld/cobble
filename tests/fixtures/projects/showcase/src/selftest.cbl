@@ -512,6 +512,91 @@ def round_hook_b():
     hook_calls += 1
 
 
+semantic_calls = 0
+loop_checks = 0
+result_slot = 0
+shadowed = 100
+
+
+def bump_zero():
+    global semantic_calls
+    semantic_calls += 1
+    return 0
+
+
+def bump_one():
+    global semantic_calls
+    semantic_calls += 10
+    return 1
+
+
+def keep_going():
+    global loop_checks
+    loop_checks += 1
+    if loop_checks < 3:
+        return 1
+    return 0
+
+
+def shadow_double(shadowed):
+    return shadowed * 2
+
+
+def count_down(steps):
+    while steps > 0:
+        steps = steps - 1
+    return steps
+
+
+def fill_result_slot():
+    global result_slot
+    result_slot = 100
+    return 9
+
+
+def test_python_semantics():
+    global semantic_calls
+    global loop_checks
+    global result_slot
+    negative = -5
+    truthy = 0
+    if negative:
+        truthy = 1
+    check("negative_is_true", truthy, 1)
+
+    semantic_calls = 0
+    picked = 0
+    if bump_zero() and bump_one():
+        picked = 1
+    if bump_one() or bump_zero():
+        picked = picked + 2
+    check("short_circuit_calls", semantic_calls, 11)
+    check("short_circuit_result", picked, 2)
+
+    semantic_calls = 0
+    if bump_one():
+        picked = 5
+    elif bump_zero():
+        picked = 6
+    check("elif_skipped", semantic_calls, 10)
+
+    loop_checks = 0
+    turns = 0
+    while keep_going():
+        turns += 1
+    check("while_condition_once", loop_checks, 3)
+    check("while_turns", turns, 2)
+
+    check("param_shadows_global", shadow_double(5), 10)
+    check("param_assignment", count_down(4), 0)
+
+    result_slot = 1 + fill_result_slot()
+    check("assign_after_call", result_slot, 10)
+
+    big = 100000
+    check("fold_overflow", 100000 * 100000 / 100000, big * big / big)
+
+
 def scheduled_check():
     check("schedule_once", 1, 1)
 
@@ -536,4 +621,5 @@ def selftest():
     test_helpers()
     test_entities()
     test_resources()
+    test_python_semantics()
     /say SELFTEST summary passed={passed} failed={failed}

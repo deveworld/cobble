@@ -64,239 +64,238 @@ pub struct WatchOptions {
 }
 
 pub fn watch(options: WatchOptions) -> Result<(), String> {
-    let WatchOptions {
-        input,
-        output,
-        namespace,
-        pack_format,
-        description,
-        verbose,
-        zip,
-        experimental_resource_pack,
-        link,
-        validate,
-        commands_json,
-    } = options;
-    if link && output.is_some() {
+    if options.link && options.output.is_some() {
         return Err("--link cannot be combined with --output".to_string());
     }
-    if link && namespace.is_some() {
+    if options.link && options.namespace.is_some() {
         return Err(
             "--link cannot be combined with --namespace; linked outputs must use the project namespace"
                 .to_string(),
         );
     }
 
-    // Try to find cobble.toml
-    let (mut config, config_dir, config_path) =
-        if let Some(config_path) = find_config(input.as_deref()) {
-            let config = if pack_format.is_some() {
-                CobbleConfig::load_unvalidated(&config_path)?
-            } else {
-                CobbleConfig::load(&config_path)?
-            };
-            let config_dir = config_path.parent().unwrap().to_path_buf();
-            (Some(config), config_dir, Some(config_path))
-        } else {
-            (
-                None,
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-                None,
-            )
-        };
-
-    // Determine source path to watch
-    let watch_path = if let Some(ref input_path) = input {
-        input_path.clone()
-    } else if let Some(ref cfg) = config {
-        config_dir.join(&cfg.build.source)
-    } else {
-        return Err("No input specified and no cobble.toml found".to_string());
-    };
-
-    if !watch_path.exists() {
-        return Err(format!("Watch path does not exist: {:?}", watch_path));
-    }
-
-    let mut effective_output = if link {
-        Some(linked_output_path(&config_dir)?)
-    } else {
-        output.clone()
-    };
-    let mut expected_link_project_id = link.then(|| project_marker_identity(&config_dir).1);
-    if let Some(linked_output) = link.then_some(effective_output.as_ref()).flatten() {
-        ensure_linked_output_target_safe(
-            linked_output,
-            expected_link_namespace(namespace.as_deref(), config.as_ref()),
-            expected_link_project_id.as_deref(),
-        )?;
-    }
+    let mut session = WatchSession::start(options)?;
+    let watch_path = session.watch_path.clone();
 
     println!("Watching: {:?}", watch_path);
-    if let Some(linked_output) = link.then_some(effective_output.as_ref()).flatten() {
+    if let Some(linked_output) = session.linked_output() {
         println!("Linked output: {:?}", linked_output);
     }
     println!("Press Ctrl+C to stop watching");
     println!();
 
-    let build_input = input.clone();
-
-    // Initial build
     println!("Performing initial build...");
-    let build_result = build(BuildOptions {
-        input: build_input.clone(),
-        output: effective_output.clone(),
-        namespace: namespace.clone(),
-        pack_format: pack_format.clone(),
-        description: description.clone(),
-        verbose,
-        quiet: false,
-        zip,
-        experimental_resource_pack,
-        validate,
-        dry_run: false,
-        commands_json: commands_json.clone(),
-    });
-
-    match build_result {
+    match build(session.build_options()) {
         Ok(()) => println!("✓ Initial build succeeded\n"),
         Err(e) => println!("✗ Initial build failed: {}\n", e),
     }
 
-    // Set up file watcher
     let (tx, rx) = mpsc::channel();
-
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         if let Ok(event) = res {
             let _ = tx.send(event);
         }
     })
     .map_err(|e| format!("Failed to create watcher: {}", e))?;
-
-    // Watch the path recursively
     watcher
         .watch(&watch_path, RecursiveMode::Recursive)
         .map_err(|e| format!("Failed to watch path: {}", e))?;
-    let mut watched_source_paths = vec![watch_path.clone()];
-    if let Some(config_path) = &config_path {
+    let mut watched_source_paths = vec![watch_path];
+    if let Some(config_path) = &session.config_path {
         watcher
             .watch(config_path, RecursiveMode::NonRecursive)
             .map_err(|e| format!("Failed to watch config file: {}", e))?;
     }
-    let mut ignored_roots =
-        watch_ignored_roots(effective_output.as_ref(), config.as_ref(), &config_dir);
 
-    // Process events
     loop {
         match rx.recv_timeout(WATCH_POLL_INTERVAL) {
             Ok(first_event) => {
                 let events = collect_debounced_events(&rx, first_event);
-                let decision = rebuild_decision(&events, config_path.as_deref(), &ignored_roots);
-
+                let decision = rebuild_decision(
+                    &events,
+                    session.config_path.as_deref(),
+                    &session.ignored_roots,
+                );
                 if decision.should_rebuild {
                     if decision.config_changed {
-                        match reload_watch_config(
-                            &mut watcher,
-                            &mut watched_source_paths,
-                            config_path.as_deref(),
-                            &config_dir,
-                            input.is_none(),
-                            pack_format.is_some(),
-                        ) {
-                            Ok(Some(updated_config)) => {
-                                config = Some(updated_config);
-                                if link {
-                                    // Re-resolve the link target and project
-                                    // identity the same way initial setup did.
-                                    match linked_output_path(&config_dir) {
-                                        Ok(updated_target) => {
-                                            if effective_output.as_deref()
-                                                != Some(updated_target.as_path())
-                                            {
-                                                println!("Linked output: {:?}", updated_target);
-                                            }
-                                            effective_output = Some(updated_target);
-                                            expected_link_project_id =
-                                                Some(project_marker_identity(&config_dir).1);
-                                        }
-                                        Err(error) => {
-                                            println!(
-                                                "! Link target could not be re-resolved: {error}"
-                                            );
-                                            println!(
-                                                "  Keeping the previous linked output target.\n"
-                                            );
-                                        }
-                                    }
-                                }
-                                ignored_roots = watch_ignored_roots(
-                                    effective_output.as_ref(),
-                                    config.as_ref(),
-                                    &config_dir,
-                                );
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                println!("✗ Config reload failed: {error}");
-                                println!("  Rebuilding with the last-good configuration.\n");
-                            }
-                        }
+                        session.reload_config(&mut watcher, &mut watched_source_paths);
                     }
-
-                    println!(
-                        "[{}] {}",
-                        unix_timestamp(),
-                        changed_paths_summary(&decision.changed_paths)
-                    );
-                    println!("Rebuilding...");
-
-                    if let Some(linked_output) = link.then_some(effective_output.as_ref()).flatten()
-                    {
-                        if let Err(error) = ensure_linked_output_target_safe(
-                            linked_output,
-                            expected_link_namespace(namespace.as_deref(), config.as_ref()),
-                            expected_link_project_id.as_deref(),
-                        ) {
-                            println!("✗ Build failed: {error}\n");
-                            continue;
-                        }
-                    }
-
-                    let build_result = build(BuildOptions {
-                        input: build_input.clone(),
-                        output: effective_output.clone(),
-                        namespace: namespace.clone(),
-                        pack_format: pack_format.clone(),
-                        description: description.clone(),
-                        verbose,
-                        quiet: false,
-                        zip,
-                        experimental_resource_pack,
-                        validate,
-                        dry_run: false,
-                        commands_json: commands_json.clone(),
-                    });
-
-                    match build_result {
-                        Ok(()) => println!("✓ Build succeeded\n"),
-                        Err(e) => println!("✗ Build failed: {}\n", e),
-                    }
+                    session.rebuild(&decision.changed_paths);
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // No events, continue watching
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err("Watcher disconnected".to_string());
             }
         }
+    }
+}
 
-        // Note: Ctrl+C is handled by signal handlers, no need to check stdin
+/// The state `cobble watch` keeps between rebuilds.
+struct WatchSession {
+    options: WatchOptions,
+    config: Option<CobbleConfig>,
+    config_dir: PathBuf,
+    config_path: Option<PathBuf>,
+    watch_path: PathBuf,
+    /// The `--output` folder, or the link target under `--link`.
+    output: Option<PathBuf>,
+    expected_link_project_id: Option<String>,
+    ignored_roots: Vec<PathBuf>,
+}
+
+impl WatchSession {
+    fn start(options: WatchOptions) -> Result<Self, String> {
+        let (config, config_dir, config_path) =
+            if let Some(config_path) = find_config(options.input.as_deref()) {
+                let config = if options.pack_format.is_some() {
+                    CobbleConfig::load_unvalidated(&config_path)?
+                } else {
+                    CobbleConfig::load(&config_path)?
+                };
+                let config_dir = config_path.parent().unwrap().to_path_buf();
+                (Some(config), config_dir, Some(config_path))
+            } else {
+                (
+                    None,
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                    None,
+                )
+            };
+
+        let watch_path = if let Some(ref input_path) = options.input {
+            input_path.clone()
+        } else if let Some(ref cfg) = config {
+            config_dir.join(&cfg.build.source)
+        } else {
+            return Err("No input specified and no cobble.toml found".to_string());
+        };
+        if !watch_path.exists() {
+            return Err(format!("Watch path does not exist: {:?}", watch_path));
+        }
+
+        let output = if options.link {
+            Some(linked_output_path(&config_dir)?)
+        } else {
+            options.output.clone()
+        };
+        let expected_link_project_id = options.link.then(|| project_marker_identity(&config_dir).1);
+        let ignored_roots = watch_ignored_roots(output.as_ref(), config.as_ref(), &config_dir);
+        let session = Self {
+            options,
+            config,
+            config_dir,
+            config_path,
+            watch_path,
+            output,
+            expected_link_project_id,
+            ignored_roots,
+        };
+        session.check_linked_output()?;
+        Ok(session)
     }
 
-    // Note: This code is unreachable, but Rust requires a return
-    #[allow(unreachable_code)]
-    Ok(())
+    fn linked_output(&self) -> Option<&PathBuf> {
+        self.options.link.then_some(self.output.as_ref()).flatten()
+    }
+
+    fn check_linked_output(&self) -> Result<(), String> {
+        match self.linked_output() {
+            Some(linked_output) => ensure_linked_output_target_safe(
+                linked_output,
+                expected_link_namespace(self.options.namespace.as_deref(), self.config.as_ref()),
+                self.expected_link_project_id.as_deref(),
+            ),
+            None => Ok(()),
+        }
+    }
+
+    fn build_options(&self) -> BuildOptions {
+        BuildOptions {
+            input: self.options.input.clone(),
+            output: self.output.clone(),
+            namespace: self.options.namespace.clone(),
+            pack_format: self.options.pack_format.clone(),
+            description: self.options.description.clone(),
+            verbose: self.options.verbose,
+            quiet: false,
+            zip: self.options.zip,
+            experimental_resource_pack: self.options.experimental_resource_pack,
+            validate: self.options.validate,
+            dry_run: false,
+            commands_json: self.options.commands_json.clone(),
+        }
+    }
+
+    /// Reloads `cobble.toml` after it changed. On failure the last good
+    /// configuration stays in use.
+    fn reload_config<W: Watcher>(
+        &mut self,
+        watcher: &mut W,
+        watched_source_paths: &mut Vec<PathBuf>,
+    ) {
+        match reload_watch_config(
+            watcher,
+            watched_source_paths,
+            self.config_path.as_deref(),
+            &self.config_dir,
+            self.options.input.is_none(),
+            self.options.pack_format.is_some(),
+        ) {
+            Ok(Some(updated_config)) => {
+                self.config = Some(updated_config);
+                if self.options.link {
+                    self.resolve_link_target_again();
+                }
+                self.ignored_roots = watch_ignored_roots(
+                    self.output.as_ref(),
+                    self.config.as_ref(),
+                    &self.config_dir,
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                println!("✗ Config reload failed: {error}");
+                println!("  Rebuilding with the last-good configuration.\n");
+            }
+        }
+    }
+
+    /// Re-resolves the link target and project identity the same way
+    /// [`WatchSession::start`] did.
+    fn resolve_link_target_again(&mut self) {
+        match linked_output_path(&self.config_dir) {
+            Ok(updated_target) => {
+                if self.output.as_deref() != Some(updated_target.as_path()) {
+                    println!("Linked output: {:?}", updated_target);
+                }
+                self.output = Some(updated_target);
+                self.expected_link_project_id = Some(project_marker_identity(&self.config_dir).1);
+            }
+            Err(error) => {
+                println!("! Link target could not be re-resolved: {error}");
+                println!("  Keeping the previous linked output target.\n");
+            }
+        }
+    }
+
+    fn rebuild(&self, changed_paths: &[PathBuf]) {
+        println!(
+            "[{}] {}",
+            unix_timestamp(),
+            changed_paths_summary(changed_paths)
+        );
+        println!("Rebuilding...");
+
+        if let Err(error) = self.check_linked_output() {
+            println!("✗ Build failed: {error}\n");
+            return;
+        }
+        match build(self.build_options()) {
+            Ok(()) => println!("✓ Build succeeded\n"),
+            Err(e) => println!("✗ Build failed: {}\n", e),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

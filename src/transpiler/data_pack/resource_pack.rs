@@ -1,5 +1,5 @@
 use super::{DataPack, SourceLocation};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 impl DataPack {
     pub fn add_resource_pack_model_in_namespace_with_source(
@@ -10,23 +10,48 @@ impl DataPack {
         source: Option<SourceLocation>,
     ) -> Result<(), String> {
         let key = Self::json_resource_key(&namespace, &relative_path);
-        let source_display_root = self.source_display_root.clone();
-        Self::insert_pass_through_resource(
-            &mut self.resource_pack_models,
-            &mut self.resource_pack_resource_origins,
-            key,
-            namespace,
-            relative_path,
-            json,
-            source,
-            |namespace, relative_path| {
-                format!(
-                    "Duplicate resource pack model '{}:{}'",
-                    namespace, relative_path
-                )
-            },
-            |source| Self::format_source_location_with_root(&source_display_root, source),
-        )
+        if let Some(existing_json) = self.resource_pack_models.get(&key) {
+            if existing_json == &json {
+                if let Some(source) = source {
+                    self.resource_pack_resource_origins
+                        .entry(key)
+                        .or_default()
+                        .push(source);
+                }
+                return Ok(());
+            }
+
+            let mut message = format!(
+                "Duplicate resource pack model '{}:{}' (invalid overwrite)",
+                namespace, relative_path
+            );
+            let declarations = [
+                (
+                    "first",
+                    self.resource_pack_resource_origins
+                        .get(&key)
+                        .and_then(|origins| origins.first()),
+                ),
+                ("second", source.as_ref()),
+            ];
+            for (label, location) in declarations {
+                if let Some(location) = location {
+                    message.push_str(&format!(
+                        "\n  {} declaration: {}",
+                        label,
+                        self.format_source_location(location)
+                    ));
+                }
+            }
+            return Err(message);
+        }
+
+        self.resource_pack_models.insert(key.clone(), json);
+        if let Some(source) = source {
+            self.resource_pack_resource_origins
+                .insert(key, vec![source]);
+        }
+        Ok(())
     }
 
     /// Whether a `resource_pack_models` path is a generated item model
@@ -175,55 +200,5 @@ impl DataPack {
     ) -> Result<String, String> {
         serde_json::to_string_pretty(entries)
             .map_err(|e| format!("Failed to serialize merged resource-pack lang JSON: {}", e))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn insert_pass_through_resource<F, G>(
-        resources: &mut HashMap<String, String>,
-        origins: &mut HashMap<String, Vec<SourceLocation>>,
-        key: String,
-        namespace: String,
-        relative_path: String,
-        json: String,
-        source: Option<SourceLocation>,
-        duplicate_message: F,
-        format_source_location: G,
-    ) -> Result<(), String>
-    where
-        F: Fn(&str, &str) -> String,
-        G: Fn(&SourceLocation) -> String,
-    {
-        if let Some(existing_json) = resources.get(&key) {
-            if existing_json == &json {
-                if let Some(source) = source {
-                    origins.entry(key).or_default().push(source);
-                }
-                return Ok(());
-            }
-
-            let mut message = format!(
-                "{} (invalid overwrite)",
-                duplicate_message(&namespace, &relative_path)
-            );
-            if let Some(first_source) = origins.get(&key).and_then(|v| v.first()) {
-                message.push_str(&format!(
-                    "\n  first declaration: {}",
-                    format_source_location(first_source)
-                ));
-            }
-            if let Some(second_source) = source.as_ref() {
-                message.push_str(&format!(
-                    "\n  second declaration: {}",
-                    format_source_location(second_source)
-                ));
-            }
-            return Err(message);
-        }
-
-        resources.insert(key.clone(), json);
-        if let Some(source) = source {
-            origins.insert(key, vec![source]);
-        }
-        Ok(())
     }
 }

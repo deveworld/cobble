@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::transpiler::expression_evaluator::ExpressionEvaluator;
+use crate::transpiler::expression_evaluator::{min_constant_commands, ExpressionEvaluator};
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{escape_quoted, GeneratedCommandKind, ModuleLevelAssignment};
 use crate::transpiler::{TranspileError, Transpiler};
@@ -20,9 +20,8 @@ enum AssignTargetKind<'a> {
 }
 
 /// How an in-function assignment's *value* is lowered. Produced by
-/// `Transpiler::classify_assignment_value`; the variants are listed in
-/// classification order, which is load-bearing (see the decision-order
-/// comment on `Transpiler::process_assignment`).
+/// `Transpiler::classify_assignment_value`; the variants are listed in the
+/// order they are checked (see `Transpiler::process_assignment`).
 enum AssignValueKind {
     /// The whole value folds to a compile-time number.
     ConstFoldable(f64),
@@ -215,8 +214,7 @@ impl Transpiler {
 
     /// Process a plain `target = value` assignment statement.
     ///
-    /// DECISION ORDER (load-bearing -- this mirrors the historical if/else
-    /// ladder exactly; reordering any step changes user-visible behavior):
+    /// The steps run in this order, and reordering them changes the output:
     ///
     /// 1. Storage-expression targets (`config.x = ...`, `items[i] = ...`)
     ///    short-circuit to the storage-target path before any type
@@ -365,9 +363,8 @@ impl Transpiler {
         }
     }
 
-    /// Classify an in-function assignment *value*. The check order is
-    /// load-bearing; see the decision-order comment on
-    /// [`Self::process_assignment`].
+    /// Classify an in-function assignment *value*. The checks run in the
+    /// order listed on [`Self::process_assignment`].
     fn classify_assignment_value(&self, target: &str, value: &Expression) -> AssignValueKind {
         // Try to evaluate constant expressions first
         if let Some(const_value) = self.try_eval_const(value) {
@@ -549,9 +546,8 @@ impl Transpiler {
         Ok(())
     }
 
-    /// Lower `AssignValueKind::ComplexEval` and `AssignValueKind::ParamCopy`
-    /// (their historical lowerings were identical): route the value through
-    /// the recursive expression evaluator.
+    /// Lower `AssignValueKind::ComplexEval` and `AssignValueKind::ParamCopy`:
+    /// route the value through the recursive expression evaluator.
     fn lower_expression_eval_assignment(
         &mut self,
         assign: &Assignment,
@@ -591,9 +587,8 @@ impl Transpiler {
         Ok(())
     }
 
-    /// Lower `AssignValueKind::ScoreSimple`: the historical manual
-    /// scoreboard ladder for literals, identifier copies, and simple
-    /// atom-op-atom binary arithmetic.
+    /// Lower `AssignValueKind::ScoreSimple`: direct scoreboard commands for
+    /// literals, identifier copies, and simple atom-op-atom arithmetic.
     fn lower_simple_score_assignment(&mut self, assign: &Assignment) -> Result<(), TranspileError> {
         // Scoreboard arithmetic below reads identifier operands as scores; a
         // storage-backed string's score mirror only holds the string length.
@@ -605,9 +600,8 @@ impl Transpiler {
             }
         }
 
-        // The historical ladder emitted nothing outside a function body (its
-        // command block was guarded on `current_function`), and none of the
-        // ladder's errors fired at module level either.
+        // Outside a function body there is nothing to emit, and none of the
+        // errors below apply at module level.
         if self.current_function.is_none() {
             return Ok(());
         }
@@ -632,16 +626,7 @@ impl Transpiler {
                 // `classify_assignment_value`; nothing to emit here.
             }
             Expression::Boolean(b) => {
-                // Boolean assignment
-                // Store as scoreboard (0/1) AND storage (byte) if needed?
-                // For now, keep existing scoreboard behavior for boolean
-                // But if we want to put it in storage:
-                // Let's stick to scoreboard for consistency with existing code
-                // unless explicitly requested?
-                // Existing code does NOTHING for Boolean assignment!
-                // See original code: "String and Boolean values ... don't generate scoreboard commands"
-                // This means they were effectively compile-time only or broken.
-                // Let's fix it by using scoreboard for boolean.
+                // `True` and `False` are scores 1 and 0.
                 self.data_pack.track_objective("temp");
                 self.symbols
                     .variable_objectives
@@ -736,11 +721,9 @@ impl Transpiler {
                 }
             }
             Expression::Binary(left, op, right) => {
-                // Binary operation (`classify_assignment_value` already routed
-                // complex shapes to the expression evaluator, so this is simple).
-                // NOTE: BinaryOp::Pow never reaches this ladder — `needs_complex_eval`
-                // routes every Pow assignment to the expression evaluator, which
-                // handles both constant and runtime exponents.
+                // `classify_assignment_value` routes nested operands and every
+                // `^` (constant or runtime exponent) to the expression
+                // evaluator, so only atom-op-atom arithmetic reaches here.
                 self.data_pack.track_objective("temp");
                 self.symbols
                     .variable_objectives
@@ -749,28 +732,20 @@ impl Transpiler {
                     .scoreboard_variables
                     .insert(assign.target.clone());
 
-                match (&**left, &**right) {
-                    (Expression::Identifier(var), Expression::Number(n)) => {
-                        self.score_binary_var_num_commands(&mut commands, assign, var, op, n)?
-                    }
-                    (Expression::Number(n1), Expression::Number(n2)) => {
-                        Self::score_binary_num_num_commands(&mut commands, assign, n1, op, n2)?
-                    }
-                    (Expression::Number(n), Expression::Identifier(var)) => {
-                        self.score_binary_num_var_commands(&mut commands, assign, n, op, var)?
-                    }
-                    (Expression::Identifier(var1), Expression::Identifier(var2)) => {
-                        self.score_binary_var_var_commands(&mut commands, assign, var1, op, var2)?
-                    }
-                    _ => {
-                        // Unsupported combination
-                        return Err(format!(
-                            "Unsupported binary operation: {:?} between {:?} and {:?}",
-                            op, left, right
-                        )
-                        .into());
-                    }
+                if !matches!(
+                    (&**left, &**right),
+                    (
+                        Expression::Identifier(_) | Expression::Number(_),
+                        Expression::Identifier(_) | Expression::Number(_)
+                    )
+                ) {
+                    return Err(format!(
+                        "Unsupported binary operation: {:?} between {:?} and {:?}",
+                        op, left, right
+                    )
+                    .into());
                 }
+                commands.extend(self.score_binary_commands(assign, left, op, right)?);
             }
             Expression::Call(func, _args) => {
                 // Value-returning user calls are handled by the expression
@@ -846,550 +821,171 @@ impl Transpiler {
         Ok(commands)
     }
 
-    /// Scoreboard ladder: `target = var <op> number`.
-    fn score_binary_var_num_commands(
-        &mut self,
-        commands: &mut Vec<String>,
-        assign: &Assignment,
-        var: &str,
-        op: &BinaryOp,
-        n: &f64,
-    ) -> Result<(), TranspileError> {
-        // Handle variable op number (e.g., score = x + 5)
-        if n.fract() != 0.0 {
-            eprintln!(
-                                    "⚠️  Warning: Float value {} in binary operation will lose precision.\n\
-                                    Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                                    n, *n as i32
-                                );
-        }
-        let value = *n as i32;
-        let var_obj = self
-            .symbols
-            .variable_objectives
-            .get(var)
-            .unwrap_or(&"temp".to_string())
-            .clone();
-
-        match op {
-            BinaryOp::Add => {
-                // Optimization: Skip self-assignment if target == var
-                if assign.target != *var || var_obj != "temp" {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        assign.target, var, var_obj
-                    ));
-                }
-                if value < 0 {
-                    commands.push(format!(
-                        "scoreboard players remove {} temp {}",
-                        assign.target, -value
-                    ));
-                } else {
-                    commands.push(format!(
-                        "scoreboard players add {} temp {}",
-                        assign.target, value
-                    ));
-                }
-            }
-            BinaryOp::Sub => {
-                // Optimization: Skip self-assignment if target == var
-                if assign.target != *var || var_obj != "temp" {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        assign.target, var, var_obj
-                    ));
-                }
-                if value < 0 {
-                    commands.push(format!(
-                        "scoreboard players add {} temp {}",
-                        assign.target, -value
-                    ));
-                } else {
-                    commands.push(format!(
-                        "scoreboard players remove {} temp {}",
-                        assign.target, value
-                    ));
-                }
-            }
-            BinaryOp::Mul => {
-                // Optimization: Skip self-assignment if target == var
-                if assign.target != *var || var_obj != "temp" {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        assign.target, var, var_obj
-                    ));
-                }
-                commands.push(format!("scoreboard players set #multiplier temp {}", value));
-                commands.push(format!(
-                    "scoreboard players operation {} temp *= #multiplier temp",
-                    assign.target
-                ));
-            }
-            BinaryOp::Div => {
-                // Check for division by zero at compile time
-                if value == 0 {
-                    return Err(format!(
-                        "Division by zero in assignment: {} = {} / {}",
-                        assign.target, var, value
-                    )
-                    .into());
-                }
-                // Optimization: Skip self-assignment if target == var
-                if assign.target != *var || var_obj != "temp" {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        assign.target, var, var_obj
-                    ));
-                }
-                commands.push(format!("scoreboard players set #divisor temp {}", value));
-                commands.push(format!(
-                    "scoreboard players operation {} temp /= #divisor temp",
-                    assign.target
-                ));
-            }
-            BinaryOp::Mod => {
-                // Check for modulo by zero at compile time
-                if value == 0 {
-                    return Err(format!(
-                        "Modulo by zero in assignment: {} = {} % {}",
-                        assign.target, var, value
-                    )
-                    .into());
-                }
-                // Optimization: Skip self-assignment if target == var
-                if assign.target != *var || var_obj != "temp" {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        assign.target, var, var_obj
-                    ));
-                }
-                commands.push(format!("scoreboard players set #modulus temp {}", value));
-                commands.push(format!(
-                    "scoreboard players operation {} temp %= #modulus temp",
-                    assign.target
-                ));
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// Scoreboard ladder: `target = number <op> number` that escaped const
-    /// folding (folding declines division/modulo by zero, which error here).
-    fn score_binary_num_num_commands(
-        commands: &mut Vec<String>,
-        assign: &Assignment,
-        n1: &f64,
-        op: &BinaryOp,
-        n2: &f64,
-    ) -> Result<(), TranspileError> {
-        // Constant expression evaluation with error checking
-        let result_f64 = match op {
-            BinaryOp::Add => *n1 + *n2,
-            BinaryOp::Sub => *n1 - *n2,
-            BinaryOp::Mul => *n1 * *n2,
-            BinaryOp::Div => {
-                if *n2 == 0.0 {
-                    return Err(format!(
-                        "Division by zero in constant expression: {} / {}",
-                        n1, n2
-                    )
-                    .into());
-                }
-                *n1 / *n2
-            }
-            BinaryOp::Mod => {
-                if *n2 == 0.0 {
-                    return Err(
-                        format!("Modulo by zero in constant expression: {} % {}", n1, n2).into(),
+    /// One side of an atom-op-atom assignment: a score, or a number known at
+    /// compile time (a literal or a `const`).
+    fn score_operand<'e>(&self, expr: &'e Expression) -> ScoreOperand<'e> {
+        match expr {
+            Expression::Identifier(name) => match self.symbols.compile_time_constants.get(name) {
+                Some(value) => ScoreOperand::Constant {
+                    value: *value as i32,
+                    literal: false,
+                },
+                None => ScoreOperand::Score {
+                    holder: name,
+                    objective: self
+                        .symbols
+                        .variable_objectives
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| "temp".to_string()),
+                },
+            },
+            Expression::Number(n) => {
+                if n.fract() != 0.0 {
+                    eprintln!(
+                        "⚠️  Warning: Float value {} in binary operation will lose precision.\n\
+                        Scoreboard only supports integers. Fractional part will be truncated to: {}",
+                        n, *n as i32
                     );
                 }
-                (*n1 as i32 % *n2 as i32) as f64
+                ScoreOperand::Constant {
+                    value: *n as i32,
+                    literal: true,
+                }
             }
-            _ => 0.0,
+            _ => unreachable!("simple score assignments have identifier or number operands"),
+        }
+    }
+
+    /// `target = left <op> right` with scoreboard commands, where each side
+    /// is a score or a compile-time number.
+    fn score_binary_commands(
+        &mut self,
+        assign: &Assignment,
+        left: &Expression,
+        op: &BinaryOp,
+        right: &Expression,
+    ) -> Result<Vec<String>, TranspileError> {
+        let target = assign.target.as_str();
+        let lhs = self.score_operand(left);
+        let rhs = self.score_operand(right);
+
+        if matches!(op, BinaryOp::Div | BinaryOp::Mod)
+            && matches!(rhs, ScoreOperand::Constant { value: 0, .. })
+        {
+            let (name, symbol) = if matches!(op, BinaryOp::Div) {
+                ("Division", "/")
+            } else {
+                ("Modulo", "%")
+            };
+            let place = if matches!(lhs, ScoreOperand::Constant { .. }) {
+                "constant expression: ".to_string()
+            } else {
+                format!("assignment: {} = ", target)
+            };
+            return Err(format!(
+                "{} by zero in {}{} {} {}",
+                name,
+                place,
+                operand_text(left),
+                symbol,
+                operand_text(right)
+            )
+            .into());
+        }
+
+        let set = |value: i32| format!("scoreboard players set {} temp {}", target, value);
+        let copy = |holder: &str, objective: &str| {
+            format!(
+                "scoreboard players operation {} temp = {} {}",
+                target, holder, objective
+            )
         };
-
-        let result = result_f64 as i32;
-        if result_f64.fract() != 0.0 {
-            eprintln!(
-                                    "⚠️  Warning: Constant expression result {} will lose precision.\n\
-                                    Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                                    result_f64, result
-                                );
+        let mut commands = Vec::new();
+        match (lhs, rhs) {
+            (ScoreOperand::Constant { value: a, .. }, ScoreOperand::Constant { value: b, .. }) => {
+                let folded = crate::transpiler::const_eval::fold_score_operation(op, a, b)
+                    .unwrap_or_default();
+                commands.push(set(folded));
+            }
+            (ScoreOperand::Score { holder, objective }, ScoreOperand::Constant { value, .. }) => {
+                // `x = x + 1` needs no copy.
+                if target != holder || objective != "temp" {
+                    commands.push(copy(holder, &objective));
+                }
+                commands.extend(Self::apply_constant_to_score(target, op, value));
+            }
+            (
+                ScoreOperand::Constant {
+                    value,
+                    literal: true,
+                },
+                ScoreOperand::Score { holder, objective },
+            ) if matches!(op, BinaryOp::Add) => {
+                commands.push(copy(holder, &objective));
+                commands.extend(Self::apply_constant_to_score(target, op, value));
+            }
+            (ScoreOperand::Constant { value, .. }, ScoreOperand::Score { holder, objective }) => {
+                if matches!(op, BinaryOp::Mul) {
+                    commands.push(copy(holder, &objective));
+                    commands.extend(Self::apply_constant_to_score(target, op, value));
+                } else if let Some(operation) = score_operation(op) {
+                    commands.push(set(value));
+                    commands.push(format!(
+                        "scoreboard players operation {} temp {} {} {}",
+                        target, operation, holder, objective
+                    ));
+                }
+            }
+            (
+                ScoreOperand::Score {
+                    holder: left_holder,
+                    objective: left_objective,
+                },
+                ScoreOperand::Score { holder, objective },
+            ) => {
+                if target != left_holder || left_objective != "temp" {
+                    commands.push(copy(left_holder, &left_objective));
+                }
+                if let Some(operation) = score_operation(op) {
+                    commands.push(format!(
+                        "scoreboard players operation {} temp {} {} {}",
+                        target, operation, holder, objective
+                    ));
+                }
+            }
         }
-
-        commands.push(format!(
-            "scoreboard players set {} temp {}",
-            assign.target, result
-        ));
-        Ok(())
+        Ok(commands)
     }
 
-    /// Scoreboard ladder: `target = number <op> var`.
-    fn score_binary_num_var_commands(
-        &mut self,
-        commands: &mut Vec<String>,
-        assign: &Assignment,
-        n: &f64,
-        op: &BinaryOp,
-        var: &str,
-    ) -> Result<(), TranspileError> {
-        // Handle Number + Variable (e.g., score = 5 + x)
-        self.data_pack.track_objective("temp");
-        // Mark target as scoreboard-backed
-        self.symbols
-            .scoreboard_variables
-            .insert(assign.target.clone());
-        if n.fract() != 0.0 {
-            eprintln!(
-                                    "⚠️  Warning: Float value {} in binary operation will lose precision.\n\
-                                    Scoreboard only supports integers. Fractional part will be truncated to: {}",
-                                    n, *n as i32
-                                );
-        }
-        let value = *n as i32;
-        let var_obj = self
-            .symbols
-            .variable_objectives
-            .get(var)
-            .unwrap_or(&"temp".to_string())
-            .clone();
-
+    /// Applies `<op> value` to the score `target`. `+` and `-` use
+    /// `add`/`remove`; the other operators go through a constant holder.
+    fn apply_constant_to_score(target: &str, op: &BinaryOp, value: i32) -> Vec<String> {
+        let value_abs = i64::from(value).abs();
+        let add = || format!("scoreboard players add {} temp {}", target, value_abs);
+        let remove = || format!("scoreboard players remove {} temp {}", target, value_abs);
+        let through_holder = |holder: &str, operation: &str| {
+            vec![
+                format!("scoreboard players set {} temp {}", holder, value),
+                format!(
+                    "scoreboard players operation {} temp {} {} temp",
+                    target, operation, holder
+                ),
+            ]
+        };
         match op {
-            BinaryOp::Add => {
-                // score = value + var → score = var, score += value
-                commands.push(format!(
-                    "scoreboard players operation {} temp = {} {}",
-                    assign.target, var, var_obj
-                ));
-                if value < 0 {
-                    commands.push(format!(
-                        "scoreboard players remove {} temp {}",
-                        assign.target, -value
-                    ));
-                } else {
-                    commands.push(format!(
-                        "scoreboard players add {} temp {}",
-                        assign.target, value
-                    ));
-                }
+            BinaryOp::Add | BinaryOp::Sub if value == i32::MIN => {
+                min_constant_commands(target, "temp")
             }
-            BinaryOp::Sub => {
-                // score = value - var → score = value, score -= var
-                commands.push(format!(
-                    "scoreboard players set {} temp {}",
-                    assign.target, value
-                ));
-                commands.push(format!(
-                    "scoreboard players operation {} temp -= {} {}",
-                    assign.target, var, var_obj
-                ));
-            }
-            BinaryOp::Mul => {
-                // score = value * var → score = var, score *= value
-                commands.push(format!(
-                    "scoreboard players operation {} temp = {} {}",
-                    assign.target, var, var_obj
-                ));
-                commands.push(format!("scoreboard players set #multiplier temp {}", value));
-                commands.push(format!(
-                    "scoreboard players operation {} temp *= #multiplier temp",
-                    assign.target
-                ));
-            }
-            BinaryOp::Div => {
-                // score = value / var (not commonly used, but implemented)
-                // Check if var is a compile-time constant with value 0
-                if let Some(const_val) = self.symbols.compile_time_constants.get(var) {
-                    if *const_val == 0.0 {
-                        return Err(format!(
-                                                "Division by zero: Variable '{}' has constant value 0.\n\
-                                                \n\
-                                                Division by zero causes undefined behavior in Minecraft.\n\
-                                                Solution: Check the divisor before division:\n\
-                                                \n\
-                                                if {} != 0:\n\
-                                                    {} = {} / {}",
-                                                var, var, assign.target, value, var
-                                            ).into());
-                    }
-                }
-                commands.push(format!(
-                    "scoreboard players set {} temp {}",
-                    assign.target, value
-                ));
-                commands.push(format!(
-                    "scoreboard players operation {} temp /= {} {}",
-                    assign.target, var, var_obj
-                ));
-            }
-            BinaryOp::Mod => {
-                // score = value % var
-                // Check if var is a compile-time constant with value 0
-                if let Some(const_val) = self.symbols.compile_time_constants.get(var) {
-                    if *const_val == 0.0 {
-                        return Err(format!(
-                                                "Modulo by zero: Variable '{}' has constant value 0.\n\
-                                                \n\
-                                                Modulo by zero causes undefined behavior in Minecraft.\n\
-                                                Solution: Check the divisor before modulo:\n\
-                                                \n\
-                                                if {} != 0:\n\
-                                                    {} = {} % {}",
-                                                var, var, assign.target, value, var
-                                            ).into());
-                    }
-                }
-                commands.push(format!(
-                    "scoreboard players set {} temp {}",
-                    assign.target, value
-                ));
-                commands.push(format!(
-                    "scoreboard players operation {} temp %= {} {}",
-                    assign.target, var, var_obj
-                ));
-            }
-            _ => {}
+            BinaryOp::Add if value < 0 => vec![remove()],
+            BinaryOp::Add => vec![add()],
+            BinaryOp::Sub if value < 0 => vec![add()],
+            BinaryOp::Sub => vec![remove()],
+            BinaryOp::Mul => through_holder("#multiplier", "*="),
+            BinaryOp::Div => through_holder("#divisor", "/="),
+            BinaryOp::Mod => through_holder("#modulus", "%="),
+            _ => Vec::new(),
         }
-        Ok(())
-    }
-
-    /// Scoreboard ladder: `target = var <op> var`, with either side possibly
-    /// a compile-time constant.
-    fn score_binary_var_var_commands(
-        &mut self,
-        commands: &mut Vec<String>,
-        assign: &Assignment,
-        var1: &str,
-        op: &BinaryOp,
-        var2: &str,
-    ) -> Result<(), TranspileError> {
-        let left_const = self.symbols.compile_time_constants.get(var1).copied();
-        let right_const = self.symbols.compile_time_constants.get(var2).copied();
-
-        if let Some(value) = left_const {
-            let num = value as i32;
-            let var_obj = self
-                .symbols
-                .variable_objectives
-                .get(var2)
-                .unwrap_or(&"temp".to_string())
-                .clone();
-
-            match op {
-                BinaryOp::Add => {
-                    commands.push(format!(
-                        "scoreboard players set {} temp {}",
-                        assign.target, num
-                    ));
-                    commands.push(format!(
-                        "scoreboard players operation {} temp += {} {}",
-                        assign.target, var2, var_obj
-                    ));
-                }
-                BinaryOp::Sub => {
-                    commands.push(format!(
-                        "scoreboard players set {} temp {}",
-                        assign.target, num
-                    ));
-                    commands.push(format!(
-                        "scoreboard players operation {} temp -= {} {}",
-                        assign.target, var2, var_obj
-                    ));
-                }
-                BinaryOp::Mul => {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp = {} {}",
-                        assign.target, var2, var_obj
-                    ));
-                    commands.push(format!("scoreboard players set #multiplier temp {}", num));
-                    commands.push(format!(
-                        "scoreboard players operation {} temp *= #multiplier temp",
-                        assign.target
-                    ));
-                }
-                BinaryOp::Div => {
-                    commands.push(format!(
-                        "scoreboard players set {} temp {}",
-                        assign.target, num
-                    ));
-                    commands.push(format!(
-                        "scoreboard players operation {} temp /= {} {}",
-                        assign.target, var2, var_obj
-                    ));
-                }
-                BinaryOp::Mod => {
-                    commands.push(format!(
-                        "scoreboard players set {} temp {}",
-                        assign.target, num
-                    ));
-                    commands.push(format!(
-                        "scoreboard players operation {} temp %= {} {}",
-                        assign.target, var2, var_obj
-                    ));
-                }
-                _ => {}
-            }
-        } else if let Some(value) = right_const {
-            let num = value as i32;
-            let var1_obj = self
-                .symbols
-                .variable_objectives
-                .get(var1)
-                .unwrap_or(&"temp".to_string())
-                .clone();
-
-            if assign.target != *var1 || var1_obj != "temp" {
-                commands.push(format!(
-                    "scoreboard players operation {} temp = {} {}",
-                    assign.target, var1, var1_obj
-                ));
-            }
-
-            match op {
-                BinaryOp::Add => {
-                    if num < 0 {
-                        commands.push(format!(
-                            "scoreboard players remove {} temp {}",
-                            assign.target, -num
-                        ));
-                    } else {
-                        commands.push(format!(
-                            "scoreboard players add {} temp {}",
-                            assign.target, num
-                        ));
-                    }
-                }
-                BinaryOp::Sub => {
-                    if num < 0 {
-                        commands.push(format!(
-                            "scoreboard players add {} temp {}",
-                            assign.target, -num
-                        ));
-                    } else {
-                        commands.push(format!(
-                            "scoreboard players remove {} temp {}",
-                            assign.target, num
-                        ));
-                    }
-                }
-                BinaryOp::Mul => {
-                    commands.push(format!("scoreboard players set #multiplier temp {}", num));
-                    commands.push(format!(
-                        "scoreboard players operation {} temp *= #multiplier temp",
-                        assign.target
-                    ));
-                }
-                BinaryOp::Div => {
-                    if num == 0 {
-                        return Err("Division by zero in assignment".into());
-                    }
-                    commands.push(format!("scoreboard players set #divisor temp {}", num));
-                    commands.push(format!(
-                        "scoreboard players operation {} temp /= #divisor temp",
-                        assign.target
-                    ));
-                }
-                BinaryOp::Mod => {
-                    if num == 0 {
-                        return Err("Modulo by zero in assignment".into());
-                    }
-                    commands.push(format!("scoreboard players set #modulus temp {}", num));
-                    commands.push(format!(
-                        "scoreboard players operation {} temp %= #modulus temp",
-                        assign.target
-                    ));
-                }
-                _ => {}
-            }
-        } else {
-            // Handle variable op variable (e.g., z = x * y)
-            let var1_obj = self
-                .symbols
-                .variable_objectives
-                .get(var1)
-                .unwrap_or(&"temp".to_string())
-                .clone();
-            let var2_obj = self
-                .symbols
-                .variable_objectives
-                .get(var2)
-                .unwrap_or(&"temp".to_string())
-                .clone();
-
-            if assign.target != *var1 || var1_obj != "temp" {
-                commands.push(format!(
-                    "scoreboard players operation {} temp = {} {}",
-                    assign.target, var1, var1_obj
-                ));
-            }
-
-            match op {
-                BinaryOp::Add => {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp += {} {}",
-                        assign.target, var2, var2_obj
-                    ));
-                }
-                BinaryOp::Sub => {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp -= {} {}",
-                        assign.target, var2, var2_obj
-                    ));
-                }
-                BinaryOp::Mul => {
-                    commands.push(format!(
-                        "scoreboard players operation {} temp *= {} {}",
-                        assign.target, var2, var2_obj
-                    ));
-                }
-                BinaryOp::Div => {
-                    // Check if var2 is a compile-time constant with value 0
-                    if let Some(const_val) = self.symbols.compile_time_constants.get(var2) {
-                        if *const_val == 0.0 {
-                            return Err(format!(
-                                                    "Division by zero: Variable '{}' has constant value 0.\n\
-                                                    \n\
-                                                    Division by zero causes undefined behavior in Minecraft.\n\
-                                                    Solution: Check the divisor before division:\n\
-                                                    \n\
-                                                    if {} != 0:\n\
-                                                        {} = {} / {}",
-                                                    var2, var2, assign.target, assign.target, var2
-                                                ).into());
-                        }
-                    }
-                    commands.push(format!(
-                        "scoreboard players operation {} temp /= {} {}",
-                        assign.target, var2, var2_obj
-                    ));
-                }
-                BinaryOp::Mod => {
-                    // Check if var2 is a compile-time constant with value 0
-                    if let Some(const_val) = self.symbols.compile_time_constants.get(var2) {
-                        if *const_val == 0.0 {
-                            return Err(format!(
-                                                    "Modulo by zero: Variable '{}' has constant value 0.\n\
-                                                    \n\
-                                                    Modulo by zero causes undefined behavior in Minecraft.\n\
-                                                    Solution: Check the divisor before modulo:\n\
-                                                    \n\
-                                                    if {} != 0:\n\
-                                                        {} = {} % {}",
-                                                    var2, var2, assign.target, assign.target, var2
-                                                ).into());
-                        }
-                    }
-                    commands.push(format!(
-                        "scoreboard players operation {} temp %= {} {}",
-                        assign.target, var2, var2_obj
-                    ));
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     fn is_runtime_condition_expression(expr: &Expression) -> bool {
@@ -1510,5 +1106,40 @@ impl Transpiler {
 
         let escaped = escape_quoted(key);
         format!("\"{}\"", escaped)
+    }
+}
+
+/// One side of an atom-op-atom score assignment.
+enum ScoreOperand<'a> {
+    Score {
+        holder: &'a str,
+        objective: String,
+    },
+    /// `literal` tells `5 + x` from `LIMIT + x`; the two compile to
+    /// different but equivalent command orders.
+    Constant {
+        value: i32,
+        literal: bool,
+    },
+}
+
+/// The `scoreboard players operation` operator for an arithmetic operator.
+fn score_operation(op: &BinaryOp) -> Option<&'static str> {
+    match op {
+        BinaryOp::Add => Some("+="),
+        BinaryOp::Sub => Some("-="),
+        BinaryOp::Mul => Some("*="),
+        BinaryOp::Div => Some("/="),
+        BinaryOp::Mod => Some("%="),
+        _ => None,
+    }
+}
+
+/// Source text of an atom operand, for error messages.
+fn operand_text(expr: &Expression) -> String {
+    match expr {
+        Expression::Identifier(name) => name.clone(),
+        Expression::Number(n) => n.to_string(),
+        other => format!("{:?}", other),
     }
 }

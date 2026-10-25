@@ -5,6 +5,10 @@
 //! - a `]` inside a quoted selector value doesn't end the selector
 //! - string escapes decode as in Python and stay escaped in the output
 //! - columns count characters after wide indentation
+//! - deeply nested code with an error fails quickly
+//! - `positioned as` and `rotated as` keep their selector
+//! - two statements on one line are an error
+//! - an `execute` keyword before block modifiers is optional
 
 mod common;
 
@@ -110,4 +114,86 @@ fn columns_count_characters_after_wide_indentation() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(stderr.contains("main.cbl:2:7:"), "{stderr}");
+}
+
+#[test]
+fn errors_in_deeply_nested_code_fail_quickly() {
+    let parens = format!(
+        "def main():\n    x = {}1 +{}\n",
+        "(".repeat(40),
+        ")".repeat(40)
+    );
+    let mut nested = String::from("x = 1\ndef main():\n");
+    for depth in 0..30 {
+        nested.push_str(&format!("{}if x > {}:\n", "    ".repeat(depth + 1), depth));
+    }
+    nested.push_str(&format!("{}y = = 1\n", "    ".repeat(31)));
+    // The CLI runs on the main thread's stack; test threads have less.
+    let temp = tempfile::TempDir::new().unwrap();
+    let file = temp.path().join("main.cbl");
+    for source in [parens, nested] {
+        fs::write(&file, source).unwrap();
+        let started = std::time::Instant::now();
+        let output = Command::new(env!("CARGO_BIN_EXE_cobble"))
+            .arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(temp.path().join("out"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("error[parse]"));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+}
+
+#[test]
+fn positioned_and_rotated_as_keep_their_selector() {
+    let main = main_function(
+        r#"def main():
+    positioned as @s:
+        /say here
+    as @a rotated as @p:
+        /say turned
+"#,
+    );
+    assert!(
+        main.contains("execute positioned as @s run say here"),
+        "{main}"
+    );
+    assert!(
+        main.contains("execute as @a rotated as @p run say turned"),
+        "{main}"
+    );
+}
+
+#[test]
+fn two_statements_on_one_line_are_an_error() {
+    for source in [
+        "def main():\n    x = 1 y = 2\n",
+        "def main():\n    return 1 2\n",
+        "def main():\n    pass pass\n",
+    ] {
+        assert!(compile(source).is_err(), "accepted: {source}");
+    }
+}
+
+#[test]
+fn execute_keyword_before_modifiers_is_optional() {
+    let main = main_function(
+        r#"def main():
+    execute as @a at @s:
+        /say hi
+    as @a at @s:
+        /say hi
+"#,
+    );
+    assert_eq!(
+        main,
+        "execute as @a at @s run say hi\nexecute as @a at @s run say hi"
+    );
 }

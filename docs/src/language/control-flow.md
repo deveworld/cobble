@@ -104,6 +104,12 @@ def reward_new_players():
         /tellraw @s {"text":"Welcome!"}
 ```
 
+The header takes `as`, `at`, `if`, `unless`, `positioned` (coordinates or
+`positioned as <selector>`), `rotated` (rotation or `rotated as <selector>`),
+`in`, `anchored`, `align`, and `store`, in any order. `asat <selector>:` on
+its own is short for `as <selector> at @s:`. A leading `execute`, as in
+`execute as @a at @s:`, is optional.
+
 A body that compiles to a single command is inlined
 (`execute as @a if ... run tellraw ...`). A longer body is compiled into a
 helper function called once per execution context

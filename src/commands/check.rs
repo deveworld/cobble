@@ -157,42 +157,18 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
         return Err("--symbols requires --json".to_string());
     }
 
-    // Try to find cobble.toml
-    let (config, config_dir) =
-        if let Some(config_path) = super::find_config(options.input.as_deref()) {
-            let config = match CobbleConfig::load(&config_path) {
-                Ok(config) => config,
-                Err(error) if options.json => {
-                    print_config_error_json(&config_path, &error, options.symbols)?;
-                    return Err(format!("Config validation failed: {error}"));
-                }
-                Err(error) => return Err(error),
-            };
-            let config_dir = config_path.parent().unwrap().to_path_buf();
-            (Some(config), config_dir)
-        } else {
-            (
-                None,
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            )
-        };
-    let experimental_plugins = options.experimental_plugins
-        || config
-            .as_ref()
-            .map(|cfg| cfg.experimental.plugins)
-            .unwrap_or(false);
+    let (config, config_dir) = load_check_config(&options)?;
+    let experimental_plugins =
+        options.experimental_plugins || config.as_ref().is_some_and(|cfg| cfg.experimental.plugins);
     let experimental_resource_pack = config
         .as_ref()
-        .map(|cfg| cfg.experimental.resource_pack)
-        .unwrap_or(false);
+        .is_some_and(|cfg| cfg.experimental.resource_pack);
     let experimental_python_compat = options.experimental_python_compat
         || config
             .as_ref()
-            .map(|cfg| cfg.experimental.python_compat)
-            .unwrap_or(false);
+            .is_some_and(|cfg| cfg.experimental.python_compat);
     let mut plugin_report = plugin_report(experimental_plugins, &config_dir);
 
-    // Determine source path
     let source_path = if let Some(ref input_path) = options.input {
         input_path.clone()
     } else if let Some(ref cfg) = config {
@@ -200,61 +176,17 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
     } else {
         return Err("No input specified and no cobble.toml found".to_string());
     };
-
-    let configured_entry_points = if options.input.is_none() {
-        config
-            .as_ref()
-            .map(|cfg| cfg.build.entry_points.clone())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    // Check if source is a file or directory
-    let files_to_check = if source_path.is_file() {
-        vec![source_path.clone()]
-    } else if source_path.is_dir() {
-        if options.input.is_none() && !configured_entry_points.is_empty() {
-            resolve_entry_points(&source_path, &configured_entry_points)?
-        } else {
-            find_cobble_files(&source_path)?
-        }
-    } else {
-        return Err(format!("Source path does not exist: {:?}", source_path));
+    let files_to_check = files_to_check(&options, config.as_ref(), &source_path)?;
+    let run = CheckRun {
+        options: &options,
+        config_dir: &config_dir,
+        source_path: &source_path,
+        files_checked: files_to_check.len(),
+        experimental_python_compat,
     };
 
     if files_to_check.is_empty() {
-        let plugin_errors = plugin_error_count(plugin_report.as_ref());
-        if options.json {
-            print_check_json(&CheckReport {
-                schema_version: 1,
-                ok: plugin_errors == 0,
-                source: path_display(&source_path),
-                files_checked: 0,
-                files: Vec::new(),
-                diagnostics: Vec::new(),
-                error_count: plugin_errors,
-                experimental_symbols: options.symbols.then(Vec::new),
-                experimental_plugins: plugin_report,
-                experimental_python_compat: python_compat_report_success(
-                    experimental_python_compat,
-                    Vec::new(),
-                ),
-            })?;
-        } else {
-            println!("No Cobble files found to check");
-            print_python_compat_report_human(
-                python_compat_report_success(experimental_python_compat, Vec::new()).as_ref(),
-            );
-            print_plugin_report_human(plugin_report.as_ref());
-        }
-        return if plugin_errors == 0 {
-            Ok(())
-        } else {
-            Err(format!(
-                "Plugin manifest inspection failed with {plugin_errors} error(s)"
-            ))
-        };
+        return run.finish_without_files(plugin_report);
     }
 
     if !options.json {
@@ -264,10 +196,6 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
     let parsed_files = match parse_source_files(&files_to_check) {
         Ok(parsed_files) => parsed_files,
         Err(file_diagnostics) => {
-            let total_errors = file_diagnostics
-                .iter()
-                .map(|file| file.diagnostics.len())
-                .sum::<usize>();
             apply_declarative_plugin_rules(
                 plugin_report.as_mut(),
                 file_diagnostics
@@ -275,60 +203,8 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
                     .map(|file| (file.path.as_path(), file.source.as_str())),
                 &config_dir,
             );
-            let plugin_errors = plugin_error_count(plugin_report.as_ref());
-            if options.json {
-                print_check_json(&CheckReport {
-                    schema_version: 1,
-                    ok: false,
-                    source: path_display(&source_path),
-                    files_checked: files_to_check.len(),
-                    files: Vec::new(),
-                    diagnostics: diagnostic_reports(&file_diagnostics, &config_dir),
-                    error_count: total_errors + plugin_errors,
-                    experimental_symbols: symbol_reports_from_diagnostics(
-                        &file_diagnostics,
-                        &config_dir,
-                        options.symbols,
-                    ),
-                    experimental_plugins: plugin_report,
-                    experimental_python_compat: python_compat_report_from_diagnostics(
-                        experimental_python_compat,
-                        &file_diagnostics,
-                        observed_constructs_from_diagnostics(&file_diagnostics),
-                        &config_dir,
-                    ),
-                })?;
-            } else {
-                for diagnostics in &file_diagnostics {
-                    let relative_path = diagnostics
-                        .path
-                        .strip_prefix(&config_dir)
-                        .unwrap_or(&diagnostics.path);
-                    println!("  ✗ {:?}:", relative_path);
-                }
-                report_file_source_diagnostics(&file_diagnostics);
-
-                println!();
-                println!(
-                    "✗ {} error(s) found in {} file(s)",
-                    total_errors,
-                    file_diagnostics.len()
-                );
-                print_python_compat_report_human(
-                    python_compat_report_from_diagnostics(
-                        experimental_python_compat,
-                        &file_diagnostics,
-                        observed_constructs_from_diagnostics(&file_diagnostics),
-                        &config_dir,
-                    )
-                    .as_ref(),
-                );
-                print_plugin_report_human(plugin_report.as_ref());
-            }
-            return Err(format!(
-                "Validation failed with {} error(s)",
-                total_errors + plugin_errors
-            ));
+            let observed = observed_constructs_from_diagnostics(&file_diagnostics);
+            return run.fail(plugin_report, Vec::new(), &file_diagnostics, observed, true);
         }
     };
 
@@ -347,108 +223,199 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
         &config_dir,
         experimental_resource_pack,
     );
+    let observed = observed_constructs_from_parsed(&parsed_files);
     if !semantic_diagnostics.is_empty() {
-        let semantic_errors = semantic_diagnostics
+        return run.fail(plugin_report, files, &semantic_diagnostics, observed, false);
+    }
+    run.pass(plugin_report, files, &parsed_files, observed)
+}
+
+/// Loads `cobble.toml` when there is one. Under `--json`, a config error is
+/// also printed as a JSON report.
+fn load_check_config(options: &CheckOptions) -> Result<(Option<CobbleConfig>, PathBuf), String> {
+    let Some(config_path) = super::find_config(options.input.as_deref()) else {
+        return Ok((
+            None,
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        ));
+    };
+    let config = match CobbleConfig::load(&config_path) {
+        Ok(config) => config,
+        Err(error) if options.json => {
+            print_config_error_json(&config_path, &error, options.symbols)?;
+            return Err(format!("Config validation failed: {error}"));
+        }
+        Err(error) => return Err(error),
+    };
+    let config_dir = config_path.parent().unwrap().to_path_buf();
+    Ok((Some(config), config_dir))
+}
+
+fn files_to_check(
+    options: &CheckOptions,
+    config: Option<&CobbleConfig>,
+    source_path: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    if source_path.is_file() {
+        return Ok(vec![source_path.to_path_buf()]);
+    }
+    if !source_path.is_dir() {
+        return Err(format!("Source path does not exist: {:?}", source_path));
+    }
+    let configured_entry_points = match (&options.input, config) {
+        (None, Some(cfg)) => cfg.build.entry_points.clone(),
+        _ => Vec::new(),
+    };
+    if configured_entry_points.is_empty() {
+        find_cobble_files(source_path)
+    } else {
+        resolve_entry_points(source_path, &configured_entry_points)
+    }
+}
+
+/// One `cobble check` run, and how it reports its outcome as JSON or text.
+struct CheckRun<'a> {
+    options: &'a CheckOptions,
+    config_dir: &'a Path,
+    source_path: &'a Path,
+    files_checked: usize,
+    experimental_python_compat: bool,
+}
+
+impl CheckRun<'_> {
+    fn finish_without_files(&self, plugin_report: Option<CheckPluginReport>) -> Result<(), String> {
+        let plugin_errors = plugin_error_count(plugin_report.as_ref());
+        let python_compat =
+            python_compat_report_success(self.experimental_python_compat, Vec::new());
+        if self.options.json {
+            print_check_json(&CheckReport {
+                schema_version: 1,
+                ok: plugin_errors == 0,
+                source: path_display(self.source_path),
+                files_checked: 0,
+                files: Vec::new(),
+                diagnostics: Vec::new(),
+                error_count: plugin_errors,
+                experimental_symbols: self.options.symbols.then(Vec::new),
+                experimental_plugins: plugin_report,
+                experimental_python_compat: python_compat,
+            })?;
+        } else {
+            println!("No Cobble files found to check");
+            print_python_compat_report_human(python_compat.as_ref());
+            print_plugin_report_human(plugin_report.as_ref());
+        }
+        plugin_result(plugin_errors)
+    }
+
+    /// Reports parse or semantic errors. `list_files` prints each failing
+    /// file first, as parse failures do.
+    fn fail(
+        &self,
+        plugin_report: Option<CheckPluginReport>,
+        files: Vec<CheckFileReport>,
+        diagnostics: &[FileSourceDiagnostics],
+        observed_constructs: Vec<String>,
+        list_files: bool,
+    ) -> Result<(), String> {
+        let errors = diagnostics
             .iter()
             .map(|file| file.diagnostics.len())
             .sum::<usize>();
         let plugin_errors = plugin_error_count(plugin_report.as_ref());
-        if options.json {
+        let python_compat = python_compat_report_from_diagnostics(
+            self.experimental_python_compat,
+            diagnostics,
+            observed_constructs,
+            self.config_dir,
+        );
+        if self.options.json {
             print_check_json(&CheckReport {
                 schema_version: 1,
                 ok: false,
-                source: path_display(&source_path),
-                files_checked: files_to_check.len(),
+                source: path_display(self.source_path),
+                files_checked: self.files_checked,
                 files,
-                diagnostics: diagnostic_reports(&semantic_diagnostics, &config_dir),
-                error_count: semantic_errors + plugin_errors,
+                diagnostics: diagnostic_reports(diagnostics, self.config_dir),
+                error_count: errors + plugin_errors,
                 experimental_symbols: symbol_reports_from_diagnostics(
-                    &semantic_diagnostics,
-                    &config_dir,
-                    options.symbols,
+                    diagnostics,
+                    self.config_dir,
+                    self.options.symbols,
                 ),
                 experimental_plugins: plugin_report,
-                experimental_python_compat: python_compat_report_from_diagnostics(
-                    experimental_python_compat,
-                    &semantic_diagnostics,
-                    observed_constructs_from_parsed(&parsed_files),
-                    &config_dir,
-                ),
+                experimental_python_compat: python_compat,
             })?;
         } else {
-            report_file_source_diagnostics(&semantic_diagnostics);
+            if list_files {
+                for file in diagnostics {
+                    let relative_path = file
+                        .path
+                        .strip_prefix(self.config_dir)
+                        .unwrap_or(&file.path);
+                    println!("  ✗ {:?}:", relative_path);
+                }
+            }
+            report_file_source_diagnostics(diagnostics);
             println!();
             println!(
                 "✗ {} error(s) found in {} file(s)",
-                semantic_errors,
-                semantic_diagnostics.len()
+                errors,
+                diagnostics.len()
             );
-            print_python_compat_report_human(
-                python_compat_report_from_diagnostics(
-                    experimental_python_compat,
-                    &semantic_diagnostics,
-                    observed_constructs_from_parsed(&parsed_files),
-                    &config_dir,
-                )
-                .as_ref(),
-            );
+            print_python_compat_report_human(python_compat.as_ref());
             print_plugin_report_human(plugin_report.as_ref());
         }
-        return Err(format!(
+        Err(format!(
             "Validation failed with {} error(s)",
-            semantic_errors + plugin_errors
-        ));
+            errors + plugin_errors
+        ))
     }
 
-    let plugin_errors = plugin_error_count(plugin_report.as_ref());
-    if options.json {
-        print_check_json(&CheckReport {
-            schema_version: 1,
-            ok: plugin_errors == 0,
-            source: path_display(&source_path),
-            files_checked: files_to_check.len(),
-            files,
-            diagnostics: Vec::new(),
-            error_count: plugin_errors,
-            experimental_symbols: symbol_reports_from_parsed(
-                &parsed_files,
-                &config_dir,
-                options.symbols,
-            ),
-            experimental_plugins: plugin_report,
-            experimental_python_compat: python_compat_report_success(
-                experimental_python_compat,
-                observed_constructs_from_parsed(&parsed_files),
-            ),
-        })?;
-        return if plugin_errors == 0 {
-            Ok(())
+    fn pass(
+        &self,
+        plugin_report: Option<CheckPluginReport>,
+        files: Vec<CheckFileReport>,
+        parsed_files: &[ParsedSourceFile],
+        observed_constructs: Vec<String>,
+    ) -> Result<(), String> {
+        let plugin_errors = plugin_error_count(plugin_report.as_ref());
+        let python_compat =
+            python_compat_report_success(self.experimental_python_compat, observed_constructs);
+        if self.options.json {
+            print_check_json(&CheckReport {
+                schema_version: 1,
+                ok: plugin_errors == 0,
+                source: path_display(self.source_path),
+                files_checked: self.files_checked,
+                files,
+                diagnostics: Vec::new(),
+                error_count: plugin_errors,
+                experimental_symbols: symbol_reports_from_parsed(
+                    parsed_files,
+                    self.config_dir,
+                    self.options.symbols,
+                ),
+                experimental_plugins: plugin_report,
+                experimental_python_compat: python_compat,
+            })?;
         } else {
-            Err(format!(
-                "Plugin manifest inspection failed with {plugin_errors} error(s)"
-            ))
-        };
+            for file in files {
+                println!(
+                    "  ✓ {:?}: {} imports, {} functions, {} commands",
+                    file.file, file.imports, file.functions, file.commands
+                );
+            }
+            println!();
+            println!("✓ All files passed validation!");
+            print_python_compat_report_human(python_compat.as_ref());
+            print_plugin_report_human(plugin_report.as_ref());
+        }
+        plugin_result(plugin_errors)
     }
+}
 
-    for file in files {
-        println!(
-            "  ✓ {:?}: {} imports, {} functions, {} commands",
-            file.file, file.imports, file.functions, file.commands
-        );
-    }
-
-    // Summary
-    println!();
-    println!("✓ All files passed validation!");
-    print_python_compat_report_human(
-        python_compat_report_success(
-            experimental_python_compat,
-            observed_constructs_from_parsed(&parsed_files),
-        )
-        .as_ref(),
-    );
-    print_plugin_report_human(plugin_report.as_ref());
-
+fn plugin_result(plugin_errors: usize) -> Result<(), String> {
     if plugin_errors == 0 {
         Ok(())
     } else {

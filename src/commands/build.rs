@@ -1791,8 +1791,95 @@ fn validate_asset_passthrough_relative_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether `output_dir` sits directly in a world's `datapacks` folder: a
+/// folder named `datapacks` next to the world's `level.dat`.
+fn is_in_datapacks_folder(output_dir: &Path) -> bool {
+    let Ok(output_dir) = std::path::absolute(output_dir) else {
+        return false;
+    };
+    let Some(datapacks) = output_dir.parent() else {
+        return false;
+    };
+    datapacks
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("datapacks"))
+        && datapacks
+            .parent()
+            .is_some_and(|world| world.join("level.dat").is_file())
+}
+
+fn create_zip(
+    output_dir: &Path,
+    namespace: &str,
+    asset_paths: Option<&HashSet<PathBuf>>,
+) -> Result<PathBuf, String> {
+    let zip_path = output_dir.with_file_name(format!("{}.zip", namespace));
+    ensure_not_symlink(&zip_path, "create zip file")?;
+    let (file, temp_zip_path) = create_temp_output_file(&zip_path)
+        .map_err(|e| format!("Failed to create temporary zip file: {}", e))?;
+
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    // Add all files from output directory to zip, in a stable order so the
+    // same pack gives the same ZIP.
+    let zip_result = (|| {
+        for entry in WalkDir::new(output_dir)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if path.is_file() {
+                let relative_path = path
+                    .strip_prefix(output_dir)
+                    .map_err(|e| format!("Failed to get relative path: {}", e))?;
+
+                // Convert path to use forward slashes for ZIP (required by Minecraft)
+                let include_asset = asset_paths
+                    .and_then(|paths| {
+                        relative_path
+                            .strip_prefix("assets")
+                            .ok()
+                            .map(|asset_path| paths.contains(asset_path))
+                    })
+                    .unwrap_or(false);
+                if relative_path != Path::new("pack.mcmeta")
+                    && !relative_path.starts_with("data")
+                    && !include_asset
+                {
+                    continue;
+                }
+
+                let zip_path = relative_path.to_string_lossy().replace('\\', "/");
+                let file_data =
+                    fs::read(path).map_err(|e| format!("Failed to read file for zip: {}", e))?;
+
+                zip.start_file(zip_path, options)
+                    .map_err(|e| format!("Failed to add file to zip: {}", e))?;
+
+                zip.write_all(&file_data)
+                    .map_err(|e| format!("Failed to write file to zip: {}", e))?;
+            }
+        }
+
+        zip.finish()
+            .map_err(|e| format!("Failed to finalize zip: {}", e))?;
+        Ok(())
+    })();
+    if let Err(error) = zip_result {
+        let _ = fs::remove_file(&temp_zip_path);
+        return Err(error);
+    }
+    replace_with_temp_file(&temp_zip_path, &zip_path).map_err(|e| {
+        let _ = fs::remove_file(&temp_zip_path);
+        format!("Failed to move temporary zip into place: {}", e)
+    })?;
+
+    Ok(zip_path)
+}
+
 #[cfg(test)]
-#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::test_support::cwd_lock;
@@ -3238,92 +3325,4 @@ resource_pack = true
         ))
         .unwrap();
     }
-}
-
-/// Whether `output_dir` sits directly in a world's `datapacks` folder: a
-/// folder named `datapacks` next to the world's `level.dat`.
-fn is_in_datapacks_folder(output_dir: &Path) -> bool {
-    let Ok(output_dir) = std::path::absolute(output_dir) else {
-        return false;
-    };
-    let Some(datapacks) = output_dir.parent() else {
-        return false;
-    };
-    datapacks
-        .file_name()
-        .is_some_and(|name| name.eq_ignore_ascii_case("datapacks"))
-        && datapacks
-            .parent()
-            .is_some_and(|world| world.join("level.dat").is_file())
-}
-
-fn create_zip(
-    output_dir: &Path,
-    namespace: &str,
-    asset_paths: Option<&HashSet<PathBuf>>,
-) -> Result<PathBuf, String> {
-    let zip_path = output_dir.with_file_name(format!("{}.zip", namespace));
-    ensure_not_symlink(&zip_path, "create zip file")?;
-    let (file, temp_zip_path) = create_temp_output_file(&zip_path)
-        .map_err(|e| format!("Failed to create temporary zip file: {}", e))?;
-
-    let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-
-    // Add all files from output directory to zip, in a stable order so the
-    // same pack gives the same ZIP.
-    let zip_result = (|| {
-        for entry in WalkDir::new(output_dir)
-            .sort_by_file_name()
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if path.is_file() {
-                let relative_path = path
-                    .strip_prefix(output_dir)
-                    .map_err(|e| format!("Failed to get relative path: {}", e))?;
-
-                // Convert path to use forward slashes for ZIP (required by Minecraft)
-                let include_asset = asset_paths
-                    .and_then(|paths| {
-                        relative_path
-                            .strip_prefix("assets")
-                            .ok()
-                            .map(|asset_path| paths.contains(asset_path))
-                    })
-                    .unwrap_or(false);
-                if relative_path != Path::new("pack.mcmeta")
-                    && !relative_path.starts_with("data")
-                    && !include_asset
-                {
-                    continue;
-                }
-
-                let zip_path = relative_path.to_string_lossy().replace('\\', "/");
-                let file_data =
-                    fs::read(path).map_err(|e| format!("Failed to read file for zip: {}", e))?;
-
-                zip.start_file(zip_path, options)
-                    .map_err(|e| format!("Failed to add file to zip: {}", e))?;
-
-                zip.write_all(&file_data)
-                    .map_err(|e| format!("Failed to write file to zip: {}", e))?;
-            }
-        }
-
-        zip.finish()
-            .map_err(|e| format!("Failed to finalize zip: {}", e))?;
-        Ok(())
-    })();
-    if let Err(error) = zip_result {
-        let _ = fs::remove_file(&temp_zip_path);
-        return Err(error);
-    }
-    replace_with_temp_file(&temp_zip_path, &zip_path).map_err(|e| {
-        let _ = fs::remove_file(&temp_zip_path);
-        format!("Failed to move temporary zip into place: {}", e)
-    })?;
-
-    Ok(zip_path)
 }

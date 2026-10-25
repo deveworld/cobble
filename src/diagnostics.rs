@@ -212,15 +212,13 @@ fn analyze_source_stages(source: &str) -> SourceAnalysis {
     };
 
     let context = semantic::SemanticContext::new(source, &located.program, &located.spans);
-    // These two AST-anchored passes keep their old stage-B loop positions
-    // relative to each other and to the datapack/no-op passes below
-    // (check_function_parameters ran before check_assignment_function_calls,
-    // both before the datapack and no-op scans on each line).
+    // Diagnostics are reported in pass order, so these two AST-anchored
+    // passes run in this order, before the datapack and no-op passes below.
     semantic::check_duplicate_function_parameters(&context, &mut diagnostics);
     semantic::check_assignment_value_function_calls(&context, &mut diagnostics);
     // Single-line datapack call diagnostics co-report with the per-line loop
-    // above (the old stage-B position); multi-line-call diagnostics stay
-    // behind the old multiline pass's `is_empty` gate below.
+    // above; multi-line-call diagnostics are added only when the
+    // `is_empty` check below finds nothing else.
     let datapack_arguments = semantic::check_datapack_resource_arguments(&context);
     diagnostics.extend(datapack_arguments.inline);
     semantic::check_noop_expression_statements(&context, &mut diagnostics);
@@ -854,9 +852,9 @@ fn check_function_parameters(
             .with_help("Use explicit arguments at each call site."),
         );
     }
-    // `duplicate-function-parameter` moved to the AST-anchored
-    // `semantic::check_duplicate_function_parameters` (duplicate parameters
-    // parse; only the grammar-rejected `*`/default forms stay pre-parse).
+    // Only the `*` and default forms, which the grammar rejects, are checked
+    // before parsing. Duplicate parameters parse, so the AST-anchored
+    // `semantic::check_duplicate_function_parameters` reports them.
 }
 
 fn check_assignment_target(
@@ -2190,7 +2188,7 @@ def main():
     fn does_not_report_noop_for_docstring_prose_statements() {
         // Docstring prose parses into bare identifier statements that the
         // transpiler deliberately drops; the no-op check must stay silent
-        // on them, like the old per-line scan's docstring skip.
+        // on them.
         let diagnostics = analyze_source(
             r#"
 def main():

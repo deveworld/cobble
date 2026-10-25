@@ -3,8 +3,7 @@
 //! The passes here walk the parsed [`Program`] in lockstep with the
 //! statement-span sidecar (`StatementSpanTree`) built by
 //! `parse_located_with_diagnostics`, so every diagnostic can point at the
-//! exact byte of the offending construct instead of re-deriving positions
-//! from per-line text scans.
+//! exact byte of the offending construct.
 //!
 //! This module is `#[path]`-included into the browser/wasm build through
 //! `diagnostics.rs`; it must not touch the filesystem (`std::fs`) or
@@ -45,8 +44,8 @@ pub(super) struct SemanticContext<'a> {
     line_starts: Vec<usize>,
     /// Inclusive 1-based line ranges covered by `"""`/`'''` docstrings.
     /// The parser tokenizes docstring bodies as real statements, but the
-    /// text passes have always treated them as comments; checks that would
-    /// turn today-silent docstring prose into errors skip these ranges.
+    /// text passes treat them as comments; checks that would report errors
+    /// in docstring prose skip these ranges.
     docstring_ranges: Vec<(usize, usize)>,
 }
 
@@ -140,8 +139,7 @@ impl<'a> SemanticContext<'a> {
     }
 
     /// The statement slice with string/comment bytes masked out, line by
-    /// line, so call scans over the slice see the same shape the per-line
-    /// scans used to see. Masking preserves char positions;
+    /// line, so call scans see only code. Masking preserves char positions;
     /// [`raw_offset_from_masked`] maps masked offsets back to raw bytes.
     fn masked_statement_slice(&self, span: SourceSpan) -> String {
         let slice = self.statement_slice(span);
@@ -164,7 +162,7 @@ impl<'a> SemanticContext<'a> {
     }
 
     /// Position of the `@Name` template inside a `define @Name = ...`
-    /// header, pointing at the `@` like the old per-line scan did.
+    /// header, pointing at the `@`.
     fn entity_template_name_position(&self, node: Option<&StatementSpanNode>) -> (usize, usize) {
         self.keyword_argument_position(node, "define")
     }
@@ -217,9 +215,8 @@ impl<'a> SemanticContext<'a> {
 }
 
 /// Inclusive 1-based line ranges of triple-quoted docstrings, tracked with
-/// the same open/close rules as the per-line scans' docstring skips
-/// (`should_skip_docstring_scan_line`): the opening line, body lines, and
-/// the closing line are all part of the range.
+/// the same open/close rules as the per-line scans' docstring skips: the
+/// opening line, body lines, and the closing line are all part of the range.
 fn docstring_line_ranges(source: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut active: Option<(char, usize)> = None;
@@ -350,9 +347,9 @@ pub(super) fn collect_function_definitions(
 }
 
 /// Collects every function definition in the program, reporting a
-/// `duplicate-function` diagnostic for each redefinition. Like the old
-/// per-line scan, a redefinition replaces the stored signature, so later
-/// arity checks resolve against the latest definition.
+/// `duplicate-function` diagnostic for each redefinition. A redefinition
+/// replaces the stored signature, so later arity checks resolve against the
+/// latest definition.
 pub(super) fn collect_function_signatures(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
@@ -381,8 +378,8 @@ pub(super) fn collect_function_signatures(
 }
 
 /// A selector alias (`@Name = @selector`) or entity template
-/// (`define @Name = ...`) definition, located like the old per-line scans:
-/// aliases at the statement start, templates at the `@` after `define`.
+/// (`define @Name = ...`) definition. Aliases are located at the statement
+/// start, templates at the `@` after `define`.
 pub(super) struct NamedSymbolDef {
     pub(super) name: String,
     pub(super) is_entity_template: bool,
@@ -391,8 +388,7 @@ pub(super) struct NamedSymbolDef {
 }
 
 /// Every selector-alias and entity-template definition in the program, in
-/// source order. Names that are not simple identifiers are skipped, exactly
-/// like the old text collectors.
+/// source order. Names that are not simple identifiers are skipped.
 pub(super) fn collect_named_symbol_defs(context: &SemanticContext<'_>) -> Vec<NamedSymbolDef> {
     let mut symbols = Vec::new();
     context.walk(&mut |statement, node| match statement {
@@ -441,7 +437,7 @@ pub(super) struct CallSite {
 /// expressions, `if`/`elif`/`while` conditions, `for` iterables and steps,
 /// `match` values, and entity-definition NBT payloads. Raw commands,
 /// selectors, and `execute` modifiers are raw strings in the AST and are
-/// never scanned (matching the old scan's skip set).
+/// never scanned.
 pub(super) fn collect_call_sites(context: &SemanticContext<'_>) -> Vec<CallSite> {
     let mut call_sites = Vec::new();
     context.walk(&mut |statement, node| {
@@ -633,7 +629,7 @@ fn collect_expression_calls(expression: &Expression, is_root: bool, out: &mut Ve
     }
 }
 
-/// The dotted callee name of a call, mirroring how the text scanner read
+/// The dotted callee name of a call, mirroring how the text scanner reads
 /// identifier-and-dot runs backwards from an open paren: an identifier chain
 /// yields the full dotted name, and a chain hanging off a non-identifier
 /// base (`items[0].reset(...)`) yields the trailing attribute names only.
@@ -787,19 +783,16 @@ pub(super) fn check_undefined_function_calls(
 }
 
 /// Reports `duplicate-function-parameter` for `def` headers that bind the
-/// same parameter name twice, anchored on `FunctionDef` statement spans
-/// (the AST anchor replaces the old per-line `def` prefix test, and a
-/// bracket-continued header is one statement slice, so multi-line headers
-/// are now checked too — the old scan required `(` and `)` on one line).
+/// same parameter name twice, anchored on `FunctionDef` statement spans. A
+/// bracket-continued header is one statement slice, so a header that spans
+/// several lines is checked as a whole.
 ///
-/// The parameter names and columns come from the same top-level comma split
-/// of the header's masked parameter list the old text scan used (the
-/// statement-span sidecar does not itemize parameter positions), moved
-/// verbatim: names that are not simple identifiers are skipped, and each
-/// re-occurrence reports against the closest previous occurrence of the
-/// name, exactly like the old insert-replace map. Masked offsets are mapped
-/// back to raw bytes before reporting. Statements inside docstring ranges
-/// are skipped like every old per-line scan.
+/// Parameter names and columns come from a top-level comma split of the
+/// header's masked parameter list (the statement-span sidecar does not
+/// itemize parameter positions). Names that are not simple identifiers are
+/// skipped, and each repeat reports against the closest previous occurrence
+/// of the name. Masked offsets are mapped back to raw bytes before
+/// reporting. Statements inside docstring ranges are skipped.
 pub(super) fn check_duplicate_function_parameters(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
@@ -862,21 +855,16 @@ pub(super) fn check_duplicate_function_parameters(
 /// expressions: `len()`/math intrinsic arity errors and unknown math
 /// functions everywhere, plus known command helpers used as expression
 /// values on assignment lines only (a returned module call is left to the
-/// undefined-function scan and the transpiler). Migrated from the stage-B
-/// text scan `check_assignment_function_calls`.
+/// undefined-function scan and the transpiler).
 ///
-/// The `Assignment`/`ConstAssignment`/`Return` statement anchor replaces
-/// the old keyword skip list; the in-statement detection is the same masked
-/// RHS call scan (`assignment_rhs_span`/`return_expression_span` +
-/// `function_calls_in_expression`), moved verbatim, with masked offsets
-/// mapped back to raw bytes so non-ASCII text keeps char-exact columns.
-/// First invalid call wins with at most one diagnostic per source line,
-/// exactly like the old per-line scan, and statements inside docstring
-/// ranges are skipped like the old docstring-body skip. Unlike the old
-/// scan, a bracket-continued statement is scanned as one unit, so calls on
-/// continuation lines are now detected (the old scan saw only the first
-/// physical line, and the transpiler rejected these shapes at its fallback
-/// 1:1 position).
+/// Runs on `Assignment`/`ConstAssignment`/`Return` statements. Calls are
+/// found by a masked RHS call scan (`assignment_rhs_span`/
+/// `return_expression_span` + `function_calls_in_expression`), with masked
+/// offsets mapped back to raw bytes so non-ASCII text keeps char-exact
+/// columns. The first invalid call wins, with at most one diagnostic per
+/// source line, and statements inside docstring ranges are skipped. A
+/// bracket-continued statement is scanned as one unit, so calls on
+/// continuation lines are found.
 pub(super) fn check_assignment_value_function_calls(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
@@ -1073,21 +1061,18 @@ fn argument_word(count: usize) -> &'static str {
 /// silently drops every other expression statement, so these lines generate
 /// no Minecraft commands.
 ///
-/// Skips mirror the old per-line scan where the old behavior was silence:
-/// selector-ish statements (an `@...` identifier or a statement whose text
-/// starts with `@`), string-led statements, and statements inside docstring
-/// ranges (docstring prose parses into bare identifier statements that the
-/// transpiler deliberately ignores). Unlike the old scan, expressions that
-/// merely contain a call or parentheses (`score + helper(1)`, `(score)`)
-/// are now flagged too — the AST distinguishes them from call statements,
-/// which the old line scan's `(` early-return could not.
+/// Skipped: selector-ish statements (an `@...` identifier or a statement
+/// whose text starts with `@`), string-led statements, and statements inside
+/// docstring ranges (docstring prose parses into bare identifier statements
+/// that the transpiler ignores). Expressions that only contain a call or
+/// parentheses (`score + helper(1)`, `(score)`) are flagged.
 pub(super) fn check_noop_expression_statements(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
-    // The old scan reported at most one no-op per source line; the parser
-    // can split one line into several statements (`nonlocal score` becomes
-    // two identifier statements), so keep the per-line cap.
+    // At most one report per source line: the parser can split one line
+    // into several statements (`nonlocal score` becomes two identifier
+    // statements).
     let mut flagged_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
     context.walk(&mut |statement, node| {
@@ -1113,12 +1098,11 @@ pub(super) fn check_noop_expression_statements(
                 if slice.starts_with('@') || slice.starts_with('"') || slice.starts_with('\'') {
                     return;
                 }
-                // Mirror the old scan's line-shape skips for lines the
-                // parser splits into several statements: a block-header
-                // line (`execute as @a if ready():` yields a leading
-                // identifier statement before the `Execute` block) and an
-                // assignment line (`value = await score` yields a trailing
-                // identifier statement after the assignment).
+                // Skip block-header and assignment lines, which the parser
+                // can split into several statements: `execute as @a if
+                // ready():` yields a leading identifier statement before the
+                // `Execute` block, and `value = await score` yields a
+                // trailing identifier statement after the assignment.
                 let masked_line = mask_non_code(context.line_text(node.span.line));
                 let masked_trimmed = masked_line.trim_start();
                 if masked_trimmed.ends_with(':')
@@ -1153,12 +1137,11 @@ pub(super) fn check_noop_expression_statements(
 ///
 /// Detection is anchored on the statement-span sidecar: every statement
 /// header slice (plus `elif` and `case` branch headers and top-level import
-/// headers) is scanned with the same masked token scan the old per-line
-/// pass used, so `None`/`null` inside raw selector strings, binding names,
-/// and entity payloads keep their diagnostics — those occurrences never
-/// surface as `Expression::None`/`Identifier` nodes, which is why a pure
-/// expression walk cannot replace the token scan. Raw `/` command
-/// statements and docstring ranges are skipped, exactly like the old scan.
+/// headers) gets a masked token scan, so `None`/`null` inside raw selector
+/// strings, binding names, and entity payloads are reported too. Those
+/// occurrences never surface as `Expression::None`/`Identifier` nodes, so a
+/// pure expression walk would miss them. Raw `/` command statements and
+/// docstring ranges are skipped.
 pub(super) fn check_unsupported_none_usage(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
@@ -1333,8 +1316,7 @@ fn unsupported_none_diagnostic(line: usize, column: usize) -> SourceDiagnostic {
 /// assignments desugar to plain assignments in the AST, so their targets are
 /// included), `global` names, and `for` targets — from any nesting depth,
 /// regardless of position (unlike the placeholder pass's incremental scope).
-/// Statements inside docstring ranges do not define symbols, matching the old
-/// line scan's docstring skip.
+/// Statements inside docstring ranges do not define symbols.
 pub(super) fn collect_defined_symbols(
     context: &SemanticContext<'_>,
     function_defs: &HashMap<String, FunctionSignature>,
@@ -1378,8 +1360,8 @@ pub(super) fn collect_defined_symbols(
     symbols
 }
 
-/// `import X` defines the module name; `from X import a, b` defines the items
-/// (not the module) — the same asymmetry the old text collector had.
+/// `import X` defines the module name; `from X import a, b` defines only the
+/// items.
 fn add_import_symbols(import: &Import, symbols: &mut DefinedSymbols) {
     if import.items.is_empty() {
         if is_simple_module_name(&import.module) {
@@ -1395,9 +1377,8 @@ fn add_import_symbols(import: &Import, symbols: &mut DefinedSymbols) {
 }
 
 /// One source line to scan for undefined references, with the parameter set
-/// of the innermost enclosing function definition (the only local scope the
-/// old check tracked; `for` targets resolve through the global symbol table,
-/// which the old redundant loop-scope stack duplicated).
+/// of the innermost enclosing function definition (the only local scope;
+/// `for` targets resolve through the whole-file symbol table).
 struct ReferenceLineScan {
     line: usize,
     params: Rc<HashSet<String>>,
@@ -1406,11 +1387,9 @@ struct ReferenceLineScan {
 /// Reports `undefined-variable` for identifier references that resolve
 /// neither in the whole-file symbol table nor in the enclosing function's
 /// parameters. The statement walk decides which lines are scanned (raw
-/// commands, docstring ranges, and `def` header lines are skipped like the
-/// old per-line loop); each line is then analyzed with the same text
-/// extraction and skip-list predicates the old scan used, line by line —
-/// deliberately NOT per whole multi-line statement, so continuation-line
-/// behavior (and silence) stays byte-identical.
+/// commands, docstring ranges, and `def` header lines are skipped); text
+/// extraction and skip-list predicates then analyze each physical line on
+/// its own, including each line of a multi-line statement.
 pub(super) fn check_undefined_variable_references(
     context: &SemanticContext<'_>,
     function_defs: &HashMap<String, FunctionSignature>,
@@ -1428,7 +1407,7 @@ pub(super) fn check_undefined_variable_references(
         &mut scans,
     );
     // The walk visits `elif`/`case` headers with their owning statement, so
-    // restore the old strictly line-ascending scan (and report) order.
+    // sort to scan (and report) in strict line order.
     scans.sort_by_key(|scan| scan.line);
     scans.dedup_by_key(|scan| scan.line);
 
@@ -1486,10 +1465,9 @@ fn collect_reference_line_scans(
             .filter(|node| node.kind == StatementSpanKind::of(statement));
 
         match statement {
-            // The old scan `continue`d on `def` lines; the parameters become
-            // the body's local scope. Only the innermost definition's
-            // parameters are active, mirroring the old single-slot function
-            // scope (nested definitions do not inherit outer parameters).
+            // `def` lines are not scanned; the parameters become the body's
+            // local scope. Only the innermost definition's parameters are
+            // active (nested definitions do not inherit outer parameters).
             Statement::FunctionDef(function_def) => {
                 let function_params: Rc<HashSet<String>> = Rc::new(
                     function_def
@@ -1506,7 +1484,7 @@ fn collect_reference_line_scans(
                     scans,
                 );
             }
-            // Raw command lines were never reference-scanned.
+            // Raw command lines are not reference-scanned.
             Statement::MinecraftCommand(_) => {}
             Statement::If(if_statement) => {
                 if let Some(node) = node {
@@ -1590,8 +1568,7 @@ fn collect_reference_line_scans(
             }
             // Every remaining statement kind scans its header lines with the
             // shared text extraction, whose skip lists keep declarations,
-            // resource blocks, `global`, and selector lines silent — exactly
-            // the lines the old whole-file loop visited and skipped.
+            // resource blocks, `global`, and selector lines silent.
             _ => {
                 if let Some(node) = node {
                     push_reference_scan_lines(context, node.span, params, scans);
@@ -1618,10 +1595,10 @@ fn push_reference_scan_lines(
     }
 }
 
-// --- Text extraction remnant for the undefined-variable check. The old
-// per-line scan's expression carving and identifier-reference rules moved
-// here verbatim: they still define what counts as a scannable expression and
-// a reference (the statement walk above only decides WHICH lines to scan).
+// --- Text extraction for the undefined-variable check. These per-line
+// expression-carving and identifier-reference rules define what counts as a
+// scannable expression and a reference (the statement walk above only
+// decides WHICH lines to scan).
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ExpressionSpan {
@@ -1916,10 +1893,10 @@ enum AssignmentScanEvent {
 
 /// Assignment statements and function-scope boundaries in source order,
 /// gathered from the AST walk. Assignments inside docstring ranges are
-/// excluded (the old line scans skipped docstring lines), and statements
-/// without an aligned span node are skipped — the line-anchored analysis
-/// below cannot locate them (a parseable source without an aligned tree is a
-/// span-builder bug, asserted in `SemanticContext::new`).
+/// excluded, and statements without an aligned span node are skipped — the
+/// line-anchored analysis below cannot locate them (a parseable source
+/// without an aligned tree is a span-builder bug, asserted in
+/// `SemanticContext::new`).
 fn collect_assignment_scan_events(context: &SemanticContext<'_>) -> Vec<AssignmentScanEvent> {
     let mut events = Vec::new();
     collect_assignment_scan_events_into(
@@ -2021,11 +1998,9 @@ fn collect_assignment_scan_events_into(
 
 /// Reports `unsupported-storage-access` for subscript/attribute access shapes
 /// the storage compiler cannot resolve. The AST walk anchors WHICH lines hold
-/// assignments and where function scopes begin and end; the per-line value
-/// analysis (and its type/const inference) is the old text implementation,
-/// deliberately fed one line at a time so multi-line assignment headers keep
-/// the old first-line-only inference — analyzing the joined statement would
-/// make the check smarter and flag (or clear) code the old scan did not.
+/// assignments and where function scopes begin and end; the value analysis
+/// (and its type/const inference) is text-based and reads only the first
+/// line of each assignment, even when the statement continues on later lines.
 pub(super) fn check_storage_backed_access(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
@@ -2033,8 +2008,7 @@ pub(super) fn check_storage_backed_access(
     let mut module_types: HashMap<String, CobbleType> = HashMap::new();
     let mut module_constants: HashMap<String, f64> = HashMap::new();
     // Every function scope starts from a clone of the MODULE environment
-    // (nested definitions included), matching the old indent-based scope's
-    // `module_types.clone()` at each `def`.
+    // (nested definitions included).
     let mut function_scopes: Vec<(HashMap<String, CobbleType>, HashMap<String, f64>)> = Vec::new();
 
     for event in collect_assignment_scan_events(context) {
@@ -2112,8 +2086,7 @@ pub(super) fn check_storage_backed_access(
 
 /// Reports `type-mismatch` when a variable is reassigned to a value of a
 /// different inferred type. Runs after (and co-reports with) the storage
-/// check under the same gate, keeping its own type environment exactly like
-/// the old pair of independent line scans.
+/// check under the same gate, with its own type environment.
 pub(super) fn check_type_mismatches(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
@@ -2178,10 +2151,10 @@ pub(super) fn check_type_mismatches(
     }
 }
 
-// --- Text analysis remnant for the storage/type checks, moved verbatim from
-// the old line scans. It defines the exact (deliberately limited) inference
-// capabilities: literal first-char shapes, single len()/math.* calls, and
-// top-level operators over known references, on one line of RHS text.
+// --- Text analysis for the storage/type checks. It defines the exact
+// (deliberately limited) inference capabilities: literal first-char shapes,
+// single len()/math.* calls, and top-level operators over known references,
+// on one line of RHS text.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StorageAccessDiagnostic {
@@ -2394,7 +2367,9 @@ fn unsupported_attribute_access(
             index = field_end;
             continue;
         }
-        if is_builtin_symbol(base) {
+        // Only the root of a chain names a variable: in `cfg.inner.c`,
+        // `inner` is a field of `cfg`.
+        if is_builtin_symbol(base) || expression[..base_start].trim_end().ends_with('.') {
             index += 1;
             continue;
         }
@@ -2991,16 +2966,16 @@ fn contains_top_level_operator(expression: &str, operators: &[&str]) -> bool {
 /// command (pinned by `reports_forward_raw_command_placeholders`),
 /// module-level names accumulate for the rest of the file, function-local
 /// names live for the enclosing definition only, and `for` targets for the
-/// loop body only. Import items seed the module scope up front (whole-file,
-/// like the old `collect_interpolation_symbols` pre-scan).
+/// loop body only. Import items from the whole file seed the module scope up
+/// front.
 struct PlaceholderScopes {
     module: HashSet<String>,
     /// Innermost function scope last; a command resolves against the LAST
-    /// entry only, mirroring the old single-slot function scope (nested
-    /// definitions do not inherit outer locals or parameters).
+    /// entry only (nested definitions do not inherit outer locals or
+    /// parameters).
     function_stack: Vec<HashSet<String>>,
-    /// Targets of every enclosing `for` loop (a stack, like the old
-    /// loop-scope stack); they stay visible inside nested definitions.
+    /// Targets of every enclosing `for` loop, as a stack; they stay visible
+    /// inside nested definitions.
     loop_targets: Vec<String>,
 }
 
@@ -3011,8 +2986,7 @@ impl PlaceholderScopes {
         self.function_stack.last_mut().unwrap_or(&mut self.module)
     }
 
-    /// Membership is a plain name check: the old scan never consulted
-    /// builtin symbols for placeholders, so neither does this one.
+    /// Membership is a plain name check that ignores builtin symbols.
     fn is_visible(&self, name: &str) -> bool {
         self.module.contains(name)
             || self
@@ -3025,11 +2999,9 @@ impl PlaceholderScopes {
 
 /// Reports unclosed/invalid/undefined placeholders in raw `/` command
 /// statements. Commands are anchored on their `MinecraftCommand` span nodes;
-/// placeholder extraction and columns come from the same quote/escape-aware
-/// scan of the raw command line the old per-line check used, so columns are
-/// byte-for-byte identical. Statements on docstring-range lines are skipped
-/// wholesale (symbol collection and command scanning), like the old scan's
-/// per-line docstring skip.
+/// placeholder extraction and columns come from a quote/escape-aware scan of
+/// the raw command line. Statements on docstring-range lines are skipped
+/// wholesale (symbol collection and command scanning).
 pub(super) fn check_raw_command_placeholders(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
@@ -3052,8 +3024,7 @@ pub(super) fn check_raw_command_placeholders(
 /// plain `import X` module names deliberately do NOT (pinned by
 /// `does_not_treat_imported_modules_as_raw_command_placeholders`) — the
 /// asymmetry is inverted from the undefined-variable collector's
-/// `add_import_symbols`. Imports on docstring-range lines are skipped like
-/// every docstring line in the old pre-scan.
+/// `add_import_symbols`. Imports on docstring-range lines are skipped.
 fn collect_interpolation_import_symbols(context: &SemanticContext<'_>) -> HashSet<String> {
     let mut symbols = HashSet::new();
 
@@ -3085,9 +3056,9 @@ fn add_interpolation_import_items(import: &Import, symbols: &mut HashSet<String>
     }
 }
 
-/// Source-order walk that mirrors the old scan's incremental bookkeeping:
-/// assignment/`global` names land in the innermost scope as they are passed,
-/// and each raw command is checked against what is visible at that point.
+/// Source-order walk with incremental bookkeeping: assignment/`global` names
+/// land in the innermost scope as they are passed, and each raw command is
+/// checked against what is visible at that point.
 fn walk_placeholder_statements(
     context: &SemanticContext<'_>,
     statements: &[Statement],
@@ -3099,8 +3070,8 @@ fn walk_placeholder_statements(
         let node = nodes
             .and_then(|nodes| nodes.get(index))
             .filter(|node| node.kind == StatementSpanKind::of(statement));
-        // Docstring prose parses into real statements; the old scan skipped
-        // every docstring line.
+        // Docstring prose parses into real statements; skip every statement
+        // on a docstring line.
         if node.is_some_and(|node| context.in_docstring(node.span.line)) {
             continue;
         }
@@ -3194,9 +3165,8 @@ fn walk_placeholder_statements(
             }
             Statement::Assignment(assignment) => {
                 // Compound assignments desugar to plain assignments in the
-                // AST, so their targets are collected exactly like the old
-                // scan's `assignment_symbol_name`; non-name targets
-                // (`x[0]`, `x.y`) fall out of the simple-name filter.
+                // AST, so their targets are collected here too; non-name
+                // targets (`x[0]`, `x.y`) fall out of the simple-name filter.
                 if is_simple_module_name(&assignment.target) {
                     scopes.defining_set().insert(assignment.target.clone());
                 }
@@ -3316,10 +3286,9 @@ pub(super) fn raw_command_placeholder_locations(
     locations
 }
 
-// --- Placeholder extraction remnant: the quote/escape-aware in-line scan
-// moved verbatim from the old text pass. It still defines what counts as a
-// placeholder and its column; the statement walk above only decides WHICH
-// lines are command lines.
+// --- Placeholder extraction: a quote/escape-aware scan of one command line.
+// It defines what counts as a placeholder and its column; the statement walk
+// above only decides WHICH lines are command lines.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandPlaceholder {
@@ -3502,18 +3471,16 @@ fn find_escaped_brace_end(text: &str, start: usize) -> Option<usize> {
 // Datapack resource-argument shapes (hybrid: statements anchored on the span
 // sidecar; argument and resource-id columns from in-statement text scans).
 // One pass covers single-line AND bracket-continued multi-line calls — a
-// statement span covers the whole call — replacing the old separate
-// single-line/`MappedSourceExpression` passes and their masked/raw offset
-// mixing (offsets here are mapped through `raw_offset_from_masked` before
-// touching raw text, so non-ASCII strings cannot drift columns).
+// statement span covers the whole call. Offsets are mapped through
+// `raw_offset_from_masked` before touching raw text, so non-ASCII strings
+// cannot drift columns.
 // ===========================================================================
 
-/// Output of [`check_datapack_resource_arguments`], split by statement shape
-/// to preserve the old gating ladder: diagnostics for single-line
-/// `datapack.*` calls co-report with the pre-parse per-line loop (the old
-/// stage-B check), while diagnostics for statements spanning several lines
-/// are deferred and reported only when nothing else was found (the old
-/// post-loop multiline pass's `is_empty` gate).
+/// Output of [`check_datapack_resource_arguments`], split by statement shape:
+/// diagnostics for single-line `datapack.*` calls co-report with the
+/// pre-parse per-line loop, while diagnostics for statements spanning
+/// several lines are deferred and reported only when nothing else was found
+/// (the `is_empty` gate in `analyze_source_stages`).
 pub(super) struct DatapackArgumentDiagnostics {
     pub(super) inline: Vec<SourceDiagnostic>,
     pub(super) deferred: Vec<SourceDiagnostic>,
@@ -3523,7 +3490,7 @@ pub(super) struct DatapackArgumentDiagnostics {
 /// tag array / replace-boolean shapes) and resource-ID strings, pointing at
 /// the offending argument byte — inside string literals for resource-ID
 /// character positions. Raw command statements and docstring ranges are
-/// skipped, exactly like the old scans.
+/// skipped.
 pub(super) fn check_datapack_resource_arguments(
     context: &SemanticContext<'_>,
 ) -> DatapackArgumentDiagnostics {
@@ -3807,9 +3774,9 @@ fn check_datapack_tag_value_resource_ids(
     }
 }
 
-// --- Datapack validation remnant: resource-ID and tag-object rules moved
-// verbatim from the old text passes. Offsets they return are byte offsets
-// inside the raw text they were handed; the callers above anchor them.
+// --- Datapack validation: resource-ID and tag-object rules. Offsets they
+// return are byte offsets inside the raw text they were handed; the callers
+// above anchor them.
 
 struct ResourceIdDiagnostic {
     message: String,

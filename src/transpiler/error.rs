@@ -6,8 +6,7 @@
 //! build the [`TranspileErrorKind::Semantic`] default and keep `format!(...)?`
 //! call sites cheap; sites with a meaningful classification construct the
 //! error with [`TranspileError::new`]. Consumers that classify errors
-//! (`cobble check`, the web demo) read the kind directly instead of sniffing
-//! message prefixes.
+//! (`cobble check`, the web demo) read the kind directly.
 
 use std::fmt;
 
@@ -114,8 +113,7 @@ impl TranspileErrorKind {
 /// A transpiler error: a diagnostic kind, the user-visible message, and the
 /// source statement being lowered when it was raised.
 ///
-/// `Display` renders the message exactly, so error text reaching users is
-/// unchanged by the typed channel.
+/// `Display` renders exactly the message text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranspileError {
     pub kind: TranspileErrorKind,

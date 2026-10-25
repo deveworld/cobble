@@ -1,12 +1,11 @@
 //! Shared storage-path planning and dynamic-path lowering.
 //!
 //! `Transpiler` (statement lowering) and `ExpressionEvaluator` (expression
-//! lowering) both need to resolve `config.count` / `values[i]` /
-//! `groups[key]` expressions into storage path plans and emit the dynamic
-//! macro-argument plumbing around them. This logic used to exist as two
-//! parallel copies that had already started to drift; it now lives once
-//! here, as provided methods on [`StoragePathOps`], with each host supplying
-//! its lookup tables through the small accessor surface.
+//! lowering) both resolve `config.count` / `values[i]` / `groups[key]`
+//! expressions into storage path plans and emit the dynamic macro-argument
+//! plumbing around them. The logic lives here as provided methods on
+//! [`StoragePathOps`]; each host supplies its symbol tables through a few
+//! accessors.
 
 use crate::ast::{CobbleType, Expression};
 use crate::transpiler::data_pack::DataPack;

@@ -8,6 +8,8 @@
 //! - `and`, `or`, and `elif` skip conditions that can't change the result
 //! - any value other than 0 is true, negative numbers included
 //! - constant folding uses the same 32-bit arithmetic as the scoreboard
+//! - nested `math.*` calls, the smallest 32-bit constant, lists in
+//!   arithmetic, and nested map fields compute what they say
 
 mod common;
 
@@ -291,4 +293,68 @@ fn constant_folding_matches_runtime_overflow() {
     assert_eq!(sim.var("folded_pow"), sim.var("computed_pow"));
     assert_eq!(sim.var("folded_div"), -4);
     assert_eq!(sim.var("folded_mod"), 2);
+}
+
+#[test]
+fn nested_math_calls_keep_their_arguments() {
+    let mut sim = Sim::load(
+        r#"from stdlib import math
+
+def main():
+    a = -8
+    root = math.sqrt(1 + math.abs(a))
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("root"), 3);
+}
+
+#[test]
+fn smallest_int_constant_wraps_like_the_scoreboard() {
+    let mut sim = Sim::load(
+        r#"const LOW = -2147483648
+
+def main():
+    a = 5
+    up = (a + 1) + LOW
+    down = (a + 1) - LOW
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("up"), 6i32.wrapping_add(i32::MIN));
+    assert_eq!(sim.var("down"), 6i32.wrapping_sub(i32::MIN));
+}
+
+#[test]
+fn list_on_the_right_of_an_operator_reads_its_size() {
+    let mut sim = Sim::load(
+        r#"items = [4, 5, 6]
+
+def main():
+    a = 1
+    left = items + (a + 1)
+    right = (a + 1) + items
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("left"), 5);
+    assert_eq!(sim.var("right"), 5);
+}
+
+#[test]
+fn nested_map_fields_read_through_the_chain() {
+    let mut sim = Sim::load(
+        r#"cfg = {"inner": {"c": 5}}
+inner = 3
+
+def main():
+    d = cfg.inner.c
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("d"), 5);
 }

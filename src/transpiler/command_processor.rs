@@ -572,156 +572,39 @@ impl<'a> CommandProcessor<'a> {
         cmd: &str,
         vars: &[(usize, usize, String)],
     ) -> Result<String, TranspileError> {
-        // Parse the command to extract target selector and message
-        // For title commands: "title <selector> <action> <message>"
-        // For tellraw commands: "tellraw <selector> <message>"
-
-        // First, split to get command type
-        let first_parts: Vec<&str> = cmd.trim().splitn(2, ' ').collect();
-        if first_parts.is_empty() {
-            return Err("Empty command".into());
-        }
-
-        let command = first_parts[0];
-
-        // Handle title and tellraw differently due to different number of arguments
-        let (selector, action, mut message) = if command == "title" {
-            // Title: "title <selector> <action> <message>"
-            let parts: Vec<&str> = cmd.trim().splitn(4, ' ').collect();
-            if parts.len() < 4 {
-                return Err(
-                    "Title command requires action (title/subtitle/actionbar). Format: /title <selector> <action> <text>".into()
-                );
-            }
-            (parts[1], Some(parts[2]), parts[3])
-        } else {
-            // Tellraw: "tellraw <selector> <message>"
-            let parts: Vec<&str> = cmd.trim().splitn(3, ' ').collect();
-            if parts.len() < 3 {
-                return Err("Invalid tellraw command format".into());
-            }
-            (parts[1], None, parts[2])
+        let (command, selector, action, message) = split_text_command(cmd)?;
+        let assemble = |text: &str| match action {
+            Some(action) => format!("{} {} {} {}", command, selector, action, text),
+            None => format!("{} {} {}", command, selector, text),
         };
+        let var_names: Vec<String> = vars.iter().map(|(_, _, name)| name.clone()).collect();
+        let trimmed = message.trim();
 
-        // Check if message is a JSON array
-        let message_trimmed = message.trim();
-        if message_trimmed.starts_with('[') {
-            // Message is a JSON array
-            if vars.is_empty() {
-                if let Some(action_token) = action {
-                    return Ok(format!(
-                        "{} {} {} {}",
-                        command, selector, action_token, message
-                    ));
-                } else {
-                    return Ok(format!("{} {} {}", command, selector, message));
-                }
+        if trimmed.starts_with('[') {
+            if var_names.is_empty() {
+                return Ok(assemble(message));
             }
-
-            let parsed_array =
-                serde_json::from_str::<serde_json::Value>(message_trimmed).map_err(|error| {
-                    format!(
-                        "Cannot use variables inside malformed JSON array text component: {error}"
-                    )
-                })?;
-            let serde_json::Value::Array(items) = parsed_array else {
-                return Err("Expected a JSON array text component.".into());
-            };
-
-            let var_names: Vec<String> = vars.iter().map(|(_, _, name)| name.clone()).collect();
-            let mut converted_components = Vec::new();
-
-            for item in items {
-                match &item {
-                    serde_json::Value::Object(object) => {
-                        if let Some(text) = object.get("text").and_then(|value| value.as_str()) {
-                            if Self::text_contains_any_var(text, &var_names) {
-                                converted_components
-                                    .push(self.styled_component_with_vars(&item, text, &var_names));
-                            } else {
-                                converted_components.push(item);
-                            }
-                        } else {
-                            converted_components.push(item);
-                        }
-                    }
-                    serde_json::Value::String(text) => {
-                        if Self::text_contains_any_var(text, &var_names) {
-                            converted_components
-                                .extend(self.split_text_component_with_vars(text, &var_names));
-                        } else {
-                            converted_components.push(item);
-                        }
-                    }
-                    _ => converted_components.push(item),
-                }
-            }
-
-            let json_array = serde_json::Value::Array(converted_components);
-            let json_string =
-                serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
-
-            if var_names
-                .iter()
-                .any(|name| json_string.contains(&format!("{{{}}}", name)))
-            {
-                return Err(
-                    "Variables in JSON array text components are supported only in string components and object text fields."
-                        .into(),
-                );
-            }
-
-            if let Some(action_token) = action {
-                return Ok(format!(
-                    "{} {} {} {}",
-                    command, selector, action_token, json_string
-                ));
-            } else {
-                return Ok(format!("{} {} {}", command, selector, json_string));
-            }
+            return Ok(assemble(&self.json_array_with_vars(trimmed, &var_names)?));
         }
 
-        // If message is a JSON object, we need to handle it specially to preserve styling
-        // Example: {"text":"Hello {player}","color":"gold","bold":true}
-        if message_trimmed.starts_with('{') {
-            // Try to parse as JSON to preserve styling
-            if let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(message_trimmed) {
-                if let Some(text_value) = json_obj.get("text").and_then(|v| v.as_str()) {
-                    // Check if text contains variables
-                    let has_vars = vars
-                        .iter()
-                        .any(|(_, _, name)| text_value.contains(&format!("{{{}}}", name)));
-
-                    if has_vars {
-                        let var_names: Vec<String> =
-                            vars.iter().map(|(_, _, name)| name.clone()).collect();
-                        let component =
-                            self.styled_component_with_vars(&json_obj, text_value, &var_names);
-                        let json_string =
-                            serde_json::to_string(&component).unwrap_or_else(|_| "{}".to_string());
-
-                        if let Some(action_token) = action {
-                            return Ok(format!(
-                                "{} {} {} {}",
-                                command, selector, action_token, json_string
-                            ));
-                        } else {
-                            return Ok(format!("{} {} {}", command, selector, json_string));
-                        }
+        // A JSON object keeps its styling, such as
+        // {"text":"Hello {player}","color":"gold","bold":true}.
+        let mut message = message;
+        if trimmed.starts_with('{') {
+            if let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if let Some(text) = json_obj.get("text").and_then(|v| v.as_str()) {
+                    if !Self::text_contains_any_var(text, &var_names) {
+                        return Ok(assemble(message));
                     }
-                    // If no variables in text, return as-is
-                    if let Some(action_token) = action {
-                        return Ok(format!(
-                            "{} {} {} {}",
-                            command, selector, action_token, message
-                        ));
-                    } else {
-                        return Ok(format!("{} {} {}", command, selector, message));
-                    }
+                    let component = self.styled_component_with_vars(&json_obj, text, &var_names);
+                    return Ok(assemble(
+                        &serde_json::to_string(&component).unwrap_or_else(|_| "{}".to_string()),
+                    ));
                 }
             }
 
-            // If JSON parsing failed or no text field, extract text the old way as fallback
+            // If JSON parsing failed or there is no text field, fall back to
+            // the quoted string after `"text":`.
             if let Some(text_start) = message.find("\"text\":") {
                 let after_text = message[text_start + 7..].trim_start();
                 if let Some(contents) = quoted_text_contents(after_text) {
@@ -730,91 +613,107 @@ impl<'a> CommandProcessor<'a> {
             }
         }
 
-        // Build JSON array by replacing {var} with score components (for non-JSON messages)
-        let mut json_components = Vec::new();
-        let mut remaining = message;
+        let components = self.plain_text_components(message, &var_names);
+        Ok(assemble(&format!("[{}]", components.join(","))))
+    }
 
-        // Get unique variable names
-        let var_names: Vec<String> = vars.iter().map(|(_, _, name)| name.clone()).collect();
+    /// A JSON array text component with `{var}` placeholders in its string
+    /// items and object `text` fields turned into score or storage
+    /// components.
+    fn json_array_with_vars(
+        &self,
+        message: &str,
+        var_names: &[String],
+    ) -> Result<String, TranspileError> {
+        let parsed_array = serde_json::from_str::<serde_json::Value>(message).map_err(|error| {
+            format!("Cannot use variables inside malformed JSON array text component: {error}")
+        })?;
+        let serde_json::Value::Array(items) = parsed_array else {
+            return Err("Expected a JSON array text component.".into());
+        };
 
-        while !remaining.is_empty() {
-            // Find the next variable placeholder
-            let mut next_var_pos = None;
-            let mut next_var_name = String::new();
-
-            for var_name in &var_names {
-                let pattern = format!("{{{}}}", var_name);
-                if let Some(pos) = remaining.find(&pattern) {
-                    if next_var_pos.is_none() || pos < next_var_pos.unwrap() {
-                        next_var_pos = Some(pos);
-                        next_var_name = var_name.clone();
+        let mut converted_components = Vec::new();
+        for item in items {
+            match &item {
+                serde_json::Value::Object(object) => {
+                    match object.get("text").and_then(|value| value.as_str()) {
+                        Some(text) if Self::text_contains_any_var(text, var_names) => {
+                            converted_components
+                                .push(self.styled_component_with_vars(&item, text, var_names));
+                        }
+                        _ => converted_components.push(item),
                     }
                 }
-            }
-
-            if let Some(pos) = next_var_pos {
-                // Add text before variable
-                if pos > 0 {
-                    let text_before = &remaining[..pos];
-                    json_components
-                        .push(format!("{{\"text\":\"{}\"}}", escape_quoted(text_before)));
+                serde_json::Value::String(text) if Self::text_contains_any_var(text, var_names) => {
+                    converted_components
+                        .extend(self.split_text_component_with_vars(text, var_names));
                 }
-
-                // Check if it's a storage variable
-                if let Some(storage_path) = self.symbols.variable_storage_paths.get(&next_var_name)
-                {
-                    json_components.push(format!(
-                        "{{\"nbt\":\"{}\",\"storage\":\"{}:global\"}}",
-                        storage_path, self.namespace
-                    ));
-                } else {
-                    // Add score component - use variable name as the score holder (fake player)
-                    let objective = self
-                        .symbols
-                        .variable_objectives
-                        .get(&next_var_name)
-                        .map(|s| s.as_str())
-                        .unwrap_or("temp");
-                    json_components.push(format!(
-                        "{{\"score\":{{\"name\":\"{}\",\"objective\":\"{}\"}}}}",
-                        next_var_name, objective
-                    ));
-                }
-
-                // Move past this variable
-                let pattern = format!("{{{}}}", next_var_name);
-                remaining = &remaining[pos + pattern.len()..];
-            } else {
-                // No more variables, add remaining text
-                if !remaining.is_empty() {
-                    json_components.push(format!("{{\"text\":\"{}\"}}", escape_quoted(remaining)));
-                }
-                break;
+                _ => converted_components.push(item),
             }
         }
 
-        // Construct final command
+        let json_string = serde_json::to_string(&serde_json::Value::Array(converted_components))
+            .unwrap_or_else(|_| "[]".to_string());
+        if Self::text_contains_any_var(&json_string, var_names) {
+            return Err(
+                "Variables in JSON array text components are supported only in string components and object text fields."
+                    .into(),
+            );
+        }
+        Ok(json_string)
+    }
+
+    /// Plain text with `{var}` placeholders as text components: each
+    /// variable becomes a score component, or an `nbt` component for a
+    /// storage-backed variable.
+    fn plain_text_components(&self, message: &str, var_names: &[String]) -> Vec<String> {
+        let mut json_components = Vec::new();
+        let mut remaining = message;
+        while !remaining.is_empty() {
+            let next_var = var_names
+                .iter()
+                .filter_map(|name| {
+                    remaining
+                        .find(&format!("{{{}}}", name))
+                        .map(|pos| (pos, name))
+                })
+                .min_by_key(|(pos, _)| *pos);
+            let Some((pos, var_name)) = next_var else {
+                json_components.push(format!("{{\"text\":\"{}\"}}", escape_quoted(remaining)));
+                break;
+            };
+
+            if pos > 0 {
+                json_components.push(format!(
+                    "{{\"text\":\"{}\"}}",
+                    escape_quoted(&remaining[..pos])
+                ));
+            }
+            if let Some(storage_path) = self.symbols.variable_storage_paths.get(var_name) {
+                json_components.push(format!(
+                    "{{\"nbt\":\"{}\",\"storage\":\"{}:global\"}}",
+                    storage_path, self.namespace
+                ));
+            } else {
+                // The variable's name is its fake player.
+                let objective = self
+                    .symbols
+                    .variable_objectives
+                    .get(var_name)
+                    .map(|s| s.as_str())
+                    .unwrap_or("temp");
+                json_components.push(format!(
+                    "{{\"score\":{{\"name\":\"{}\",\"objective\":\"{}\"}}}}",
+                    var_name, objective
+                ));
+            }
+            remaining = &remaining[pos + var_name.len() + 2..];
+        }
+
         if json_components.is_empty() {
             json_components.push("{\"text\":\"\"}".to_string());
         }
-
-        // Include action token for title commands
-        if let Some(action_token) = action {
-            Ok(format!(
-                "{} {} {} [{}]",
-                command,
-                selector,
-                action_token,
-                json_components.join(",")
-            ))
-        } else {
-            Ok(format!(
-                "{} {} [{}]",
-                command,
-                selector,
-                json_components.join(",")
-            ))
-        }
+        json_components
     }
 
     fn format_constant(&self, value: f64) -> String {
@@ -901,6 +800,28 @@ fn quoted_text_contents(after_text: &str) -> Option<&str> {
     }
 
     None
+}
+
+/// Splits `title <selector> <action> <message>` or
+/// `tellraw <selector> <message>` into its parts.
+fn split_text_command(cmd: &str) -> Result<(&str, &str, Option<&str>, &str), TranspileError> {
+    let cmd = cmd.trim();
+    let command = cmd.split(' ').next().unwrap_or("");
+    if command == "title" {
+        let parts: Vec<&str> = cmd.splitn(4, ' ').collect();
+        if parts.len() < 4 {
+            return Err(
+                "Title command requires action (title/subtitle/actionbar). Format: /title <selector> <action> <text>".into()
+            );
+        }
+        Ok((command, parts[1], Some(parts[2]), parts[3]))
+    } else {
+        let parts: Vec<&str> = cmd.splitn(3, ' ').collect();
+        if parts.len() < 3 {
+            return Err("Invalid tellraw command format".into());
+        }
+        Ok((command, parts[1], None, parts[2]))
+    }
 }
 
 #[cfg(test)]

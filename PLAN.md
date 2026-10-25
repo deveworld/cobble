@@ -289,9 +289,8 @@ state and persistent variables.
     the line-scan and source-key fallbacks;
   - the obsolete line-scan fallbacks are removed once source-map snapshots
     cover imports, unrolling, resource JSON, and raw commands;
-  - symbol collection moves out of `src/diagnostics.rs`, and function
-    registration and resource declarations move out of
-    `src/transpiler/mod.rs`, without behavior changes.
+  - symbol collection moves out of `src/diagnostics.rs` without behavior
+    changes.
 
 #### Acceptance Criteria
 

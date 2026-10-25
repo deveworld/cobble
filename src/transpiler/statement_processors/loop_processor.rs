@@ -78,9 +78,9 @@ struct RuntimeLoopDriver<'a> {
     /// Helper-name prefix: the loop helper is named `{prefix}_temp_{id}` and
     /// the body helper `{prefix}_body_{id}`.
     helper_prefix: &'static str,
-    /// `while` historically allocates the loop helper id before lowering its
-    /// condition; the runtime `for` drivers allocate it afterwards. Preserved
-    /// so generated helper names stay stable.
+    /// `while` allocates the loop helper id before lowering its condition;
+    /// the runtime `for` drivers allocate it afterwards. Generated helper
+    /// names depend on this order.
     loop_helper_id_before_condition: bool,
     /// Commands emitted into the current function before the loop starts.
     init_commands: LoopDriverHook<'a, Vec<String>>,
