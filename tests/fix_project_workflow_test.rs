@@ -48,6 +48,32 @@ fn write_project(root: &Path) -> PathBuf {
     project
 }
 
+/// A command tree with `say`, so `--validate` needs no download.
+fn write_say_tree(root: &Path) -> PathBuf {
+    let path = root.join("commands.json");
+    fs::write(
+        &path,
+        r#"{
+  "type": "root",
+  "children": {
+    "say": {
+      "type": "literal",
+      "children": {
+        "message": {
+          "type": "argument",
+          "parser": "brigadier:string",
+          "properties": { "type": "greedy" },
+          "executable": true
+        }
+      }
+    }
+  }
+}"#,
+    )
+    .unwrap();
+    path
+}
+
 fn text(output: &Output) -> String {
     format!(
         "{}{}",
@@ -170,11 +196,12 @@ fn a_namespace_change_replaces_the_projects_own_output() {
     for validate in [false, true] {
         let temp_dir = TempDir::new().unwrap();
         let project = write_project(temp_dir.path());
+        let tree = write_say_tree(temp_dir.path());
         let build = |project: &Path| {
             let mut command = cobble();
             command.current_dir(project).args(["build", "-q"]);
             if validate {
-                command.arg("--validate");
+                command.arg("--validate").arg("--commands-json").arg(&tree);
             }
             succeed(&mut command);
         };
@@ -208,7 +235,8 @@ fn a_moved_project_keeps_its_output() {
         let mut command = cobble();
         command.current_dir(&moved).args(["build", "-q"]);
         if validate {
-            command.arg("--validate");
+            let tree = write_say_tree(temp_dir.path());
+            command.arg("--validate").arg("--commands-json").arg(tree);
         }
         succeed(&mut command);
 
