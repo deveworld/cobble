@@ -78,7 +78,17 @@ pre-26.3 shapes as `datapack-resource-format` errors:
   predicate with a `type` (formerly a list of predicates, or an entity
   predicate on its own), such as `{"type": "minecraft:entity_properties",
   "entity": "this", "predicate": {...}}`;
+- an advancement's `display.icon` and a recipe's `result` name the item in `id`
+  (formerly `item`);
+- recipe ingredients are an item id, a `#tag`, or a list of item ids (formerly
+  `{"item": ...}` or `{"tag": ...}` objects);
 - cooking recipes set `cookingtime`.
+
+Types must exist in Minecraft 26.3, because data packs can't add new ones: the
+`type` of a predicate, an item modifier, a loot entry, and a recipe, and the
+`trigger` of an advancement criterion. For example, `minecraft:set_nbt` is
+now `minecraft:set_custom_data`, and `minecraft:alternative` is now
+`minecraft:any_of`.
 
 Minecraft silently ignores lists such as `conditions` and `functions`, so
 Cobble reports them too.

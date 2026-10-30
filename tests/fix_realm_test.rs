@@ -24,6 +24,10 @@
 //!   Minecraft then ran none of the function
 //! - `grid[r][c] = v` with parameter indexes wrote a map key of `grid[r]`
 //! - `for ch in word` over a string parameter left `ch` empty
+//! - recipes and advancement icons in pre-26.3 shapes and types 26.3 doesn't
+//!   have passed the resource checks, and `/reload` then failed
+//! - the validator called commands valid that Minecraft can't load: unknown
+//!   ids, missing pack resources, bad text components, and bad values
 
 mod common;
 
@@ -466,6 +470,158 @@ def main():
             "Server: y",
             "Server: x",
             "Server: y"
+        ]
+    );
+}
+
+#[test]
+fn resource_shapes_and_types_minecraft_rejects_are_reported() {
+    for (resource, expected) in [
+        (
+            r##"datapack.recipe("a", {"type": "minecraft:crafting_shaped", "pattern": ["#"], "key": {"#": {"item": "minecraft:stick"}}, "result": {"id": "minecraft:diamond"}})"##,
+            "`key.#` is now the item id itself",
+        ),
+        (
+            r#"datapack.recipe("a", {"type": "minecraft:crafting_shapeless", "ingredients": [{"tag": "minecraft:logs"}], "result": {"id": "minecraft:diamond"}})"#,
+            "`ingredients[0]` is now the tag as a string",
+        ),
+        (
+            r#"datapack.recipe("a", {"type": "minecraft:crafting_shapeless", "ingredients": ["minecraft:dirt"], "result": {"item": "minecraft:diamond"}})"#,
+            "`result.item` is now `id`",
+        ),
+        (
+            r#"datapack.recipe("a", {"type": "minecraft:crafting_bogus", "result": {"id": "minecraft:diamond"}})"#,
+            "`minecraft:crafting_bogus` is not a recipe type",
+        ),
+        (
+            r#"datapack.advancement("a", {"criteria": {"x": {"trigger": "minecraft:tick"}}, "parent": "minecraft:story/root", "display": {"icon": {"item": "minecraft:diamond"}, "title": "T", "description": "D"}})"#,
+            "`display.icon.item` is now `id`",
+        ),
+        (
+            r#"datapack.advancement("a", {"criteria": {"x": {"trigger": "minecraft:bogus"}}})"#,
+            "`minecraft:bogus` is not an advancement trigger",
+        ),
+        (
+            r#"datapack.item_modifier("a", {"type": "minecraft:set_nbt", "tag": "{a:1}"})"#,
+            "(use `minecraft:set_custom_data`)",
+        ),
+        (
+            r#"datapack.predicate("a", {"type": "minecraft:alternative", "terms": []})"#,
+            "(use `minecraft:any_of`)",
+        ),
+        (
+            r#"datapack.loot_table("a", {"type": "minecraft:chest", "pools": [{"rolls": 1, "entries": [{"type": "minecraft:bogus"}]}]})"#,
+            "`minecraft:bogus` is not a loot entry type",
+        ),
+        (
+            r#"datapack.loot_table("a", {"type": "minecraft:chest", "pools": [{"rolls": 1, "entries": [{"type": "minecraft:item", "name": "minecraft:stick", "modifier": [{"type": "minecraft:copy_nbt"}]}]}]})"#,
+            "(use `minecraft:copy_custom_data`)",
+        ),
+    ] {
+        let error = compile(&format!("from stdlib import datapack\n{resource}\n")).unwrap_err();
+        assert!(error.contains(expected), "{resource}: {error}");
+    }
+
+    compile(
+        r##"
+from stdlib import datapack
+
+datapack.recipe("shaped", {"type": "minecraft:crafting_shaped", "pattern": ["#"], "key": {"#": "minecraft:stick"}, "result": {"id": "minecraft:diamond", "count": 1}})
+datapack.recipe("shapeless", {"type": "minecraft:crafting_shapeless", "ingredients": ["#minecraft:logs", ["minecraft:dirt", "minecraft:sand"]], "result": {"id": "minecraft:diamond"}})
+datapack.recipe("smelt", {"type": "minecraft:smelting", "ingredient": "minecraft:dirt", "result": "minecraft:diamond", "cookingtime": 100})
+datapack.advancement("tick", {"criteria": {"x": {"trigger": "tick"}}, "parent": "minecraft:story/root", "display": {"icon": {"id": "minecraft:diamond"}, "title": "T", "description": "D"}})
+datapack.predicate("any", {"type": "minecraft:any_of", "terms": [{"type": "minecraft:random_chance", "chance": 0.5}]})
+"##,
+    )
+    .unwrap_or_else(|error| panic!("build failed: {error}"));
+}
+
+#[test]
+fn validator_reports_what_stops_a_function_from_loading() {
+    let commands_json = Path::new("data/commands.json");
+    if !commands_json.exists() {
+        eprintln!("Skipping: data/commands.json not found");
+        return;
+    }
+    let validator = cobble::validator::CommandValidator::from_file(commands_json).unwrap();
+    let error = |command: &str| {
+        validator
+            .validate_command_detailed(command)
+            .expect_err(command)
+            .message
+    };
+    for (command, expected) in [
+        ("give @s minecraft:diamnd", "Unknown item"),
+        ("summon minecraft:zombi", "Unknown entity type"),
+        ("kill @e[type=minecraft:zombi]", "Unknown entity type"),
+        (
+            "setblock ~ ~ ~ minecraft:oak_stairs[facing=up]",
+            "no `facing=up`",
+        ),
+        ("effect give @s minecraft:sped", "Unknown effect"),
+        ("particle minecraft:hartt ~ ~ ~", "Unknown particle"),
+        ("enchant @s minecraft:sharpnes", "Unknown enchantment"),
+        ("scoreboard objectives add x bogus", "scoreboard criterion"),
+        (
+            r#"tellraw @a {"text":"x","color":"pink"}"#,
+            "`pink` is not a color",
+        ),
+        (
+            r#"bossbar add a:b {"text":"x","bold":"y"}"#,
+            "`bold` must be",
+        ),
+        ("tp @s ^ ~ ^", "mixes"),
+        ("setblock ~ ~ 1.5 minecraft:stone", "must be a whole number"),
+        (
+            "execute if score @s a matches 5..1 run say x",
+            "low end above",
+        ),
+        ("data get entity @s a..b", "not a valid NBT path"),
+        ("kill @e[limit=1,limit=2]", "can appear once"),
+    ] {
+        let found = error(command);
+        assert!(found.contains(expected), "{command}: {found}");
+    }
+    for command in [
+        "item replace entity @s villager.7 with minecraft:stone",
+        "item replace entity @s bogus.slot with minecraft:stone",
+        "execute if items entity @s * minecraft:stone run say x",
+    ] {
+        assert!(validator.validate_command(command).is_err(), "{command}");
+    }
+    for command in [
+        "give @s diamond",
+        "give @s mymod:ruby",
+        "$give @s minecraft:$(item)",
+        "item replace entity @s mob.inventory.7 with minecraft:stone",
+        "item replace entity @s ns:hands with minecraft:stone",
+        r#"tellraw @a {"text":"x","color":"$(color)"}"#,
+        "execute if items entity @s weapon.mainhand * run say x",
+    ] {
+        assert!(validator.validate_command(command).is_ok(), "{command}");
+    }
+
+    let (_temp, output_dir) = compile(
+        r#"
+def main():
+    /loot give @s loot sim:missing
+    /execute if predicate sim:gone run say x
+    /loot give @s loot minecraft:chests/simple_dungeon
+    /loot give @s loot other_pack:elsewhere
+"#,
+    )
+    .unwrap_or_else(|error| panic!("build failed: {error}"));
+    let report = validator.validate_datapack(&output_dir);
+    let messages: Vec<&str> = report
+        .errors
+        .iter()
+        .map(|(_, error)| error.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "Unknown loot table `sim:missing`: the pack doesn't define it",
+            "Unknown predicate `sim:gone`: the pack doesn't define it",
         ]
     );
 }

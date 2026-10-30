@@ -143,6 +143,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   condition written as a list or as an entity predicate without `type`.
   Minecraft 26.3 rejects the advancement, and then `/reload` fails for every
   pack.
+- `datapack.*` reports more shapes that Minecraft 26.3 rejects, which make
+  `/reload` fail for every pack: `{"item": ...}` and `{"tag": ...}` recipe
+  ingredients, `item` in a recipe `result` or an advancement icon, and any
+  predicate, item modifier, loot entry, recipe, or trigger type that 26.3
+  doesn't have, such as `minecraft:set_nbt`.
+- `--validate` and `cobble validate` report what stops a function from
+  loading in Minecraft: unknown item, block, entity, effect, particle,
+  attribute, enchantment, damage type, and biome ids, block states, scoreboard
+  criteria, and item slots, including entity types in selectors; references to
+  loot tables, predicates, item modifiers, dialogs, and slot sources the pack
+  doesn't define; invalid JSON text components; coordinates that mix `^` with
+  others, fractional block coordinates, reversed ranges, invalid NBT paths, and
+  selector arguments that repeat or can't be negated. All of these used to
+  pass as valid. `clickEvent` and `hoverEvent`, which Minecraft ignores, are
+  reported too.
+- The validator's item slots follow 26.3: `mob.inventory.<n>` replaces
+  `villager.<n>`, and `horse.saddle`, `horse.armor`, and the crafting and
+  smithing names are gone.
 - A string parameter with a `"` or a `\` shows in `tellraw` and `title` text.
   The value used to go into the JSON as a macro, which broke the command,
   and Minecraft then ran none of the function, not even its other commands.

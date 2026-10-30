@@ -4504,7 +4504,7 @@ fn test_tellraw_styling_preserved() {
     let source = r#"
 def test():
     score = 100
-    /tellraw @a {"text":"Score: {score}","color":"gold","bold":true,"clickEvent":{"action":"run_command","value":"/say clicked"}}
+    /tellraw @a {"text":"Score: {score}","color":"gold","bold":true,"click_event":{"action":"run_command","command":"/say clicked"}}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();

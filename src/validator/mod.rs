@@ -1,8 +1,12 @@
 pub mod arg_parsers;
 pub mod command_tree;
+pub mod registries;
 pub mod string_reader;
+pub mod text_component;
+pub mod values;
 
 use command_tree::CommandNode;
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use string_reader::StringReader;
 use walkdir::WalkDir;
@@ -31,10 +35,16 @@ pub struct ValidationReport {
     pub source_map_errors: Vec<String>,
 }
 
+/// How the error for an argument no parser accepts starts.
+const GENERIC_ARGUMENT_ERROR: &str = "Unknown or invalid argument";
+
 pub struct CommandValidator {
     root: CommandNode,
     /// Highest command permission level a validated command may use.
     max_permission_level: u8,
+    /// The pack `validate_datapack` is checking, for references to its
+    /// resources.
+    pack_resources: RefCell<Option<registries::PackResources>>,
 }
 
 impl CommandValidator {
@@ -52,6 +62,7 @@ impl CommandValidator {
         Self {
             root,
             max_permission_level: command_tree::DEFAULT_FUNCTION_PERMISSION_LEVEL,
+            pack_resources: RefCell::new(None),
         }
     }
 
@@ -141,6 +152,14 @@ impl CommandValidator {
 
     /// Validate all .mcfunction files in a datapack directory.
     pub fn validate_datapack(&self, dir: &Path) -> ValidationReport {
+        self.pack_resources
+            .replace(Some(registries::PackResources::new(dir)));
+        let report = self.validate_function_files(dir);
+        self.pack_resources.replace(None);
+        report
+    }
+
+    fn validate_function_files(&self, dir: &Path) -> ValidationReport {
         let mut report = ValidationReport {
             files_checked: 0,
             commands_checked: 0,
@@ -251,11 +270,7 @@ impl CommandValidator {
                     match self.walk_node(target, reader, depth + 1) {
                         Ok(()) => return Ok(()),
                         Err(error) => {
-                            let pos = error.position;
-                            if pos > best_error_pos {
-                                best_error_pos = pos;
-                                best_error = Some(error);
-                            }
+                            Self::keep_better_error(&mut best_error, &mut best_error_pos, error);
                             reader.set_cursor(saved);
                         }
                     }
@@ -269,6 +284,21 @@ impl CommandValidator {
                 if let Some(ref parser_type) = child.parser {
                     let saved = reader.cursor();
                     if arg_parsers::parse_argument(reader, parser_type, child.properties.as_ref()) {
+                        let token = reader.slice(saved, reader.cursor());
+                        if let Some(problem) =
+                            self.argument_problem(parser_type, child.properties.as_ref(), &token)
+                        {
+                            Self::keep_better_error(
+                                &mut best_error,
+                                &mut best_error_pos,
+                                CommandValidationError {
+                                    message: problem,
+                                    position: saved,
+                                },
+                            );
+                            reader.set_cursor(saved);
+                            continue;
+                        }
                         if let Some(error) = self.permission_error(name, child, reader.cursor()) {
                             if best_error.is_none() || error.position > best_error_pos {
                                 best_error_pos = error.position;
@@ -292,11 +322,11 @@ impl CommandValidator {
                         match self.walk_node(target, reader, depth + 1) {
                             Ok(()) => return Ok(()),
                             Err(error) => {
-                                let pos = error.position;
-                                if pos > best_error_pos {
-                                    best_error_pos = pos;
-                                    best_error = Some(error);
-                                }
+                                Self::keep_better_error(
+                                    &mut best_error,
+                                    &mut best_error_pos,
+                                    error,
+                                );
                                 reader.set_cursor(saved);
                             }
                         }
@@ -310,13 +340,52 @@ impl CommandValidator {
             let preview = remaining.chars().take(40).collect::<String>();
             CommandValidationError {
                 message: format!(
-                    "Unknown or invalid argument at position {}: '{}'",
+                    "{GENERIC_ARGUMENT_ERROR} at position {}: '{}'",
                     reader.cursor(),
                     preview
                 ),
                 position: reader.cursor(),
             }
         }))
+    }
+
+    /// Keeps the error from the branch that read furthest, and at the same
+    /// position the one that says more than "invalid argument".
+    fn keep_better_error(
+        best_error: &mut Option<CommandValidationError>,
+        best_error_pos: &mut usize,
+        error: CommandValidationError,
+    ) {
+        let replaces_generic = error.position == *best_error_pos
+            && !error.message.starts_with(GENERIC_ARGUMENT_ERROR)
+            && best_error
+                .as_ref()
+                .is_none_or(|best| best.message.starts_with(GENERIC_ARGUMENT_ERROR));
+        if best_error.is_none() || error.position > *best_error_pos || replaces_generic {
+            *best_error_pos = error.position;
+            *best_error = Some(error);
+        }
+    }
+
+    /// What Minecraft would reject in an argument whose shape is right.
+    fn argument_problem(
+        &self,
+        parser_type: &str,
+        properties: Option<&serde_json::Value>,
+        token: &str,
+    ) -> Option<String> {
+        if parser_type == "minecraft:component" {
+            return text_component::problem(token)
+                .map(|problem| format!("Invalid text component: {problem}"));
+        }
+        values::problem(parser_type, token)
+            .or_else(|| registries::problem(parser_type, properties, token))
+            .or_else(|| {
+                self.pack_resources
+                    .borrow()
+                    .as_ref()
+                    .and_then(|resources| resources.problem(parser_type, token))
+            })
     }
 
     fn is_at_end(reader: &StringReader) -> bool {

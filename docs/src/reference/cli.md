@@ -357,7 +357,25 @@ cobble validate output --commands-json /tmp/commands.json
 ```
 
 The validator uses Minecraft's exported Brigadier command tree, including 26.x commands such as `dialog`, `fetchprofile`, `waypoint`, `stopwatch`, `version`, and `return run`.
-It also applies the tree's permission levels: data pack functions run at level 2
+It also reports what Minecraft rejects when it loads a function, which stops
+that function from loading:
+
+- unknown `minecraft:` ids of items, blocks, block states, entity types,
+  effects, particles, attributes, enchantments, damage types, and biomes, and
+  unknown scoreboard criteria and item slots;
+- references to a loot table, a predicate, an item modifier, a dialog, or a
+  slot source that the pack's own namespace doesn't define;
+- JSON text components Minecraft rejects, and the old names `clickEvent` and
+  `hoverEvent`, which it ignores (they are now `click_event` and
+  `hover_event`);
+- coordinates that mix `^` with other forms, fractional block coordinates,
+  reversed ranges such as `5..1`, invalid NBT paths, and selector arguments
+  that repeat or can't be negated.
+
+Ids of other namespaces, tags, SNBT text components, and values with a
+`$(name)` placeholder aren't checked.
+
+The validator also applies the tree's permission levels: data pack functions run at level 2
 (`gamemasters`, the default `function-permission-level`), so commands that need
 a higher level, such as `transfer`, `tick`, `op`, or `stop`, are reported because
 Minecraft refuses to load a function that uses them. If your server raised

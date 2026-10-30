@@ -210,7 +210,7 @@ def test():
     /say Hello World
     /say Score is {score}
     /tellraw @a {"text":"Hello","color":"green"}
-    /tellraw @a [{"text":"Click "},{"text":"here","clickEvent":{"action":"run_command","value":"/say hi"}}]
+    /tellraw @a [{"text":"Click "},{"text":"here","click_event":{"action":"run_command","command":"/say hi"}}]
 "#,
     );
     assert!(

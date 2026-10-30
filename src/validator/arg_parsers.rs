@@ -469,26 +469,28 @@ fn is_item_slot_value(value: &str, allow_groups: bool) -> bool {
         return false;
     }
 
+    // The names of `SlotRanges` in Minecraft 26.3.
     if allow_groups
-        && (value == "*"
-            || matches!(
-                value,
-                "armor.*"
-                    | "container.*"
-                    | "enderchest.*"
-                    | "horse.*"
-                    | "hotbar.*"
-                    | "inventory.*"
-                    | "villager.*"
-                    | "weapon.*"
-            ))
+        && matches!(
+            value,
+            "armor.*"
+                | "container.*"
+                | "enderchest.*"
+                | "horse.*"
+                | "hotbar.*"
+                | "inventory.*"
+                | "mob.inventory.*"
+                | "player.crafting.*"
+                | "weapon.*"
+        )
     {
         return true;
     }
 
     if matches!(
         value,
-        "weapon"
+        "contents"
+            | "weapon"
             | "weapon.mainhand"
             | "weapon.offhand"
             | "armor.head"
@@ -496,15 +498,9 @@ fn is_item_slot_value(value: &str, allow_groups: bool) -> bool {
             | "armor.legs"
             | "armor.feet"
             | "armor.body"
-            | "horse.saddle"
-            | "horse.armor"
             | "saddle"
+            | "horse.chest"
             | "player.cursor"
-            | "crafting_table.result"
-            | "smithing_template"
-            | "smithing_base"
-            | "smithing_addition"
-            | "smithing_result"
     ) {
         return true;
     }
@@ -521,10 +517,9 @@ fn is_item_slot_value(value: &str, allow_groups: bool) -> bool {
         "hotbar" => index <= 8,
         "inventory" => index <= 26,
         "enderchest" => index <= 26,
-        "villager" => index <= 7,
+        "mob.inventory" => index <= 7,
         "horse" => index <= 14,
         "player.crafting" => index <= 3,
-        "crafting_table.input" => index <= 8,
         _ => false,
     }
 }
@@ -872,7 +867,7 @@ fn selector_key_allowed(key: &str) -> bool {
     )
 }
 
-fn split_selector_arguments(args: &str) -> Vec<String> {
+pub(super) fn split_selector_arguments(args: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
@@ -1006,8 +1001,16 @@ fn parse_resource_or_inline(reader: &mut StringReader, allow_number: bool) -> bo
 
 /// `minecraft:slot_source` tries a slot range first, like Minecraft's
 /// `SlotSourceArgument`, then falls back to a slot source ID or inline value.
+/// A slot name, a slot source written inline, or the `namespace:path` of one
+/// in a data pack. A word without a `:` can only be a slot name.
 fn parse_slot_source(reader: &mut StringReader) -> bool {
-    parse_item_slots(reader) || parse_resource_or_inline(reader, false)
+    if parse_item_slots(reader) {
+        return true;
+    }
+    let token = reader.remaining();
+    let token = token.split(' ').next().unwrap_or_default();
+    (token.contains(':') || token.starts_with(['{', '[']))
+        && parse_resource_or_inline(reader, false)
 }
 
 fn parse_resource_location(reader: &mut StringReader) -> bool {
