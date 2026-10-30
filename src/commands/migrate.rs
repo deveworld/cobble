@@ -190,7 +190,7 @@ fn build_migration_report(options: MigrateOptions) -> MigrationReport {
     let mut changed = false;
 
     if supported_route {
-        let report_temp = matches!(options.to.as_str(), "0.11" | "0.11.0");
+        let report_temp = options.to.starts_with("0.11");
         let inspection =
             inspect_project(&project_path, report_temp, &mut diagnostics, &mut actions);
         config = inspection.config;
@@ -1567,7 +1567,9 @@ fn print_human_report(report: &MigrationReport) {
 fn is_supported_route(from: &str, to: &str) -> bool {
     // 0.10 and 0.11 share pack format 121.0, so a route ends at either.
     match to {
-        "0.11" | "0.11.0" => matches!(from, "0.8" | "0.8.0" | "0.9" | "0.9.0" | "0.10" | "0.10.0"),
+        "0.11" | "0.11.0" | "0.11.0-rc.1" => {
+            matches!(from, "0.8" | "0.8.0" | "0.9" | "0.9.0" | "0.10" | "0.10.0")
+        }
         "0.10" | "0.10.0" => matches!(from, "0.8" | "0.8.0" | "0.9" | "0.9.0"),
         _ => false,
     }

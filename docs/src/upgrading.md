@@ -7,8 +7,7 @@ lists every change.
 
 ## 0.10 To 0.11
 
-0.11 is still in development. This section lists the changes on `main` so far
-and will grow before the release.
+0.11.0-rc.1 is the release candidate for these changes.
 
 Cobble 0.11 keeps the Minecraft Java Edition 26.3 target and pack format
 `121.0`, so `cobble.toml` and the command tree stay as they are. Most changes

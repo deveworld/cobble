@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0-rc.1] - 2026-10-31
+
+Release candidate for 0.11.0. See
+[Upgrading](https://deveworld.github.io/cobble/docs/upgrading.html#010-to-011)
+for the upgrade steps.
+
 ### Added
 - `persist name = value` declares a module-level variable that keeps its value
   across `/reload` and server restarts. Its initializer only runs while the

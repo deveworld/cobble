@@ -2,11 +2,11 @@
 
 ## Status
 
-- Last updated: 2026-10-22
+- Last updated: 2026-10-31
 - Current stable release: `0.10.0` (2026-10-22)
-- Next release: `0.11.0` (in progress on `main`)
+- Next release: `0.11.0` (release candidate on `main`)
 - Planned after that: `1.0.0`
-- Active pre-release: none
+- Active pre-release: `0.11.0-rc.1` (2026-10-31)
 - Current Minecraft target: Java Edition `26.3`
 - Current data pack format: `121.0`
 - Package name: `cobble-lang`
@@ -122,8 +122,8 @@ QA when EULA acceptance is available.
 ### Release Sequence
 
 - `0.7.1` to `0.10.0`: released; see Shipped Releases below.
-- `0.11.0` (in progress): pack isolation and persistent state so far, with
-  more work planned; the last release before 1.0 locks generated output.
+- `0.11.0` (`0.11.0-rc.1` on `main`): pack isolation, persistent state, and
+  Python forms; the last release before 1.0 locks generated output.
 - `1.0.0`: long-term compatibility contract for language behavior, CLI
   behavior, metadata schemas, and release gates.
 - Future 1.x: multi-target support, editor integration, plugin and tooling
@@ -173,8 +173,8 @@ Carried forward from those plans and still open:
 
 ### 0.11.0: Pack Isolation And Persistent State
 
-Status: in progress. Goals 1 to 3 below are implemented on `main`
-(2026-10-22); more work is planned for 0.11 before the release.
+Status: `0.11.0-rc.1` (2026-10-31). Goals 1 to 3 below are implemented on
+`main`, along with the Python forms in the changelog.
 
 Theme: fix the two generated-output behaviors that writing real packs exposed,
 while generated output can still change before 1.0 locks it. Both showed up in
