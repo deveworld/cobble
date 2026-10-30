@@ -46,7 +46,7 @@ fn read_function(output_dir: &Path, function_name: &str) -> String {
 }
 
 #[test]
-fn test_storage_string_truthiness_condition_is_rejected() {
+fn test_storage_string_truthiness_reads_its_length() {
     let source = r#"
 def check():
     name = "abc"
@@ -54,28 +54,16 @@ def check():
         /say truthy
 "#;
 
-    let error = compile_source(source).unwrap_err();
+    let (_temp, output_dir) = compile_source(source).unwrap();
+    let content = read_function(&output_dir, "check");
     assert!(
-        error.contains("storage-backed (string)") && error.contains("'name'"),
-        "expected storage-backed rejection naming the variable, got: {error}"
+        content.contains("data get storage") && content.contains("run say truthy"),
+        "{content}"
     );
 }
 
 #[test]
-fn test_storage_string_comparisons_are_rejected() {
-    let eq_source = r#"
-def check():
-    name = "abc"
-    other = "abc"
-    if name == other:
-        /say eq
-"#;
-    let error = compile_source(eq_source).unwrap_err();
-    assert!(
-        error.contains("storage-backed (string)") && error.contains("'name'"),
-        "expected storage-backed rejection for ==, got: {error}"
-    );
-
+fn test_storage_string_order_comparisons_are_rejected() {
     let gt_source = r#"
 def check():
     name = "abc"
@@ -141,8 +129,7 @@ def check():
     let content = read_function(&output_dir, "check");
     assert!(!content.is_empty());
 
-    // A string literal-array loop target read as a score would only expose
-    // the string length, so using it in a scoreboard condition now errors.
+    // A string loop target is compared as stored, so it never equals a number.
     let source = r#"
 def check():
     names = ["a", "bb", "ccc"]
@@ -151,11 +138,7 @@ def check():
             /say two
 "#;
 
-    let error = compile_source(source).unwrap_err();
-    assert!(
-        error.contains("storage-backed (string)") && error.contains("'v'"),
-        "expected storage-backed rejection for string loop target, got: {error}"
-    );
+    compile_source(source).unwrap();
 }
 
 #[test]

@@ -23,11 +23,11 @@ use super::text::{
 use super::{
     compound_assignment_span, datapack_json_resource_type, datapack_json_value_ranges,
     datapack_tag_type, function_calls_in_expression, is_allowed_value_function_call,
-    is_builtin_symbol, is_known_module_call, is_simple_module_name, math_value_function_arity,
-    nullish_token_spans, should_skip_assignment_symbol_scan, split_module_call_name,
-    starts_with_any_keyword, value_only_module_call_message, DefinedSymbols,
-    FunctionCallArgumentSpan, FunctionCallSpan, FunctionSignature, SourceDiagnostic,
-    DECLARATION_KEYWORDS, RESOURCE_BLOCK_KEYWORDS,
+    is_builtin_symbol, is_known_module_call, is_list_method, is_simple_module_name,
+    math_value_function_arity, nullish_token_spans, should_skip_assignment_symbol_scan,
+    split_module_call_name, starts_with_any_keyword, value_only_module_call_message,
+    DefinedSymbols, FunctionCallArgumentSpan, FunctionCallSpan, FunctionSignature,
+    SourceDiagnostic, DECLARATION_KEYWORDS, RESOURCE_BLOCK_KEYWORDS,
 };
 
 /// Shared context for the semantic passes: the source text, the parsed
@@ -611,6 +611,17 @@ fn collect_expression_calls(expression: &Expression, is_root: bool, out: &mut Ve
             collect_expression_calls(base, false, out);
             collect_expression_calls(index, false, out);
         }
+        Expression::Slice(base, start, stop) => {
+            collect_expression_calls(base, false, out);
+            for bound in [start, stop].into_iter().flatten() {
+                collect_expression_calls(bound, false, out);
+            }
+        }
+        Expression::Conditional(condition, value, otherwise) => {
+            collect_expression_calls(condition, false, out);
+            collect_expression_calls(value, false, out);
+            collect_expression_calls(otherwise, false, out);
+        }
         Expression::Array(items) => {
             for item in items {
                 collect_expression_calls(item, false, out);
@@ -747,6 +758,12 @@ pub(super) fn check_undefined_function_calls(
                 continue;
             }
 
+            // A method of a list held in a variable; the transpiler knows
+            // what `module` holds.
+            if is_list_method(method) && !is_builtin_symbol(module) {
+                continue;
+            }
+
             diagnostics.push(
                 SourceDiagnostic::error(
                     "undefined-function",
@@ -763,7 +780,8 @@ pub(super) fn check_undefined_function_calls(
 
         if function_defs.contains_key(&call.name)
             || is_allowed_value_function_call(&call.name)
-            || call.name == "range"
+            || is_list_method(&call.name)
+            || matches!(call.name.as_str(), "range" | "enumerate")
         {
             continue;
         }
@@ -1280,6 +1298,17 @@ fn collect_expression_none_diagnostics(
             collect_expression_none_diagnostics(base, none_allowed, diagnostics);
             collect_expression_none_diagnostics(index, none_allowed, diagnostics);
         }
+        Expression::Slice(base, start, stop) => {
+            collect_expression_none_diagnostics(base, none_allowed, diagnostics);
+            for bound in [start, stop].into_iter().flatten() {
+                collect_expression_none_diagnostics(bound, none_allowed, diagnostics);
+            }
+        }
+        Expression::Conditional(condition, value, otherwise) => {
+            collect_expression_none_diagnostics(condition, none_allowed, diagnostics);
+            collect_expression_none_diagnostics(value, none_allowed, diagnostics);
+            collect_expression_none_diagnostics(otherwise, none_allowed, diagnostics);
+        }
         Expression::Array(items) => {
             for item in items {
                 collect_expression_none_diagnostics(item, none_allowed, diagnostics);
@@ -1349,8 +1378,18 @@ pub(super) fn collect_defined_symbols(
                     }
                 }
             }
+            Statement::MultiAssign(multi) => {
+                for target in &multi.targets {
+                    if let Expression::Identifier(name) = target {
+                        symbols.insert(name.clone());
+                    }
+                }
+            }
             Statement::For(for_loop) if is_simple_module_name(&for_loop.target) => {
                 symbols.insert(for_loop.target.clone());
+                if let Some(index) = &for_loop.index {
+                    symbols.insert(index.clone());
+                }
             }
             Statement::Import(import) => add_import_symbols(import, &mut symbols),
             _ => {}
@@ -1875,7 +1914,10 @@ fn is_ident_continue_byte(byte: u8) -> bool {
 }
 
 fn is_expression_keyword(name: &str) -> bool {
-    matches!(name, "and" | "or" | "not" | "in" | "by" | "to")
+    matches!(
+        name,
+        "and" | "or" | "not" | "in" | "by" | "to" | "if" | "else"
+    )
 }
 
 // ===========================================================================
@@ -2287,7 +2329,11 @@ fn unsupported_subscript_access(
             index += 1;
             continue;
         };
-        if is_builtin_symbol(base) {
+        // `or [1, 2]` starts a list, and a masked string literal is all `_`.
+        if is_builtin_symbol(base)
+            || is_expression_keyword(base)
+            || base.chars().all(|ch| ch == '_')
+        {
             index += 1;
             continue;
         }
@@ -2896,6 +2942,11 @@ fn infer_expression_type_for_diagnostics(
         return None;
     }
 
+    // A conditional expression can give either type.
+    if contains_top_level_keyword(expression, "if") {
+        return Some(CobbleType::Unknown);
+    }
+
     if expression.starts_with('"') || expression.starts_with('\'') {
         return Some(CobbleType::String);
     }
@@ -2909,6 +2960,17 @@ fn infer_expression_type_for_diagnostics(
         return Some(CobbleType::Map);
     }
     let function_calls = function_calls_in_expression(expression);
+    if let Some(builtin) = function_calls.first().filter(|call| {
+        expression.starts_with(&format!("{}(", call.name))
+            && matching_close_paren(expression, call.name.len()) == Some(expression.len() - 1)
+    }) {
+        match builtin.name.as_str() {
+            "sorted" => return Some(CobbleType::List),
+            "str" => return Some(CobbleType::String),
+            "abs" | "max" | "min" | "sum" => return Some(CobbleType::Integer),
+            _ => {}
+        }
+    }
     if expression.starts_with("len(") && function_calls.len() == 1 {
         let call = &function_calls[0];
         if call.name == "len"
@@ -2948,6 +3010,12 @@ fn infer_expression_type_for_diagnostics(
             }
         }
     }
+    // `a or b` gives an operand, which is a boolean only for comparisons.
+    if !contains_top_level_operator(expression, &["==", "!=", "<=", ">=", "<", ">"])
+        && (find_word(expression, "and").is_some() || find_word(expression, "or").is_some())
+    {
+        return Some(CobbleType::Unknown);
+    }
     if expression_contains_boolean_operator(expression)
         && expression_references_are_known(expression, type_env)
     {
@@ -2956,10 +3024,53 @@ fn infer_expression_type_for_diagnostics(
     if expression_contains_arithmetic_operator(expression)
         && expression_references_are_known(expression, type_env)
     {
+        // `+` and `*` also join and repeat text and lists.
+        let holds_values = expression.contains(['"', '\'', '[', '{'])
+            || identifier_references_in_expression(expression)
+                .iter()
+                .any(|reference| {
+                    matches!(
+                        type_env.get(&reference.name),
+                        Some(CobbleType::String | CobbleType::List | CobbleType::Map)
+                    )
+                });
+        if holds_values {
+            return Some(CobbleType::Unknown);
+        }
         return Some(CobbleType::Integer);
     }
 
     None
+}
+
+/// Whether `keyword` stands as a word outside brackets and strings.
+fn contains_top_level_keyword(expression: &str, keyword: &str) -> bool {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut previous_is_ident = false;
+    for (index, ch) in expression.char_indices() {
+        if let Some(active) = quote {
+            if ch == active {
+                quote = None;
+            }
+            previous_is_ident = false;
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 && !previous_is_ident && expression[index..].starts_with(keyword) {
+            let after = expression[index + keyword.len()..].chars().next();
+            if !after.is_some_and(|next| next.is_alphanumeric() || next == '_') {
+                return true;
+            }
+        }
+        previous_is_ident = ch.is_alphanumeric() || ch == '_';
+    }
+    false
 }
 
 fn expression_references_are_known(
@@ -3038,7 +3149,7 @@ fn strip_comment_preserving_strings(text: &str) -> String {
     output
 }
 
-fn is_numeric_literal(expression: &str) -> bool {
+pub(super) fn is_numeric_literal(expression: &str) -> bool {
     let expression = expression.trim();
     if expression.is_empty() {
         return false;
@@ -3269,11 +3380,20 @@ fn walk_placeholder_statements(
                 );
                 scopes.function_stack.pop();
             }
+            Statement::MultiAssign(multi) => {
+                for target in &multi.targets {
+                    if let Expression::Identifier(name) = target {
+                        scopes.defining_set().insert(name.clone());
+                    }
+                }
+            }
             Statement::For(for_loop) => {
                 let scoped_target = is_simple_module_name(&for_loop.target);
+                let loop_targets = scopes.loop_targets.len();
                 if scoped_target {
                     scopes.loop_targets.push(for_loop.target.clone());
                 }
+                scopes.loop_targets.extend(for_loop.index.iter().cloned());
                 walk_placeholder_statements(
                     context,
                     &for_loop.body,
@@ -3281,9 +3401,7 @@ fn walk_placeholder_statements(
                     scopes,
                     diagnostics,
                 );
-                if scoped_target {
-                    scopes.loop_targets.pop();
-                }
+                scopes.loop_targets.truncate(loop_targets);
             }
             Statement::While(while_loop) => {
                 walk_placeholder_statements(

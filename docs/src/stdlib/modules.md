@@ -64,7 +64,7 @@ Colors accept Minecraft named colors or `#RRGGBB`.
 
 The text of `text.tellraw`, `text.title`, `text.subtitle`, and
 `text.actionbar` takes `{name}` placeholders as a raw `tellraw` does (see
-[JSON Text](../language/commands.md#json-text)):
+[JSON Text](../language/commands.md#json-and-snbt-text)):
 
 ```python
 from stdlib import text

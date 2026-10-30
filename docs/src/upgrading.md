@@ -190,6 +190,10 @@ lines that rely on the old behavior:
   (`if lives:`, `not lives`, `while ready():`) with `matches 1..`, so a
   negative number counted as false. 0.11 treats every value other than 0 as
   true.
+- **`and` and `or` as values.** 0.10 gave 1 or 0 for `x = a or b`. 0.11 gives
+  one of the operands, as Python does. Conditions read the same.
+- **Comparing two parameters.** 0.10 compared `a == b` as numbers, which for
+  text compared lengths. 0.11 compares the stored values.
 - **Parameters hide module variables.** In 0.10, a function whose parameter
   had the name of a module variable read the module variable in conditions and
   arithmetic, and the argument only in `{name}`. 0.11 reads the argument

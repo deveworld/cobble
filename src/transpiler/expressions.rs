@@ -1,6 +1,6 @@
 use crate::ast::{CobbleType, Expression};
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
-use crate::transpiler::storage_paths::StoragePathOps;
+use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{GeneratedCommandKind, StoragePathPlan, TranspileError, Transpiler};
 
 impl Transpiler {
@@ -23,6 +23,74 @@ impl Transpiler {
             warnings: &self.warnings,
         };
         evaluator.evaluate_expression_to_target(expr, target)
+    }
+
+    /// A list method that a storage command does directly.
+    fn process_list_method(
+        &mut self,
+        base: &Expression,
+        method: &str,
+        args: &[Expression],
+    ) -> Result<(), TranspileError> {
+        let Some(plan) = self.resolve_storage_path_plan(base) else {
+            return Err(format!("`{method}` needs a list held in a variable.").into());
+        };
+        let namespace = self.data_pack.namespace.clone();
+        let expected = match method {
+            "append" | "extend" => 1..=1,
+            "pop" => 0..=1,
+            _ => 0..=0,
+        };
+        if !expected.contains(&args.len()) {
+            return Err(format!("`{method}` got {} argument(s).", args.len()).into());
+        }
+        let commands = match method {
+            "clear" => {
+                let empty = if self.value_read_type(base) == CobbleType::Map {
+                    "{}"
+                } else {
+                    "[]"
+                };
+                self.path_commands(&plan, |path| {
+                    format!("data modify storage {namespace}:global {path} set value {empty}")
+                })?
+            }
+            "pop" => {
+                let item = Expression::Subscript(
+                    Box::new(base.clone()),
+                    Box::new(args.first().cloned().unwrap_or(Expression::Number(-1.0))),
+                );
+                let Some(item_plan) = self.resolve_storage_path_plan(&item) else {
+                    return Err("`pop` needs a list held in a variable.".into());
+                };
+                self.path_commands(&item_plan, |path| {
+                    format!("data remove storage {namespace}:global {path}")
+                })?
+            }
+            _ => {
+                // `extend` appends every item of the value.
+                let items = if method == "extend" { "[]" } else { "" };
+                let (mut commands, value_path) = self.materialize_storage_value(&args[0])?;
+                commands.extend(self.path_commands(&plan, |path| {
+                    format!(
+                        "data modify storage {namespace}:global {path} append from storage {namespace}:global {value_path}{items}"
+                    )
+                })?);
+                commands.push(format!(
+                    "data remove storage {namespace}:global {value_path}"
+                ));
+                commands
+            }
+        };
+        self.extend_current_function(commands);
+        Ok(())
+    }
+
+    fn value_read_type(&self, expr: &Expression) -> CobbleType {
+        match expr {
+            Expression::Subscript(..) | Expression::Attribute(..) => self.storage_read_type(expr),
+            expr => self.infer_type(expr),
+        }
     }
 
     pub(in crate::transpiler) fn process_expression(
@@ -54,6 +122,12 @@ impl Transpiler {
                             // Regular function call - generate Minecraft function call
                             self.generate_function_call(func_name, args)?;
                         }
+                    }
+                    Expression::Attribute(obj, method)
+                        if self.is_list_value(obj)
+                            && (Self::is_list_command_method(method) || method == "pop") =>
+                    {
+                        self.process_list_method(obj, method, args)?;
                     }
                     Expression::Attribute(obj, method) => {
                         // Handle attribute access like stdlib.addEventListener

@@ -103,6 +103,18 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Map(entries) => entries
                 .iter()
                 .any(|(_, value)| Self::expression_reads_target(value, target)),
+            Expression::Slice(base, start, stop) => {
+                Self::expression_reads_target(base, target)
+                    || [start, stop]
+                        .into_iter()
+                        .flatten()
+                        .any(|bound| Self::expression_reads_target(bound, target))
+            }
+            Expression::Conditional(condition, value, otherwise) => {
+                Self::expression_reads_target(condition, target)
+                    || Self::expression_reads_target(value, target)
+                    || Self::expression_reads_target(otherwise, target)
+            }
             Expression::Number(_)
             | Expression::String(_)
             | Expression::Boolean(_)
@@ -116,7 +128,8 @@ impl<'a> ExpressionEvaluator<'a> {
     pub(in crate::transpiler) fn calls_user_code(expr: &Expression) -> bool {
         match expr {
             Expression::Call(func, args) => {
-                let builtin = matches!(&**func, Expression::Identifier(name) if name == "len")
+                let builtin = matches!(&**func, Expression::Identifier(name)
+                    if matches!(name.as_str(), "len" | "abs" | "min" | "max"))
                     || matches!(&**func, Expression::Attribute(obj, _)
                         if matches!(&**obj, Expression::Identifier(module) if module == "math"));
                 !builtin || args.iter().any(Self::calls_user_code)
@@ -133,6 +146,18 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Map(entries) => entries
                 .iter()
                 .any(|(_, value)| Self::calls_user_code(value)),
+            Expression::Slice(base, start, stop) => {
+                Self::calls_user_code(base)
+                    || [start, stop]
+                        .into_iter()
+                        .flatten()
+                        .any(|bound| Self::calls_user_code(bound))
+            }
+            Expression::Conditional(condition, value, otherwise) => {
+                Self::calls_user_code(condition)
+                    || Self::calls_user_code(value)
+                    || Self::calls_user_code(otherwise)
+            }
             Expression::Identifier(_)
             | Expression::Number(_)
             | Expression::String(_)
@@ -583,6 +608,15 @@ impl<'a> ExpressionEvaluator<'a> {
         if matches!(func, Expression::Identifier(name) if name == "len") {
             return self.len_to_target(args, target, target_obj);
         }
+        if let Expression::Identifier(name) = func {
+            if !self.functions.params.contains_key(name) {
+                match name.as_str() {
+                    "abs" => return self.abs_to_target(args, target, target_obj),
+                    "min" | "max" => return self.extreme_to_target(name, args, target, target_obj),
+                    _ => {}
+                }
+            }
+        }
 
         // Handle intrinsics like math.sqrt
         if let Expression::Attribute(obj, method) = func {
@@ -617,6 +651,55 @@ impl<'a> ExpressionEvaluator<'a> {
             }
         }
         self.user_function_call_to_target(&func_name, args, target, target_obj)
+    }
+
+    fn abs_to_target(
+        &mut self,
+        args: &[Expression],
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        let [value] = args else {
+            return Err(format!("abs() takes 1 argument, got {}", args.len()).into());
+        };
+        let scratch = format!("#abs_value_{}", self.next_temp_id());
+        let mut commands = self.evaluate_expression_to_target(value, &scratch)?;
+        commands.extend([
+            "scoreboard players set #abs_negate temp -1".to_string(),
+            format!(
+                "execute if score {scratch} temp matches ..-1 run scoreboard players operation {scratch} temp *= #abs_negate temp"
+            ),
+            format!("scoreboard players operation {target} {target_obj} = {scratch} temp"),
+        ]);
+        Ok(commands)
+    }
+
+    /// `min(a, b, ...)` or `max(a, b, ...)`. A single list argument is
+    /// lowered to a prelude helper before this point.
+    fn extreme_to_target(
+        &mut self,
+        name: &str,
+        args: &[Expression],
+        target: &str,
+        target_obj: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        let Some((first, rest)) = args.split_first() else {
+            return Err(format!("{name}() takes at least 1 argument").into());
+        };
+        let operation = if name == "min" { "<" } else { ">" };
+        let best = format!("#{name}_value_{}", self.next_temp_id());
+        let mut commands = self.evaluate_expression_to_target(first, &best)?;
+        for arg in rest {
+            let scratch = format!("#{name}_arg_{}", self.next_temp_id());
+            commands.extend(self.evaluate_expression_to_target(arg, &scratch)?);
+            commands.push(format!(
+                "scoreboard players operation {best} temp {operation} {scratch} temp"
+            ));
+        }
+        commands.push(format!(
+            "scoreboard players operation {target} {target_obj} = {best} temp"
+        ));
+        Ok(commands)
     }
 
     fn len_to_target(

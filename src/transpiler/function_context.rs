@@ -116,6 +116,19 @@ impl FunctionContext {
                     self.check_expression(&assign.value, assigned).map_err(at)?;
                     assigned.insert(assign.target.clone());
                 }
+                Statement::MultiAssign(multi) => {
+                    for value in &multi.values {
+                        self.check_expression(value, assigned).map_err(at)?;
+                    }
+                    for target in &multi.targets {
+                        match target {
+                            Expression::Identifier(name) => {
+                                assigned.insert(name.clone());
+                            }
+                            target => self.check_expression(target, assigned).map_err(at)?,
+                        }
+                    }
+                }
                 Statement::Expression(expr) => self.check_expression(expr, assigned).map_err(at)?,
                 Statement::Return(Some(expr)) => {
                     self.check_expression(expr, assigned).map_err(at)?
@@ -149,6 +162,7 @@ impl FunctionContext {
                     if let Some(step) = &for_loop.step {
                         self.check_expression(step, assigned).map_err(at)?;
                     }
+                    assigned.extend(for_loop.index.iter().cloned());
                     assigned.insert(for_loop.target.clone());
                     self.check_first_iteration(&for_loop.body, assigned)?;
                     collect_bindings(&for_loop.body, assigned, &mut HashSet::new());
@@ -258,6 +272,12 @@ fn collect_bindings(
             Statement::Assignment(assign) if assign.assigns_name() => {
                 assigned.extend([assign.target.clone()]);
             }
+            Statement::MultiAssign(multi) => {
+                assigned.extend(multi.targets.iter().filter_map(|target| match target {
+                    Expression::Identifier(name) => Some(name.clone()),
+                    _ => None,
+                }));
+            }
             Statement::Global(names) => globals.extend(names.iter().cloned()),
             Statement::If(if_stmt) => {
                 collect_bindings(&if_stmt.then_branch, assigned, globals);
@@ -269,6 +289,7 @@ fn collect_bindings(
                 }
             }
             Statement::For(for_loop) => {
+                assigned.extend(for_loop.index.iter().cloned());
                 assigned.extend([for_loop.target.clone()]);
                 collect_bindings(&for_loop.body, assigned, globals);
             }
@@ -362,6 +383,17 @@ fn expression_reads<'a>(expr: &'a Expression, reads: &mut Vec<&'a str>) {
             expression_reads(obj, reads);
             expression_reads(index, reads);
         }
+        Expression::Slice(obj, start, stop) => {
+            expression_reads(obj, reads);
+            for bound in [start, stop].into_iter().flatten() {
+                expression_reads(bound, reads);
+            }
+        }
+        Expression::Conditional(condition, value, otherwise) => {
+            expression_reads(condition, reads);
+            expression_reads(value, reads);
+            expression_reads(otherwise, reads);
+        }
         Expression::Array(items) => {
             for item in items {
                 expression_reads(item, reads);
@@ -399,6 +431,10 @@ fn collect_statement_expressions<'a>(body: &'a [Statement], out: &mut Vec<&'a Ex
                 if let Some(target) = &assign.target_expr {
                     out.push(target);
                 }
+            }
+            Statement::MultiAssign(multi) => {
+                out.extend(&multi.values);
+                out.extend(&multi.targets);
             }
             Statement::Expression(expr) | Statement::Return(Some(expr)) => out.push(expr),
             Statement::If(if_stmt) => {
@@ -456,6 +492,17 @@ fn expression_calls(expr: &Expression, calls: &mut BTreeSet<String>) {
         Expression::Subscript(obj, index) => {
             expression_calls(obj, calls);
             expression_calls(index, calls);
+        }
+        Expression::Slice(obj, start, stop) => {
+            expression_calls(obj, calls);
+            for bound in [start, stop].into_iter().flatten() {
+                expression_calls(bound, calls);
+            }
+        }
+        Expression::Conditional(condition, value, otherwise) => {
+            expression_calls(condition, calls);
+            expression_calls(value, calls);
+            expression_calls(otherwise, calls);
         }
         Expression::Array(items) => {
             for item in items {

@@ -97,7 +97,7 @@ fn kind_name(kind: StatementSpanKind) -> &'static str {
     match kind {
         StatementSpanKind::Import => "Import",
         StatementSpanKind::FunctionDef => "FunctionDef",
-        StatementSpanKind::Assignment => "Assignment",
+        StatementSpanKind::MultiAssign | StatementSpanKind::Assignment => "Assignment",
         StatementSpanKind::ConstAssignment => "ConstAssignment",
         StatementSpanKind::Expression => "Expression",
         StatementSpanKind::If => "If",

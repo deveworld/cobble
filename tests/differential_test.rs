@@ -187,6 +187,19 @@ enum Expr {
     Item(String, Box<Expr>),
     /// `len(name)` of a list or a string.
     Len(String),
+    /// `(value if condition else otherwise)`.
+    Pick(Box<Cond>, Box<Expr>, Box<Expr>),
+    Abs(Box<Expr>),
+    /// `min(a, b)`, or `max(a, b)` when the flag is set.
+    Extreme(bool, Box<Expr>, Box<Expr>),
+    /// `(a or b)`, or `(a and b)` when the flag is clear.
+    Either(bool, Box<Expr>, Box<Expr>),
+    /// `sum(name)` of a list of numbers.
+    Sum(String),
+    /// `min(name)`, or `max(name)` when the flag is set.
+    ListExtreme(bool, String),
+    /// `name.count(value)`.
+    Count(String, Box<Expr>),
 }
 
 fn bin(op: Op, left: Expr, right: Expr) -> Expr {
@@ -233,6 +246,12 @@ enum Cond {
     Not(Box<Cond>, bool),
     And(Box<Cond>, Box<Cond>),
     Or(Box<Cond>, Box<Cond>),
+    /// `value in name`, or `value not in name` when the flag is set.
+    In(Box<Expr>, String, bool),
+    /// `left == right` or `left != right` on strings.
+    Text(&'static str, Str, Str),
+    /// `left <op> middle <op> right`.
+    Chain(Box<Expr>, &'static str, Box<Expr>, &'static str, Box<Expr>),
 }
 
 #[derive(Clone)]
@@ -268,6 +287,10 @@ enum Stmt {
         body: Vec<Stmt>,
     },
     Return(Expr),
+    /// `a, b = b, a`.
+    Swap(String, String),
+    /// `list.append(value)`.
+    Append(String, Expr),
 }
 
 #[derive(Clone)]
@@ -591,6 +614,26 @@ impl Generator {
         if depth == 0 || self.rng.chance(30) {
             return self.atom(scope, depth);
         }
+        if self.rng.chance(16) {
+            let lists = scope.readable_lists();
+            let left = Box::new(self.expr(scope, depth - 1));
+            let right = Box::new(self.expr(scope, depth - 1));
+            match self.rng.below(7) {
+                0 => return Expr::Pick(Box::new(self.cond(scope, 1)), left, right),
+                1 => return Expr::Abs(left),
+                2 => return Expr::Extreme(self.rng.chance(50), left, right),
+                3 => return Expr::Either(self.rng.chance(50), left, right),
+                4 if !lists.is_empty() => return Expr::Sum(self.rng.pick(&lists).0),
+                5 if !lists.is_empty() => {
+                    let flag = self.rng.chance(50);
+                    return Expr::ListExtreme(flag, self.rng.pick(&lists).0);
+                }
+                6 if !lists.is_empty() => {
+                    return Expr::Count(self.rng.pick(&lists).0, left);
+                }
+                _ => {}
+            }
+        }
         if self.rng.chance(6) {
             return Expr::Neg(Box::new(self.expr(scope, depth - 1)));
         }
@@ -676,6 +719,32 @@ impl Generator {
         }
         if self.rng.chance(15) {
             return Cond::Truthy(self.expr(scope, 1));
+        }
+        if self.rng.chance(20) {
+            let lists = scope.readable_lists();
+            match self.rng.below(3) {
+                0 if !lists.is_empty() => {
+                    let value = Box::new(self.expr(scope, 1));
+                    return Cond::In(value, self.rng.pick(&lists).0, self.rng.chance(40));
+                }
+                1 => {
+                    let op = self.rng.pick(&["==", "!="]);
+                    return Cond::Text(op, self.str_expr(scope, 1), self.str_expr(scope, 1));
+                }
+                _ => {
+                    let first = self.rng.pick(&["<", "<=", "=="]);
+                    let second = self.rng.pick(&["<", "<=", "!="]);
+                    let names = scope.readable(Ty::Int);
+                    let middle = if names.is_empty() {
+                        Expr::Lit(self.literal())
+                    } else {
+                        Expr::Var(self.rng.pick(&names))
+                    };
+                    let left = Box::new(self.expr(scope, 1));
+                    let right = Box::new(self.expr(scope, 1));
+                    return Cond::Chain(left, first, Box::new(middle), second, right);
+                }
+            }
         }
         let op = self.rng.pick(&["==", "!=", "<", "<=", ">", ">="]);
         Cond::Cmp(op, self.expr(scope, 2), self.expr(scope, 2))
@@ -787,6 +856,39 @@ impl Generator {
                     return self.foreach_statement(scope, depth)
                 }
                 89..=92 if depth < 2 => return Stmt::Return(self.expr(scope, 2)),
+                93 | 94 => {
+                    let targets: Vec<String> = scope
+                        .writable(Ty::Int)
+                        .into_iter()
+                        .filter(|name| !scope.is_unassigned_local(name))
+                        .collect();
+                    if targets.len() < 2 {
+                        continue;
+                    }
+                    let first = self.rng.pick(&targets);
+                    let second = self.rng.pick(&targets);
+                    if first == second {
+                        continue;
+                    }
+                    return Stmt::Swap(first, second);
+                }
+                95 | 96 => {
+                    // A local list that no loop walks: a loop over a list
+                    // that grows would not end in Python.
+                    let lists: Vec<(String, usize)> = scope
+                        .item_targets()
+                        .into_iter()
+                        .filter(|(name, _)| {
+                            !scope.iterated.contains(name)
+                                && scope.local_pool.iter().any(|(local, _)| local == name)
+                        })
+                        .collect();
+                    if lists.is_empty() {
+                        continue;
+                    }
+                    let name = self.rng.pick(&lists).0;
+                    return Stmt::Append(name, self.expr(scope, 2));
+                }
                 _ => {}
             }
         }
@@ -887,7 +989,7 @@ impl Generator {
                 Self::reads_writable(left, scope) || Self::reads_writable(right, scope)
             }
             // A list's items and a string can change in the body.
-            Expr::Call(..) | Expr::Item(..) | Expr::Len(_) => true,
+            _ => true,
         }
     }
 
@@ -1337,6 +1439,30 @@ fn cobble_expr(expr: &Expr) -> String {
         Expr::Call(name, args) => format!("{name}({})", vals(args, Language::Cobble)),
         Expr::Item(name, index) => format!("{name}[{}]", cobble_expr(index)),
         Expr::Len(name) => format!("len({name})"),
+        Expr::Pick(condition, value, otherwise) => format!(
+            "({} if {} else {})",
+            cobble_expr(value),
+            cobble_cond(condition, 0),
+            cobble_expr(otherwise)
+        ),
+        Expr::Abs(value) => format!("abs({})", cobble_expr(value)),
+        Expr::Extreme(max, left, right) => format!(
+            "{}({}, {})",
+            if *max { "max" } else { "min" },
+            cobble_expr(left),
+            cobble_expr(right)
+        ),
+        Expr::Either(or, left, right) => format!(
+            "({} {} {})",
+            cobble_expr(left),
+            if *or { "or" } else { "and" },
+            cobble_expr(right)
+        ),
+        Expr::Sum(name) => format!("sum({name})"),
+        Expr::ListExtreme(max, name) => {
+            format!("{}({name})", if *max { "max" } else { "min" })
+        }
+        Expr::Count(name, value) => format!("{name}.count({})", cobble_expr(value)),
     }
 }
 
@@ -1355,6 +1481,30 @@ fn python_expr(expr: &Expr) -> String {
         Expr::Call(name, args) => format!("{name}({})", vals(args, Language::Python)),
         Expr::Item(name, index) => format!("{name}[{}]", python_expr(index)),
         Expr::Len(name) => format!("len({name})"),
+        Expr::Pick(condition, value, otherwise) => format!(
+            "({} if {} else {})",
+            python_expr(value),
+            python_cond(condition),
+            python_expr(otherwise)
+        ),
+        Expr::Abs(value) => format!("W(abs({}))", python_expr(value)),
+        Expr::Extreme(max, left, right) => format!(
+            "{}({}, {})",
+            if *max { "max" } else { "min" },
+            python_expr(left),
+            python_expr(right)
+        ),
+        Expr::Either(or, left, right) => format!(
+            "({} {} {})",
+            python_expr(left),
+            if *or { "or" } else { "and" },
+            python_expr(right)
+        ),
+        Expr::Sum(name) => format!("W(sum({name}))"),
+        Expr::ListExtreme(max, name) => {
+            format!("{}({name})", if *max { "max" } else { "min" })
+        }
+        Expr::Count(name, value) => format!("{name}.count({})", python_expr(value)),
     }
 }
 
@@ -1432,6 +1582,31 @@ fn cobble_cond(cond: &Cond, level: u8) -> String {
             0,
             format!("{} or {}", cobble_cond(left, 0), cobble_cond(right, 1)),
         ),
+        Cond::In(value, name, negated) => (
+            3,
+            format!(
+                "{} {} {name}",
+                cobble_expr(value),
+                if *negated { "not in" } else { "in" }
+            ),
+        ),
+        Cond::Text(op, left, right) => (
+            3,
+            format!(
+                "{} {op} {}",
+                val_text(&Val::Str(left.clone()), Language::Cobble),
+                val_text(&Val::Str(right.clone()), Language::Cobble)
+            ),
+        ),
+        Cond::Chain(left, first, middle, second, right) => (
+            3,
+            format!(
+                "{} {first} {} {second} {}",
+                cobble_expr(left),
+                cobble_expr(middle),
+                cobble_expr(right)
+            ),
+        ),
     };
     if own < level {
         format!("({text})")
@@ -1449,6 +1624,22 @@ fn python_cond(cond: &Cond) -> String {
         Cond::Not(inner, _) => format!("(not {})", python_cond(inner)),
         Cond::And(left, right) => format!("({} and {})", python_cond(left), python_cond(right)),
         Cond::Or(left, right) => format!("({} or {})", python_cond(left), python_cond(right)),
+        Cond::In(value, name, negated) => format!(
+            "({} {} {name})",
+            python_expr(value),
+            if *negated { "not in" } else { "in" }
+        ),
+        Cond::Text(op, left, right) => format!(
+            "({} {op} {})",
+            val_text(&Val::Str(left.clone()), Language::Python),
+            val_text(&Val::Str(right.clone()), Language::Python)
+        ),
+        Cond::Chain(left, first, middle, second, right) => format!(
+            "({} {first} {} {second} {})",
+            python_expr(left),
+            python_expr(middle),
+            python_expr(right)
+        ),
     }
 }
 
@@ -1476,6 +1667,12 @@ fn print_block(out: &mut String, body: &[Stmt], indent: usize, language: Languag
                 )
                 .unwrap(),
             },
+            Stmt::Swap(first, second) => {
+                writeln!(out, "{pad}{first}, {second} = {second}, {first}").unwrap();
+            }
+            Stmt::Append(target, value) => {
+                writeln!(out, "{pad}{target}.append({})", expr(value)).unwrap();
+            }
             Stmt::SetItem(target, index, value) => {
                 writeln!(out, "{pad}{target}[{}] = {}", expr(index), expr(value)).unwrap();
             }
@@ -1674,8 +1871,18 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
                 expr(right, bound || exponent, visit);
             }
             Expr::Call(_, args) => args.iter_mut().for_each(|arg| val(arg, visit)),
-            Expr::Item(_, index) => expr(index, bound, visit),
-            Expr::Lit(_) | Expr::Var(_) | Expr::Len(_) => {}
+            Expr::Item(_, index) | Expr::Count(_, index) => expr(index, bound, visit),
+            Expr::Pick(condition, value, otherwise) => {
+                cond(condition, visit);
+                expr(value, bound, visit);
+                expr(otherwise, bound, visit);
+            }
+            Expr::Abs(inner) => expr(inner, bound, visit),
+            Expr::Extreme(_, left, right) | Expr::Either(_, left, right) => {
+                expr(left, bound, visit);
+                expr(right, bound, visit);
+            }
+            Expr::Lit(_) | Expr::Var(_) | Expr::Len(_) | Expr::Sum(_) | Expr::ListExtreme(..) => {}
         }
     }
     fn val(v: &mut Val, visit: &mut dyn FnMut(&mut Expr, bool)) {
@@ -1709,13 +1916,24 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
                 cond(left, visit);
                 cond(right, visit);
             }
+            Cond::In(value, ..) => expr(value, false, visit),
+            Cond::Text(_, left, right) => {
+                string(left, visit);
+                string(right, visit);
+            }
+            Cond::Chain(left, _, _, _, right) => {
+                expr(left, false, visit);
+                expr(right, false, visit);
+            }
         }
     }
     fn block(body: &mut [Stmt], visit: &mut dyn FnMut(&mut Expr, bool)) {
         for statement in body {
             match statement {
                 Stmt::Assign(_, v) => val(v, visit),
-                Stmt::Compound(_, _, e) | Stmt::Return(e) => expr(e, false, visit),
+                Stmt::Compound(_, _, e) | Stmt::Return(e) | Stmt::Append(_, e) => {
+                    expr(e, false, visit)
+                }
                 Stmt::SetItem(_, index, value) => {
                     expr(index, false, visit);
                     expr(value, false, visit);
@@ -1751,7 +1969,7 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
                     val(list, visit);
                     block(body, visit);
                 }
-                Stmt::Raw(..) | Stmt::Say(_) => {}
+                Stmt::Raw(..) | Stmt::Say(_) | Stmt::Swap(..) => {}
             }
         }
     }
@@ -1775,7 +1993,7 @@ fn for_each_cond(program: &mut Program, visit: &mut dyn FnMut(&mut Cond)) {
                 cond(left, visit);
                 cond(right, visit);
             }
-            Cond::Cmp(..) | Cond::Truthy(_) => {}
+            Cond::Cmp(..) | Cond::Truthy(_) | Cond::In(..) | Cond::Text(..) | Cond::Chain(..) => {}
         }
     }
     for_each_block(program, &mut |body| {
@@ -1828,6 +2046,21 @@ fn names_resolve(program: &Program) -> bool {
             }
             Expr::Call(_, args) => args.iter().for_each(|arg| val_reads(arg, reads)),
             Expr::Lit(_) => {}
+            Expr::Pick(condition, value, otherwise) => {
+                cond_reads(condition, reads);
+                expr_reads(value, reads);
+                expr_reads(otherwise, reads);
+            }
+            Expr::Abs(inner) => expr_reads(inner, reads),
+            Expr::Extreme(_, left, right) | Expr::Either(_, left, right) => {
+                expr_reads(left, reads);
+                expr_reads(right, reads);
+            }
+            Expr::Sum(name) | Expr::ListExtreme(_, name) => reads.push(name.clone()),
+            Expr::Count(name, value) => {
+                reads.push(name.clone());
+                expr_reads(value, reads);
+            }
         }
     }
     fn str_reads(value: &Str, reads: &mut Vec<String>) {
@@ -1860,6 +2093,19 @@ fn names_resolve(program: &Program) -> bool {
             Cond::And(left, right) | Cond::Or(left, right) => {
                 cond_reads(left, reads);
                 cond_reads(right, reads);
+            }
+            Cond::In(value, name, _) => {
+                expr_reads(value, reads);
+                reads.push(name.clone());
+            }
+            Cond::Text(_, left, right) => {
+                str_reads(left, reads);
+                str_reads(right, reads);
+            }
+            Cond::Chain(left, _, middle, _, right) => {
+                expr_reads(left, reads);
+                expr_reads(middle, reads);
+                expr_reads(right, reads);
             }
         }
     }
@@ -1920,6 +2166,14 @@ fn names_resolve(program: &Program) -> bool {
                     walk(body, reads, defined);
                 }
                 Stmt::Return(value) => expr_reads(value, reads),
+                Stmt::Swap(first, second) => {
+                    reads.push(first.clone());
+                    reads.push(second.clone());
+                }
+                Stmt::Append(target, value) => {
+                    reads.push(target.clone());
+                    expr_reads(value, reads);
+                }
             }
         }
     }

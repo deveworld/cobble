@@ -41,7 +41,9 @@ An `elif` condition is evaluated only when no earlier branch ran, so a
 function called in it runs only then.
 
 Comparisons chain as in Python: `0 < x < 10` means `0 < x and x < 10`. The
-middle operand can't call a function, because it would run twice. Inside
+middle operand can't call a function, because it would run twice. `==`, `!=`,
+and `in` also work on text, lists, and maps, and text, a list, or a map is true
+when it isn't empty (see [Python Forms](python.md#python-forms)). Inside
 brackets a condition can continue on the next line:
 
 ```python
@@ -132,7 +134,7 @@ def reward_new_players():
 
 The header takes `as`, `at`, `if`, `unless`, `positioned` (coordinates or
 `positioned as <selector>`), `rotated` (rotation or `rotated as <selector>`),
-`in`, `anchored`, `align`, and `store`, in any order. `asat <selector>:` on
+`in`, `anchored`, `align`, `store`, `on`, `facing`, and `summon`, in any order. `asat <selector>:` on
 its own is short for `as <selector> at @s:`. A leading `execute`, as in
 `execute as @a at @s:`, is optional.
 
@@ -303,7 +305,8 @@ leave it unchanged. A `while True` loop with no `return` in its body reports an
 
 ## Match Statements
 
-`match` branches on an integer value:
+`match` branches on an integer value. Text works too, with `case "name":`, and
+compiles to an `if` chain:
 
 ```python
 def check_score():

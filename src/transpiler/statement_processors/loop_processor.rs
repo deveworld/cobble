@@ -1674,6 +1674,7 @@ fn substitute_statement(
             }
             Statement::For(ForLoop {
                 target: for_loop.target.clone(),
+                index: for_loop.index.clone(),
                 iter: substitute_expression(&for_loop.iter, target, value)?,
                 step: for_loop
                     .step
@@ -1705,6 +1706,18 @@ fn substitute_statement(
                 .map(|expr| substitute_expression(expr, target, value))
                 .transpose()?,
         ),
+        Statement::MultiAssign(multi) => {
+            let substitute = |expressions: &[Expression]| {
+                expressions
+                    .iter()
+                    .map(|expression| substitute_expression(expression, target, value))
+                    .collect::<Result<Vec<_>, TranspileError>>()
+            };
+            Statement::MultiAssign(MultiAssign {
+                targets: substitute(&multi.targets)?,
+                values: substitute(&multi.values)?,
+            })
+        }
         Statement::Pass => Statement::Pass,
         Statement::MinecraftCommand(command) => Statement::MinecraftCommand(
             replace_unroll_placeholder(command, target, &value.as_command_text()),
@@ -1774,6 +1787,9 @@ fn substitute_execute_modifier(
         ExecuteModifier::Align(raw) => {
             ExecuteModifier::Align(replace_unroll_placeholder(raw, target, &command_value))
         }
+        ExecuteModifier::Other(raw) => {
+            ExecuteModifier::Other(replace_unroll_placeholder(raw, target, &command_value))
+        }
         ExecuteModifier::Store(raw) => {
             ExecuteModifier::Store(replace_unroll_placeholder(raw, target, &command_value))
         }
@@ -1823,6 +1839,24 @@ fn substitute_expression(
         Expression::Unary(op, expr) => Expression::Unary(
             op.clone(),
             Box::new(substitute_expression(expr, target, value)?),
+        ),
+        Expression::Slice(base, start, stop) => {
+            let bound = |bound: &Option<Box<Expression>>| {
+                bound
+                    .as_ref()
+                    .map(|bound| substitute_expression(bound, target, value).map(Box::new))
+                    .transpose()
+            };
+            Expression::Slice(
+                Box::new(substitute_expression(base, target, value)?),
+                bound(start)?,
+                bound(stop)?,
+            )
+        }
+        Expression::Conditional(condition, then_value, otherwise) => Expression::Conditional(
+            Box::new(substitute_expression(condition, target, value)?),
+            Box::new(substitute_expression(then_value, target, value)?),
+            Box::new(substitute_expression(otherwise, target, value)?),
         ),
         Expression::Call(func, args) => Expression::Call(
             Box::new(substitute_expression(func, target, value)?),

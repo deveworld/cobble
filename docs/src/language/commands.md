@@ -13,9 +13,10 @@ A `#` comment after a command is removed from the output. The `#` needs a
 space before and after it, so `#` inside a name, such as the fake player
 `#count`, stays in the command.
 
-## JSON Text
+## JSON And SNBT Text
 
-`tellraw`, `title`, and other commands with JSON text work as written:
+`tellraw`, `title`, and other commands with text components work as written,
+in JSON or in SNBT such as `{text:"Hello",color:gold}`:
 
 ```python
 def announce():
@@ -25,9 +26,10 @@ def announce():
     /tellraw @a [{"text":"Score: {score}", "color":"gold"}, {"text":" ready"}]
 ```
 
-In `tellraw` and `title`, a `{variable}` inside a JSON `text` field or a JSON
-array string becomes a score or NBT text component. The styling of the
-surrounding text is kept. A string shows as its text, and a list or a map
+In `tellraw` and `title`, a `{variable}` inside a `text` field, a string in a
+component list, `extra`, the `with` arguments of a translation, or hover text
+becomes a score or NBT text component. The styling of the surrounding text is
+kept. A string shows as its text, and a list or a map
 shows as SNBT, such as `[1, 2]`.
 
 ## Variables In `say`
@@ -85,7 +87,7 @@ loops are substituted at compile time.
 
 A Cobble variable, including the variable of a runtime loop, works as a
 placeholder only in `say`, `tellraw`, and `title` text, as described under
-[JSON Text](#json-text) and [Variables In `say`](#variables-in-say). In any
+[JSON Text](#json-and-snbt-text) and [Variables In `say`](#variables-in-say). In any
 other command it is a compile error. To use a variable's value there, pass it
 to a function parameter:
 

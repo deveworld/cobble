@@ -323,23 +323,35 @@ impl Transpiler {
             Expression::Subscript(base, _) => self.is_string_base(base),
             _ => false,
         };
-        if !storage_value {
-            self.symbols.variable_storage_paths.remove(&assign.target);
-        }
+        let replaced_copy = if storage_value {
+            None
+        } else {
+            self.symbols.variable_storage_paths.remove(&assign.target)
+        };
 
         match self.classify_assignment_value(&assign.target, &assign.value) {
             AssignValueKind::ConstFoldable(const_value) => {
                 self.lower_const_fold_assignment(assign, const_value);
-                Ok(())
             }
-            AssignValueKind::ConditionFlag => self.lower_condition_flag_assignment(assign),
+            AssignValueKind::ConditionFlag => self.lower_condition_flag_assignment(assign)?,
             AssignValueKind::ComplexEval | AssignValueKind::ParamCopy => {
-                self.lower_expression_eval_assignment(assign)
+                self.lower_expression_eval_assignment(assign)?
             }
-            AssignValueKind::StorageLiteral => self.lower_storage_literal_assignment(assign),
-            AssignValueKind::StringChar => self.lower_string_char_assignment(assign),
-            AssignValueKind::ScoreSimple => self.lower_simple_score_assignment(assign),
+            AssignValueKind::StorageLiteral => self.lower_storage_literal_assignment(assign)?,
+            AssignValueKind::StringChar => self.lower_string_char_assignment(assign)?,
+            AssignValueKind::ScoreSimple => self.lower_simple_score_assignment(assign)?,
         }
+
+        // Code already lowered can read the old copy on a later pass of a
+        // loop, as `/say {a}` before `a = a + 1`, so the copy stays current.
+        if let Some(path) = replaced_copy {
+            let namespace = self.data_pack.namespace.clone();
+            self.extend_current_function(vec![format!(
+                "execute store result storage {namespace}:global {path} int 1 run scoreboard players get {} temp",
+                assign.target
+            )]);
+        }
+        Ok(())
     }
 
     /// How `target = value` reads `value` from storage, when it copies a
@@ -435,11 +447,13 @@ impl Transpiler {
     /// and the source has a score, as the target of a list loop does next
     /// to its storage copy.
     fn copies_a_score(&self, target: &str, source: &str) -> bool {
-        matches!(
+        let holds_a_number = matches!(
             self.symbols.variable_types.get(target),
             Some(CobbleType::Integer | CobbleType::Boolean)
-        ) && (self.symbols.scoreboard_variables.contains(source)
-            || self.symbols.variable_objectives.contains_key(source))
+        ) || self.current_context.score_writes.contains(target);
+        holds_a_number
+            && (self.symbols.scoreboard_variables.contains(source)
+                || self.symbols.variable_objectives.contains_key(source))
     }
 
     /// Assign to a parameter of the current function. Parameters live in
@@ -516,8 +530,6 @@ impl Transpiler {
     /// Classify an in-function assignment *value*. The checks run in the
     /// order listed on [`Self::process_assignment`].
     fn classify_assignment_value(&self, target: &str, value: &Expression) -> AssignValueKind {
-        self.warn_logical_operator_value(value);
-
         // Try to evaluate constant expressions first
         if let Some(const_value) = self.try_eval_const(value) {
             return AssignValueKind::ConstFoldable(const_value);
@@ -1149,27 +1161,6 @@ impl Transpiler {
             BinaryOp::Div => through_holder("#divisor", "/="),
             BinaryOp::Mod => through_holder("#modulus", "%="),
             _ => Vec::new(),
-        }
-    }
-
-    /// Warns when `and` or `or` gets an operand that isn't 1 or 0, where
-    /// Python's result would be one of the operands.
-    pub(in crate::transpiler) fn warn_logical_operator_value(&self, value: &Expression) {
-        let Expression::Binary(left, BinaryOp::And | BinaryOp::Or, right) = value else {
-            return;
-        };
-        let is_plain_number = |operand: &Expression| match operand {
-            Expression::Number(number) => *number != 0.0 && *number != 1.0,
-            Expression::Identifier(_) => self.infer_type(operand) == CobbleType::Integer,
-            _ => false,
-        };
-        if is_plain_number(left) || is_plain_number(right) {
-            self.warn_at(
-                "logical-operator-value",
-                "`and` and `or` give 1 or 0 here, not one of their operands as in Python.",
-                Some("Use an `if` to choose between two values."),
-                self.current_statement_source.clone(),
-            );
         }
     }
 

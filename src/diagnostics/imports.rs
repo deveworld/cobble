@@ -681,6 +681,12 @@ fn collect_cross_file_call_diagnostics(
                     continue;
                 }
 
+                // A method of a list held in a variable; the transpiler
+                // knows what `module` holds.
+                if super::is_list_method(method) && !super::is_builtin_symbol(module) {
+                    continue;
+                }
+
                 output.entry(file_index).or_default().push(
                     SourceDiagnostic::error(
                         "undefined-function",
@@ -695,7 +701,10 @@ fn collect_cross_file_call_diagnostics(
                 continue;
             }
 
-            if !super::is_allowed_value_function_call(&call.name) {
+            if !super::is_allowed_value_function_call(&call.name)
+                && !super::is_list_method(&call.name)
+                && call.name != "enumerate"
+            {
                 output.entry(file_index).or_default().push(
                     SourceDiagnostic::error(
                         "undefined-function",

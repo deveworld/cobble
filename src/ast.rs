@@ -61,6 +61,7 @@ pub enum Statement {
     Import(Import),
     FunctionDef(FunctionDef),
     Assignment(Assignment),
+    MultiAssign(MultiAssign),         // a, b = 1, 2
     ConstAssignment(ConstAssignment), // const NAME = value
     Expression(Expression),
     If(IfStatement),
@@ -120,6 +121,13 @@ impl Assignment {
     }
 }
 
+/// `a, b = b, a`, or `a, b = pair` with one value that holds the items.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MultiAssign {
+    pub targets: Vec<Expression>,
+    pub values: Vec<Expression>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConstAssignment {
     pub target: String,
@@ -137,6 +145,9 @@ pub struct IfStatement {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForLoop {
     pub target: String,
+    /// `i` in `for i, item in enumerate(items):`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<String>,
     pub iter: Expression,
     pub step: Option<Expression>, // Optional step value (for range with step)
     pub body: Vec<Statement>,
@@ -164,6 +175,7 @@ pub struct MatchCase {
 pub enum MatchPattern {
     Literal(i32),    // case 5:
     Range(i32, i32), // case 1 to 10:
+    Text(String),    // case "name":
     Wildcard,        // case _:
 }
 
@@ -185,6 +197,7 @@ pub enum ExecuteModifier {
     Anchored(String),   // anchored eyes
     Align(String),      // align xyz
     Store(String),      // store result score ...
+    Other(String),      // on target, facing ..., summon ...
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -216,6 +229,15 @@ pub enum Expression {
 
     // Subscript
     Subscript(Box<Expression>, Box<Expression>),
+    /// `value[start:stop]`, either bound may be left out.
+    Slice(
+        Box<Expression>,
+        Option<Box<Expression>>,
+        Option<Box<Expression>>,
+    ),
+
+    /// `then_value if condition else else_value`, as (condition, then, else).
+    Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -235,6 +257,8 @@ pub enum BinaryOp {
     LtEq,
     Gt,
     GtEq,
+    In,
+    NotIn,
 
     // Logical
     And,

@@ -1,6 +1,7 @@
-use crate::ast::{BinaryOp, Expression, Statement, UnaryOp};
+use crate::ast::{BinaryOp, CobbleType, Expression, Statement, UnaryOp};
 use crate::transpiler::condition_translator::{ConditionTranslator, TranslatedCondition};
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
+use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{FunctionCapture, TranspileError, Transpiler};
 
 /// Execute-condition keywords that start a raw Minecraft condition
@@ -61,6 +62,12 @@ impl Transpiler {
                         | BinaryOp::Gt
                         | BinaryOp::GtEq
                 );
+
+                if matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
+                    && self.compares_stored_values(left, right)
+                {
+                    return self.lower_stored_equality(left, op, right);
+                }
 
                 if is_comparison {
                     // Evaluate each complex side (arithmetic, calls, storage
@@ -127,6 +134,19 @@ impl Transpiler {
             Expression::Number(value) => {
                 self.data_pack.track_boolean_constants();
                 Ok(Expression::Boolean(*value as i32 != 0))
+            }
+            // Text, a list, or a map is true when it isn't empty.
+            Expression::Identifier(name)
+                if matches!(
+                    self.symbols.variable_types.get(name),
+                    Some(CobbleType::String | CobbleType::List | CobbleType::Map)
+                ) && self.symbols.variable_storage_paths.contains_key(name) =>
+            {
+                let size = Expression::Call(
+                    Box::new(Expression::Identifier("len".to_string())),
+                    vec![condition.clone()],
+                );
+                self.lower_condition_value_to_temp(&size)
             }
             expr if self.condition_operand_needs_temp(expr) => {
                 self.lower_condition_value_to_temp(expr)
@@ -243,6 +263,87 @@ impl Transpiler {
         }
 
         Ok(Expression::Identifier(temp_var))
+    }
+
+    /// How an operand of `==` is stored: `Some(true)` for text, a list, or a
+    /// map, `Some(false)` for a value that may be one, as a parameter, and
+    /// `None` for a number.
+    fn stored_operand(&self, expr: &Expression) -> Option<bool> {
+        let of_type = |value_type: Option<&CobbleType>, stored: bool| match value_type {
+            Some(CobbleType::String | CobbleType::List | CobbleType::Map) => Some(true),
+            Some(CobbleType::Integer | CobbleType::Boolean) => None,
+            _ => stored.then_some(false),
+        };
+        match expr {
+            Expression::String(_) | Expression::Array(_) | Expression::Map(_) => Some(true),
+            Expression::Identifier(name) => {
+                if self.symbols.compile_time_constants.contains_key(name) {
+                    return None;
+                }
+                of_type(
+                    self.symbols.variable_types.get(name),
+                    self.is_current_macro_param(name)
+                        || self.symbols.variable_storage_paths.contains_key(name),
+                )
+            }
+            Expression::Subscript(base, _) if self.is_string_base(base) => Some(true),
+            Expression::Subscript(..) | Expression::Attribute(..) => of_type(
+                Some(&self.storage_read_type(expr)),
+                self.resolve_storage_path_plan(expr).is_some(),
+            ),
+            _ => None,
+        }
+    }
+
+    /// Whether `left == right` compares stored values, which have no score.
+    /// Two values that may be numbers or text are compared as stored too.
+    fn compares_stored_values(&self, left: &Expression, right: &Expression) -> bool {
+        matches!(
+            (self.stored_operand(left), self.stored_operand(right)),
+            (Some(true), _) | (_, Some(true)) | (Some(false), Some(false))
+        )
+    }
+
+    /// `left == right` on stored values: `data modify` fails when the value
+    /// it would write is already there, so its success says they differ.
+    fn lower_stored_equality(
+        &mut self,
+        left: &Expression,
+        op: &BinaryOp,
+        right: &Expression,
+    ) -> Result<Expression, TranspileError> {
+        let id = self.next_temp_id();
+        let namespace = self.data_pack.namespace.clone();
+        let root = format!("_cobble_compare_{id}");
+        let (first, second) = (format!("{root}.first"), format!("{root}.second"));
+        let differs = format!("expr_cond_temp_{id}");
+
+        self.data_pack.track_objective("temp");
+        self.symbols
+            .variable_objectives
+            .insert(differs.clone(), "temp".to_string());
+        self.symbols.scoreboard_variables.insert(differs.clone());
+
+        let mut commands = self.storage_value_commands(&first, left)?;
+        commands.extend(self.storage_value_commands(&second, right)?);
+        commands.extend([
+            format!(
+                "execute store success score {differs} temp run data modify storage {namespace}:global {first} set from storage {namespace}:global {second}"
+            ),
+            // Nothing to copy also fails, but a value and no value differ.
+            format!(
+                "execute if data storage {namespace}:global {first} unless data storage {namespace}:global {second} run scoreboard players set {differs} temp 1"
+            ),
+            format!("data remove storage {namespace}:global {root}"),
+        ]);
+        self.extend_current_function(commands);
+
+        let expected = if matches!(op, BinaryOp::Eq) { 0.0 } else { 1.0 };
+        Ok(Expression::Binary(
+            Box::new(Expression::Identifier(differs)),
+            BinaryOp::Eq,
+            Box::new(Expression::Number(expected)),
+        ))
     }
 
     pub(in crate::transpiler) fn condition_operand_needs_temp(&self, expr: &Expression) -> bool {

@@ -47,7 +47,9 @@ impl Transpiler {
                     | BinaryOp::Lt
                     | BinaryOp::LtEq
                     | BinaryOp::Gt
-                    | BinaryOp::GtEq => CobbleType::Boolean,
+                    | BinaryOp::GtEq
+                    | BinaryOp::In
+                    | BinaryOp::NotIn => CobbleType::Boolean,
 
                     // Logical operations return booleans
                     BinaryOp::And | BinaryOp::Or => CobbleType::Boolean,
@@ -61,7 +63,10 @@ impl Transpiler {
                     UnaryOp::Neg | UnaryOp::Pos => CobbleType::Integer,
                 }
             }
-            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "len") => {
+            Expression::Call(func, _)
+                if matches!(&**func, Expression::Identifier(name)
+                if matches!(name.as_str(), "len" | "abs" | "min" | "max" | "sum")) =>
+            {
                 CobbleType::Integer
             }
             Expression::Call(func, _)
@@ -170,7 +175,15 @@ impl Transpiler {
         use crate::ast::CobbleType;
 
         if let Some(existing_type) = self.symbols.variable_types.get(var_name) {
+            // A hidden local can hold `1 if a else b > 2`.
+            let numbers = |value_type: &CobbleType| {
+                matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
+            };
+            let hidden_number = var_name.starts_with("_cobble_hold_")
+                && numbers(existing_type)
+                && numbers(new_type);
             if existing_type != new_type
+                && !hidden_number
                 && *existing_type != CobbleType::Unknown
                 && *new_type != CobbleType::Unknown
             {

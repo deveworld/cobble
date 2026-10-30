@@ -377,20 +377,30 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
         plan: &StoragePathPlan,
     ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.storage_data_pack().namespace.clone();
-        let copy = |path: &str, prefix: &str| {
+        self.path_commands(plan, |path| {
             format!(
-                "{prefix}data modify storage {namespace}:global {target_path} set from storage {namespace}:global {path}"
+                "data modify storage {namespace}:global {target_path} set from storage {namespace}:global {path}"
             )
-        };
+        })
+    }
+
+    /// Commands that run `command(path)` on the path `plan` names, through a
+    /// macro helper when part of the path is known only at run time.
+    fn path_commands(
+        &mut self,
+        plan: &StoragePathPlan,
+        command: impl Fn(&str) -> String,
+    ) -> Result<Vec<String>, TranspileError> {
         if let Some(path) = plan.as_static() {
-            return Ok(vec![copy(path, "")]);
+            return Ok(vec![command(path)]);
         }
+        let namespace = self.storage_data_pack().namespace.clone();
         let id = self.storage_next_temp_id();
         let (mut commands, args_path) = self.prepare_dynamic_storage_path(id, plan)?;
         let helper = format!("_cobble_storage_dyn_{id}");
         self.add_generated_helper_function(
             helper.clone(),
-            vec![copy(plan.template(), "$")],
+            vec![format!("${}", command(plan.template()))],
             GeneratedCommandKind::ControlFlow,
         );
         commands.push(format!(

@@ -13,7 +13,8 @@ These fail with a diagnostic before compilation:
   `nonlocal`;
 - default parameter values, duplicate parameter names, `*args`, and `**kwargs`;
 - list and dict comprehensions;
-- `for ... else`;
+- `for ... else`, and `for` over the keys of a map;
+- a slice with a step, such as `items[::2]`;
 - dotted or relative imports, import aliases, and `import a, b`.
 
 `cobble check --experimental-python-compat` lists the supported Python-like
@@ -40,13 +41,20 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   as a number.
 - Functions return integers only. Use storage or a module variable for other
   results. `return x > 3` and other conditions return 1 or 0.
-- `and` and `or` give 1 or 0 when used as a value, not one of their operands,
-  so `x = a or 5` is 1 when `a` is 7. A `logical-operator-value` warning marks
-  this for plain numbers.
-- `/` is floor division and `^` is power, in place of Python's `//` and `**`.
+- `/` and `//` are both floor division, and `^` and `**` are both power.
+- `+` joins text and lists when Cobble can tell that one side is text or a
+  list. Two parameters add as numbers, so write `str(a) + b` to join them.
+- Text joined or repeated while the pack runs can't hold a `"`, because it goes
+  through a macro line.
+- In `items[f()]`, a list that `f` changes in place shows the change, as in
+  Python, and so does one that `f` replaces, where Python keeps the old list.
+- `sort()` and `sorted()` order numbers. `index()` gives -1 and `pop()` gives 0
+  when there is nothing to find, where Python raises an error.
+- Text positions count UTF-16 units, so an emoji is two long in a running pack.
 - A bare expression such as `score + 1` produces no command and is rejected.
   Use an assignment, a call, a raw command, or `pass`.
-- `for` loops iterate `range(...)`, literal arrays, and storage-backed lists.
+- `for` loops iterate `range(...)`, literal arrays, storage-backed lists, and
+  text.
 - A name a function assigns is local to it unless the function declares it
   `global`. Reading a local before assigning it is a compile error instead of
   an `UnboundLocalError` at run time; see
@@ -54,6 +62,32 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
 - Recursive functions work, and every call runs in the same game tick.
 - `while` loops and runtime `for` loops compile to functions that call
   themselves, and every iteration runs in the same game tick.
+
+## Python Forms
+
+These work as in Python on numbers, text, lists, and maps:
+
+| Form | Example |
+| --- | --- |
+| Comparing text, lists, and maps | `if name == "Steve":`, `if a != [1, 2]:` |
+| Membership | `if x in items:`, `"key" not in config`, `"ell" in text` |
+| Truth of text, lists, and maps | `if items:`, `while queue:` |
+| Conditional expression | `x = 1 if ready else 2` |
+| Chained comparison | `if 0 < x <= 10:` |
+| Multiple assignment | `a, b = b, a`, `x, y = pair`, `a[0], a[1] = a[1], a[0]` |
+| `and` and `or` giving an operand | `name = given or "anon"` |
+| Slices | `text[1:3]`, `items[-2:]`, `items[:n]` |
+| Joining and repeating | `"a" + name`, `items + [4]`, `[0] * 9`, `"-" * n` |
+| List methods | `append`, `extend`, `insert`, `pop`, `remove`, `index`, `count`, `sort`, `reverse`, `clear` |
+| Builtins | `abs`, `min`, `max`, `sum`, `sorted`, `str`, `len` |
+| Loops | `for i, item in enumerate(items):`, `for ch in text:` |
+| `match` on text | `case "sword":` |
+
+`min` and `max` take several numbers or one list, and `sum` takes a list. A
+function you define with one of these names replaces it. Forms that need a loop compile to helper
+functions in the pack, named `_cobble_...`, and only the ones a pack uses are
+added. A value that takes commands to compute can't initialize a module
+variable; assign it inside a function.
 
 ## Browser Compiler
 

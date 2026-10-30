@@ -389,6 +389,7 @@ pub fn tokenize_spanned_located(source: &str) -> Result<Vec<SpannedToken>, Token
         end_line,
         end_column,
     );
+    relax_soft_keywords(&mut tokens);
     Ok(tokens)
 }
 
@@ -645,7 +646,9 @@ impl LineTokenizer<'_> {
             // space) and not after an operand: `a/b` and `f(x)/y` divide,
             // while a statement-leading `/say` stays a raw command.
             Some(&(next_index, next_ch))
-                if next_ch.is_alphabetic() && !should_be_binary_minus(self.tokens) =>
+                if next_ch.is_alphabetic()
+                    && !should_be_binary_minus(self.tokens)
+                    && !matches!(self.tokens.last(), Some(token) if token.token == Token::Slash) =>
             {
                 // Minecraft command - consume rest of line
                 let rest = &self.line[next_index..];
@@ -782,17 +785,42 @@ impl LineTokenizer<'_> {
 
     fn identifier_or_keyword(&mut self, start: usize) {
         // Identifier or keyword (may include namespace like minecraft:stone).
-        // A colon followed by an identifier is a namespace separator.
+        // A colon followed by an identifier is a namespace separator, except
+        // in a subscript, where it separates the bounds of `items[i:j]`.
         let line = self.line;
+        let in_subscript = self.in_subscript();
         let mut ident = String::new();
         let end = self.take_while(&mut ident, start, |index, ch| {
             ch.is_alphanumeric()
                 || ch == '_'
                 || (ch == ':'
+                    && !in_subscript
                     && line[index + 1..]
                         .starts_with(|next: char| next.is_alphabetic() || next == '_'))
         });
         self.push(keyword_or_ident(ident), start, end);
+    }
+
+    /// Whether the innermost open bracket follows a value, as in `items[`.
+    fn in_subscript(&self) -> bool {
+        let mut depth = 0usize;
+        for (index, token) in self.tokens.iter().enumerate().rev() {
+            match token.token {
+                Token::RParen | Token::RBracket | Token::RBrace => depth += 1,
+                Token::LParen | Token::LBrace if depth == 0 => return false,
+                Token::LParen | Token::LBrace | Token::LBracket if depth > 0 => depth -= 1,
+                Token::LBracket => {
+                    let before = index.checked_sub(1).map(|index| &self.tokens[index].token);
+                    return matches!(
+                        before,
+                        Some(Token::Ident(_) | Token::RBracket | Token::RParen | Token::String(_))
+                    );
+                }
+                Token::Newline => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     fn selector(&mut self, start: usize) {
@@ -874,6 +902,67 @@ impl LineTokenizer<'_> {
         }
         self.push(Token::NotEq, start, start + 2);
         Ok(())
+    }
+}
+
+/// Turns words that are keywords in only one form back into names, so `end`,
+/// `to`, `at`, and the like work as variables and functions.
+fn relax_soft_keywords(tokens: &mut [SpannedToken]) {
+    let mut line_start = 0;
+    for index in 0..tokens.len() {
+        let previous = index.checked_sub(1).map(|index| &tokens[index].token);
+        if matches!(
+            previous,
+            Some(Token::Newline | Token::Indent | Token::Dedent)
+        ) {
+            line_start = index;
+        }
+        let next = tokens.get(index + 1).map(|token| &token.token);
+        let selector_follows = matches!(next, Some(Token::Ident(name)) if name.starts_with('@'));
+        let starts_line = index == line_start;
+        let header_ends_line = || {
+            let rest = tokens[index..]
+                .iter()
+                .take_while(|token| token.token != Token::Newline);
+            rest.last().is_some_and(|token| token.token == Token::Colon)
+        };
+        let word = match tokens[index].token {
+            // `end` alone on its line closes `define`.
+            Token::End if starts_line && matches!(next, Some(Token::Newline | Token::Eof)) => None,
+            Token::End => Some("end"),
+            // `case 1 to 10:`
+            Token::To if tokens[line_start].token == Token::Case => None,
+            Token::To => Some("to"),
+            // `for i in items by 2:`
+            Token::By
+                if tokens[line_start].token == Token::For
+                    && !matches!(previous, Some(Token::For | Token::Comma)) =>
+            {
+                None
+            }
+            Token::By => Some("by"),
+            // `create @Boss`, or the block of a `define`.
+            Token::Create if selector_follows || (starts_line && next == Some(&Token::LBrace)) => {
+                None
+            }
+            Token::Create => Some("create"),
+            Token::Define if selector_follows => None,
+            Token::Define => Some("define"),
+            // `at @s:` or `at {player}:`
+            Token::At if selector_follows || next == Some(&Token::LBrace) => None,
+            Token::At => Some("at"),
+            Token::Asat if selector_follows || next == Some(&Token::LBrace) => None,
+            Token::Asat => Some("asat"),
+            Token::Match | Token::Case if starts_line && header_ends_line() => None,
+            Token::Match => Some("match"),
+            Token::Case => Some("case"),
+            Token::Const if starts_line && matches!(next, Some(Token::Ident(_))) => None,
+            Token::Const => Some("const"),
+            _ => None,
+        };
+        if let Some(word) = word {
+            tokens[index].token = Token::Ident(word.to_string());
+        }
     }
 }
 

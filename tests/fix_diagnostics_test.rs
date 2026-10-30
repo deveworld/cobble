@@ -119,8 +119,8 @@ fn canary_assignment_target_scan_still_skips_return_lines() {
     let diagnostics = analyze_source("def main():\n    return 1, 2\n");
     assert_no_kind(&diagnostics, "unsupported-assignment-target");
 
-    // ...while real tuple assignments still are.
-    let diagnostics = analyze_source("def main():\n    a, b = 1, 2\n");
+    // ...while unpacking a number still is.
+    let diagnostics = analyze_source("def main():\n    a, b = 2\n");
     expect_kind(&diagnostics, "unsupported-assignment-target");
 }
 

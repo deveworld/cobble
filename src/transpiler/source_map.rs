@@ -525,6 +525,16 @@ impl Transpiler {
                     Self::expression_source_key(&assign.value)
                 )
             }
+            Statement::MultiAssign(multi) => {
+                let join = |expressions: &[Expression]| {
+                    expressions
+                        .iter()
+                        .map(Self::expression_source_key)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                format!("{}={}", join(&multi.targets), join(&multi.values))
+            }
             Statement::ConstAssignment(assign) => {
                 format!(
                     "const{}={}",
@@ -602,6 +612,7 @@ impl Transpiler {
             ExecuteModifier::In(dimension) => format!("in{}", dimension),
             ExecuteModifier::Anchored(anchor) => format!("anchored{}", anchor),
             ExecuteModifier::Align(axes) => format!("align{}", axes),
+            ExecuteModifier::Other(modifier) => modifier.clone(),
             ExecuteModifier::Store(store) => format!("store{}", store),
         }
     }
@@ -660,6 +671,25 @@ impl Transpiler {
                     .join(",");
                 format!("{}({})", Self::expression_source_key(func), args)
             }
+            Expression::Slice(base, start, stop) => {
+                let bound = |bound: &Option<Box<Expression>>| {
+                    bound
+                        .as_ref()
+                        .map_or(String::new(), |bound| Self::expression_source_key(bound))
+                };
+                format!(
+                    "{}[{}:{}]",
+                    Self::expression_source_key(base),
+                    bound(start),
+                    bound(stop)
+                )
+            }
+            Expression::Conditional(condition, value, otherwise) => format!(
+                "{}if{}else{}",
+                Self::expression_source_key(value),
+                Self::expression_source_key(condition),
+                Self::expression_source_key(otherwise)
+            ),
             Expression::Subscript(base, index) => {
                 format!(
                     "{}[{}]",
@@ -684,6 +714,8 @@ impl Transpiler {
             BinaryOp::LtEq => "<=",
             BinaryOp::Gt => ">",
             BinaryOp::GtEq => ">=",
+            BinaryOp::In => "in",
+            BinaryOp::NotIn => "notin",
             BinaryOp::And => "and",
             BinaryOp::Or => "or",
         }

@@ -137,6 +137,7 @@ impl Transpiler {
                     BinaryOp::LtEq => Some((left_val <= right_val) as i32 as f64),
                     BinaryOp::Gt => Some((left_val > right_val) as i32 as f64),
                     BinaryOp::GtEq => Some((left_val >= right_val) as i32 as f64),
+                    BinaryOp::In | BinaryOp::NotIn => None,
                     BinaryOp::And => Some(((left_val != 0.0) && (right_val != 0.0)) as i32 as f64),
                     BinaryOp::Or => Some(((left_val != 0.0) || (right_val != 0.0)) as i32 as f64),
                 }

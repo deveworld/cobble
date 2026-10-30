@@ -39,10 +39,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command simulator and compares the results with the same programs run as
   Python. The programs use numbers, strings, and lists, and some are split
   into files that import each other. CI runs it with 300 programs.
-- A `logical-operator-value` warning marks `and` and `or` used as a value
-  with a plain number, where Python would give one of the operands. Cobble
-  gives 1 or 0. `//` and `**` report what to use instead, and an unexpected
-  letter outside ASCII says that names are ASCII.
+- Python forms: `==` and `!=` on text, lists, and maps; `in` and `not in`;
+  text, lists, and maps in conditions; conditional expressions; multiple
+  assignment; slices; `+` and `*` on text and lists; the list methods
+  `append`, `extend`, `insert`, `pop`, `remove`, `index`, `count`, `sort`,
+  `reverse`, and `clear`; `abs`, `min`, `max`, `sum`, `sorted`, and `str`;
+  `enumerate`; `for` over text; `match` on text; and `//`, `**`, `//=`, and
+  `**=`. Forms that need a loop compile to `_cobble_...` helper functions, and
+  a pack gets only the ones it uses. See
+  [Python Forms](https://deveworld.github.io/cobble/docs/language/python.html#python-forms).
+- A comparison or `and`/`or` can be an operand of arithmetic, as in
+  `total + (x > 1)`.
+- `end`, `to`, `by`, `at`, `asat`, `create`, `define`, `match`, `case`, and
+  `const` work as names of variables, functions, and parameters. They are
+  keywords only in their own forms.
+- Execute blocks take `on <relation>`, `facing ...`, and `summon <entity>`.
+- An unexpected letter outside ASCII says that names are ASCII.
 - Compiler warnings are diagnostics with a kind and a source location.
   `cobble build` prints them with the line they point at, `cobble check`
   reports them with severity `warning` and counts them in `warning_count`,
@@ -50,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in [Diagnostics](https://deveworld.github.io/cobble/docs/reference/diagnostics.html#warnings).
 
 ### Changed
+- `and` and `or` used as a value give one of their operands, as in Python, so
+  `x = a or 5` is `a` when `a` isn't 0. They used to give 1 or 0.
+- `==` and `!=` between two parameters compare their stored values, so text
+  compares as text. They used to compare numbers, which is a string's length.
 - An execute block may start with `execute`, as in `execute as @a at @s:`.
 - `/say` text with variables runs as a macro `say` in a helper function
   instead of becoming `tellraw @a`, so it keeps the `[name]` prefix and shows
@@ -319,6 +335,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tag value.
 - `cobble fmt` keeps the indentation of a comment on the first line of a block
   or a bracket when the line before it ends with a comment or a bracket.
+- A variable in an SNBT text component, as in
+  `/tellraw @a {text:"Score {score}",color:gold}`, shows its value. The
+  component used to print as raw text, and a list of components was an error.
+  Variables also work in `extra`, `with`, and hover text.
+- `xs = [xs[1], 0]` reads the old list, which it used to overwrite first.
+- `name[f()]` on text reads the text before `f` runs, as Python does.
+- A copy of a parameter shows its new value in a loop. `/say {a}` before
+  `a = a + 1` used to print the first value on every pass.
 - `--validate` accepts every NBT path name Minecraft does, such as `a:b` and
   names outside ASCII, and a token such as `a@b` is no longer read as a
   selector.

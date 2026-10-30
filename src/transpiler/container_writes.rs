@@ -5,7 +5,7 @@
 //! field, in a function that runs first or in a file compiled later, so a
 //! read keeps the literal's type only when every write has that type too.
 
-use crate::ast::{Assignment, CobbleType, Expression, Statement};
+use crate::ast::{Assignment, CobbleType, Expression, MultiAssign, Statement};
 use std::collections::{HashMap, HashSet};
 
 /// The places and types each variable gets written. The place is a field
@@ -23,6 +23,8 @@ pub(in crate::transpiler) fn collect_container_writes(
     for statement in statements {
         match statement {
             Statement::Assignment(assign) => record_assignment(assign, writes),
+            Statement::MultiAssign(multi) => record_multi_assign(multi, writes),
+            Statement::Expression(expr) => record_list_method(expr, writes),
             Statement::FunctionDef(func) => collect_container_writes(&func.body, writes),
             Statement::If(if_stmt) => {
                 collect_container_writes(&if_stmt.then_branch, writes);
@@ -44,6 +46,42 @@ pub(in crate::transpiler) fn collect_container_writes(
             _ => {}
         }
     }
+}
+
+/// `a[i], b.x = ...` writes like one assignment per target.
+fn record_multi_assign(multi: &MultiAssign, writes: &mut ContainerWrites) {
+    for target in &multi.targets {
+        if let Expression::Subscript(base, _) | Expression::Attribute(base, _) = target {
+            if let Expression::Identifier(name) = &**base {
+                writes
+                    .entry(name.clone())
+                    .or_default()
+                    .insert((None, CobbleType::Unknown));
+            }
+        }
+    }
+}
+
+/// `items.append(x)` and the other methods that add items.
+fn record_list_method(expr: &Expression, writes: &mut ContainerWrites) {
+    let Expression::Call(func, args) = expr else {
+        return;
+    };
+    let Expression::Attribute(base, method) = &**func else {
+        return;
+    };
+    let Expression::Identifier(name) = &**base else {
+        return;
+    };
+    let value_type = match (method.as_str(), args.as_slice()) {
+        ("append", [value]) | ("insert", [_, value]) => written_type(value),
+        ("extend", _) => CobbleType::Unknown,
+        _ => return,
+    };
+    writes
+        .entry(name.clone())
+        .or_default()
+        .insert((None, value_type));
 }
 
 fn record_assignment(assign: &Assignment, writes: &mut ContainerWrites) {

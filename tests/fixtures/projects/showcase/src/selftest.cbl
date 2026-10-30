@@ -717,6 +717,142 @@ def test_values():
     check("field_left_alone", retitled.hp, 5)
 
 
+def describe(kind):
+    match kind:
+        case "sword":
+            return 1
+        case "bow":
+            return 2
+        case _:
+            return 0
+
+
+def contains(value, box):
+    return value in box
+
+
+def head(value, count):
+    return len(value[:count])
+
+
+def fib_short(n):
+    return n if n < 2 else fib_short(n - 1) + fib_short(n - 2)
+
+
+def test_python_forms():
+    # Comparing text, lists, and maps.
+    name = "Steve"
+    other = "Alex"
+    check("text_equal", name == "Steve", 1)
+    check("text_not_equal", name != other, 1)
+    check("text_param", "a", "a")
+    check("list_equal", [1, 2] == [1, 2], 1)
+    check("map_equal", {"a": 1, "b": 2} == {"b": 2, "a": 1}, 1)
+    check("text_truthy", 1 if name else 0, 1)
+    empty = []
+    check("list_falsy", 1 if empty else 0, 0)
+
+    # Membership.
+    items = [1, 2, 3]
+    names = ["ann", "bob"]
+    prices = {"minecraft:diamond": 100, "Iron Sword": 7}
+    check("in_list", 2 in items, 1)
+    check("not_in_list", 9 not in items, 1)
+    check("in_text_list", "bob" in names, 1)
+    check("in_text", "ev" in name, 1)
+    check("in_map", "Iron Sword" in prices, 1)
+    check("in_param_list", contains(3, items), 1)
+    check("in_param_text", contains("St", name), 1)
+    check("in_param_map", contains("minecraft:diamond", prices), 1)
+    check("in_param_missing", contains("gold", prices), 0)
+
+    # Map keys that aren't plain names.
+    check("key_id", prices["minecraft:diamond"], 100)
+    key = "Iron Sword"
+    check("key_runtime", prices[key], 7)
+
+    # Conditional expressions, tuples, and chained comparisons.
+    check("conditional", 10 if name == "Steve" else 20, 10)
+    check("conditional_text", "yes" if 1 > 2 else "no", "no")
+    first, second = 1, 2
+    first, second = second, first
+    check("swap_first", first, 2)
+    check("swap_second", second, 1)
+    a, b = [5, 6]
+    check("unpack", a * 10 + b, 56)
+    check("chain", 1 < first < 3, 1)
+    check("conditional_return", fib_short(10), 55)
+
+    # List methods.
+    values = [3, 1, 2]
+    values.append(5)
+    values.insert(1, 9)
+    check("list_len", len(values), 5)
+    check("list_pop", values.pop(), 5)
+    check("list_pop_at", values.pop(0), 3)
+    values.remove(1)
+    check("list_index", values.index(2), 1)
+    check("list_count", values.count(9), 1)
+    values.extend([7, 8])
+    values.sort()
+    check("list_sort", values[0] * 10 + values[-1], 29)
+    values.reverse()
+    check("list_reverse", values[0], 9)
+    values.clear()
+    check("list_clear", len(values), 0)
+    grid = [[1], [2]]
+    grid[1].append(4)
+    check("nested_append", grid[1][-1], 4)
+
+    # Builtins.
+    check("abs", abs(-7), 7)
+    check("min_values", min(4, 2, 9), 2)
+    check("max_values", max(4, 2, 9), 9)
+    check("sum_list", sum(items), 6)
+    check("min_list", min(items), 1)
+    check("max_list", max(items), 3)
+    ordered = sorted([3, 1, 2])
+    check("sorted", ordered[0], 1)
+    check("floor_div", -7 // 2, -4)
+    check("power", 2 ** 8, 256)
+
+    # Slices, joins, and repeats.
+    word = "abcdef"
+    check("slice_text", word[1:3], "bc")
+    check("slice_end", word[-2:], "ef")
+    check("slice_clamped", word[4:99], "ef")
+    check("slice_list", len(items[1:]), 2)
+    check("slice_param", head(word, 2) + head(items, 9), 5)
+    check("join_text", word[:2] + "!", "ab!")
+    check("join_number", "n=" + str(5), "n=5")
+    check("repeat_text", "ab" * 2, "abab")
+    count = 3
+    check("repeat_runtime", "z" * count, "zzz")
+    check("join_list", len(items + [4]), 4)
+    check("repeat_list", len([0] * count), 3)
+
+    # `and` and `or` give an operand.
+    blank = ""
+    check("or_text", blank or "anon", "anon")
+    zero = 0
+    check("or_number", zero or 5, 5)
+    check("and_number", 3 and 7, 7)
+
+    # Loops over text and with positions.
+    letters = ""
+    for ch in word[:3]:
+        letters = ch + letters
+    check("for_text", letters, "cba")
+    total = 0
+    for i, value in enumerate([5, 6], 1):
+        total += i * value
+    check("enumerate", total, 17)
+
+    # `match` on text.
+    check("match_text", describe("bow"), 2)
+    check("match_default", describe("axe"), 0)
+
+
 def scheduled_check():
     check("schedule_once", 1, 1)
 
@@ -744,4 +880,5 @@ def selftest():
     test_python_semantics()
     test_calls()
     test_values()
+    test_python_forms()
     /say SELFTEST summary passed={passed} failed={failed}

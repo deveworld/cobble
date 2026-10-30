@@ -135,6 +135,7 @@ pub enum StatementSpanKind {
     Import,
     FunctionDef,
     Assignment,
+    MultiAssign,
     ConstAssignment,
     Expression,
     If,
@@ -158,6 +159,7 @@ impl StatementSpanKind {
             Statement::Import(_) => Self::Import,
             Statement::FunctionDef(_) => Self::FunctionDef,
             Statement::Assignment(_) => Self::Assignment,
+            Statement::MultiAssign(_) => Self::MultiAssign,
             Statement::ConstAssignment(_) => Self::ConstAssignment,
             Statement::Expression(_) => Self::Expression,
             Statement::If(_) => Self::If,
@@ -343,7 +345,8 @@ fn simple_statement<'a>(
         const_assignment(expr.clone()),
         persist_assignment(expr.clone()),
         compound_assignment(expr.clone()),
-        assignment(expr),
+        assignment(expr.clone()),
+        multi_assignment(expr),
         expr_stmt,
     ))
     .then_ignore(just(&Token::Newline))
@@ -430,6 +433,35 @@ fn assignment<'a>(
         })
 }
 
+/// `a, b = b, a`, or `a, b = pair`.
+fn multi_assignment<'a>(
+    expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
+) -> impl Parser<'a, &'a [Token], Statement, Extra<'a>> + Clone {
+    assignment_target(expr.clone())
+        .separated_by(just(&Token::Comma))
+        .at_least(2)
+        .collect::<Vec<_>>()
+        .then_ignore(just(&Token::Equals))
+        .then(
+            expr.separated_by(just(&Token::Comma))
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
+        .try_map(|(targets, values), span| {
+            if values.len() != 1 && values.len() != targets.len() {
+                return Err(Rich::custom(
+                    span,
+                    format!(
+                        "{} targets but {} values on the right of `=`",
+                        targets.len(),
+                        values.len()
+                    ),
+                ));
+            }
+            Ok(Statement::MultiAssign(MultiAssign { targets, values }))
+        })
+}
+
 /// Persistent module variable: `persist NAME = value`
 fn persist_assignment<'a>(
     expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
@@ -452,6 +484,14 @@ fn compound_assignment<'a>(
     expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Statement, Extra<'a>> + Clone {
     let compound_assignment_op = choice((
+        just(&Token::Star)
+            .then(just(&Token::Star))
+            .then_ignore(just(&Token::Equals))
+            .to(BinaryOp::Pow),
+        just(&Token::Slash)
+            .then(just(&Token::Slash))
+            .then_ignore(just(&Token::Equals))
+            .to(BinaryOp::Div),
         just(&Token::Plus)
             .then_ignore(just(&Token::Equals))
             .to(BinaryOp::Add),
@@ -624,17 +664,25 @@ fn for_loop<'a>(
     expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
     block: impl Parser<'a, &'a [Token], Vec<Statement>, Extra<'a>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Statement, Extra<'a>> + Clone {
+    let name = select_ref! { Token::Ident(s) => s.clone() };
     just(&Token::For)
-        .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+        .ignore_then(name)
+        .then(just(&Token::Comma).ignore_then(name).or_not())
         .then_ignore(just(&Token::In))
         .then(expr.clone())
         .then(just(&Token::By).ignore_then(expr.clone()).or_not())
         .then_ignore(just(&Token::Colon))
         .then_ignore(just(&Token::Newline).or_not())
         .then(block.clone())
-        .map(|(((target, iter), step), body)| {
+        .map(|(((names, iter), step), body)| {
+            // `for i, item in ...` names the item second.
+            let (index, target) = match names {
+                (index, Some(item)) => (Some(index), item),
+                (item, None) => (None, item),
+            };
             Statement::For(ForLoop {
                 target,
+                index,
                 iter,
                 step,
                 body,
@@ -668,6 +716,7 @@ fn match_pattern<'a>() -> impl Parser<'a, &'a [Token], MatchPattern, Extra<'a>> 
     choice((
         // Wildcard: _
         just(&Token::Underscore).to(MatchPattern::Wildcard),
+        select_ref! { Token::String(s) => MatchPattern::Text(s.clone()) },
         // Range: expr to expr
         match_pattern_int
             .then(just(&Token::To).ignore_then(match_pattern_int).or_not())
@@ -812,8 +861,16 @@ fn execute_modifier<'a>(
             .map(ExecuteModifier::Align),
         // store result/success ...
         select_ref! { Token::Ident(s) if s == "store" => s.clone() }
-            .ignore_then(exec_condition)
+            .ignore_then(exec_condition.clone())
             .map(ExecuteModifier::Store),
+        // on <relation>, summon <entity>
+        select_ref! { Token::Ident(s) if s == "on" || s == "summon" => s.clone() }
+            .then(select_ref! { Token::Ident(s) => s.clone() })
+            .map(|(word, value)| ExecuteModifier::Other(format!("{word} {value}"))),
+        // facing <position>, facing entity <selector> <anchor>
+        select_ref! { Token::Ident(s) if s == "facing" => s.clone() }
+            .ignore_then(exec_condition)
+            .map(|target| ExecuteModifier::Other(format!("facing {target}"))),
     ))
 }
 
@@ -838,7 +895,14 @@ fn execute_condition<'a>(
             Token::Ident(s)
                 if matches!(
                     s.as_str(),
-                    "positioned" | "rotated" | "anchored" | "align" | "store"
+                    "positioned"
+                        | "rotated"
+                        | "anchored"
+                        | "align"
+                        | "store"
+                        | "on"
+                        | "summon"
+                        | "facing"
                 )
         )
     };
@@ -955,9 +1019,9 @@ fn render_execute_condition(
 /// `and`; `or`.
 fn expression<'a>() -> impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone {
     recursive(|expr| {
-        let call = call_expression(expr);
+        let call = call_expression(expr.clone());
         let add_sub = arithmetic_expression(call);
-        logical_expression(add_sub)
+        logical_expression(add_sub, expr)
     })
 }
 
@@ -1009,6 +1073,14 @@ fn atom<'a>(
     ))
 }
 
+/// What can follow an expression in a postfix chain.
+#[derive(Clone)]
+enum Postfix {
+    Attribute(String),
+    Index(Expression),
+    Slice(Option<Expression>, Option<Expression>),
+}
+
 fn call_expression<'a>(
     expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone {
@@ -1017,22 +1089,27 @@ fn call_expression<'a>(
         choice((
             just(&Token::Dot)
                 .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
-                .map(|attr| (true, Expression::Identifier(attr))), // true = dot access
+                .map(Postfix::Attribute),
             just(&Token::LBracket)
-                .ignore_then(expr.clone())
+                .ignore_then(expr.clone().or_not())
+                .then(
+                    just(&Token::Colon)
+                        .ignore_then(expr.clone().or_not())
+                        .or_not(),
+                )
                 .then_ignore(just(&Token::RBracket))
-                .map(|index| (false, index)), // false = bracket access
+                .try_map(|(first, stop), span| match (first, stop) {
+                    (first, Some(stop)) => Ok(Postfix::Slice(first, stop)),
+                    (Some(index), None) => Ok(Postfix::Index(index)),
+                    (None, None) => Err(Rich::custom(span, "Expected an index")),
+                }),
         ))
         .repeated(),
-        |base, (is_dot, accessor)| {
-            if is_dot {
-                if let Expression::Identifier(attr) = accessor {
-                    Expression::Attribute(Box::new(base), attr)
-                } else {
-                    unreachable!()
-                }
-            } else {
-                Expression::Subscript(Box::new(base), Box::new(accessor))
+        |base, postfix| match postfix {
+            Postfix::Attribute(attr) => Expression::Attribute(Box::new(base), attr),
+            Postfix::Index(index) => Expression::Subscript(Box::new(base), Box::new(index)),
+            Postfix::Slice(start, stop) => {
+                Expression::Slice(Box::new(base), start.map(Box::new), stop.map(Box::new))
             }
         },
     );
@@ -1086,15 +1163,15 @@ fn arithmetic_expression<'a>(
     // Highest precedence: ^ (power) - right-associative
     // Power operator is right-associative: 2^3^2 = 2^(3^2) = 512
     // We parse left-to-right but fold right-to-left for right-associativity
+    let power_op = choice((
+        just(&Token::Caret).to(BinaryOp::Pow),
+        just(&Token::Star)
+            .then(just(&Token::Star))
+            .to(BinaryOp::Pow),
+    ));
     let power = unary
         .clone()
-        .then(
-            just(&Token::Caret)
-                .to(BinaryOp::Pow)
-                .then(unary.clone())
-                .repeated()
-                .collect::<Vec<_>>(),
-        )
+        .then(power_op.then(unary.clone()).repeated().collect::<Vec<_>>())
         .map(|(first, rest)| {
             if rest.is_empty() {
                 first
@@ -1119,6 +1196,9 @@ fn arithmetic_expression<'a>(
     let mul_div_mod = power.clone().foldl(
         choice((
             just(&Token::Star).to(BinaryOp::Mul),
+            just(&Token::Slash)
+                .then(just(&Token::Slash))
+                .to(BinaryOp::Div),
             just(&Token::Slash).to(BinaryOp::Div),
             just(&Token::Percent).to(BinaryOp::Mod),
         ))
@@ -1172,7 +1252,8 @@ fn contains_call(expr: &Expression) -> bool {
 }
 
 fn logical_expression<'a>(
-    add_sub: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
+    add_sub: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone + 'a,
+    expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone + 'a,
 ) -> impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone {
     // Comparisons
     let comparison = add_sub
@@ -1185,12 +1266,15 @@ fn logical_expression<'a>(
                 just(&Token::LtEq).to(BinaryOp::LtEq),
                 just(&Token::Gt).to(BinaryOp::Gt),
                 just(&Token::Lt).to(BinaryOp::Lt),
+                just(&Token::In).to(BinaryOp::In),
+                just(&Token::Not).then(just(&Token::In)).to(BinaryOp::NotIn),
             ))
             .then(add_sub.clone())
             .repeated()
             .collect::<Vec<_>>(),
         )
-        .map(|(first, rest)| comparison_chain(first, rest));
+        .map(|(first, rest)| comparison_chain(first, rest))
+        .boxed();
 
     // Not (unary). `repeated` also matches zero `not`s, so a bare
     // comparison needs no second alternative; one would parse every failed
@@ -1210,14 +1294,35 @@ fn logical_expression<'a>(
         |left, (op, right)| Expression::Binary(Box::new(left), op, Box::new(right)),
     );
 
-    // Or (lowest precedence)
-    and_expr.clone().foldl(
-        just(&Token::Or)
-            .to(BinaryOp::Or)
-            .then(and_expr.clone())
-            .repeated(),
-        |left, (op, right)| Expression::Binary(Box::new(left), op, Box::new(right)),
-    )
+    // Or
+    let or_expr = and_expr
+        .clone()
+        .foldl(
+            just(&Token::Or)
+                .to(BinaryOp::Or)
+                .then(and_expr.clone())
+                .repeated(),
+            |left, (op, right)| Expression::Binary(Box::new(left), op, Box::new(right)),
+        )
+        .boxed();
+
+    // Conditional expression (lowest precedence, right-associative)
+    or_expr
+        .clone()
+        .then(
+            just(&Token::If)
+                .ignore_then(or_expr)
+                .then_ignore(just(&Token::Else))
+                .then(expr)
+                .or_not(),
+        )
+        .map(|(value, rest)| match rest {
+            Some((condition, otherwise)) => {
+                Expression::Conditional(Box::new(condition), Box::new(value), Box::new(otherwise))
+            }
+            None => value,
+        })
+        .boxed()
 }
 
 /// Parse source code into AST
@@ -1678,6 +1783,22 @@ impl<'a> SpanTreeBuilder<'a> {
                 self.scan_assignment()?;
                 self.leaf_from(kind, start_index)
             }
+            Statement::MultiAssign(multi) => {
+                for index in 0..multi.targets.len() {
+                    if index > 0 {
+                        self.expect(|token| matches!(token, Token::Comma))?;
+                    }
+                    self.scan_assignment_target()?;
+                }
+                self.expect(|token| matches!(token, Token::Equals))?;
+                for index in 0..multi.values.len() {
+                    if index > 0 {
+                        self.expect(|token| matches!(token, Token::Comma))?;
+                    }
+                    self.scan_expression()?;
+                }
+                self.leaf_from(kind, start_index)
+            }
             Statement::ConstAssignment(_) => {
                 self.expect(|token| matches!(token, Token::Const))?;
                 self.expect(|token| matches!(token, Token::Ident(_)))?;
@@ -1886,6 +2007,13 @@ impl<'a> SpanTreeBuilder<'a> {
                 | Token::Percent
                 | Token::Caret,
             ) if matches!(self.peek_at(1), Some(Token::Equals)) => self.index += 2,
+            // `**=` and `//=`
+            Some(Token::Star | Token::Slash)
+                if matches!(self.peek_at(1), Some(Token::Star | Token::Slash))
+                    && matches!(self.peek_at(2), Some(Token::Equals)) =>
+            {
+                self.index += 3
+            }
             _ => return None,
         }
         self.scan_expression()
@@ -1904,13 +2032,11 @@ impl<'a> SpanTreeBuilder<'a> {
     /// always follows, and expressions never cross `Newline` tokens.
     fn scan_expression(&mut self) -> Option<()> {
         self.scan_operand()?;
-        while matches!(
-            self.peek(),
-            Some(
-                Token::Plus
+        loop {
+            match self.peek() {
+                Some(
+                    Token::Plus
                     | Token::Minus
-                    | Token::Star
-                    | Token::Slash
                     | Token::Percent
                     | Token::Caret
                     | Token::EqEq
@@ -1919,14 +2045,25 @@ impl<'a> SpanTreeBuilder<'a> {
                     | Token::LtEq
                     | Token::Gt
                     | Token::GtEq
+                    | Token::In
                     | Token::And
                     | Token::Or
-            )
-        ) {
-            self.index += 1;
+                    | Token::If
+                    | Token::Else,
+                ) => self.index += 1,
+                // `**`, `//`, and `not in` are two tokens.
+                Some(Token::Star) if matches!(self.peek_at(1), Some(Token::Star)) => {
+                    self.index += 2
+                }
+                Some(Token::Slash) if matches!(self.peek_at(1), Some(Token::Slash)) => {
+                    self.index += 2
+                }
+                Some(Token::Star | Token::Slash) => self.index += 1,
+                Some(Token::Not) if matches!(self.peek_at(1), Some(Token::In)) => self.index += 2,
+                _ => return Some(()),
+            }
             self.scan_operand()?;
         }
-        Some(())
     }
 
     /// One operand: unary prefixes, an atom, `.ident`/`[index]` accessor

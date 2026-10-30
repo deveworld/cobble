@@ -655,26 +655,6 @@ fn check_unsupported_keywords(
         }
     }
 
-    for (symbol, help) in [
-        (
-            "//",
-            "Use `/`. Division on scores already rounds down, like Python's `//`.",
-        ),
-        ("**", "Use `^` for powers."),
-    ] {
-        if let Some(index) = trimmed.find(symbol).filter(|_| !trimmed.starts_with('/')) {
-            diagnostics.push(
-                SourceDiagnostic::error(
-                    "unsupported-python-syntax",
-                    line_number,
-                    indent + column_from_byte(trimmed, index),
-                    format!("`{symbol}` is not supported in Cobble"),
-                )
-                .with_help(help),
-            );
-        }
-    }
-
     if starts_with_keyword(trimmed, "async") {
         diagnostics.push(
             SourceDiagnostic::error(
@@ -722,7 +702,12 @@ fn looks_like_block_header(trimmed: &str) -> bool {
 
     for keyword in ["if", "elif", "else", "while", "for", "match", "case"] {
         if starts_with_keyword(trimmed, keyword) {
-            return true;
+            // `match` and `case` are also plain names, as in `match = 1`.
+            let rest = trimmed[keyword.len()..].trim_start();
+            let names_a_value = matches!(keyword, "match" | "case")
+                && (rest.is_empty()
+                    || rest.starts_with(['=', '.', '[', '(', '+', '-', '*', '/', '%', ',', ')']));
+            return !names_a_value;
         }
     }
 
@@ -964,13 +949,12 @@ fn check_assignment_target(
         return;
     };
 
+    // `a, b = 1, 2` is fine, but a constant has one name and a number
+    // can't be unpacked.
     let raw_target = trimmed[..equals_index].trim();
-    let target = raw_target
-        .strip_prefix("const ")
-        .unwrap_or(raw_target)
-        .trim();
-
-    if unpacks(target) {
+    if raw_target.strip_prefix("const ").is_some_and(unpacks)
+        || (unpacks(raw_target) && semantic::is_numeric_literal(trimmed[equals_index + 1..].trim()))
+    {
         diagnostics.push(
             SourceDiagnostic::error(
                 "unsupported-assignment-target",
@@ -1311,8 +1295,21 @@ pub(super) fn should_skip_assignment_symbol_scan(trimmed: &str) -> bool {
 /// in `crate::stdlib::STDLIB_MODULES`: every non-dotted entry of that table
 /// is also a builtin symbol (dotted entries like "score.objective" can never
 /// appear as a bare identifier).
-pub(crate) const NON_MODULE_BUILTIN_SYMBOLS: &[&str] =
-    &["True", "False", "None", "len", "range", "stdlib"];
+pub(crate) const NON_MODULE_BUILTIN_SYMBOLS: &[&str] = &[
+    "True",
+    "False",
+    "None",
+    "len",
+    "range",
+    "stdlib",
+    "abs",
+    "enumerate",
+    "max",
+    "min",
+    "sorted",
+    "str",
+    "sum",
+];
 
 pub(crate) fn is_builtin_symbol(name: &str) -> bool {
     NON_MODULE_BUILTIN_SYMBOLS.contains(&name)
@@ -1463,8 +1460,27 @@ fn math_value_function_arity(name: &str) -> Option<usize> {
     }
 }
 
+pub(super) fn is_list_method(name: &str) -> bool {
+    matches!(
+        name,
+        "append"
+            | "clear"
+            | "count"
+            | "extend"
+            | "index"
+            | "insert"
+            | "pop"
+            | "remove"
+            | "reverse"
+            | "sort"
+    )
+}
+
 fn is_allowed_value_function_call(name: &str) -> bool {
-    name == "len" || math_value_function_arity(name).is_some()
+    matches!(
+        name,
+        "len" | "abs" | "max" | "min" | "sorted" | "str" | "sum"
+    ) || math_value_function_arity(name).is_some()
 }
 
 fn is_control_word(name: &str) -> bool {

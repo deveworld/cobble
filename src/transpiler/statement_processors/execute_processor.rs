@@ -153,7 +153,7 @@ impl Transpiler {
             {
                 if raw_minecraft_condition_verdict(value.trim_start()).is_none() {
                     return Err(format!(
-                        "Unsupported condition `{} in {}`: Cobble has no `in` operator. Compare the items one by one, or keep a flag or a count for the value.",
+                        "Unsupported condition `{} in {}`: an execute header can't use the `in` operator. Test it with an `if` inside the block.",
                         value.trim(),
                         container.trim()
                     )
@@ -180,6 +180,7 @@ impl Transpiler {
                     chain.parts.push(format!("anchored {}", anchor))
                 }
                 ExecuteModifier::Align(axes) => chain.parts.push(format!("align {}", axes)),
+                ExecuteModifier::Other(modifier) => chain.parts.push(modifier.clone()),
                 ExecuteModifier::Store(store_cmd) => {
                     chain.parts.push(format!("store {}", store_cmd))
                 }

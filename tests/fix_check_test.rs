@@ -43,7 +43,7 @@ fn cli_check_json_reports_semantic_errors_across_all_files() {
     .unwrap();
     fs::write(
         temp_dir.path().join("b.cbl"),
-        "def beta():\n    x = \"abc\"\n    for v in x:\n        /say hi\n",
+        "def beta():\n    x = {\"a\": 1}\n    for v in x:\n        /say hi\n",
     )
     .unwrap();
 

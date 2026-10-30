@@ -35,7 +35,6 @@
 //! - map keys with a colon, a space, or a dot gave broken storage paths
 //! - `return x > 3` and `a < b < c` were errors with no useful message, and a
 //!   multi-line `if (...)` header was rejected
-//! - `and` and `or` used as a value silently differed from Python
 //! - a comment inside a `datapack.*_tag` list counted as a tag value
 
 mod common;
@@ -354,22 +353,7 @@ datapack.advancement("diamond", {"criteria": {"got": {
 }
 
 #[test]
-fn conditions_without_a_minecraft_keyword_are_errors() {
-    let error = compile(
-        r#"
-items = [1, 2]
-
-def main():
-    if 2 in items:
-        /say yes
-"#,
-    )
-    .unwrap_err();
-    assert!(
-        error.contains("Unsupported condition `2 in items`: Cobble has no `in` operator"),
-        "{error}"
-    );
-
+fn raw_conditions_with_the_in_modifier_stay_raw() {
     let (_temp, output_dir) = compile(
         r#"
 def main():
@@ -784,41 +768,6 @@ def main():
         panic!("the call would run twice");
     };
     assert!(error.contains("`<` gives 1 or 0"), "{error}");
-}
-
-#[test]
-fn python_operators_cobble_replaces_report_what_to_use() {
-    let error = compile("def main():\n    a = 3\n    b = a // 2\n    c = a ** 2\n")
-        .err()
-        .unwrap();
-    assert!(error.contains("`//` is not supported"), "{error}");
-    assert!(error.contains("`**` is not supported"), "{error}");
-    assert!(compile("def main():\n    /say 1 // 2 ** 3\n").is_ok());
-}
-
-#[test]
-fn and_or_as_a_value_warn_for_plain_numbers() {
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let source = temp_dir.path().join("main.cbl");
-    let warnings = |body: &str| {
-        fs::write(
-            &source,
-            format!("def main():\n    a = 7\n{body}\n    /say {{x}}\n"),
-        )
-        .unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_cobble"))
-            .current_dir(temp_dir.path())
-            .args(["check", "main.cbl", "--json"])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        String::from_utf8_lossy(&output.stdout).contains("logical-operator-value")
-    };
-
-    assert!(warnings("    x = a or 5"));
-    assert!(warnings("    x = 0 or 5"));
-    assert!(!warnings("    x = a > 1 or a < 0"));
-    assert!(!warnings("    x = True and False"));
 }
 
 #[test]

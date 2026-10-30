@@ -107,6 +107,8 @@ impl Transpiler {
                     // Wildcard case handled separately
                     wildcard_case = Some(idx);
                 }
+                // A `match` with text cases is lowered to an `if` chain.
+                MatchPattern::Text(_) => unreachable!("text cases don't reach the case table"),
             }
         }
 

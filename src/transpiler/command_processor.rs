@@ -1,4 +1,5 @@
 use crate::ast::{CobbleType, Expression};
+use crate::transpiler::snbt_text;
 use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{escape_quoted, TranspileError};
 use std::collections::HashMap;
@@ -690,6 +691,8 @@ impl<'a> CommandProcessor<'a> {
             None => format!("{} {} {}", command, selector, text),
         };
         let var_names: Vec<String> = vars.iter().map(|(_, _, name)| name.clone()).collect();
+        let snbt_as_json = snbt_text::component_json(message.trim());
+        let message = snbt_as_json.as_deref().unwrap_or(message);
         let trimmed = message.trim();
 
         if trimmed.starts_with('[') {
@@ -708,15 +711,12 @@ impl<'a> CommandProcessor<'a> {
         }
         if trimmed.starts_with('{') {
             if let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                if let Some(text) = json_obj.get("text").and_then(|v| v.as_str()) {
-                    if !Self::text_contains_any_var(text, &var_names) {
-                        return Ok(assemble(message));
-                    }
-                    let component = self.styled_component_with_vars(&json_obj, text, &var_names);
-                    return Ok(assemble(
-                        &serde_json::to_string(&component).unwrap_or_else(|_| "{}".to_string()),
-                    ));
+                let component = self.object_with_vars(&json_obj, &var_names);
+                let text = serde_json::to_string(&component).unwrap_or_else(|_| "{}".to_string());
+                if Self::text_contains_any_var(&text, &var_names) {
+                    return Err(UNREACHED_VARIABLE.into());
                 }
+                return Ok(assemble(&text));
             }
 
             // If JSON parsing failed or there is no text field, fall back to
@@ -748,35 +748,83 @@ impl<'a> CommandProcessor<'a> {
             return Err("Expected a JSON array text component.".into());
         };
 
-        let mut converted_components = Vec::new();
-        for item in items {
-            match &item {
-                serde_json::Value::Object(object) => {
-                    match object.get("text").and_then(|value| value.as_str()) {
-                        Some(text) if Self::text_contains_any_var(text, var_names) => {
-                            converted_components
-                                .push(self.styled_component_with_vars(&item, text, var_names));
-                        }
-                        _ => converted_components.push(item),
-                    }
-                }
-                serde_json::Value::String(text) if Self::text_contains_any_var(text, var_names) => {
-                    converted_components
-                        .extend(self.split_text_component_with_vars(text, var_names));
-                }
-                _ => converted_components.push(item),
-            }
-        }
-
+        let converted_components = items
+            .iter()
+            .flat_map(|item| self.item_with_vars(item, var_names))
+            .collect();
         let json_string = serde_json::to_string(&serde_json::Value::Array(converted_components))
             .unwrap_or_else(|_| "[]".to_string());
         if Self::text_contains_any_var(&json_string, var_names) {
-            return Err(
-                "Variables in JSON array text components are supported only in string components and object text fields."
-                    .into(),
-            );
+            return Err(UNREACHED_VARIABLE.into());
         }
         Ok(json_string)
+    }
+
+    /// One item of a component list, which a placeholder can split in parts.
+    fn item_with_vars(
+        &self,
+        item: &serde_json::Value,
+        var_names: &[String],
+    ) -> Vec<serde_json::Value> {
+        match item {
+            serde_json::Value::String(text) if Self::text_contains_any_var(text, var_names) => {
+                self.split_text_component_with_vars(text, var_names)
+            }
+            serde_json::Value::Object(_) => vec![self.object_with_vars(item, var_names)],
+            _ => vec![item.clone()],
+        }
+    }
+
+    /// `object` with its placeholders filled in: its `text`, its `extra`
+    /// parts, the `with` arguments of a translation, and hover text.
+    fn object_with_vars(
+        &self,
+        object: &serde_json::Value,
+        var_names: &[String],
+    ) -> serde_json::Value {
+        let mut result = match object.get("text").and_then(|value| value.as_str()) {
+            Some(text) if Self::text_contains_any_var(text, var_names) => {
+                self.styled_component_with_vars(object, text, var_names)
+            }
+            _ => object.clone(),
+        };
+        if let Some(serde_json::Value::Array(extra)) = result.get("extra").cloned() {
+            result["extra"] = extra
+                .iter()
+                .flat_map(|item| self.item_with_vars(item, var_names))
+                .collect();
+        }
+        if let Some(serde_json::Value::Array(arguments)) = result.get("with").cloned() {
+            // One placeholder of the translation takes one argument.
+            result["with"] = arguments
+                .iter()
+                .map(|item| {
+                    let mut parts = self.item_with_vars(item, var_names);
+                    match parts.len() {
+                        1 => parts.remove(0),
+                        _ => serde_json::Value::Array(parts),
+                    }
+                })
+                .collect();
+        }
+        let hover_text = result
+            .get("hover_event")
+            .filter(|hover| {
+                hover.get("action").and_then(|value| value.as_str()) == Some("show_text")
+            })
+            .and_then(|hover| hover.get("value"))
+            .cloned();
+        if let Some(value) = hover_text {
+            let parts: Vec<_> = match &value {
+                serde_json::Value::Array(items) => items
+                    .iter()
+                    .flat_map(|item| self.item_with_vars(item, var_names))
+                    .collect(),
+                value => self.item_with_vars(value, var_names),
+            };
+            result["hover_event"]["value"] = serde_json::Value::Array(parts);
+        }
+        result
     }
 
     /// Plain text with `{var}` placeholders as text components: each
@@ -920,6 +968,8 @@ fn follows_selector_key(before: &str) -> bool {
         .or_else(|| key.strip_suffix("selector"))
         .is_some_and(|rest| matches!(rest.trim_end().chars().last(), Some('{' | ',')))
 }
+
+const UNREACHED_VARIABLE: &str = "A variable in a text component works in `text`, `extra`, `with`, and hover text. Other fields take no variables.";
 
 /// Commands whose text after the command name is a chat message, where
 /// `@Name` is plain text. `msg`, `tell`, and `w` take a target first.

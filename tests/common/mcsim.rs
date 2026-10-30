@@ -560,10 +560,47 @@ impl Sim {
             let (append, source) = match after.split_once(' ') {
                 Some(("set", source)) => (false, source),
                 Some(("append", source)) => (true, source),
+                Some(("insert", source)) => {
+                    let (index, source) = source.split_once(' ').expect("insert index");
+                    let index: usize = index.parse().expect("insert index");
+                    let value = if let Some(snbt) = source.strip_prefix("value ") {
+                        parse_snbt(snbt.trim())
+                    } else {
+                        let source = source.strip_prefix("from storage ").expect("insert source");
+                        let (_, source_path) = source.split_once(' ').expect("source path");
+                        self.storage_get(split_path(source_path.trim()).0)?.clone()
+                    };
+                    let mut list = match self.storage_get(path) {
+                        Some(Value::Array(items)) => items.clone(),
+                        _ => Vec::new(),
+                    };
+                    if index > list.len() {
+                        return None;
+                    }
+                    list.insert(index, value);
+                    self.storage_set(path, Value::Array(list));
+                    return Some(1);
+                }
                 _ => panic!("unsupported data modify: {rest}"),
             };
             let value = if let Some(snbt) = source.strip_prefix("value ") {
                 parse_snbt(snbt.trim())
+            } else if let Some(items) = source
+                .strip_prefix("from storage ")
+                .and_then(|source| source.trim().strip_suffix("[]"))
+            {
+                // Every item of the source list.
+                let (_, source_path) = items.split_once(' ').expect("source path");
+                let Some(Value::Array(items)) = self.storage_get(source_path).cloned() else {
+                    return None;
+                };
+                let mut list = match self.storage_get(path) {
+                    Some(Value::Array(existing)) => existing.clone(),
+                    _ => Vec::new(),
+                };
+                list.extend(items);
+                self.storage_set(path, Value::Array(list));
+                return Some(1);
             } else if let Some(source) = source.strip_prefix("from storage ") {
                 let (_, source_path) = source.split_once(' ').expect("source path");
                 // Copying from a missing path fails the command.
@@ -886,7 +923,10 @@ fn parse_path(path: &str) -> Vec<Segment> {
                     index.push(chars[i]);
                     i += 1;
                 }
-                segments.push(Segment::Index(index.trim().parse().expect("list index")));
+                // `items[]` selects every item; the first tells if any exist.
+                let index = index.trim();
+                let index = if index.is_empty() { "0" } else { index };
+                segments.push(Segment::Index(index.parse().expect("list index")));
             }
             ch => current.push(ch),
         }

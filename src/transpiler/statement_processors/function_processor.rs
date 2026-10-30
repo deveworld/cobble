@@ -33,7 +33,7 @@ impl Transpiler {
         let shadows: Vec<String> = context
             .locals
             .iter()
-            .filter(|local| self.symbols.module_variables.contains(*local))
+            .filter(|local| !self.in_prelude && self.symbols.module_variables.contains(*local))
             .cloned()
             .collect();
         let previous_shadows = std::mem::replace(&mut self.unwarned_shadows, shadows);
@@ -78,7 +78,6 @@ impl Transpiler {
         }
 
         // Set up new function context
-        let locals = context.locals.clone();
         let globals = context.globals.clone();
         let recursive = self.functions.recursive.contains(&func.name);
         if recursive {
@@ -157,7 +156,8 @@ impl Transpiler {
                 .add_function_with_metadata(func.name.clone(), commands, metadata);
         }
 
-        // Restore previous context
+        // Restore previous context. Lowering the body can add hidden locals.
+        let locals = self.current_context.locals.clone();
         self.current_function = previous_function;
         self.current_function_metadata = previous_metadata;
         self.current_context = previous_context;
@@ -491,7 +491,6 @@ impl Transpiler {
 
         if let Some(condition) = expr.filter(|expr| Self::is_runtime_condition_expression(expr)) {
             // `return x > 3` gives 1 or 0.
-            self.warn_logical_operator_value(condition);
             return self.process_if(&IfStatement {
                 condition: condition.clone(),
                 then_branch: vec![Statement::Return(Some(Expression::Number(1.0)))],

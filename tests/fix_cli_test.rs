@@ -400,7 +400,7 @@ fn cli_check_json_reports_runtime_for_kind() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(
         temp_dir.path(),
-        "def main():\n    x = \"abc\"\n    for v in x:\n        /say hi\n",
+        "def main():\n    x = {\"a\": 1}\n    for v in x:\n        /say hi\n",
     );
 
     let output = cobble()

@@ -6,6 +6,7 @@ mod condition_translator;
 mod const_eval;
 mod container_writes;
 mod data_pack;
+mod desugar;
 mod error;
 mod expression_evaluator;
 mod expressions;
@@ -14,6 +15,7 @@ mod intrinsics;
 mod module_init;
 mod resource_format;
 mod score_holders;
+mod snbt_text;
 mod source_map;
 mod statement_processors;
 mod stdlib_modules;
@@ -36,7 +38,7 @@ use command_processor::CommandProcessor;
 use source_map::SourceLocations;
 use statement_processors::{ImportState, UnrollState};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use stdlib_modules::StdlibState;
 use symbols::{FunctionTable, Symbols};
@@ -99,6 +101,11 @@ pub struct Transpiler {
     functions: FunctionTable,
     /// Module-level assignments in source order, replayed in `_cobble_init`.
     module_level_vars: Vec<ModuleLevelAssignment>,
+    /// Prelude helpers already in the pack.
+    prelude_compiled: HashSet<String>,
+    /// Whether the statements being lowered come from the prelude, so they
+    /// have no source lines of their own.
+    in_prelude: bool,
     imports: ImportState,
     source_locations: SourceLocations,
     stdlib: StdlibState,
@@ -233,6 +240,8 @@ impl Transpiler {
             symbols: Symbols::default(),
             functions: FunctionTable::default(),
             module_level_vars: Vec::new(),
+            prelude_compiled: HashSet::new(),
+            in_prelude: false,
             imports: ImportState::default(),
             source_locations: SourceLocations::default(),
             stdlib: StdlibState::default(),
@@ -393,7 +402,7 @@ impl Transpiler {
         // An unrolled loop sets the location of each body statement itself.
         // Substituted text no longer matches its source line and could claim
         // the location of identical text elsewhere in the file.
-        let statement_source = if self.unroll.depth > 0 {
+        let statement_source = if self.unroll.depth > 0 || self.in_prelude {
             previous_statement_source.clone()
         } else {
             self.take_statement_source(statement)
@@ -460,6 +469,12 @@ impl Transpiler {
                 return Err(self.unbound_local_error(&read.name.clone()));
             }
         }
+        if let Some(lowered) = self.desugar_statement(statement)? {
+            for statement in &lowered {
+                self.process_statement_inner(statement)?;
+            }
+            return Ok(());
+        }
         match statement {
             Statement::Import(import) => {
                 self.process_import(import)?;
@@ -470,6 +485,8 @@ impl Transpiler {
             Statement::Assignment(assign) => {
                 self.process_assignment(assign)?;
             }
+            // Lowered to assignments above.
+            Statement::MultiAssign(_) => {}
             Statement::ConstAssignment(const_assign) => {
                 self.process_const_assignment(const_assign)?;
             }
@@ -510,7 +527,7 @@ impl Transpiler {
             Statement::MinecraftCommand(cmd) => {
                 // Strip leading slash and process variable/parameter substitution
                 let clean_cmd = Self::strip_command_prefix(cmd);
-                let source_location = if self.unroll.depth > 0 {
+                let source_location = if self.unroll.depth > 0 || self.in_prelude {
                     self.current_statement_source.clone()
                 } else {
                     self.take_raw_command_source(clean_cmd.trim())
