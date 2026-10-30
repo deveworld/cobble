@@ -40,6 +40,17 @@ when it is not 0, so negative numbers count as true, as in Python.
 An `elif` condition is evaluated only when no earlier branch ran, so a
 function called in it runs only then.
 
+Comparisons chain as in Python: `0 < x < 10` means `0 < x and x < 10`. The
+middle operand can't call a function, because it would run twice. Inside
+brackets a condition can continue on the next line:
+
+```python
+def check(x, y):
+    if (x > 0
+        and y > 0):
+        /say both positive
+```
+
 ## Boolean Operators
 
 `and`, `or`, and `not` combine conditions in `if`, `elif`, `while`, and

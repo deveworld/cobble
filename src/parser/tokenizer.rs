@@ -535,7 +535,12 @@ fn tokenize_line(
             '*' => tokenizer.single(start, Token::Star),
             '%' => tokenizer.single(start, Token::Percent),
             _ => {
-                return Err(tokenizer.error_at(start, format!("Unexpected character: {}", ch)));
+                let hint = if ch.is_alphabetic() {
+                    ". Names use ASCII letters, digits, and underscores; other text goes in a string"
+                } else {
+                    ""
+                };
+                return Err(tokenizer.error_at(start, format!("Unexpected character: {ch}{hint}")));
             }
         }
     }

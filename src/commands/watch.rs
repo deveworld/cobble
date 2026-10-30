@@ -97,15 +97,18 @@ pub fn watch(options: WatchOptions) -> Result<(), String> {
         }
     })
     .map_err(|e| format!("Failed to create watcher: {}", e))?;
-    watcher
-        .watch(&watch_path, RecursiveMode::Recursive)
-        .map_err(|e| format!("Failed to watch path: {}", e))?;
-    let mut watched_source_paths = vec![watch_path];
+    // A folder watched twice keeps the last mode, so the source comes second.
     if let Some(config_path) = &session.config_path {
+        let (folder, mode) = watch_target(config_path);
         watcher
-            .watch(config_path, RecursiveMode::NonRecursive)
+            .watch(&folder, mode)
             .map_err(|e| format!("Failed to watch config file: {}", e))?;
     }
+    let (source_folder, source_mode) = watch_target(&watch_path);
+    watcher
+        .watch(&source_folder, source_mode)
+        .map_err(|e| format!("Failed to watch path: {}", e))?;
+    let mut watched_source_paths = vec![source_folder];
 
     loop {
         match rx.recv_timeout(WATCH_POLL_INTERVAL) {
@@ -303,6 +306,20 @@ struct RebuildDecision {
     should_rebuild: bool,
     config_changed: bool,
     changed_paths: Vec<PathBuf>,
+}
+
+/// The folder to watch for `path`. Many editors save by replacing the file,
+/// which ends a watch on the file itself, so a file is watched through its
+/// folder. Imports sit beside the importing file.
+fn watch_target(path: &Path) -> (PathBuf, RecursiveMode) {
+    if !path.is_file() {
+        return (path.to_path_buf(), RecursiveMode::Recursive);
+    }
+    let folder = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    (folder, RecursiveMode::NonRecursive)
 }
 
 fn collect_debounced_events(rx: &Receiver<Event>, first_event: Event) -> Vec<Event> {
@@ -546,7 +563,12 @@ fn reload_watch_config<W: Watcher>(
                 updated_watch_path.display()
             ));
         }
-        replace_watched_source_paths(watcher, watched_source_paths, updated_watch_path)?;
+        replace_watched_source_paths(
+            watcher,
+            watched_source_paths,
+            updated_watch_path,
+            Some(config_path),
+        )?;
     }
 
     Ok(Some(updated_config))
@@ -556,34 +578,41 @@ fn replace_watched_source_paths<W: Watcher>(
     watcher: &mut W,
     watched_source_paths: &mut Vec<PathBuf>,
     updated_watch_path: PathBuf,
+    config_path: Option<&Path>,
 ) -> Result<(), String> {
-    if watched_source_paths.len() == 1 && watched_source_paths[0] == updated_watch_path {
+    let (updated_folder, updated_mode) = watch_target(&updated_watch_path);
+    if watched_source_paths.len() == 1 && watched_source_paths[0] == updated_folder {
         return Ok(());
     }
 
-    if !watched_source_paths.contains(&updated_watch_path) {
-        watcher
-            .watch(&updated_watch_path, RecursiveMode::Recursive)
-            .map_err(|error| {
-                format!(
-                    "Failed to watch updated source path {:?}: {}",
-                    updated_watch_path, error
-                )
-            })?;
-        println!("Watching: {:?}", updated_watch_path);
-    }
-
+    // Unwatching a folder also ends the watches below it, so the old source
+    // goes first; the new source may be inside it, or the other way around.
     for old_path in watched_source_paths.iter() {
-        if old_path != &updated_watch_path {
-            watcher
-                .unwatch(old_path)
-                .map_err(|error| format!("Failed to stop watching {:?}: {}", old_path, error))?;
-            println!("Stopped watching: {:?}", old_path);
+        // This fails partway when a watched folder was deleted, as a rebuild
+        // does under the output folder. What stays watched costs a rebuild.
+        match watcher.unwatch(old_path) {
+            Ok(()) => println!("Stopped watching: {:?}", old_path),
+            Err(error) => println!("! Failed to stop watching {:?}: {}", old_path, error),
         }
     }
-
     watched_source_paths.clear();
-    watched_source_paths.push(updated_watch_path);
+
+    if let Some(config_path) = config_path {
+        let (folder, mode) = watch_target(config_path);
+        watcher
+            .watch(&folder, mode)
+            .map_err(|error| format!("Failed to watch config file: {error}"))?;
+    }
+    watcher
+        .watch(&updated_folder, updated_mode)
+        .map_err(|error| {
+            format!(
+                "Failed to watch updated source path {:?}: {}",
+                updated_folder, error
+            )
+        })?;
+    println!("Watching: {:?}", updated_folder);
+    watched_source_paths.push(updated_folder);
     Ok(())
 }
 
@@ -764,12 +793,69 @@ mod tests {
         let mut watcher = FakeWatcher::default();
         let mut watched_paths = vec![PathBuf::from("src")];
 
-        replace_watched_source_paths(&mut watcher, &mut watched_paths, PathBuf::from("modules"))
-            .unwrap();
+        replace_watched_source_paths(
+            &mut watcher,
+            &mut watched_paths,
+            PathBuf::from("modules"),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(watcher.unwatched, vec![PathBuf::from("src")]);
         assert_eq!(watcher.watched, vec![PathBuf::from("modules")]);
         assert_eq!(watched_paths, vec![PathBuf::from("modules")]);
+    }
+
+    #[test]
+    fn replace_watched_source_paths_keeps_the_config_folder_watched() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("cobble.toml");
+        let source = temp_dir.path().join("src");
+        fs::create_dir(&source).unwrap();
+        fs::write(&config_path, "").unwrap();
+        let mut watcher = FakeWatcher::default();
+        let mut watched_paths = vec![temp_dir.path().to_path_buf()];
+
+        replace_watched_source_paths(
+            &mut watcher,
+            &mut watched_paths,
+            source.clone(),
+            Some(&config_path),
+        )
+        .unwrap();
+
+        // The project folder was the source: its watch ended with the old
+        // source and has to come back for `cobble.toml`.
+        assert_eq!(watcher.unwatched, vec![temp_dir.path().to_path_buf()]);
+        assert_eq!(
+            watcher.watched,
+            vec![temp_dir.path().to_path_buf(), source.clone()]
+        );
+        assert_eq!(watched_paths, vec![source]);
+    }
+
+    #[test]
+    fn a_file_is_watched_through_its_folder() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file = temp_dir.path().join("main.cbl");
+        fs::write(&file, "").unwrap();
+
+        let (folder, mode) = watch_target(&file);
+        assert_eq!(folder, temp_dir.path());
+        assert_eq!(mode, RecursiveMode::NonRecursive);
+
+        let (folder, mode) = watch_target(temp_dir.path());
+        assert_eq!(folder, temp_dir.path());
+        assert_eq!(mode, RecursiveMode::Recursive);
+
+        let current_dir = std::env::current_dir().unwrap();
+        let bare_file = fs::read_dir(&current_dir)
+            .unwrap()
+            .flatten()
+            .find(|entry| entry.path().is_file())
+            .map(|entry| PathBuf::from(entry.file_name()))
+            .unwrap();
+        assert_eq!(watch_target(&bare_file).0, PathBuf::from("."));
     }
 
     #[test]

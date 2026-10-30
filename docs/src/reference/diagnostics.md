@@ -56,6 +56,7 @@ lists them under Diagnostics.
 | `infinite-loop` | a `while True` loop has no `return` in its body |
 | `fractional-number` | a number with a fractional part is stored in a score, which keeps only the integer part |
 | `number-out-of-range` | a number outside the 32-bit range is stored in a score, which clamps it |
+| `logical-operator-value` | `and` or `or` with a plain number is used as a value; Cobble gives 1 or 0 where Python gives an operand |
 | `selector-redefined` | a selector alias is defined again, which replaces the earlier definition |
 
 ## Kinds Listed Elsewhere

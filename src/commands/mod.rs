@@ -36,7 +36,7 @@ pub(crate) fn find_config(input: Option<&Path>) -> Option<PathBuf> {
         if path.is_file() {
             // If input is a file, look for config in parent directories
             if let Some(parent) = path.parent() {
-                return CobbleConfig::find_in_path(parent);
+                return CobbleConfig::find_in_path(parent).or_else(find_config_above_current_dir);
             }
         } else {
             // If input is a directory, look for config in it
@@ -45,6 +45,12 @@ pub(crate) fn find_config(input: Option<&Path>) -> Option<PathBuf> {
     }
     // Look in current directory
     CobbleConfig::find_in_path(".")
+}
+
+/// A relative walk ends at the current directory, but a project's `cobble.toml`
+/// can sit above it, as it does for `cobble build main.cbl` run inside `src`.
+fn find_config_above_current_dir() -> Option<PathBuf> {
+    CobbleConfig::find_in_path(std::env::current_dir().ok()?.parent()?)
 }
 
 pub(crate) fn resolve_entry_points(

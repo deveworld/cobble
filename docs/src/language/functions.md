@@ -85,7 +85,7 @@ def main():
     give_reward("Steve", 5)
 ```
 
-Functions can return integer scoreboard values:
+Functions can return integer scoreboard values. A condition returns 1 or 0:
 
 ```python
 def double(value):

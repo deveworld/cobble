@@ -265,7 +265,7 @@ def lookup(key):
     );
     assert!(
         all_functions.contains(
-            "$execute store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.$(key0)"
+            "$execute store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.\"$(key0)\""
         ),
         "{all_functions}"
     );

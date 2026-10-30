@@ -117,8 +117,10 @@ validated builds, and `--dry-run --validate` staging output. A pure
 
 A plain (non-`--validate`) build into an existing non-empty output directory
 also requires this project's ownership marker: a
-`.cobble/build_manifest.json` whose namespace and `project_id` match the
-current project. Unmarked directories and directories owned by another Cobble
+`.cobble/build_manifest.json` whose `project_id` matches the current project,
+or whose namespace does when the marker has no matching id. An output inside
+the project folder needs only a valid marker, so it stays the project's after
+the folder moves. Unmarked directories and directories owned by another Cobble
 project are refused; pick a new or empty output directory, or use
 `cobble build --validate` for staged publishing. Inside an owned output
 directory a build deletes and rewrites what Cobble generates: the
@@ -283,7 +285,8 @@ marker.
 
 This will:
 1. Perform an initial build
-2. Watch for changes in `.cbl`, `.cobble`, and `cobble.toml` files
+2. Watch for changes in `.cbl`, `.cobble`, and `cobble.toml` files, including
+   editors that save by replacing the file
 3. Coalesce rapid editor save events into one rebuild
 4. Ignore generated output, `.cobble/`, staging directories, ZIP files, and
    common editor temporary files
@@ -454,7 +457,9 @@ cobble link --status
 cobble link --clear
 ```
 
-`link` writes project-local state to `.cobble/link_state.json`. The base
+`link` writes project-local state to `.cobble/link_state.json`. A relative
+path is read from the project folder, and the state keeps the absolute path,
+so the link means the same place from any working folder. The base
 directory given to `--world` or `--minecraft` must already exist, so a
 mistyped path fails with an error; Cobble creates only the `datapacks/` (and
 `saves/<pack-name>/`) subdirectories automatically. A direct `--datapacks`

@@ -234,13 +234,13 @@ def test():
         "{content}"
     );
     assert!(all_functions.contains(
-        "$execute store result score #test.selected cobble.vars run data get storage cobble:global locals.test.config.$(key0)"
+        "$execute store result score #test.selected cobble.vars run data get storage cobble:global locals.test.config.\"$(key0)\""
     ));
     // Right-operand scratches now carry unique suffixes (#expr_temp_<id>).
     assert!(all_functions.lines().any(|line| {
         line.starts_with("$execute store result score #expr_temp_")
             && line.ends_with(
-                "cobble.vars run data get storage cobble:global locals.test.config.$(key0)",
+                "cobble.vars run data get storage cobble:global locals.test.config.\"$(key0)\"",
             )
     }));
     assert!(content.lines().any(|line| line
@@ -267,7 +267,7 @@ def lookup(key):
         "{content}"
     );
     assert!(all_functions.contains(
-        "$execute store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.$(key0)"
+        "$execute store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.\"$(key0)\""
     ));
 }
 
@@ -290,7 +290,7 @@ def probe():
         "{content}"
     );
     assert!(
-        all_functions.contains("locals.probe.config.nested.$(key0)")
+        all_functions.contains("locals.probe.config.nested.\"$(key0)\"")
             && !all_functions.contains("locals.probe.config.nested[$(idx0)]"),
         "{all_functions}"
     );
@@ -2785,7 +2785,7 @@ def test():
         "{content}"
     );
     assert!(all_functions.contains(
-        "$data modify storage cobble:global locals.test.config.$(key0) set from storage cobble:global _cobble_value_"
+        "$data modify storage cobble:global locals.test.config.\"$(key0)\" set from storage cobble:global _cobble_value_"
     ));
     assert!(all_functions.contains(
         "$data modify storage cobble:global locals.test.values[$(idx0)] set from storage cobble:global _cobble_value_"
@@ -2845,9 +2845,9 @@ def test():
         all_functions.contains(
             "$execute store result score #storage_target_"
         ) && all_functions.contains(
-            "run data get storage cobble:global vars.config.$(key0)"
+            "run data get storage cobble:global vars.config.\"$(key0)\""
         ) && all_functions.contains(
-            "$execute store result storage cobble:global vars.config.$(key0) int 1 run scoreboard players get #storage_target_"
+            "$execute store result storage cobble:global vars.config.\"$(key0)\" int 1 run scoreboard players get #storage_target_"
         ),
         "{all_functions}"
     );

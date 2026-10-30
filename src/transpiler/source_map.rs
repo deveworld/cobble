@@ -670,7 +670,7 @@ impl Transpiler {
         }
     }
 
-    fn binary_op_source_key(op: &BinaryOp) -> &'static str {
+    pub(in crate::transpiler) fn binary_op_source_key(op: &BinaryOp) -> &'static str {
         match op {
             BinaryOp::Add => "+",
             BinaryOp::Sub => "-",

@@ -238,7 +238,7 @@ pub(crate) fn read_link_state(config_dir: &Path) -> Result<Option<LinkState>, St
     }
     let content = fs::read_to_string(&path)
         .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-    let state = serde_json::from_str::<LinkState>(&content)
+    let mut state = serde_json::from_str::<LinkState>(&content)
         .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?;
     if state.version != 1 {
         return Err(format!(
@@ -247,6 +247,8 @@ pub(crate) fn read_link_state(config_dir: &Path) -> Result<Option<LinkState>, St
             path.display()
         ));
     }
+    state.target_path = path_display(&resolve_path(config_dir, Path::new(&state.target_path)));
+    state.pack_path = path_display(&resolve_path(config_dir, Path::new(&state.pack_path)));
     Ok(Some(state))
 }
 
@@ -344,12 +346,11 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+/// The absolute form of `path`, read from the project folder when relative.
+/// Link state has to name the same place from any working directory.
 fn resolve_path(config_dir: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        config_dir.join(path)
-    }
+    let joined = config_dir.join(path);
+    normalize_path(&std::path::absolute(&joined).unwrap_or(joined))
 }
 
 fn path_display(path: &Path) -> String {
@@ -362,6 +363,17 @@ mod tests {
 
     fn config() -> CobbleConfig {
         CobbleConfig::default_with_name("linked_pack".to_string())
+    }
+
+    fn absolute_state(root: &Path) -> LinkState {
+        let target = root.join("world/datapacks");
+        LinkState {
+            version: 1,
+            target_kind: "datapacks".to_string(),
+            target_path: path_display(&target),
+            pack_name: "linked_pack".to_string(),
+            pack_path: path_display(&target.join("linked_pack")),
+        }
     }
 
     #[test]
@@ -470,17 +482,70 @@ mod tests {
     #[test]
     fn write_and_read_link_state_round_trip() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let state = LinkState {
-            version: 1,
-            target_kind: "datapacks".to_string(),
-            target_path: "world/datapacks".to_string(),
-            pack_name: "linked_pack".to_string(),
-            pack_path: "world/datapacks/linked_pack".to_string(),
-        };
+        let state = absolute_state(temp_dir.path());
 
         write_link_state(temp_dir.path(), &state).unwrap();
 
         assert_eq!(read_link_state(temp_dir.path()).unwrap(), Some(state));
+    }
+
+    #[test]
+    fn relative_link_state_is_read_from_the_project_folder() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project = temp_dir.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let state = LinkState {
+            version: 1,
+            target_kind: "datapacks".to_string(),
+            target_path: "./../world/datapacks".to_string(),
+            pack_name: "linked_pack".to_string(),
+            pack_path: "./../world/datapacks/linked_pack".to_string(),
+        };
+        write_link_state(&project, &state).unwrap();
+
+        assert_eq!(
+            read_link_state(&project).unwrap(),
+            Some(absolute_state(temp_dir.path()))
+        );
+    }
+
+    #[test]
+    fn build_link_state_keeps_absolute_paths_for_a_relative_project() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let state = build_link_state(
+            &config(),
+            Path::new("."),
+            &LinkOptions {
+                project_path: None,
+                datapacks: Some(temp_dir.path().join("a/../world/datapacks")),
+                world: None,
+                minecraft: None,
+                pack_name: None,
+                dry_run: false,
+                clear: false,
+                status: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(state, absolute_state(temp_dir.path()));
+
+        let state = build_link_state(
+            &config(),
+            Path::new("."),
+            &LinkOptions {
+                project_path: None,
+                datapacks: Some(PathBuf::from("world/datapacks")),
+                world: None,
+                minecraft: None,
+                pack_name: None,
+                dry_run: false,
+                clear: false,
+                status: false,
+            },
+        )
+        .unwrap();
+        assert!(Path::new(&state.target_path).is_absolute());
+        assert!(Path::new(&state.pack_path).is_absolute());
     }
 
     #[cfg(unix)]
@@ -498,13 +563,7 @@ mod tests {
         fs::write(&victim_file, "keep\n").unwrap();
         hard_link(&victim_file, &state_path).unwrap();
 
-        let state = LinkState {
-            version: 1,
-            target_kind: "datapacks".to_string(),
-            target_path: "world/datapacks".to_string(),
-            pack_name: "linked_pack".to_string(),
-            pack_path: "world/datapacks/linked_pack".to_string(),
-        };
+        let state = absolute_state(temp_dir.path());
 
         write_link_state(temp_dir.path(), &state).unwrap();
 

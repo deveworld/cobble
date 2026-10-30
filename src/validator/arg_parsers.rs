@@ -1344,13 +1344,11 @@ fn parse_nbt_path(reader: &mut StringReader) -> bool {
             continue;
         }
 
-        if ch == '.' || ch == '_' || ch.is_ascii_alphanumeric() || ch == '-' {
-            reader.read_char();
-            has_content = true;
-            continue;
+        if ch == ']' || ch == '}' {
+            break;
         }
-
-        break;
+        reader.read_char();
+        has_content = true;
     }
 
     if has_content && reader.at_token_boundary() {

@@ -28,6 +28,15 @@
 //!   have passed the resource checks, and `/reload` then failed
 //! - the validator called commands valid that Minecraft can't load: unknown
 //!   ids, missing pack resources, bad text components, and bad values
+//! - `tellraw @a "text {name}"` showed the quotes around the text, and a `"`
+//!   in a string parameter broke the macro line
+//! - `def giveReward():` passed `cobble check`, then failed `cobble build`
+//!   with no source line
+//! - map keys with a colon, a space, or a dot gave broken storage paths
+//! - `return x > 3` and `a < b < c` were errors with no useful message, and a
+//!   multi-line `if (...)` header was rejected
+//! - `and` and `or` used as a value silently differed from Python
+//! - a comment inside a `datapack.*_tag` list counted as a tag value
 
 mod common;
 
@@ -35,6 +44,67 @@ use common::mcsim::{compile, compile_project, load_functions, Sim};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+#[test]
+fn a_quoted_message_with_a_variable_shows_without_its_quotes() {
+    let mut sim = Sim::load(
+        r#"
+title = "Boss"
+count = 3
+
+def show(name):
+    /tellraw @a "Hello {name}"
+
+def main():
+    /tellraw @a "Plain"
+    /tellraw @a "Fight {title} {count}"
+    /tellraw @a 'Single {title}'
+    /tellraw @a "A \"quoted\" {title}"
+    show("Steve")
+    show("say \"hi\"")
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(
+        sim.log,
+        [
+            "Plain",
+            "Fight Boss 3",
+            "Single Boss",
+            "A \"quoted\" Boss",
+            "Hello Steve",
+            "Hello say \"hi\""
+        ]
+    );
+}
+
+#[test]
+fn a_function_name_with_capitals_is_an_error_at_its_line() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    fs::write(
+        temp_dir.path().join("main.cbl"),
+        "def main():\n    /say hi\n\ndef giveReward():\n    /say reward\n",
+    )
+    .unwrap();
+
+    for command in ["check", "build"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cobble"))
+            .current_dir(temp_dir.path())
+            .env("NO_COLOR", "1")
+            .args([command, "main.cbl"])
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!output.status.success(), "{command}: {text}");
+        assert!(text.contains("give_reward"), "{command}: {text}");
+        assert!(text.contains('4'), "{command}: {text}");
+    }
+}
 
 #[test]
 fn string_values_show_without_quotes_in_text_commands() {
@@ -624,4 +694,154 @@ def main():
             "Unknown predicate `sim:gone`: the pack doesn't define it",
         ]
     );
+}
+
+#[test]
+fn map_keys_can_be_ids_and_names_with_spaces() {
+    let mut sim = Sim::load(
+        r#"
+prices = {"minecraft:diamond": 100, "Iron Sword": 7, "a.b": 3}
+shop = {"Iron Sword": {"cost": 5}}
+
+def price(id):
+    return prices[id]
+
+def set_price(id, value):
+    prices[id] = value
+
+def main():
+    a = prices["minecraft:diamond"]
+    b = price("Iron Sword")
+    c = prices["a.b"]
+    set_price("new key", 11)
+    d = price("new key")
+    prices["a.b"] += 1
+    e = price("a.b")
+    f = shop["Iron Sword"]["cost"]
+    n = len(prices)
+    /tellraw @a ["{a} {b} {c} {d} {e} {f} {n}"]
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.log, ["100 7 3 11 4 5 4"]);
+}
+
+#[test]
+fn conditions_return_one_or_zero_and_comparisons_chain() {
+    let mut sim = Sim::load(
+        r#"
+x = 5
+
+def big():
+    return x > 3
+
+def small():
+    return not (x > 3) or x == 0
+
+def between(low, high):
+    return low < x < high
+
+def count_down():
+    n = 8
+    while 0 < n < 9:
+        n -= 3
+    return n
+
+def main():
+    a = big()
+    b = small()
+    c = between(1, 9)
+    d = between(6, 9)
+    e = count_down()
+    f = 0
+    if big() and 1 < x <= 5 < 6:
+        f = 1
+    if (x > 0
+        and x < 9):
+        f += 1
+    /tellraw @a ["{a} {b} {c} {d} {e} {f}"]
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.log, ["1 0 1 0 -1 2"]);
+}
+
+#[test]
+fn a_chained_comparison_does_not_run_a_call_twice() {
+    let Err(error) = Sim::try_load(
+        r#"
+def f():
+    return 2
+
+def main():
+    a = 1 < f() < 3
+    /say {a}
+"#,
+        &[],
+    ) else {
+        panic!("the call would run twice");
+    };
+    assert!(error.contains("`<` gives 1 or 0"), "{error}");
+}
+
+#[test]
+fn python_operators_cobble_replaces_report_what_to_use() {
+    let error = compile("def main():\n    a = 3\n    b = a // 2\n    c = a ** 2\n")
+        .err()
+        .unwrap();
+    assert!(error.contains("`//` is not supported"), "{error}");
+    assert!(error.contains("`**` is not supported"), "{error}");
+    assert!(compile("def main():\n    /say 1 // 2 ** 3\n").is_ok());
+}
+
+#[test]
+fn and_or_as_a_value_warn_for_plain_numbers() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let source = temp_dir.path().join("main.cbl");
+    let warnings = |body: &str| {
+        fs::write(
+            &source,
+            format!("def main():\n    a = 7\n{body}\n    /say {{x}}\n"),
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_cobble"))
+            .current_dir(temp_dir.path())
+            .args(["check", "main.cbl", "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).contains("logical-operator-value")
+    };
+
+    assert!(warnings("    x = a or 5"));
+    assert!(warnings("    x = 0 or 5"));
+    assert!(!warnings("    x = a > 1 or a < 0"));
+    assert!(!warnings("    x = True and False"));
+}
+
+#[test]
+fn comments_inside_multi_line_tag_lists_are_not_values() {
+    let source = r##"from stdlib import datapack
+
+datapack.block_tag("passable", [  # blocks a ray crosses
+    # plain blocks
+    "minecraft:air",  # the common case
+    "#minecraft:leaves",  # a tag, with a # in the comment
+])
+
+def main():
+    /say hi
+"##;
+    let (_temp_dir, output_dir) = compile(source).unwrap();
+    let tag = fs::read_to_string(output_dir.join("data/sim/tags/block/passable.json")).unwrap();
+    assert!(tag.contains("minecraft:air"), "{tag}");
+    assert!(tag.contains("#minecraft:leaves"), "{tag}");
+}
+
+#[test]
+fn names_outside_ascii_report_that_names_are_ascii() {
+    let error = compile("점수 = 0\n").err().unwrap();
+    assert!(error.contains("Names use ASCII letters"), "{error}");
 }

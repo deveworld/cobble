@@ -1,7 +1,7 @@
 use super::{find_cobble_files, find_config, resolve_entry_points};
 use crate::commands::output_safety::{
     build_manifest_path, ensure_no_symlink_descendants, ensure_no_symlinks_from,
-    ensure_not_symlink, project_marker_identity, read_build_manifest, require_manifest_ownership,
+    ensure_not_symlink, project_marker_identity, read_build_manifest, require_output_ownership,
 };
 use crate::commands::validate::{print_validation_report, resolve_commands_json, run_validation};
 use crate::config::CobbleConfig;
@@ -306,6 +306,7 @@ fn check_output_location(options: &BuildOptions, project: &BuildProject) -> Resu
             &project.output_dir,
             &project.namespace,
             &project.project_id,
+            &project.project_root,
         )?;
     }
     Ok(())
@@ -823,6 +824,7 @@ fn ensure_plain_build_output_dir_owned(
     output_dir: &Path,
     namespace: &str,
     project_id: &str,
+    project_root: &Path,
 ) -> Result<(), String> {
     let mut entries = match fs::read_dir(output_dir) {
         Ok(entries) => entries,
@@ -847,7 +849,14 @@ fn ensure_plain_build_output_dir_owned(
             error
         )
     })?;
-    require_manifest_ownership(&manifest, Some(namespace), Some(project_id)).map_err(|error| {
+    require_output_ownership(
+        &manifest,
+        output_dir,
+        Some(project_root),
+        Some(namespace),
+        Some(project_id),
+    )
+    .map_err(|error| {
         format!(
             "Refusing to build into output directory owned by another Cobble project at {}: {}",
             output_dir.display(),
@@ -889,7 +898,7 @@ fn publish_validated_output(
     if output_dir.exists() {
         ensure_validated_output_has_replaceable_name(output_dir)?;
         ensure_output_dir_does_not_contain_project_root(output_dir, project_root)?;
-        ensure_replace_output_dir_safe(output_dir, namespace, project_id)?;
+        ensure_replace_output_dir_safe(output_dir, namespace, project_id, project_root)?;
         ensure_no_symlink_descendants(output_dir, "publish validated output")?;
 
         let publish_dir = replacement_publish_dir(output_dir)?;
@@ -1238,6 +1247,7 @@ fn ensure_replace_output_dir_safe(
     output_dir: &Path,
     namespace: &str,
     project_id: &str,
+    project_root: &Path,
 ) -> Result<(), String> {
     let metadata = fs::symlink_metadata(output_dir)
         .map_err(|e| format!("Failed to inspect existing output {:?}: {}", output_dir, e))?;
@@ -1256,7 +1266,14 @@ fn ensure_replace_output_dir_safe(
             error
         )
     })?;
-    require_manifest_ownership(&manifest, Some(namespace), Some(project_id)).map_err(|error| {
+    require_output_ownership(
+        &manifest,
+        output_dir,
+        Some(project_root),
+        Some(namespace),
+        Some(project_id),
+    )
+    .map_err(|error| {
         format!(
             "Refusing to replace existing output owned by another Cobble project at {}: {}",
             output_dir.display(),

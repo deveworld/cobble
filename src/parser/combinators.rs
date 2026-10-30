@@ -1139,23 +1139,58 @@ fn arithmetic_expression<'a>(
     )
 }
 
+/// `a < b < c` as `a < b and b < c`. A call in the middle would run twice, so
+/// that form stays nested and the transpiler rejects it.
+fn comparison_chain(first: Expression, rest: Vec<(BinaryOp, Expression)>) -> Expression {
+    let middles = rest.iter().take(rest.len().saturating_sub(1));
+    let splittable = !middles.clone().any(|(_, middle)| contains_call(middle));
+    let mut left = first;
+    let mut chain: Option<Expression> = None;
+    for (op, right) in rest {
+        if !splittable {
+            left = Expression::Binary(Box::new(left), op, Box::new(right));
+            continue;
+        }
+        let comparison = Expression::Binary(Box::new(left), op, Box::new(right.clone()));
+        chain = Some(match chain {
+            Some(chain) => Expression::Binary(Box::new(chain), BinaryOp::And, Box::new(comparison)),
+            None => comparison,
+        });
+        left = right;
+    }
+    chain.unwrap_or(left)
+}
+
+fn contains_call(expr: &Expression) -> bool {
+    match expr {
+        Expression::Call(_, _) => true,
+        Expression::Binary(left, _, right) => contains_call(left) || contains_call(right),
+        Expression::Unary(_, inner) | Expression::Attribute(inner, _) => contains_call(inner),
+        Expression::Subscript(base, index) => contains_call(base) || contains_call(index),
+        _ => false,
+    }
+}
+
 fn logical_expression<'a>(
     add_sub: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone {
     // Comparisons
-    let comparison = add_sub.clone().foldl(
-        choice((
-            just(&Token::EqEq).to(BinaryOp::Eq),
-            just(&Token::NotEq).to(BinaryOp::NotEq),
-            just(&Token::GtEq).to(BinaryOp::GtEq),
-            just(&Token::LtEq).to(BinaryOp::LtEq),
-            just(&Token::Gt).to(BinaryOp::Gt),
-            just(&Token::Lt).to(BinaryOp::Lt),
-        ))
-        .then(add_sub.clone())
-        .repeated(),
-        |left, (op, right)| Expression::Binary(Box::new(left), op, Box::new(right)),
-    );
+    let comparison = add_sub
+        .clone()
+        .then(
+            choice((
+                just(&Token::EqEq).to(BinaryOp::Eq),
+                just(&Token::NotEq).to(BinaryOp::NotEq),
+                just(&Token::GtEq).to(BinaryOp::GtEq),
+                just(&Token::LtEq).to(BinaryOp::LtEq),
+                just(&Token::Gt).to(BinaryOp::Gt),
+                just(&Token::Lt).to(BinaryOp::Lt),
+            ))
+            .then(add_sub.clone())
+            .repeated()
+            .collect::<Vec<_>>(),
+        )
+        .map(|(first, rest)| comparison_chain(first, rest));
 
     // Not (unary). `repeated` also matches zero `not`s, so a bare
     // comparison needs no second alternative; one would parse every failed

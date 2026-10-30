@@ -516,6 +516,8 @@ impl Transpiler {
     /// Classify an in-function assignment *value*. The checks run in the
     /// order listed on [`Self::process_assignment`].
     fn classify_assignment_value(&self, target: &str, value: &Expression) -> AssignValueKind {
+        self.warn_logical_operator_value(value);
+
         // Try to evaluate constant expressions first
         if let Some(const_value) = self.try_eval_const(value) {
             return AssignValueKind::ConstFoldable(const_value);
@@ -1150,7 +1152,28 @@ impl Transpiler {
         }
     }
 
-    fn is_runtime_condition_expression(expr: &Expression) -> bool {
+    /// Warns when `and` or `or` gets an operand that isn't 1 or 0, where
+    /// Python's result would be one of the operands.
+    pub(in crate::transpiler) fn warn_logical_operator_value(&self, value: &Expression) {
+        let Expression::Binary(left, BinaryOp::And | BinaryOp::Or, right) = value else {
+            return;
+        };
+        let is_plain_number = |operand: &Expression| match operand {
+            Expression::Number(number) => *number != 0.0 && *number != 1.0,
+            Expression::Identifier(_) => self.infer_type(operand) == CobbleType::Integer,
+            _ => false,
+        };
+        if is_plain_number(left) || is_plain_number(right) {
+            self.warn_at(
+                "logical-operator-value",
+                "`and` and `or` give 1 or 0 here, not one of their operands as in Python.",
+                Some("Use an `if` to choose between two values."),
+                self.current_statement_source.clone(),
+            );
+        }
+    }
+
+    pub(in crate::transpiler) fn is_runtime_condition_expression(expr: &Expression) -> bool {
         match expr {
             Expression::Binary(_, op, _) => matches!(
                 op,

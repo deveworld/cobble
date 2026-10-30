@@ -65,13 +65,17 @@ pub(crate) fn require_manifest_ownership(
     expected_namespace: Option<&str>,
     expected_project_id: Option<&str>,
 ) -> Result<(), String> {
+    // The id names the project folder, so a matching marker is this project's
+    // own output, built under whatever namespace `cobble.toml` had then.
+    let actual_project_id = manifest.get("project_id").and_then(Value::as_str);
+    if expected_project_id.is_some() && actual_project_id == expected_project_id {
+        return Ok(());
+    }
     require_manifest_namespace(manifest, expected_namespace)?;
     let Some(expected_project_id) = expected_project_id else {
         return Ok(());
     };
-    let actual_project_id = manifest
-        .get("project_id")
-        .and_then(Value::as_str)
+    let actual_project_id = actual_project_id
         .ok_or_else(|| "missing project_id in .cobble/build_manifest.json".to_string())?;
     if actual_project_id != expected_project_id {
         return Err(format!(
@@ -79,6 +83,28 @@ pub(crate) fn require_manifest_ownership(
         ));
     }
     Ok(())
+}
+
+/// Whether the marker in `manifest` makes `output_dir` this project's output.
+/// An output inside the project folder moved along with it, while the project
+/// id names the folder the output was built in, so only outputs elsewhere are
+/// held to the id.
+pub(crate) fn require_output_ownership(
+    manifest: &Value,
+    output_dir: &Path,
+    project_root: Option<&Path>,
+    expected_namespace: Option<&str>,
+    expected_project_id: Option<&str>,
+) -> Result<(), String> {
+    let inside_project = output_dir
+        .canonicalize()
+        .ok()
+        .zip(project_root.and_then(|root| root.canonicalize().ok()))
+        .is_some_and(|(output, root)| output.starts_with(root));
+    if inside_project {
+        return Ok(());
+    }
+    require_manifest_ownership(manifest, expected_namespace, expected_project_id)
 }
 
 /// Refuses a symlink at `root` or at any component of `path` below it.

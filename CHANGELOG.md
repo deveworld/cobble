@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command simulator and compares the results with the same programs run as
   Python. The programs use numbers, strings, and lists, and some are split
   into files that import each other. CI runs it with 300 programs.
+- A `logical-operator-value` warning marks `and` and `or` used as a value
+  with a plain number, where Python would give one of the operands. Cobble
+  gives 1 or 0. `//` and `**` report what to use instead, and an unexpected
+  letter outside ASCII says that names are ASCII.
 - Compiler warnings are diagnostics with a kind and a source location.
   `cobble build` prints them with the line they point at, `cobble check`
   reports them with severity `warning` and counts them in `warning_count`,
@@ -288,6 +292,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of taking those of identical commands later in the file.
 - First-time command tree generation uses a partial file of its own, so two
   validations at once do not overwrite each other's download.
+- `cobble watch` keeps working after an editor saves by replacing a file. It
+  used to lose `cobble.toml`, or the single file it was given, after the
+  first such save. Moving `build.source` out of a folder that holds rebuilt
+  output no longer fails and stops the config watch.
+- `cobble link` saves absolute paths, and paths in older link state are read
+  from the project folder. `watch --link`, `clean --linked`, `link --status`,
+  and `doctor` used to look in the wrong place from another working folder.
+- A file input finds the `cobble.toml` above the current folder, so
+  `cobble build main.cbl` inside `src` uses the project's settings instead of
+  the default namespace and a new `src/output`.
+- A project can replace and clean its own output after its namespace changes.
+  An output inside the project folder also stays the project's after the
+  folder moves. `cobble clean` used to refuse both.
+- `tellraw` and `title` text written as one quoted string, such as
+  `/tellraw @a "Hi {name}"`, no longer shows the quotes when it has a
+  placeholder. A `"` in a string parameter no longer breaks that line.
+- Map keys that aren't plain names, such as `"minecraft:diamond"` and
+  `"Iron Sword"`, work in subscripts, both as literals and as runtime values.
+  They used to give an invalid command, or for `"a.b"` read a nested path.
+- `return x > 3` and other conditions return 1 or 0, and `a < b < c` works as
+  in Python. A multi-line `if (...)` or `while (...)` header is accepted.
+- A function name with capital letters is an error at its `def` line, also in
+  `cobble check`. It used to pass `check`, then fail `build` with no location.
+- A comment inside the list of a `datapack.*_tag` call no longer counts as a
+  tag value.
+- `cobble fmt` keeps the indentation of a comment on the first line of a block
+  or a bracket when the line before it ends with a comment or a bracket.
+- `--validate` accepts every NBT path name Minecraft does, such as `a:b` and
+  names outside ASCII, and a token such as `a@b` is no longer read as a
+  selector.
 
 ### Documentation
 - The documentation is now a book built with mdBook from `docs/src/` and

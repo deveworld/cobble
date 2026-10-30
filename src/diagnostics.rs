@@ -27,11 +27,12 @@ pub use reporting::{
 };
 pub use text::byte_offset_for_line_column;
 
+pub(crate) use text::mask_non_code;
 use text::{
     column_from_byte, find_string_end, find_triple_quote, find_word,
-    function_name_before_open_paren, is_ident_char, leading_triple_quote, mask_non_code,
-    matching_close_delimiter, matching_close_paren, single_equals_index, split_top_level_arg_spans,
-    starts_with_keyword, triple_quote_pattern,
+    function_name_before_open_paren, is_ident_char, leading_triple_quote, matching_close_delimiter,
+    matching_close_paren, single_equals_index, split_top_level_arg_spans, starts_with_keyword,
+    triple_quote_pattern,
 };
 
 /// Base keyword sets shared by the line-scan skip lists below. Each scan site
@@ -226,7 +227,7 @@ fn analyze_source_stages(source: &str) -> SourceAnalysis {
             active_for_blocks.push(indent);
         }
 
-        check_missing_block_colon(line, trimmed, line_number, &mut diagnostics);
+        check_missing_block_colon(line, trimmed, &masked, line_number, &mut diagnostics);
         check_decorator(line, trimmed, line_number, trimmed_column, &mut diagnostics);
         check_unsupported_keywords(line, trimmed, line_number, indent, &mut diagnostics);
         check_imports(trimmed, line_number, indent, &mut diagnostics);
@@ -654,6 +655,26 @@ fn check_unsupported_keywords(
         }
     }
 
+    for (symbol, help) in [
+        (
+            "//",
+            "Use `/`. Division on scores already rounds down, like Python's `//`.",
+        ),
+        ("**", "Use `^` for powers."),
+    ] {
+        if let Some(index) = trimmed.find(symbol).filter(|_| !trimmed.starts_with('/')) {
+            diagnostics.push(
+                SourceDiagnostic::error(
+                    "unsupported-python-syntax",
+                    line_number,
+                    indent + column_from_byte(trimmed, index),
+                    format!("`{symbol}` is not supported in Cobble"),
+                )
+                .with_help(help),
+            );
+        }
+    }
+
     if starts_with_keyword(trimmed, "async") {
         diagnostics.push(
             SourceDiagnostic::error(
@@ -670,10 +691,16 @@ fn check_unsupported_keywords(
 fn check_missing_block_colon(
     line: &str,
     trimmed: &str,
+    masked: &str,
     line_number: usize,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
     if trimmed.ends_with(':') || !looks_like_block_header(trimmed) {
+        return;
+    }
+    // An open bracket continues the header on the next line.
+    let opened = masked.matches(['(', '[', '{']).count();
+    if opened > masked.matches([')', ']', '}']).count() {
         return;
     }
 

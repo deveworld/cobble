@@ -3,7 +3,7 @@ use super::{
     output_safety::{ensure_no_symlinks_from, ensure_not_symlink},
 };
 use crate::config::CobbleConfig;
-use crate::diagnostics::{parse_source, FileSourceDiagnostics, SourceDiagnostic};
+use crate::diagnostics::{mask_non_code, parse_source, FileSourceDiagnostics, SourceDiagnostic};
 use crate::error::report_file_source_diagnostics;
 use crate::fs_safety::write_file_atomic;
 use std::fs;
@@ -238,7 +238,8 @@ fn format_source(source: &str) -> String {
                     });
                 }
             }
-            previous_code_allows_indent = trimmed_start.ends_with(':');
+            let code = mask_non_code(trimmed_start);
+            previous_code_allows_indent = code.trim_end().ends_with([':', '(', '[', '{']);
         }
     }
 
@@ -453,6 +454,27 @@ mod tests {
         let source = "\u{feff}def main():\r\n  /say windows\r\n\r\n";
 
         assert_eq!(format_source(source), "def main():\n    /say windows\n");
+    }
+
+    #[test]
+    fn keeps_comments_that_start_a_block_or_a_bracket_inside_it() {
+        let source = "\
+def main():  # entry
+    # first in the block
+    /say hi
+
+items = [  # numbers
+    # first in the list
+    1,
+]
+
+def other(
+    # first in the parameters
+    a,
+):
+    /say {a}
+";
+        assert_eq!(format_source(source), source);
     }
 
     #[test]

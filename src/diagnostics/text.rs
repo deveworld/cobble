@@ -277,7 +277,7 @@ pub(super) fn find_string_end(line: &str, quote: char, start: usize) -> Option<u
     None
 }
 
-pub(super) fn mask_non_code(line: &str) -> String {
+pub(crate) fn mask_non_code(line: &str) -> String {
     let mut output = String::with_capacity(line.len());
     let mut chars = line.char_indices().peekable();
     let mut quote = None;

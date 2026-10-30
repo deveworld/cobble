@@ -27,7 +27,9 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   storage path. List and string indexes may be literals, constants, or runtime
   integers such as `items[i]`, and a negative index counts from the end;
   `name[i]` of a string is a one-character string. Map keys may be
-  attributes, string literals, or runtime strings such as `config[key]`.
+  attributes, string literals, or runtime strings such as `config[key]`. A
+  key can hold spaces, dots, and colons, as in `prices["minecraft:diamond"]`;
+  only a runtime key can't hold a `"`.
 - A list or map is a value: assigning it to another variable or passing it to
   a function copies it, so a change through one name doesn't show through the
   other.
@@ -37,7 +39,11 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   program also sets to a value of another type, the value is kept as text and
   as a number.
 - Functions return integers only. Use storage or a module variable for other
-  results.
+  results. `return x > 3` and other conditions return 1 or 0.
+- `and` and `or` give 1 or 0 when used as a value, not one of their operands,
+  so `x = a or 5` is 1 when `a` is 7. A `logical-operator-value` warning marks
+  this for plain numbers.
+- `/` is floor division and `^` is power, in place of Python's `//` and `**`.
 - A bare expression such as `score + 1` produces no command and is rejected.
   Use an assignment, a call, a raw command, or `pass`.
 - `for` loops iterate `range(...)`, literal arrays, and storage-backed lists.

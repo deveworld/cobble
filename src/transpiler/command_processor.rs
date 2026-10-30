@@ -642,7 +642,7 @@ impl<'a> CommandProcessor<'a> {
             // Fallback for callers that cannot add helper functions: the
             // transpiler runs `say` text with variables through
             // `say_macro` instead, which keeps `say`'s own output.
-            let tellraw_cmd = format!("tellraw @a {}", say_message.trim());
+            let tellraw_cmd = format!("tellraw @a {}", serde_json::Value::from(say_message.trim()));
             return self.convert_to_tellraw_json(&tellraw_cmd, vars);
         }
 
@@ -702,6 +702,10 @@ impl<'a> CommandProcessor<'a> {
         // A JSON object keeps its styling, such as
         // {"text":"Hello {player}","color":"gold","bold":true}.
         let mut message = message;
+        if let Some(text) = quoted_message(trimmed) {
+            let components = self.plain_text_components(&text, &var_names);
+            return Ok(assemble(&format!("[{}]", components.join(","))));
+        }
         if trimmed.starts_with('{') {
             if let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 if let Some(text) = json_obj.get("text").and_then(|v| v.as_str()) {
@@ -971,7 +975,7 @@ pub(in crate::transpiler) fn unknown_selector(command: &str) -> Option<String> {
                 }
                 word_start = index + 1;
             }
-            '@' => {
+            '@' if index == word_start => {
                 let name: String = chars[position..]
                     .iter()
                     .map(|(_, c)| *c)
@@ -1023,8 +1027,13 @@ fn in_text_string(chars: &[char]) -> bool {
         return false;
     };
     let before: String = chars[..open].iter().collect();
-    let before = before.trim_end();
+    let before = before.trim();
     if before.ends_with('[') || before.ends_with(',') {
+        return true;
+    }
+    // The whole message: `tellraw @a "text"`, `title @a title "text"`.
+    let words = before.split(' ').count();
+    if before.starts_with("tellraw ") && words == 2 || before.starts_with("title ") && words == 3 {
         return true;
     }
     let Some(key) = before.strip_suffix(':') else {
@@ -1051,6 +1060,21 @@ fn is_inside_quotes(chars: &[char]) -> bool {
     }
 
     quote_count % 2 == 1
+}
+
+/// The text of a message that is one quoted string, which Minecraft reads as
+/// a text component and shows without its quotes.
+fn quoted_message(message: &str) -> Option<String> {
+    if let Some(text) = message
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+    {
+        return Some(text.to_string());
+    }
+    match serde_json::from_str(message) {
+        Ok(serde_json::Value::String(text)) => Some(text),
+        _ => None,
+    }
 }
 
 /// Extract the contents of the double-quoted string that `after_text` starts

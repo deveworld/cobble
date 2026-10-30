@@ -5,11 +5,21 @@ use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::symbols::{FunctionTable, Symbols};
 use crate::transpiler::{
     escape_quoted, record_warning, score_value_warning, FunctionReturnKind, GeneratedCommandKind,
-    SourceLocation, StoragePathPlan, TranspileError, TranspileWarning, MAX_POWER_EXPONENT,
+    SourceLocation, StoragePathPlan, TranspileError, TranspileWarning, Transpiler,
+    MAX_POWER_EXPONENT,
 };
 use std::cell::RefCell;
 
 /// Lowers an expression into commands that compute it into a score.
+/// The error for a comparison or `and`/`or` inside an arithmetic expression.
+fn unsupported_operator(op: &BinaryOp) -> TranspileError {
+    format!(
+        "`{}` gives 1 or 0 only as a whole condition or value, as in `flag = a > b`, not inside arithmetic. Store it in a variable first.",
+        Transpiler::binary_op_source_key(op)
+    )
+    .into()
+}
+
 pub struct ExpressionEvaluator<'a> {
     pub(in crate::transpiler) data_pack: &'a mut DataPack,
     pub(in crate::transpiler) symbols: &'a Symbols,
@@ -959,7 +969,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     }
                 }
             }
-            _ => return Err(format!("Unsupported binary operation: {:?}", op).into()),
+            _ => return Err(unsupported_operator(op)),
         }
         Ok(())
     }
@@ -991,7 +1001,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 );
                 return Ok(());
             }
-            _ => return Err(format!("Unsupported binary operation: {:?}", op).into()),
+            _ => return Err(unsupported_operator(op)),
         };
         commands.push(format!(
             "scoreboard players operation {} {} {} {} {}",

@@ -1,13 +1,27 @@
-use crate::ast::{CobbleType, Expression, FunctionDef};
+use crate::ast::{CobbleType, Expression, FunctionDef, IfStatement, Statement};
 use crate::transpiler::function_context::unbound_local_message;
 use crate::transpiler::score_holders::{rename_holders, written_holders};
 use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{
     FunctionContext, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, ReturnContext,
-    SourceLocation, TranspileError, Transpiler,
+    SourceLocation, TranspileError, TranspileErrorKind, Transpiler,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
+
+/// `giveReward` as `give_reward`.
+fn snake_case(name: &str) -> String {
+    let mut snake = String::new();
+    let mut after_lowercase = false;
+    for ch in name.chars() {
+        if ch.is_ascii_uppercase() && after_lowercase {
+            snake.push('_');
+        }
+        after_lowercase = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        snake.push(ch.to_ascii_lowercase());
+    }
+    snake
+}
 
 impl Transpiler {
     pub(in crate::transpiler) fn process_function_def(
@@ -27,6 +41,17 @@ impl Transpiler {
             .current_statement_source
             .clone()
             .or_else(|| self.function_def_source(func));
+        if func.name.contains(|ch: char| ch.is_ascii_uppercase()) {
+            return Err(TranspileError::new(
+                TranspileErrorKind::Semantic,
+                format!(
+                    "Function name `{}` has capital letters, which Minecraft function paths can't use. Rename it, for example to `{}`.",
+                    func.name,
+                    snake_case(&func.name)
+                ),
+            )
+            .with_location_if_missing(def_source));
+        }
 
         // Save previous function context
         let previous_function = self.current_function.take();
@@ -462,6 +487,17 @@ impl Transpiler {
             return Err("return can only be used inside a function"
                 .to_string()
                 .into());
+        }
+
+        if let Some(condition) = expr.filter(|expr| Self::is_runtime_condition_expression(expr)) {
+            // `return x > 3` gives 1 or 0.
+            self.warn_logical_operator_value(condition);
+            return self.process_if(&IfStatement {
+                condition: condition.clone(),
+                then_branch: vec![Statement::Return(Some(Expression::Number(1.0)))],
+                elif_branches: Vec::new(),
+                else_branch: Some(vec![Statement::Return(Some(Expression::Number(0.0)))]),
+            });
         }
 
         let mut commands = Vec::new();

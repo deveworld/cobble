@@ -189,7 +189,7 @@ pub(in crate::transpiler) trait StoragePathOps {
                         Some(base_path.append_dynamic_key(Expression::Number(*n)))
                     }
                     Expression::Number(n) => Some(base_path.append_static_index(*n as i32)),
-                    Expression::String(s) => Some(base_path.append_field(s)),
+                    Expression::String(s) => Some(base_path.append_key(s)),
                     Expression::Identifier(name) => {
                         if self.should_use_dynamic_storage_key(base_type.clone(), index)
                             && self
@@ -970,6 +970,17 @@ impl StoragePathPlan {
         }
     }
 
+    /// Appends a map key, quoted when it isn't a plain name.
+    pub(in crate::transpiler) fn append_key(self, key: &str) -> Self {
+        match self {
+            Self::Static(path) => Self::Static(storage_child_path(&path, key)),
+            Self::Dynamic { template, args } => Self::Dynamic {
+                template: storage_child_path(&template, key),
+                args,
+            },
+        }
+    }
+
     pub(in crate::transpiler) fn append_static_index(self, index: i32) -> Self {
         match self {
             Self::Static(path) => Self::Static(format!("{}[{}]", path, index)),
@@ -1009,7 +1020,8 @@ impl StoragePathPlan {
             kind: DynamicStoragePathArgKind::Key,
         });
         Self::Dynamic {
-            template: format!("{}.$({})", template, placeholder),
+            // The value may hold spaces, dots, and colons, as in `prices[id]`.
+            template: format!("{}.\"$({})\"", template, placeholder),
             args,
         }
     }

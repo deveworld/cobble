@@ -379,13 +379,14 @@ impl Sim {
                     let (kind, after) = after.split_once(' ').expect("condition kind");
                     if kind == "data" {
                         // `data storage <id> <path>`: passes when the path exists.
-                        let tokens: Vec<&str> = after.splitn(4, ' ').collect();
+                        let tokens: Vec<&str> = after.splitn(3, ' ').collect();
                         assert_eq!(tokens[0], "storage", "only storage data conditions: {rest}");
-                        let present = self.storage_get(tokens[2]).is_some();
+                        let (path, after_path) = split_path(tokens[2]);
+                        let present = self.storage_get(path).is_some();
                         if present == negate {
                             contexts.clear();
                         }
-                        rest = tokens.get(3).copied().expect("execute chain continues");
+                        rest = after_path;
                         continue;
                     }
                     assert_eq!(kind, "score", "unsupported execute condition: {rest}");
@@ -423,7 +424,7 @@ impl Sim {
                         .expect("execute chain continues");
                 }
                 "store" => {
-                    let tokens: Vec<&str> = after.splitn(7, ' ').collect();
+                    let tokens: Vec<&str> = after.split(' ').collect();
                     let success = match tokens[0] {
                         "result" => false,
                         "success" => true,
@@ -439,12 +440,15 @@ impl Sim {
                             rest = after.splitn(5, ' ').nth(4).expect("store chain");
                         }
                         "storage" => {
+                            let target = after.splitn(4, ' ').nth(3).expect("store path");
+                            let (path, after_path) = split_path(target);
+                            let tokens: Vec<&str> = after_path.splitn(3, ' ').collect();
                             stores.push(Store::Storage {
-                                path: tokens[3].to_string(),
-                                scale: tokens[5].parse().expect("store scale"),
+                                path: path.to_string(),
+                                scale: tokens[1].parse().expect("store scale"),
                                 success,
                             });
-                            rest = after.splitn(7, ' ').nth(6).expect("store chain");
+                            rest = tokens[2];
                         }
                         other => panic!("unsupported store target `{other}`"),
                     }
@@ -552,7 +556,7 @@ impl Sim {
     fn exec_data(&mut self, rest: &str) -> Option<i32> {
         if let Some(after) = rest.strip_prefix("modify storage ") {
             let (_, after) = after.split_once(' ').expect("storage id");
-            let (path, after) = after.split_once(' ').expect("storage path");
+            let (path, after) = split_path(after);
             let (append, source) = match after.split_once(' ') {
                 Some(("set", source)) => (false, source),
                 Some(("append", source)) => (true, source),
@@ -563,11 +567,11 @@ impl Sim {
             } else if let Some(source) = source.strip_prefix("from storage ") {
                 let (_, source_path) = source.split_once(' ').expect("source path");
                 // Copying from a missing path fails the command.
-                self.storage_get(source_path.trim())?.clone()
+                self.storage_get(split_path(source_path.trim()).0)?.clone()
             } else if let Some(source) = source.strip_prefix("string storage ") {
                 let (_, source) = source.split_once(' ').expect("source path");
-                let mut parts = source.split_whitespace();
-                let source_path = parts.next().expect("source path");
+                let (source_path, offsets) = split_path(source);
+                let mut parts = offsets.split_whitespace();
                 let mut offset = || {
                     parts
                         .next()
@@ -618,10 +622,8 @@ impl Sim {
         }
         if let Some(after) = rest.strip_prefix("get storage ") {
             let (_, path_and_scale) = after.split_once(' ').expect("storage path");
-            let (path, scale) = match path_and_scale.trim().split_once(' ') {
-                Some((path, scale)) => (path, Some(scale.parse::<f64>().expect("data get scale"))),
-                None => (path_and_scale.trim(), None),
-            };
+            let (path, scale) = split_path(path_and_scale.trim());
+            let scale = (!scale.is_empty()).then(|| scale.parse::<f64>().expect("data get scale"));
             let value = self
                 .storage_get(path)
                 .unwrap_or_else(|| panic!("data get of missing path {path}"));
@@ -833,6 +835,25 @@ enum Segment {
     Index(i64),
 }
 
+/// Splits a storage path from the arguments after it. A quoted key can hold
+/// spaces.
+fn split_path(text: &str) -> (&str, &str) {
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = in_quotes;
+        } else if ch == '"' {
+            in_quotes = !in_quotes;
+        } else if ch == ' ' && !in_quotes {
+            return (&text[..index], text[index..].trim());
+        }
+    }
+    (text, "")
+}
+
 fn parse_path(path: &str) -> Vec<Segment> {
     let mut segments = Vec::new();
     let chars: Vec<char> = path.trim().chars().collect();
@@ -848,6 +869,9 @@ fn parse_path(path: &str) -> Vec<Segment> {
             '"' => {
                 i += 1;
                 while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\' {
+                        i += 1;
+                    }
                     current.push(chars[i]);
                     i += 1;
                 }

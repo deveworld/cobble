@@ -2973,6 +2973,37 @@ fn expression_references_are_known(
         })
 }
 
+/// `text` with each comment replaced by spaces, so offsets stay the same.
+fn blank_comments(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut quote = None;
+    let mut escaped = false;
+    let mut in_comment = false;
+    for ch in text.chars() {
+        if in_comment {
+            in_comment = ch != '\n';
+        } else if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+        } else if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+        } else if ch == '#' {
+            in_comment = true;
+        }
+        if in_comment {
+            result.extend(std::iter::repeat_n(' ', ch.len_utf8()));
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 fn strip_comment_preserving_strings(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     let mut quote = None;
@@ -4153,6 +4184,7 @@ fn quoted_string_literal_at(text: &str, offset: usize) -> Option<&str> {
 }
 
 fn array_literal_item_spans(text: &str) -> Vec<ArgumentSpan> {
+    let text = &blank_comments(text);
     let mut result = Vec::new();
     let mut start = None;
     let mut index = 0usize;

@@ -2,7 +2,7 @@ use crate::commands::find_config;
 use crate::commands::link::linked_output_path;
 use crate::commands::output_safety::{
     build_manifest_path, ensure_no_symlink_descendants, ensure_not_symlink,
-    project_marker_identity, read_build_manifest, require_manifest_ownership,
+    project_marker_identity, read_build_manifest, require_output_ownership,
 };
 use crate::config::CobbleConfig;
 use serde_json::Value;
@@ -179,7 +179,13 @@ fn inspect_clean_target(
     let manifest_path = build_manifest_path(output_dir);
     let manifest = read_build_manifest(&manifest_path)
         .and_then(|manifest| {
-            require_manifest_ownership(&manifest, expected_namespace, expected_project_id)?;
+            require_output_ownership(
+                &manifest,
+                output_dir,
+                config_dir,
+                expected_namespace,
+                expected_project_id,
+            )?;
             Ok(manifest)
         })
         .map_err(|error| format!("Refusing to clean {}: {}", output_dir.display(), error))?;

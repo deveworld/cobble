@@ -2,6 +2,7 @@ use crate::commands::link::{link_state_path, read_link_state, validate_link_stat
 use crate::commands::output_safety::{
     build_manifest_path, ensure_no_symlink_descendants, ensure_no_symlinks_from,
     ensure_not_symlink, project_marker_identity, read_build_manifest, require_manifest_ownership,
+    require_output_ownership,
 };
 use crate::commands::validate::{
     is_auto_download_commands_json_path, resolve_commands_json, DEFAULT_COMMANDS_JSON,
@@ -425,6 +426,7 @@ fn inspect_output_report(config: &ConfigReport) -> OutputReport {
     let (_, expected_project_id) = project_marker_identity(config_dir);
     let marker = inspect_output_marker(
         &output_path,
+        Some(config_dir),
         config
             .project
             .as_ref()
@@ -451,6 +453,7 @@ fn inspect_output_report(config: &ConfigReport) -> OutputReport {
 
 fn inspect_output_marker(
     output_path: &Path,
+    project_root: Option<&Path>,
     expected_namespace: Option<&str>,
     expected_project_id: Option<&str>,
 ) -> OutputMarkerReport {
@@ -486,9 +489,13 @@ fn inspect_output_marker(
                     .get("project_id")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_string);
-                if let Err(error) =
-                    require_manifest_ownership(&manifest, expected_namespace, expected_project_id)
-                {
+                if let Err(error) = require_output_ownership(
+                    &manifest,
+                    output_path,
+                    project_root,
+                    expected_namespace,
+                    expected_project_id,
+                ) {
                     // A marker owned by another project is the same hazard for
                     // the output directory as it is for a linked pack.
                     OutputMarkerReport {
@@ -1060,7 +1067,8 @@ mod tests {
         )
         .unwrap();
 
-        let marker = inspect_output_marker(&output_dir, Some("example"), Some("this-project"));
+        let marker =
+            inspect_output_marker(&output_dir, None, Some("example"), Some("this-project"));
 
         assert_eq!(marker.status, "error");
         assert!(marker.message.contains("does not match"));
