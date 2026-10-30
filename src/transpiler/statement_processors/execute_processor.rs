@@ -1,8 +1,10 @@
 use crate::ast::*;
 use crate::transpiler::command_processor::expand_selector_aliases;
+use crate::transpiler::condition_lowering::RAW_CONDITION_KEYWORDS;
 use crate::transpiler::condition_translator::{
     condition_clauses, negate_clause, TranslatedCondition,
 };
+use crate::transpiler::raw_minecraft_condition_verdict;
 use crate::transpiler::{
     FunctionCapture, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, TranspileError,
     Transpiler,
@@ -142,7 +144,22 @@ impl Transpiler {
             deferred: Vec::new(),
             has_macro_params: false,
         };
-        for modifier in modifiers {
+        for (index, modifier) in modifiers.iter().enumerate() {
+            // `if x in items:` reads as `if x` and the modifier `in items`.
+            if let (
+                ExecuteModifier::IfRaw(value) | ExecuteModifier::UnlessRaw(value),
+                Some(ExecuteModifier::In(container)),
+            ) = (modifier, modifiers.get(index + 1))
+            {
+                if raw_minecraft_condition_verdict(value.trim_start()).is_none() {
+                    return Err(format!(
+                        "Unsupported condition `{} in {}`: Cobble has no `in` operator. Compare the items one by one, or keep a flag or a count for the value.",
+                        value.trim(),
+                        container.trim()
+                    )
+                    .into());
+                }
+            }
             match modifier {
                 ExecuteModifier::As(selector) => {
                     self.push_execute_target(&mut chain, "as", selector)?
@@ -211,6 +228,7 @@ impl Transpiler {
             )
             .into());
         }
+        Self::check_raw_condition(condition)?;
         Self::push_raw_if_condition(chain, condition);
         Ok(())
     }
@@ -234,8 +252,28 @@ impl Transpiler {
             )
             .into());
         }
+        Self::check_raw_condition(condition)?;
         Self::push_raw_unless_condition(chain, condition);
         Ok(())
+    }
+
+    /// A condition that is neither a Cobble expression nor starts with a
+    /// Minecraft condition (`entity`, `score`, `block`, ...) would reach the
+    /// pack as an `execute` command Minecraft can't load, as `2 in items`
+    /// would.
+    fn check_raw_condition(condition: &str) -> Result<(), TranspileError> {
+        if raw_minecraft_condition_verdict(condition.trim_start()).is_some() {
+            return Ok(());
+        }
+        let keywords = RAW_CONDITION_KEYWORDS
+            .iter()
+            .map(|keyword| keyword.trim_end())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(format!(
+            "Unsupported condition `{condition}`. A condition compares numbers, tests a value, or starts with a Minecraft condition: {keywords}."
+        )
+        .into())
     }
 
     /// Translate an `if`/`unless` condition that parses as a Python

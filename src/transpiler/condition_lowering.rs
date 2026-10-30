@@ -5,7 +5,7 @@ use crate::transpiler::{FunctionCapture, TranspileError, Transpiler};
 
 /// Execute-condition keywords that start a raw Minecraft condition
 /// (`entity @a[...]`, `score x temp matches 5`, `data storage ...`).
-pub(in crate::transpiler) const RAW_CONDITION_KEYWORDS: [&str; 11] = [
+pub(in crate::transpiler) const RAW_CONDITION_KEYWORDS: [&str; 13] = [
     "score ",     // "score <target> <objective> matches/</>/>=/<=/= ..."
     "entity ",    // "entity <selector>"
     "block ",     // "block <pos> <block>"
@@ -17,6 +17,8 @@ pub(in crate::transpiler) const RAW_CONDITION_KEYWORDS: [&str; 11] = [
     "items ",     // "items <source> <slots> <item>"
     "function ",  // "function <function/tag>"
     "loaded ",    // "loaded <pos>"
+    "slots ",     // "slots <source> <slots> <count>"
+    "stopwatch ", // "stopwatch <id> <range>"
 ];
 
 /// `Some(true)` for a raw Minecraft condition, `Some(false)` for a Python

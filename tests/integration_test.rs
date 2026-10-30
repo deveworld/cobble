@@ -4525,10 +4525,11 @@ def test():
     let content = read_function(&output_dir, "test");
 
     // Each styled component keeps its style, and the variable values sit in
-    // its `extra` so they inherit that style.
+    // its `extra` so they inherit that style. A string is interpreted so it
+    // shows without quotes.
     assert!(
         content.contains(
-            r##"tellraw @a [{"color":"gold","extra":[{"score":{"name":"#test.score","objective":"cobble.vars"}}],"text":"Score: "},{"extra":[{"nbt":"locals.test.message","storage":"cobble:global"}],"italic":true,"text":" Message: "}]"##
+            r##"tellraw @a [{"color":"gold","extra":[{"score":{"name":"#test.score","objective":"cobble.vars"}}],"text":"Score: "},{"extra":[{"interpret":true,"nbt":"locals.test.message","storage":"cobble:global"}],"italic":true,"text":" Message: "}]"##
         ),
         "{content}"
     );

@@ -128,8 +128,22 @@ fn check_loot_entry(entry: &Value, path: &str, problems: &mut Vec<String>) {
 }
 
 /// Advancements: a visible root advancement (`display` without `parent`)
-/// must set `display.background`.
+/// must set `display.background`, and a criterion's `player` and `entity`
+/// conditions are one predicate.
 pub(super) fn check_advancement(json: &Value, problems: &mut Vec<String>) {
+    if let Some(criteria) = json.get("criteria").and_then(Value::as_object) {
+        for (name, criterion) in criteria {
+            let Some(conditions) = criterion.get("conditions") else {
+                continue;
+            };
+            for field in ["player", "entity"] {
+                if let Some(condition) = conditions.get(field) {
+                    let path = format!("criteria.{name}.conditions.{field}");
+                    check_entity_condition(condition, &path, problems);
+                }
+            }
+        }
+    }
     let Some(display) = json.get("display") else {
         return;
     };
@@ -138,6 +152,32 @@ pub(super) fn check_advancement(json: &Value, problems: &mut Vec<String>) {
             "a root advancement with `display` must set `display.background` (or give it a `parent`); rejected"
                 .to_string(),
         );
+    }
+}
+
+/// A `player` or `entity` condition of an advancement criterion is one
+/// predicate with a `type`. A list of predicates and a bare entity predicate
+/// were the older forms.
+fn check_entity_condition(condition: &Value, path: &str, problems: &mut Vec<String>) {
+    if let Some(list) = condition.as_array() {
+        problems.push(format!(
+            "`{path}` is now one predicate, not a list (combine several with \"type\": \"minecraft:all_of\"); rejected"
+        ));
+        for (index, predicate) in list.iter().enumerate() {
+            check_predicate(predicate, &format!("{path}[{index}]"), problems);
+        }
+        return;
+    }
+    if !condition.is_object() || has(condition, "type") {
+        check_predicate(condition, path, problems);
+        return;
+    }
+    if has(condition, "condition") {
+        check_predicate(condition, path, problems);
+    } else {
+        problems.push(format!(
+            "`{path}` is now a predicate with a `type`; wrap an entity predicate as {{\"type\": \"minecraft:entity_properties\", \"entity\": \"this\", \"predicate\": {{...}}}}; rejected"
+        ));
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::ast::Expression;
+use crate::ast::{CobbleType, Expression};
 use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{escape_quoted, TranspileError};
 use std::collections::HashMap;
@@ -28,6 +28,11 @@ pub enum SayMacroSource {
     /// A parameter of the current function, read from `args`.
     Parameter,
 }
+
+/// Storage paths in `<namespace>:global` where a text command finds the
+/// text of a value of unknown type, and a list or a map that has none.
+const TEXT_COPY: &str = "_text";
+const SNBT_COPY: &str = "_text_snbt";
 
 /// A command after placeholder substitution.
 struct Substituted {
@@ -95,10 +100,28 @@ impl<'a> CommandProcessor<'a> {
             result = format!("${}", result);
         }
 
-        Ok(expand_selector_aliases(
-            &result,
-            &self.symbols.selector_aliases,
-        ))
+        if let Some(alias) = refined_alias(&result, &self.symbols.selector_aliases) {
+            return Err(format!(
+                "Selector alias `@{alias}` can't take more arguments in `[...]`. Write the whole selector, or define another alias with them."
+            )
+            .into());
+        }
+        let expanded = expand_selector_aliases(&result, &self.symbols.selector_aliases);
+        if let Some(selector) = unknown_selector(expanded.trim_start_matches('$')) {
+            let name = &selector[1..];
+            let hint = if self.symbols.entity_templates.contains_key(name) {
+                format!(
+                    " `{selector}` is an entity template, which only works with `create`; \
+                     add a selector alias `@Name = @e[...]` to target its entities."
+                )
+            } else {
+                " Define it with `@Name = @selector[...]` or use a vanilla selector \
+                 (@a, @e, @p, @r, @s, @n)."
+                    .to_string()
+            };
+            return Err(format!("Unknown selector `{selector}`.{hint}").into());
+        }
+        Ok(expanded)
     }
 
     /// Plans a `say` command whose text shows Cobble variables. `say` adds
@@ -418,10 +441,7 @@ impl<'a> CommandProcessor<'a> {
 
     fn variable_text_component(&self, var_name: &str) -> serde_json::Value {
         if let Some(storage_path) = self.symbols.variable_storage_paths.get(var_name) {
-            serde_json::json!({
-                "nbt": storage_path,
-                "storage": format!("{}:global", self.namespace)
-            })
+            self.storage_text_component(var_name, storage_path)
         } else {
             let objective = self
                 .symbols
@@ -436,6 +456,76 @@ impl<'a> CommandProcessor<'a> {
                 }
             })
         }
+    }
+
+    /// The text component that shows a storage-backed variable. An `nbt`
+    /// component quotes a string unless it interprets the value, and an
+    /// interpreted number or list shows nothing, so a string is interpreted
+    /// and a list or a map shows as SNBT. A value of unknown type shows the
+    /// copies [`Self::text_copy_commands`] makes before the command.
+    fn storage_text_component(&self, var_name: &str, storage_path: &str) -> serde_json::Value {
+        let storage = format!("{}:global", self.namespace);
+        match self.symbols.variable_types.get(var_name) {
+            Some(CobbleType::String) => serde_json::json!({
+                "nbt": storage_path,
+                "storage": storage,
+                "interpret": true
+            }),
+            Some(CobbleType::List | CobbleType::Map) => serde_json::json!({
+                "nbt": storage_path,
+                "storage": storage
+            }),
+            _ => serde_json::json!({
+                "text": "",
+                "extra": [
+                    {
+                        "nbt": format!("{TEXT_COPY}.{var_name}"),
+                        "storage": storage,
+                        "interpret": true
+                    },
+                    {"nbt": format!("{SNBT_COPY}.{var_name}"), "storage": storage}
+                ]
+            }),
+        }
+    }
+
+    /// Commands that run before a text command showing a storage-backed
+    /// variable of unknown type: a number or a string gets its text in
+    /// `_text.<name>`, and a list or a map, which has no text, gets a copy
+    /// in `_text_snbt.<name>` (see [`Self::storage_text_component`]).
+    pub fn text_copy_commands(&self, cmd: &str) -> Result<Vec<String>, TranspileError> {
+        let trimmed = cmd.trim();
+        if !["tellraw ", "title ", "say "]
+            .iter()
+            .any(|command| trimmed.starts_with(command))
+        {
+            return Ok(Vec::new());
+        }
+        let Substituted { vars, .. } = self.substitute_placeholders(cmd, false)?;
+        let storage = format!("{}:global", self.namespace);
+        let mut copied: Vec<&str> = Vec::new();
+        let mut commands = Vec::new();
+        for (_, _, name) in &vars {
+            let Some(path) = self.symbols.variable_storage_paths.get(name) else {
+                continue;
+            };
+            if copied.contains(&name.as_str())
+                || matches!(
+                    self.symbols.variable_types.get(name),
+                    Some(CobbleType::String | CobbleType::List | CobbleType::Map)
+                )
+            {
+                continue;
+            }
+            copied.push(name);
+            commands.extend([
+                format!("data remove storage {storage} {TEXT_COPY}.{name}"),
+                format!("data remove storage {storage} {SNBT_COPY}.{name}"),
+                format!("data modify storage {storage} {TEXT_COPY}.{name} set string storage {storage} {path}"),
+                format!("execute unless data storage {storage} {TEXT_COPY}.{name} run data modify storage {storage} {SNBT_COPY}.{name} set from storage {storage} {path}"),
+            ]);
+        }
+        Ok(commands)
     }
 
     fn text_contains_any_var(text: &str, var_names: &[String]) -> bool {
@@ -690,10 +780,10 @@ impl<'a> CommandProcessor<'a> {
                 ));
             }
             if let Some(storage_path) = self.symbols.variable_storage_paths.get(var_name) {
-                json_components.push(format!(
-                    "{{\"nbt\":\"{}\",\"storage\":\"{}:global\"}}",
-                    storage_path, self.namespace
-                ));
+                json_components.push(
+                    self.storage_text_component(var_name, storage_path)
+                        .to_string(),
+                );
             } else {
                 // The variable's name is its fake player.
                 let objective = self
@@ -735,9 +825,47 @@ pub(crate) fn expand_selector_aliases(text: &str, aliases: &HashMap<String, Stri
 
     let mut result = String::with_capacity(text.len());
     let mut in_string = false;
+    // Inside the string value of a `selector` text component, where an alias
+    // names entities as it does outside strings.
+    let mut in_selector_string = false;
     let mut escape_next = false;
     let mut chars = text.char_indices().peekable();
     while let Some((index, ch)) = chars.next() {
+        if escape_next {
+            escape_next = false;
+        } else if ch == '\\' {
+            escape_next = true;
+        } else if ch == '"' {
+            in_string = !in_string;
+            in_selector_string = in_string && follows_selector_key(&text[..index]);
+        } else if ch == '@' && (!in_string || in_selector_string) {
+            let name_end = text[index + 1..]
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .map_or(text.len(), |offset| index + 1 + offset);
+            if let Some(selector) = aliases.get(&text[index + 1..name_end]) {
+                if in_string {
+                    result.push_str(&escape_quoted(selector));
+                } else {
+                    result.push_str(selector);
+                }
+                while chars.peek().is_some_and(|(next, _)| *next < name_end) {
+                    chars.next();
+                }
+                continue;
+            }
+        }
+        result.push(ch);
+    }
+    result
+}
+
+/// The first alias in `text` outside strings that is followed by `[`, as
+/// in `@Players[distance=..5]`. Expanding it would give `@a[...][...]`,
+/// which Minecraft can't parse.
+fn refined_alias(text: &str, aliases: &HashMap<String, String>) -> Option<String> {
+    let mut in_string = false;
+    let mut escape_next = false;
+    for (index, ch) in text.char_indices() {
         if escape_next {
             escape_next = false;
         } else if ch == '\\' {
@@ -748,17 +876,95 @@ pub(crate) fn expand_selector_aliases(text: &str, aliases: &HashMap<String, Stri
             let name_end = text[index + 1..]
                 .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                 .map_or(text.len(), |offset| index + 1 + offset);
-            if let Some(selector) = aliases.get(&text[index + 1..name_end]) {
-                result.push_str(selector);
-                while chars.peek().is_some_and(|(next, _)| *next < name_end) {
-                    chars.next();
-                }
-                continue;
+            let name = &text[index + 1..name_end];
+            if aliases.contains_key(name) && text[name_end..].starts_with('[') {
+                return Some(name.to_string());
             }
         }
-        result.push(ch);
     }
-    result
+    None
+}
+
+/// Whether `before` ends with a `selector` key, as in `{"selector":` or
+/// the SNBT `{selector:`.
+fn follows_selector_key(before: &str) -> bool {
+    let Some(key) = before.trim_end().strip_suffix(':') else {
+        return false;
+    };
+    let key = key.trim_end();
+    key.strip_suffix("\"selector\"")
+        .or_else(|| key.strip_suffix("selector"))
+        .is_some_and(|rest| matches!(rest.trim_end().chars().last(), Some('{' | ',')))
+}
+
+/// Commands whose text after the command name is a chat message, where
+/// `@Name` is plain text. `msg`, `tell`, and `w` take a target first.
+const MESSAGE_COMMANDS: &[&str] = &["say", "me", "teammsg", "tm"];
+const PRIVATE_MESSAGE_COMMANDS: &[&str] = &["msg", "tell", "w"];
+
+/// The first `@Name` in `command` outside strings and chat messages that
+/// is not a vanilla selector (`@a`, `@e`, `@p`, `@r`, `@s`, `@n`).
+/// Minecraft can't parse such a command, so the whole function would fail
+/// to load.
+pub(in crate::transpiler) fn unknown_selector(command: &str) -> Option<String> {
+    let mut quote: Option<char> = None;
+    let mut escape_next = false;
+    let mut word_start = 0;
+    let mut previous_word = "";
+    let mut skip_words = 0usize;
+    let chars: Vec<(usize, char)> = command.char_indices().collect();
+    let mut position = 0;
+    while position < chars.len() {
+        let (index, ch) = chars[position];
+        position += 1;
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if let Some(open) = quote {
+            if ch == '\\' {
+                escape_next = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            ' ' => {
+                let word = &command[word_start..index];
+                if !word.is_empty() {
+                    let starts_command = word_start == 0 || previous_word == "run";
+                    if starts_command && MESSAGE_COMMANDS.contains(&word) {
+                        return None;
+                    }
+                    if starts_command && PRIVATE_MESSAGE_COMMANDS.contains(&word) {
+                        // The target is checked; the message after it isn't.
+                        skip_words = 1;
+                    } else if skip_words > 0 {
+                        skip_words -= 1;
+                        if skip_words == 0 {
+                            return None;
+                        }
+                    }
+                    previous_word = word;
+                }
+                word_start = index + 1;
+            }
+            '@' => {
+                let name: String = chars[position..]
+                    .iter()
+                    .map(|(_, c)| *c)
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if !matches!(name.as_str(), "a" | "e" | "p" | "r" | "s" | "n") {
+                    return Some(format!("@{name}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether the position right after `chars` falls inside an unterminated

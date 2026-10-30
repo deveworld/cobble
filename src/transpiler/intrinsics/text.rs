@@ -1,4 +1,5 @@
 use crate::ast::Expression;
+use crate::transpiler::command_processor::CommandProcessor;
 use crate::transpiler::{TranspileError, Transpiler};
 
 pub(in crate::transpiler) fn validate_text_color(color: &str) -> Result<(), TranspileError> {
@@ -133,6 +134,14 @@ impl Transpiler {
             }
             _ => return Err(format!("Unknown text function: text.{}", method).into()),
         };
-        self.push_current_command(command)
+        // The text takes `{name}` placeholders as a raw `tellraw` does.
+        let processor = CommandProcessor {
+            namespace: self.data_pack.namespace.clone(),
+            current_params: &self.current_context.params,
+            symbols: &self.symbols,
+        };
+        let mut commands = processor.text_copy_commands(&command)?;
+        commands.push(processor.process_command_string(&command)?);
+        self.push_current_commands(commands)
     }
 }

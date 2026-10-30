@@ -719,6 +719,18 @@ impl<'a> ExpressionEvaluator<'a> {
         target_obj: &str,
     ) -> Result<Vec<String>, TranspileError> {
         let Some(path_plan) = self.resolve_storage_path_plan(expr) else {
+            if let Expression::Attribute(base, field) = expr {
+                if let Expression::Identifier(module) = &**base {
+                    if !self.symbols.variable_storage_paths.contains_key(module)
+                        && self.symbols.module_variables.contains(field)
+                    {
+                        return Err(format!(
+                            "`{module}.{field}` names a variable of the module `{module}`, which can't be read through the module name. Import it with `from {module} import {field}` and use `{field}`."
+                        )
+                        .into());
+                    }
+                }
+            }
             let message = if matches!(expr, Expression::Subscript(..)) {
                 "Subscript base must resolve to a storage path (list/map)."
             } else {

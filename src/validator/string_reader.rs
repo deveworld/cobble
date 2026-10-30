@@ -4,6 +4,7 @@
 pub struct StringReader {
     input: Vec<char>,
     cursor: usize,
+    macro_line: bool,
 }
 
 impl StringReader {
@@ -11,7 +12,36 @@ impl StringReader {
         Self {
             input: input.chars().collect(),
             cursor: 0,
+            macro_line: false,
         }
+    }
+
+    /// A reader for a macro line without its `$`. Its `$(name)` placeholders
+    /// get their values when the function runs.
+    pub fn for_macro_line(input: &str) -> Self {
+        Self {
+            macro_line: true,
+            ..Self::new(input)
+        }
+    }
+
+    pub fn is_macro_line(&self) -> bool {
+        self.macro_line
+    }
+
+    /// Skips the rest of the current token if it holds a `$(name)`
+    /// placeholder, as in `kills_$(mob)`.
+    pub fn skip_token_with_macro(&mut self) -> bool {
+        let mut end = self.cursor;
+        while end < self.input.len() && self.input[end] != ' ' {
+            end += 1;
+        }
+        let token: String = self.input[self.cursor..end].iter().collect();
+        if !token.contains("$(") {
+            return false;
+        }
+        self.cursor = end;
+        true
     }
 
     pub fn cursor(&self) -> usize {

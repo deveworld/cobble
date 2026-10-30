@@ -677,7 +677,7 @@ impl Sim {
                 .map(|item| self.render_text(item, ctx))
                 .collect(),
             Value::Object(map) => {
-                if let Some(text) = map.get("text") {
+                let mut text = if let Some(text) = map.get("text") {
                     text.as_str().unwrap_or_default().to_string()
                 } else if let Some(score) = map.get("score") {
                     let holder = self.holder(score["name"].as_str().unwrap(), ctx);
@@ -685,14 +685,24 @@ impl Sim {
                         .map(|v| v.to_string())
                         .unwrap_or_default()
                 } else if let Some(path) = map.get("nbt") {
-                    match self.storage_get(path.as_str().unwrap()) {
-                        Some(Value::String(s)) => s.clone(),
-                        Some(other) => other.to_string(),
-                        None => String::new(),
+                    // As Minecraft 26.3 shows it: an interpreted string is its
+                    // text and an interpreted number or list shows nothing;
+                    // otherwise the value shows as SNBT, a string in quotes.
+                    let interpret = map.get("interpret") == Some(&Value::Bool(true));
+                    match (self.storage_get(path.as_str().unwrap()), interpret) {
+                        (Some(Value::String(s)), true) => s.clone(),
+                        (Some(_), true) | (None, _) => String::new(),
+                        (Some(value), false) => snbt_text(value),
                     }
                 } else {
                     panic!("unsupported text component: {value}");
+                };
+                if let Some(Value::Array(extra)) = map.get("extra") {
+                    for item in extra {
+                        text.push_str(&self.render_text(item, ctx));
+                    }
                 }
+                text
             }
             other => other.to_string(),
         }
@@ -1022,4 +1032,28 @@ pub fn floor_div(a: i32, b: i32) -> i32 {
 /// Minecraft `%=` is `Mth.positiveModulo` (a floor modulus).
 pub fn floor_mod(a: i32, b: i32) -> i32 {
     a.wrapping_sub(floor_div(a, b).wrapping_mul(b))
+}
+
+/// A value as Minecraft prints SNBT in chat: strings quoted (in single
+/// quotes when they hold a double quote), lists as `[1, 2]`.
+fn snbt_text(value: &Value) -> String {
+    match value {
+        Value::String(text) if text.contains('"') && !text.contains('\'') => {
+            format!("'{}'", text.replace('\\', "\\\\"))
+        }
+        Value::String(text) => format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\"")),
+        Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(snbt_text).collect::<Vec<_>>().join(", ")
+        ),
+        Value::Object(fields) => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .map(|(key, value)| format!("{key}: {}", snbt_text(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => other.to_string(),
+    }
 }

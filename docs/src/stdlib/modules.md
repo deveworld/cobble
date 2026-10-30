@@ -62,6 +62,17 @@ def notify():
 text components for use inside other helpers or JSON resource declarations.
 Colors accept Minecraft named colors or `#RRGGBB`.
 
+The text of `text.tellraw`, `text.title`, `text.subtitle`, and
+`text.actionbar` takes `{name}` placeholders as a raw `tellraw` does (see
+[JSON Text](../language/commands.md#json-text)):
+
+```python
+from stdlib import text
+
+def countdown(seconds):
+    text.actionbar("@a", {"text": "Starts in {seconds}", "color": "yellow"})
+```
+
 ## Score
 
 ```python

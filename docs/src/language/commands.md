@@ -27,7 +27,8 @@ def announce():
 
 In `tellraw` and `title`, a `{variable}` inside a JSON `text` field or a JSON
 array string becomes a score or NBT text component. The styling of the
-surrounding text is kept.
+surrounding text is kept. A string shows as its text, and a list or a map
+shows as SNBT, such as `[1, 2]`.
 
 ## Variables In `say`
 

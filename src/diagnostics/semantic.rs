@@ -2037,6 +2037,7 @@ pub(super) fn check_storage_backed_access(
     // Every function scope starts from a clone of the MODULE environment
     // (nested definitions included).
     let mut function_scopes: Vec<(HashMap<String, CobbleType>, HashMap<String, f64>)> = Vec::new();
+    let imported = Imports::of(context.program);
 
     for event in collect_assignment_scan_events(context) {
         match event {
@@ -2087,6 +2088,7 @@ pub(super) fn check_storage_backed_access(
                     &assignment.value,
                     type_env,
                     constant_env,
+                    &imported,
                 ) {
                     diagnostics.push(
                         SourceDiagnostic::error(
@@ -2219,6 +2221,30 @@ pub(super) fn check_type_mismatches(
 // single len()/math.* calls, and top-level operators over known references,
 // on one line of RHS text.
 
+/// What a file imports: `from other import name` names a variable of
+/// another file, and `import other` a module.
+struct Imports {
+    names: HashSet<String>,
+    modules: HashSet<String>,
+}
+
+impl Imports {
+    fn of(program: &crate::ast::Program) -> Self {
+        let mut imports = Imports {
+            names: HashSet::new(),
+            modules: HashSet::new(),
+        };
+        for import in &program.imports {
+            if import.items.is_empty() {
+                imports.modules.insert(import.module.clone());
+            } else {
+                imports.names.extend(import.items.iter().cloned());
+            }
+        }
+        imports
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StorageAccessDiagnostic {
     offset: usize,
@@ -2230,20 +2256,24 @@ fn unsupported_storage_access_in_expression(
     expression: &str,
     type_env: &HashMap<String, CobbleType>,
     constant_env: &HashMap<String, f64>,
+    imported: &Imports,
 ) -> Option<StorageAccessDiagnostic> {
     let masked = mask_non_code(expression);
 
-    if let Some(diagnostic) = unsupported_subscript_access(&masked, type_env, constant_env) {
+    if let Some(diagnostic) =
+        unsupported_subscript_access(&masked, type_env, constant_env, imported)
+    {
         return Some(diagnostic);
     }
 
-    unsupported_attribute_access(&masked, type_env)
+    unsupported_attribute_access(&masked, type_env, imported)
 }
 
 fn unsupported_subscript_access(
     expression: &str,
     type_env: &HashMap<String, CobbleType>,
     constant_env: &HashMap<String, f64>,
+    imported: &Imports,
 ) -> Option<StorageAccessDiagnostic> {
     let bytes = expression.as_bytes();
     let mut index = 0usize;
@@ -2274,6 +2304,12 @@ fn unsupported_subscript_access(
                 continue;
             }
             Some(base_type) => (base_type.clone(), false),
+            // A variable imported from another file: the compiler knows its
+            // type.
+            None if imported.names.contains(base) => {
+                index = close_index + 1;
+                continue;
+            }
             None => {
                 let Some((root, _root_start)) =
                     storage_chain_root_before_subscript(expression, base_start)
@@ -2286,6 +2322,10 @@ fn unsupported_subscript_access(
                         help: "Assign a list, map, or string literal to the base variable before using storage-backed access.".to_string(),
                     });
                 };
+                if imported.names.contains(root) {
+                    index = close_index + 1;
+                    continue;
+                }
                 let Some(root_type) = type_env.get(root) else {
                     return Some(StorageAccessDiagnostic {
                         offset: base_start,
@@ -2415,6 +2455,7 @@ fn unsupported_subscript_access(
 fn unsupported_attribute_access(
     expression: &str,
     type_env: &HashMap<String, CobbleType>,
+    imported: &Imports,
 ) -> Option<StorageAccessDiagnostic> {
     let bytes = expression.as_bytes();
     let mut index = 0usize;
@@ -2443,6 +2484,23 @@ fn unsupported_attribute_access(
             continue;
         }
 
+        // A variable imported from another file: the compiler knows its type.
+        if imported.names.contains(base) {
+            index += 1;
+            continue;
+        }
+        if imported.modules.contains(base) && !type_env.contains_key(base) {
+            let field = identifier_after(expression, index + 1).map_or("name", |(field, _)| field);
+            return Some(StorageAccessDiagnostic {
+                offset: base_start,
+                message: format!(
+                    "`{base}.{field}` names a variable of the module `{base}`, which this file can't read through the module name"
+                ),
+                help: format!(
+                    "Import the variable: `from {base} import {field}`, then use `{field}`."
+                ),
+            });
+        }
         let Some(base_type) = type_env.get(base) else {
             return Some(StorageAccessDiagnostic {
                 offset: base_start,
@@ -2451,7 +2509,7 @@ fn unsupported_attribute_access(
             });
         };
 
-        if *base_type != CobbleType::Map {
+        if !matches!(base_type, CobbleType::Map | CobbleType::Unknown) {
             return Some(StorageAccessDiagnostic {
                 offset: base_start,
                 message: format!(
@@ -2803,6 +2861,7 @@ fn assignment_span_for_type_check(
     let is_const = raw_target.starts_with("const ");
     let target = raw_target
         .strip_prefix("const ")
+        .or_else(|| raw_target.strip_prefix("persist "))
         .unwrap_or(raw_target)
         .trim();
     if !is_simple_module_name(target) {

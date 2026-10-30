@@ -21,8 +21,15 @@ def admin_command():
 ```
 
 Cobble replaces each alias at compile time, matching whole names only, in raw
-commands and in execute-block targets and conditions. Aliases are shared by
-every file in a project, so define each one once.
+commands, in `selector` text components such as `{"selector":"@Admin"}`, and
+in execute-block targets and conditions. Aliases are shared by every file in a
+project, so define each one once.
+
+An `@Name` that is neither an alias nor a vanilla selector is a compile error,
+because Minecraft can't load a function with such a command. Chat text in
+`say`, `msg`, and the other message commands is left as it is. An alias can't
+take more arguments: instead of `@Boss[distance=..8]`, write the whole
+selector or define another alias.
 
 ## Entity Templates
 

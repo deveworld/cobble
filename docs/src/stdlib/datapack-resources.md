@@ -74,6 +74,10 @@ pre-26.3 shapes as `datapack-resource-format` errors:
   (formerly `conditions`) on tables, pools, and entries, and a
   `minecraft:tag` entry names its tag in `items` (`"#minecraft:logs"`);
 - a root advancement with `display` sets `display.background`;
+- an advancement criterion's `player` and `entity` conditions are one
+  predicate with a `type` (formerly a list of predicates, or an entity
+  predicate on its own), such as `{"type": "minecraft:entity_properties",
+  "entity": "this", "predicate": {...}}`;
 - cooking recipes set `cookingtime`.
 
 Minecraft silently ignores lists such as `conditions` and `functions`, so

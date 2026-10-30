@@ -106,8 +106,10 @@ impl CommandValidator {
         if macro_offset == 1 {
             Self::validate_macro_placeholders(trimmed)?;
         }
-        let command = trimmed.strip_prefix('$').unwrap_or(trimmed);
-        let mut reader = StringReader::new(command);
+        let mut reader = match trimmed.strip_prefix('$') {
+            Some(command) => StringReader::for_macro_line(command),
+            None => StringReader::new(trimmed),
+        };
         self.walk_node(&self.root, &mut reader, 0)
             .map_err(|mut error| {
                 error.position += macro_offset;

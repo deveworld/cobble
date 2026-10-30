@@ -534,23 +534,29 @@ impl Transpiler {
                 if let Some(say_macro) = say_macro {
                     return self.emit_say_macro(say_macro, source_location);
                 }
+                let mut processed = processor
+                    .text_copy_commands(&clean_cmd)
+                    .map_err(|error| error.with_location_if_missing(source_location.clone()))?;
                 let processed_cmd = processor
                     .process_command_string(&clean_cmd)
                     .map_err(|error| error.with_location_if_missing(source_location.clone()))?;
 
                 self.forget_storage_copies(std::slice::from_ref(&processed_cmd));
+                processed.push(processed_cmd);
                 if let Some(ref mut commands) = self.current_function {
-                    let command_index = commands.len();
-                    commands.push(processed_cmd);
-                    if let Some(ref mut metadata) = self.current_function_metadata {
-                        metadata.insert(
-                            command_index,
-                            GeneratedCommand::new(
-                                commands[command_index].clone(),
-                                source_location,
-                                GeneratedCommandKind::UserCommand,
-                            ),
-                        );
+                    for command in processed {
+                        let command_index = commands.len();
+                        commands.push(command);
+                        if let Some(ref mut metadata) = self.current_function_metadata {
+                            metadata.insert(
+                                command_index,
+                                GeneratedCommand::new(
+                                    commands[command_index].clone(),
+                                    source_location.clone(),
+                                    GeneratedCommandKind::UserCommand,
+                                ),
+                            );
+                        }
                     }
                 } else {
                     return Err("Minecraft command outside of function context"

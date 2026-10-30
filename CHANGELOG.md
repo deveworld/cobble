@@ -106,6 +106,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `while True` warns only when its body has no `return`.
 
 ### Fixed
+- `tellraw` and `title` show a string variable as its text. Minecraft 26.3
+  prints an `nbt` text component as SNBT, so `{name}` used to show
+  `"Bread"` with quotes. A value of unknown type, such as a copy of a
+  parameter, is copied as text right before the command, and a list or a map
+  still shows as SNBT.
+- `text.tellraw()`, `text.title()`, `text.subtitle()`, and `text.actionbar()`
+  show `{name}` placeholders as raw `tellraw` and `title` do. They used to
+  print the placeholder as written.
+- An item of a `persist` list, an item of a list imported with
+  `from other import name`, and a field of a loop variable that walks a list
+  of maps can be read into a variable. The storage check used to reject
+  them.
+- `cobble build --validate` accepts a macro line with a token that mixes
+  text and a placeholder, such as `kills_$(mob)`.
+- An unknown `@Name` in a raw command, such as a misspelled alias or an
+  entity template, is a compile error. It used to reach the pack as written,
+  and Minecraft can't load a function with such a command. Chat text in
+  `say`, `msg`, and the other message commands stays as written.
+- An alias inside a `selector` text component, as in
+  `{"selector":"@Fighters"}`, is expanded. `@Alias[...]` in a raw command is
+  a compile error, as it is in execute headers; it used to expand to
+  `@a[...][...]`.
+- A condition that is neither a Cobble expression nor starts with a
+  Minecraft condition is a compile error. `if 2 in items:` used to compile
+  to `execute if 2 in items`, which Minecraft can't load; the error now
+  says Cobble has no `in` operator. The `slots` and `stopwatch` conditions
+  of 26.3 pass through as Minecraft conditions.
+- `elif` or `else` after an `if` with a Minecraft condition, such as
+  `if entity @s[tag=a]:`, reports `unsupported-control-flow` with a rewrite
+  that stores the test in a variable. It used to be a bare parse error.
+- Reading another file's variable through its module name, as in
+  `economy.balance`, says to import it with `from economy import balance`.
+  The message used to ask for a map literal.
+- `datapack.advancement()` reports a criterion's `player` or `entity`
+  condition written as a list or as an entity predicate without `type`.
+  Minecraft 26.3 rejects the advancement, and then `/reload` fails for every
+  pack.
 - A build compiles each file once. A file that an earlier file imports used
   to be compiled again when the build reached it in the source folder, which
   left unused helper functions in the pack and set its module variables

@@ -25,6 +25,24 @@ pub fn parse_argument(
         }
     }
 
+    let saved = reader.cursor();
+    if parse_native(reader, parser_type, properties) {
+        return true;
+    }
+    reader.set_cursor(saved);
+    // In a macro line, a token that mixes text and placeholders, such as
+    // `kills_$(mob)`, only gets its value when the function runs.
+    reader.is_macro_line()
+        && !is_multi_token_parser(parser_type)
+        && !is_greedy_parser(parser_type, properties)
+        && reader.skip_token_with_macro()
+}
+
+fn parse_native(
+    reader: &mut StringReader,
+    parser_type: &str,
+    properties: Option<&serde_json::Value>,
+) -> bool {
     match parser_type {
         // === Brigadier core types ===
         "brigadier:bool" => parse_bool(reader),

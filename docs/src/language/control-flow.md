@@ -93,6 +93,21 @@ def check_players():
         /say Special player!
 ```
 
+An `if` whose condition is a Minecraft condition, such as
+`if entity @s[tag=special]:`, runs as an execute block, so it can't have
+`elif` or `else`. Store the test in a variable and branch on that:
+
+```python
+def greet():
+    special = 0
+    store result score special temp:
+        /execute if entity @s[tag=special]
+    if special == 1:
+        /say Special player!
+    else:
+        /say Regular player
+```
+
 ## Execute Blocks
 
 Execute blocks run their body under Minecraft `execute` modifiers:

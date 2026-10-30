@@ -119,6 +119,9 @@ fn analyze_source_stages(source: &str) -> SourceAnalysis {
     }
 
     let mut active_for_blocks: Vec<usize> = Vec::new();
+    // Indents of open `if`/`unless` blocks with a Minecraft condition, such
+    // as `if entity @s[tag=x]:`, which run as execute blocks.
+    let mut active_raw_if_blocks: Vec<usize> = Vec::new();
     let mut active_docstring_quote: Option<char> = None;
     let mut multiline_expression_depth = 0usize;
 
@@ -168,8 +171,43 @@ fn analyze_source_stages(source: &str) -> SourceAnalysis {
             }
         }
 
+        let continues_if =
+            starts_with_keyword(trimmed, "elif") || starts_with_keyword(trimmed, "else");
+        let is_raw_if_else = continues_if && active_raw_if_blocks.last().copied() == Some(indent);
+        while let Some(block_indent) = active_raw_if_blocks.last().copied() {
+            if indent <= block_indent {
+                active_raw_if_blocks.pop();
+            } else {
+                break;
+            }
+        }
+
         if trimmed.starts_with('/') {
             continue;
+        }
+
+        if is_raw_if_else {
+            let keyword = if starts_with_keyword(trimmed, "elif") {
+                "elif"
+            } else {
+                "else"
+            };
+            diagnostics.push(
+                SourceDiagnostic::error(
+                    "unsupported-control-flow",
+                    line_number,
+                    trimmed_column,
+                    format!(
+                        "`{keyword}` can't follow an `if` with a Minecraft condition, which runs as an execute block"
+                    ),
+                )
+                .with_help(
+                    "Store the test in a variable first, then branch on it:\n    found = 0\n    store result score found temp:\n        /execute if entity @s[tag=x]\n    if found == 1:\n        ...\n    else:\n        ...",
+                ),
+            );
+        }
+        if trimmed.ends_with(':') && is_raw_condition_header(trimmed) {
+            active_raw_if_blocks.push(indent);
         }
 
         if is_for_else {
@@ -1218,6 +1256,16 @@ fn top_level_compound_assignment(trimmed: &str) -> Option<(usize, &'static str, 
     }
 
     None
+}
+
+/// Whether `header` is an `if` or `unless` block with a Minecraft condition,
+/// such as `if score #round game matches 3:`.
+fn is_raw_condition_header(header: &str) -> bool {
+    ["if ", "unless "].iter().any(|keyword| {
+        header.strip_prefix(keyword).is_some_and(|condition| {
+            crate::transpiler::raw_minecraft_condition_verdict(condition.trim_start()) == Some(true)
+        })
+    })
 }
 
 pub(super) fn should_skip_assignment_symbol_scan(trimmed: &str) -> bool {
