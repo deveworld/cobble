@@ -664,6 +664,59 @@ def test_calls():
     check("compare_left_first", compared, 0)
 
 
+letter_codes = {"h": 1, "e": 2, "l": 3, "o": 4}
+renamed = ["Steve", "Alex"]
+retitled = {"title": "Boss", "hp": 5}
+relabeled = [1, 2]
+
+
+def first_item(value):
+    item = value[0]
+    return item
+
+
+def last_item(value):
+    item = value[-1]
+    return item
+
+
+def first_letter_code(value):
+    letter = value[0]
+    return letter_codes[letter]
+
+
+def last_letter_code(value):
+    letter = value[-1]
+    return letter_codes[letter]
+
+
+def rewrite_items():
+    renamed[1] = 7
+    retitled.title = 2
+    relabeled[0] = "hello"
+
+
+def test_values():
+    # A parameter's item is checked when the pack runs: a list gives an
+    # item and a string a character.
+    check("param_list_item", first_item([7, 8]), 7)
+    check("param_list_last_item", last_item([7, 8]), 8)
+    check("param_string_char", first_letter_code("hello"), 1)
+    check("param_string_last_char", last_letter_code("hello"), 4)
+
+    # An item or field written with a value of another type reads the
+    # written value.
+    rewrite_items()
+    number = renamed[1]
+    check("item_rewritten_as_number", number + 1, 8)
+    title = retitled.title
+    check("field_rewritten_as_number", title + 1, 3)
+    text = relabeled[0]
+    letter = text[0]
+    check("item_rewritten_as_string", letter_codes[letter], 1)
+    check("field_left_alone", retitled.hp, 5)
+
+
 def scheduled_check():
     check("schedule_once", 1, 1)
 
@@ -690,4 +743,5 @@ def selftest():
     test_resources()
     test_python_semantics()
     test_calls()
+    test_values()
     /say SELFTEST summary passed={passed} failed={failed}

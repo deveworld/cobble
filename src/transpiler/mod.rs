@@ -4,6 +4,7 @@ mod command_processor;
 mod condition_lowering;
 mod condition_translator;
 mod const_eval;
+mod container_writes;
 mod data_pack;
 mod error;
 mod expression_evaluator;
@@ -308,6 +309,8 @@ impl Transpiler {
             }
         }
 
+        // Before the imports, which read the file's writes too.
+        self.record_container_writes(program);
         self.process_imports(program)?;
 
         // PASS 1: Register all function signatures first (to handle forward references)
@@ -365,6 +368,18 @@ impl Transpiler {
         Ok(())
     }
 
+    /// Records the values `program` writes into lists and maps, so a read
+    /// of an item or a field knows when its type can change. `transpile`
+    /// records its own program and its imports. A build of several files
+    /// records every file first, so a read sees the writes of a file
+    /// compiled after it.
+    pub fn record_container_writes(&mut self, program: &Program) {
+        container_writes::collect_container_writes(
+            &program.statements,
+            &mut self.symbols.container_writes,
+        );
+    }
+
     fn strip_command_prefix(cmd: &str) -> String {
         if let Some(stripped) = cmd.strip_prefix('/') {
             stripped.to_string()
@@ -413,6 +428,25 @@ impl Transpiler {
 
         self.current_statement_source = previous_statement_source;
         result
+    }
+
+    /// A variable that holds a score and a storage copy, such as a copy of a
+    /// parameter, becomes a plain number when a raw command writes its
+    /// score: later reads use the score instead of the stale copy.
+    fn forget_storage_copies(&mut self, commands: &[String]) {
+        // Commands take the pack's objective when their function is added.
+        let objective = vars_objective::SOURCE_OBJECTIVE;
+        for command in commands {
+            for holder in score_holders::written_holders(command, objective) {
+                if self.symbols.scoreboard_variables.contains(holder)
+                    && self.symbols.variable_storage_paths.remove(holder).is_some()
+                {
+                    self.symbols
+                        .variable_types
+                        .insert(holder.to_string(), CobbleType::Integer);
+                }
+            }
+        }
     }
 
     fn unbound_local_error(&self, name: &str) -> TranspileError {
@@ -504,6 +538,7 @@ impl Transpiler {
                     .process_command_string(&clean_cmd)
                     .map_err(|error| error.with_location_if_missing(source_location.clone()))?;
 
+                self.forget_storage_copies(std::slice::from_ref(&processed_cmd));
                 if let Some(ref mut commands) = self.current_function {
                     let command_index = commands.len();
                     commands.push(processed_cmd);
@@ -524,7 +559,15 @@ impl Transpiler {
                 }
             }
             Statement::Execute(exec_block) => {
+                let start = self.current_function.as_ref().map_or(0, Vec::len);
                 self.process_execute_block(exec_block)?;
+                // A `store ... score name` header writes the score.
+                let written: Vec<String> = self
+                    .current_function
+                    .as_ref()
+                    .map(|commands| commands[start.min(commands.len())..].to_vec())
+                    .unwrap_or_default();
+                self.forget_storage_copies(&written);
             }
             Statement::SelectorDef(selector_def) => {
                 self.process_selector_def(selector_def)?;

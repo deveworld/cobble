@@ -126,6 +126,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It used to turn into a score.
 - A module variable assigned a copy of a string or list variable, or a
   character of a string, lives in storage. It used to become a score.
+- An item of a list or a field of a map that holds a string stays a string
+  when it is assigned or passed on, as in `name = names[1]` or
+  `show(config.title)`. It used to become a number, the string's length.
+- An item or field that the program sets to a value of another type, as in
+  `items[0] = "abc"` for a list of numbers, reads the value it holds when the
+  pack runs, wherever the write is: in a function that runs first or in
+  another file. A string read this way used to become its length.
+- A string parameter can be indexed, and a copy of a parameter keeps a string
+  as a string. Whether `value[i]` of a parameter gives an item or a character
+  is checked when the pack runs. Indexing a string parameter used to fail in
+  Minecraft, and the copy became a number.
+- A list literal can hold characters and items, as in `[word[0], names[1]]`,
+  and an item assignment can store one. They used to be stored as numbers.
+- Inside an expanded `for` loop over strings, `word[0]` reads a character of
+  the current string. It used to be a compile error.
+- `cobble check` accepts indexing a `for` loop target and an item of a list,
+  and no longer reports a type mismatch for a value whose type it can't tell.
 - The target of a `for` loop over a list copies into a number variable as a
   number, as in `last = value`. The copy used to go to storage, where the
   variable's score never saw it, and a new variable assigned from the target
@@ -134,6 +151,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `items[pick(0, 1)] = 9`, no longer reads as tuple unpacking.
 - `cobble check` no longer reports a type mismatch when a function's local or
   parameter has the name of a module variable of another type.
+- A call statement reads its arguments from left to right, as in Python. In
+  `set_level(level, set_level(5, 0))`, `level` used to be read after the
+  inner call ran.
 - A comparison reads a variable on its left before a call on its right runs,
   as in Python. In `if level > raise_level():`, a `raise_level` that changed
   `level` used to change the result.

@@ -532,6 +532,10 @@ fn semantic_check(
     // was checked with it.
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    // A file can write the lists and maps of a file checked before it.
+    for parsed in parsed_files {
+        transpiler.record_container_writes(&parsed.program);
+    }
     for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
         if transpiler.has_compiled(path) {
             continue;

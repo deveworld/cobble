@@ -1,4 +1,5 @@
 use crate::ast::{CobbleType, EntityDef, Expression};
+use crate::transpiler::container_writes::ContainerWrites;
 use crate::transpiler::FunctionReturnKind;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -26,6 +27,9 @@ pub(in crate::transpiler) struct Symbols {
     /// Names assigned at module level in any compiled file. A function
     /// assigning one of them without `global` gets a local variable instead.
     pub(in crate::transpiler) module_variables: BTreeSet<String>,
+    /// What the program writes into lists and maps, collected before any
+    /// statement is lowered (see `container_writes.rs`).
+    pub(in crate::transpiler) container_writes: ContainerWrites,
 }
 
 impl Symbols {

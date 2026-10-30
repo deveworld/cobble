@@ -784,6 +784,9 @@ mod tests {
 
     #[test]
     fn default_commands_json_resolves_to_a_versioned_cache_path() {
+        // The default path is relative, so other tests must not change the
+        // current folder meanwhile.
+        let _guard = cwd_lock().lock().unwrap();
         assert_eq!(
             resolve_commands_json(Path::new("custom/commands.json")),
             PathBuf::from("custom/commands.json")

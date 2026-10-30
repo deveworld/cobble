@@ -766,3 +766,171 @@ def main():
     assert_eq!(sim.call("main"), Some(1));
     assert_eq!(sim.var("last"), 6);
 }
+
+#[test]
+fn items_and_fields_keep_their_strings() {
+    let mut sim = Sim::load(
+        r#"names = ["Steve", "Alex"]
+config = {"title": "Boss", "hp": 5}
+first = names[0]
+title = config.title
+
+def show(text):
+    /say v {text}
+    return len(text)
+
+def main():
+    name = names[1]
+    field = config["title"]
+    letters = [name[0], first[-1], "z"]
+    letters[2] = field[1]
+    /say v {name} {field} {first} {title}
+    return show(names[1]) * 10 + show(config.title) + config.hp
+"#,
+        &[],
+    );
+    assert_eq!(sim.call("main"), Some(4 * 10 + 4 + 5));
+    assert_eq!(
+        sim.log,
+        vec![
+            "Server: v Alex Boss Steve Boss",
+            "Server: v Alex",
+            "Server: v Boss",
+        ]
+    );
+    assert_eq!(
+        storage(&sim, &["locals", "main", "letters"]),
+        serde_json::json!(["A", "e", "o"])
+    );
+}
+
+#[test]
+fn parameters_keep_strings_and_index_by_their_value() {
+    let mut sim = Sim::load(
+        r#"def first_and_last(value):
+    copy = value
+    head = copy[0]
+    tail = value[-1]
+    /say v {head} {tail}
+    return len(copy)
+
+def main():
+    words = 0
+    for word in ["ab", "xyz"]:
+        words += first_and_last(word)
+        letter = word[len(word) - 1]
+        /say v {letter}
+    return words * 100 + first_and_last([7, 8, 9])
+"#,
+        &[],
+    );
+    assert_eq!(sim.call("main"), Some(5 * 100 + 3));
+    assert_eq!(
+        sim.log,
+        vec![
+            "Server: v a b",
+            "Server: v b",
+            "Server: v x z",
+            "Server: v z",
+            "Server: v 7 9",
+        ]
+    );
+}
+
+#[test]
+fn a_call_reads_its_arguments_from_left_to_right() {
+    let mut sim = Sim::load(
+        r#"level = 0
+
+def set_level(value, other):
+    global level
+    level = value
+    return 0
+
+def main():
+    global level
+    level = 1
+    set_level(level, set_level(5, 0))
+    return level
+"#,
+        &[],
+    );
+    // `level` is read before the inner call sets it to 5.
+    assert_eq!(sim.call("main"), Some(1));
+}
+
+#[test]
+fn a_raw_command_that_sets_a_copy_of_a_parameter_sets_its_value() {
+    let mut sim = Sim::load(
+        r#"def bump(start):
+    value = start
+    total = 0
+    for i in range(3):
+        /say v {value}
+        /scoreboard players add value temp 10
+    return value
+
+def main():
+    return bump(1)
+"#,
+        &[],
+    );
+    assert_eq!(sim.call("main"), Some(31));
+    assert_eq!(sim.log, vec!["Server: v 1", "Server: v 11", "Server: v 21"]);
+}
+
+#[test]
+fn an_item_written_with_another_type_reads_the_written_value() {
+    // `rename` runs first and is compiled after `main`.
+    let mut sim = Sim::load(
+        r#"names = ["Steve", "Alex"]
+config = {"title": "Boss", "hp": 5}
+items = [1, 2]
+
+def main():
+    rename()
+    y = names[1]
+    t = config.title
+    x = items[0]
+    hp = config.hp
+    /say v {y} {t} {x} {hp}
+    return (y + 1) * 100 + (t + 1) * 10 + hp
+
+def rename():
+    names[1] = 7
+    config.title = 2
+    items[0] = "abc"
+"#,
+        &[],
+    );
+    assert_eq!(sim.call("main"), Some(8 * 100 + 3 * 10 + 5));
+    assert_eq!(sim.log, vec!["Server: v 7 2 abc 5"]);
+}
+
+#[test]
+fn an_item_written_in_another_file_reads_the_written_value() {
+    let mut sim = Sim::load_project(
+        &[
+            (
+                "a.cbl",
+                r#"names = ["Steve", "Alex"]
+
+def read_a():
+    y = names[1]
+    /say v {y}
+    return y + 1
+"#,
+            ),
+            (
+                "b.cbl",
+                r#"def write_b():
+    names[1] = 7
+"#,
+            ),
+        ],
+        &[],
+    );
+    sim.call("write_b");
+    assert_eq!(sim.call("read_a"), Some(8));
+    assert_eq!(sim.log, vec!["Server: v 7"]);
+}

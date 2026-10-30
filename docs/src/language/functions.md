@@ -67,10 +67,12 @@ def main():
     b = total([1, 2, 3])   # 6
 ```
 
-Cobble doesn't know a parameter's type, so it indexes and iterates a parameter
-as a list. Copied into a variable that holds a string, list, or map, a
-parameter keeps that type; copied into a new variable, it becomes a number. A
-parameter can't also be declared `global`.
+Cobble doesn't know a parameter's type, so a copy of a parameter keeps its
+value in storage and in a score: `{name}` and `len(name)` read the value, and
+arithmetic reads the number. `name[i]` of a parameter checks when the pack
+runs whether the value is a list or a string, and gives an item or a
+character. `for` iterates a parameter as a list. A parameter can't also be
+declared `global`.
 
 ## Calling Functions
 

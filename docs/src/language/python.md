@@ -31,6 +31,11 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
 - A list or map is a value: assigning it to another variable or passing it to
   a function copies it, so a change through one name doesn't show through the
   other.
+- An item of a list or a field of a map keeps its type when you assign it or
+  pass it on: `name = names[1]` holds a string when `names` holds strings.
+  When Cobble can't tell the type, as for a parameter or an item that the
+  program also sets to a value of another type, the value is kept as text and
+  as a number.
 - Functions return integers only. Use storage or a module variable for other
   results.
 - A bare expression such as `score + 1` produces no command and is rejected.

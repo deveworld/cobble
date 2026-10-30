@@ -82,8 +82,9 @@ impl Transpiler {
             Expression::Call(_, _) => CobbleType::Unknown,
             // A character of a string is a string.
             Expression::Subscript(base, _)
-                if matches!(&**base, Expression::Identifier(name)
-                    if self.symbols.variable_types.get(name) == Some(&CobbleType::String)) =>
+                if matches!(&**base, Expression::String(_))
+                    || matches!(&**base, Expression::Identifier(name)
+                        if self.symbols.variable_types.get(name) == Some(&CobbleType::String)) =>
             {
                 CobbleType::String
             }

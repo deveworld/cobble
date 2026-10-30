@@ -1896,6 +1896,9 @@ enum AssignmentScanEvent {
     Assignment {
         line: usize,
     },
+    /// A `for` loop target, with its type: a number over a `range`, and
+    /// unknown over anything else.
+    LoopTarget(String, CobbleType),
 }
 
 /// Assignment statements and function-scope boundaries in source order,
@@ -1974,6 +1977,16 @@ fn collect_assignment_scan_events_into(
                 }
             }
             Statement::For(for_loop) => {
+                let target_type = match &for_loop.iter {
+                    Expression::Call(function, _) if matches!(&**function, Expression::Identifier(name) if name == "range") => {
+                        CobbleType::Integer
+                    }
+                    _ => CobbleType::Unknown,
+                };
+                events.push(AssignmentScanEvent::LoopTarget(
+                    for_loop.target.clone(),
+                    target_type,
+                ));
                 collect_assignment_scan_events_into(
                     context,
                     &for_loop.body,
@@ -2043,6 +2056,14 @@ pub(super) fn check_storage_backed_access(
             }
             AssignmentScanEvent::LeaveFunction => {
                 function_scopes.pop();
+            }
+            AssignmentScanEvent::LoopTarget(target, target_type) => {
+                let (type_env, constant_env) = match function_scopes.last_mut() {
+                    Some((types, constants)) => (types, constants),
+                    None => (&mut module_types, &mut module_constants),
+                };
+                constant_env.remove(&target);
+                type_env.insert(target, target_type);
             }
             AssignmentScanEvent::Assignment { line } => {
                 let line_text = context.line_text(line);
@@ -2131,6 +2152,13 @@ pub(super) fn check_type_mismatches(
             AssignmentScanEvent::LeaveFunction => {
                 function_scopes.pop();
             }
+            AssignmentScanEvent::LoopTarget(target, _) => {
+                match function_scopes.last_mut() {
+                    Some(types) => types,
+                    None => &mut module_types,
+                }
+                .remove(&target);
+            }
             AssignmentScanEvent::Assignment { line } => {
                 let line_text = context.line_text(line);
                 let masked = mask_non_code(line_text);
@@ -2148,13 +2176,19 @@ pub(super) fn check_type_mismatches(
                     Some(types) => types,
                     None => &mut module_types,
                 };
+                // A value of unknown type, such as an item of a list, fits
+                // any variable.
                 let Some(new_type) =
                     infer_expression_type_for_diagnostics(&assignment.value, type_env)
+                        .filter(|new_type| *new_type != CobbleType::Unknown)
                 else {
                     continue;
                 };
 
-                if let Some(existing_type) = type_env.get(&assignment.target) {
+                if let Some(existing_type) = type_env
+                    .get(&assignment.target)
+                    .filter(|existing| **existing != CobbleType::Unknown)
+                {
                     if *existing_type != new_type {
                         diagnostics.push(
                             SourceDiagnostic::error(
@@ -2358,7 +2392,8 @@ fn unsupported_subscript_access(
             if let Some(index_type) =
                 infer_expression_type_for_diagnostics(index_expression, type_env)
             {
-                if index_type != CobbleType::Integer {
+                // A value of unknown type, such as a parameter, may be one.
+                if !matches!(index_type, CobbleType::Integer | CobbleType::Unknown) {
                     return Some(StorageAccessDiagnostic {
                         offset: index + 1,
                         message: format!(
@@ -2838,14 +2873,20 @@ fn infer_expression_type_for_diagnostics(
     if is_simple_module_name(expression) {
         return type_env.get(expression).cloned();
     }
-    // A character of a string is a string.
+    // A character of a string is a string; an item of a list or a field of
+    // a map can be anything.
     if let Some(open) = expression.find('[') {
         let base = &expression[..open];
         if is_simple_module_name(base)
             && matching_close_bracket(expression, open) == Some(expression.len() - 1)
-            && type_env.get(base) == Some(&CobbleType::String)
         {
-            return Some(CobbleType::String);
+            match type_env.get(base) {
+                Some(CobbleType::String) => return Some(CobbleType::String),
+                Some(CobbleType::List | CobbleType::Map | CobbleType::Unknown) => {
+                    return Some(CobbleType::Unknown)
+                }
+                _ => {}
+            }
         }
     }
     if expression_contains_boolean_operator(expression)

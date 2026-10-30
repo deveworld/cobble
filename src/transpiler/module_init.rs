@@ -1,5 +1,5 @@
-use crate::ast::Expression;
-use crate::transpiler::storage_paths::StorageValueOps;
+use crate::ast::{CobbleType, Expression};
+use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
     GeneratedCommand, GeneratedCommandKind, SourceLocation, TranspileError, Transpiler,
 };
@@ -166,29 +166,43 @@ impl Transpiler {
 
         // A copy of a string, list, or map variable, or a character of a
         // string, is stored like a literal.
-        let storage_source = match value {
-            Expression::Identifier(name) => self
-                .symbols
-                .variable_storage_paths
-                .get(name)
-                .map(|path| (path.clone(), None)),
-            Expression::Subscript(base, index) => self
-                .string_variable_path(base)
-                .map(|path| (path, Some(index))),
-            _ => None,
-        };
-        if let Some((source_path, index)) = storage_source {
-            let storage_path = format!("vars.{}", var_name);
-            self.symbols
-                .variable_storage_paths
-                .insert(var_name.to_string(), storage_path.clone());
-            return match index {
-                Some(index) => self.string_char_commands(&storage_path, &source_path, index),
-                None => Ok(vec![format!(
+        let storage_path = format!("vars.{}", var_name);
+        if let Expression::Subscript(base, index) = value {
+            if self.is_string_base(base) {
+                self.symbols
+                    .variable_storage_paths
+                    .insert(var_name.to_string(), storage_path.clone());
+                return self.string_char_commands(&storage_path, base, index);
+            }
+        }
+        if let Expression::Identifier(name) = value {
+            if let Some(source_path) = self.symbols.variable_storage_paths.get(name).cloned() {
+                self.symbols
+                    .variable_storage_paths
+                    .insert(var_name.to_string(), storage_path.clone());
+                return Ok(vec![format!(
                     "data modify storage {ns}:global {storage_path} set from storage {ns}:global {source_path}",
                     ns = self.data_pack.namespace
-                )]),
-            };
+                )]);
+            }
+        }
+        // An item or field that isn't a number is copied in storage, with a
+        // score too when its type is unknown.
+        if matches!(value, Expression::Subscript(..) | Expression::Attribute(..)) {
+            let read_type = self.storage_read_type(value);
+            if let (true, Some(plan)) = (
+                read_type != CobbleType::Integer,
+                self.resolve_storage_path_plan(value),
+            ) {
+                let mut commands = self.copy_storage_commands(&storage_path, &plan)?;
+                if read_type == CobbleType::Unknown {
+                    commands.push(format!(
+                        "execute store result score {var_name} temp run data get storage {}:global {storage_path}",
+                        self.data_pack.namespace
+                    ));
+                }
+                return Ok(commands);
+            }
         }
 
         match value {

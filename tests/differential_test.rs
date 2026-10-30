@@ -10,14 +10,13 @@
 //! counts a parameter down to 0, and indexes stay inside their list or
 //! string.
 //!
-//! Values are numbers, strings, and lists of numbers. A program is one file,
+//! Values are numbers, strings, and lists of numbers or strings. A program
+//! is one file,
 //! or a `main` file and one or two files it imports. A list is a value in
 //! Cobble and an object in Python, so the generator never lets two names
 //! reach the same list where a change through one could show through the
 //! other: it doesn't copy list variables, pass module lists to functions,
-//! change a list a function received, or assign a module list. A
-//! parameter's type is unknown to Cobble, so a string parameter is never
-//! indexed, and is only copied into a variable that already holds a string.
+//! change a list a function received, or assign a module list.
 //!
 //! `COBBLE_DIFF_CASES` sets the number of programs (default 300) and
 //! `COBBLE_DIFF_SEED` the seed of the first one (default 1); program `i`
@@ -42,6 +41,9 @@ struct ModuleSpec {
     string: &'static str,
     list: &'static str,
     list_len: usize,
+    /// A list of strings.
+    strs: &'static str,
+    strs_len: usize,
 }
 
 const MAIN: ModuleSpec = ModuleSpec {
@@ -50,6 +52,8 @@ const MAIN: ModuleSpec = ModuleSpec {
     string: "gs",
     list: "gl",
     list_len: 3,
+    strs: "gn",
+    strs_len: 2,
 };
 const UTIL: ModuleSpec = ModuleSpec {
     name: "util",
@@ -57,6 +61,8 @@ const UTIL: ModuleSpec = ModuleSpec {
     string: "hs",
     list: "hl",
     list_len: 2,
+    strs: "hn",
+    strs_len: 3,
 };
 const EXTRA: ModuleSpec = ModuleSpec {
     name: "extra",
@@ -64,6 +70,8 @@ const EXTRA: ModuleSpec = ModuleSpec {
     string: "zs",
     list: "zl",
     list_len: 3,
+    strs: "zn",
+    strs_len: 2,
 };
 
 // Generated names never collide: locals and parameters are the names
@@ -72,6 +80,8 @@ const INT_LOCALS: [&str; 4] = ["a", "b", "c", "d"];
 const STR_LOCALS: [&str; 2] = ["s", "t"];
 /// List locals and their lengths.
 const LIST_LOCALS: [(&str, usize); 2] = [("xs", 3), ("ys", 2)];
+/// Locals that hold a list of strings, and their lengths.
+const STRS_LOCALS: [(&str, usize); 1] = [("ns", 2)];
 /// The strings a program uses. None is empty, so `s[0]` and `s[-1]` exist.
 const STRINGS: [&str; 6] = ["a", "ab", "xyz", "hello", "q r", "Mc"];
 /// The length of a list parameter.
@@ -162,6 +172,8 @@ enum Ty {
     Int,
     Str,
     List(usize),
+    /// A list of strings.
+    Strs(usize),
 }
 
 #[derive(Clone)]
@@ -187,6 +199,8 @@ enum Str {
     Var(String),
     /// `name[index]`, a one-character string.
     Char(String, Box<Expr>),
+    /// `name[index]` of a list of strings.
+    Item(String, Box<Expr>),
 }
 
 #[derive(Clone)]
@@ -195,11 +209,19 @@ enum List {
     Var(String),
 }
 
+/// A list of strings.
+#[derive(Clone)]
+enum Strs {
+    Lit(Vec<Str>),
+    Var(String),
+}
+
 #[derive(Clone)]
 enum Val {
     Int(Expr),
     Str(Str),
     List(List),
+    Strs(Strs),
 }
 
 #[derive(Clone)]
@@ -219,6 +241,8 @@ enum Stmt {
     Compound(String, Op, Expr),
     /// `list[index] = value`.
     SetItem(String, Expr, Expr),
+    /// `strings[index] = value` on a list of strings.
+    SetStr(String, Expr, Str),
     Call(String, Vec<Val>),
     /// `/scoreboard players add|remove|set <name> temp <value>`.
     Raw(&'static str, String, i32),
@@ -237,10 +261,10 @@ enum Stmt {
         args: Vec<Expr>,
         body: Vec<Stmt>,
     },
-    /// `for target in list:`.
+    /// `for target in list:`, over a list of numbers or of strings.
     ForEach {
         target: String,
-        list: List,
+        list: Val,
         body: Vec<Stmt>,
     },
     Return(Expr),
@@ -305,7 +329,7 @@ struct Scope {
     /// Locals assigned on every path to the current statement.
     assigned: BTreeSet<String>,
     /// Loop counters and targets: readable, never assigned by the body.
-    loop_names: Vec<String>,
+    loop_names: Vec<(String, Ty)>,
     /// Lists that a loop around the current statement iterates. Python
     /// keeps iterating the old list after an assignment, so the body
     /// doesn't assign them.
@@ -334,9 +358,12 @@ impl Scope {
                 .filter(|(name, t)| *t == ty && self.assigned.contains(name))
                 .map(|(name, _)| name.clone()),
         );
-        if ty == Ty::Int {
-            names.extend(self.loop_names.iter().cloned());
-        }
+        names.extend(
+            self.loop_names
+                .iter()
+                .filter(|(_, t)| *t == ty)
+                .map(|(name, _)| name.clone()),
+        );
         for (var, t) in &self.module_vars {
             if *t == ty && !self.hidden(var) {
                 names.push(var.clone());
@@ -347,11 +374,20 @@ impl Scope {
         names
     }
 
-    /// Readable lists of any length.
+    /// Readable lists of numbers of any length.
     fn readable_lists(&self) -> Vec<(String, usize)> {
         let mut lists = Vec::new();
         for len in [2, 3] {
             lists.extend(self.readable(Ty::List(len)).into_iter().map(|n| (n, len)));
+        }
+        lists
+    }
+
+    /// Readable lists of strings of any length.
+    fn readable_strs(&self) -> Vec<(String, usize)> {
+        let mut lists = Vec::new();
+        for len in [2, 3] {
+            lists.extend(self.readable(Ty::Strs(len)).into_iter().map(|n| (n, len)));
         }
         lists
     }
@@ -364,7 +400,7 @@ impl Scope {
             .map(|(p, _)| p.clone())
             .collect();
         // Module lists are never assigned; see the module docs.
-        if !matches!(ty, Ty::List(_)) {
+        if !matches!(ty, Ty::List(_) | Ty::Strs(_)) {
             names.extend(
                 self.globals
                     .iter()
@@ -392,20 +428,18 @@ impl Scope {
             .collect()
     }
 
+    /// Lists of strings whose items a statement may set. No parameter holds
+    /// one.
+    fn str_item_targets(&self) -> Vec<(String, usize)> {
+        self.readable_strs()
+    }
+
     /// Lists that may be passed to a function: the function's own lists and
     /// the lists it received. A module list could change during the call.
     fn passable_lists(&self, len: usize) -> Vec<String> {
         self.readable(Ty::List(len))
             .into_iter()
             .filter(|name| !self.module_vars.iter().any(|(v, _)| v == name) || self.hidden(name))
-            .collect()
-    }
-
-    /// Strings that may be indexed: string parameters can't be.
-    fn indexable_strings(&self) -> Vec<String> {
-        self.readable(Ty::Str)
-            .into_iter()
-            .filter(|name| !self.params.iter().any(|(p, _)| p == name))
             .collect()
     }
 
@@ -465,7 +499,8 @@ impl Generator {
         if depth > 0 && self.rng.chance(12) {
             let lists = scope.readable_lists();
             let strings = scope.readable(Ty::Str);
-            match self.rng.below(3) {
+            let strs = scope.readable_strs();
+            match self.rng.below(4) {
                 0 if !lists.is_empty() => {
                     let (name, len) = self.rng.pick(&lists);
                     let index = self.list_index(scope, len, depth - 1);
@@ -473,6 +508,7 @@ impl Generator {
                 }
                 1 if !lists.is_empty() => return Expr::Len(self.rng.pick(&lists).0),
                 2 if !strings.is_empty() => return Expr::Len(self.rng.pick(&strings)),
+                3 if !strs.is_empty() => return Expr::Len(self.rng.pick(&strs).0),
                 _ => {}
             }
         }
@@ -488,7 +524,7 @@ impl Generator {
         let callee = self.rng.pick(&scope.callees);
         let mut args = Vec::new();
         for (index, ty) in callee.params.iter().enumerate() {
-            let arg = self.val(scope, *ty, depth.saturating_sub(1), true, true);
+            let arg = self.val(scope, *ty, depth.saturating_sub(1), true);
             args.push(match arg {
                 Val::Int(arg) if callee.recursive && index == 0 => {
                     Val::Int(bin(Op::Mod, arg, Expr::Lit(4)))
@@ -575,40 +611,36 @@ impl Generator {
         bin(op, left, right)
     }
 
-    /// A string. `params` allows string parameters, which only a variable
-    /// that already holds a string or an argument can take.
-    fn str_expr(&mut self, scope: &mut Scope, depth: usize, params: bool) -> Str {
-        match self.rng.below(10) {
-            4..=6 => {
-                let names: Vec<String> = scope
-                    .readable(Ty::Str)
-                    .into_iter()
-                    .filter(|name| params || !scope.params.iter().any(|(p, _)| p == name))
-                    .collect();
-                if !names.is_empty() {
-                    return Str::Var(self.rng.pick(&names));
-                }
+    fn str_expr(&mut self, scope: &mut Scope, depth: usize) -> Str {
+        let names = scope.readable(Ty::Str);
+        let strs = scope.readable_strs();
+        match self.rng.below(12) {
+            4..=6 if !names.is_empty() => Str::Var(self.rng.pick(&names)),
+            7..=9 if !names.is_empty() => {
+                let name = self.rng.pick(&names);
+                let index = self.string_index(scope, &name, depth.min(1));
+                Str::Char(name, Box::new(index))
             }
-            7..=9 => {
-                let names = scope.indexable_strings();
-                if !names.is_empty() {
-                    let name = self.rng.pick(&names);
-                    let index = self.string_index(scope, &name, depth.min(1));
-                    return Str::Char(name, Box::new(index));
-                }
+            10..=11 if !strs.is_empty() => {
+                let (name, len) = self.rng.pick(&strs);
+                let index = self.list_index(scope, len, depth.min(1));
+                Str::Item(name, Box::new(index))
             }
-            _ => {}
+            _ => Str::Lit(self.rng.pick(&STRINGS)),
         }
-        Str::Lit(self.rng.pick(&STRINGS))
     }
 
     /// A value of type `ty`. An argument may also pass a list variable.
-    /// `typed` tells that the value goes to a parameter or a variable that
-    /// already holds a value of this type.
-    fn val(&mut self, scope: &mut Scope, ty: Ty, depth: usize, argument: bool, typed: bool) -> Val {
+    fn val(&mut self, scope: &mut Scope, ty: Ty, depth: usize, argument: bool) -> Val {
         match ty {
             Ty::Int => Val::Int(self.expr(scope, depth)),
-            Ty::Str => Val::Str(self.str_expr(scope, depth, argument || typed)),
+            Ty::Str => Val::Str(self.str_expr(scope, depth)),
+            Ty::Strs(len) => {
+                let items = (0..len)
+                    .map(|_| self.str_expr(scope, depth.min(1)))
+                    .collect();
+                Val::Strs(Strs::Lit(items))
+            }
             Ty::List(len) => {
                 let names = scope.passable_lists(len);
                 if argument && !names.is_empty() && self.rng.chance(50) {
@@ -668,9 +700,10 @@ impl Generator {
         loop {
             match self.rng.below(100) {
                 0..=29 => {
-                    let ty = match self.rng.below(10) {
-                        0 => Ty::Str,
-                        1 => self.rng.pick(&[Ty::List(2), Ty::List(3)]),
+                    let ty = match self.rng.below(12) {
+                        0 | 1 => Ty::Str,
+                        2 => self.rng.pick(&[Ty::List(2), Ty::List(3)]),
+                        3 => self.rng.pick(&[Ty::Strs(2), Ty::Strs(3)]),
                         _ => Ty::Int,
                     };
                     let targets = scope.writable(ty);
@@ -678,9 +711,7 @@ impl Generator {
                         continue;
                     }
                     let target = self.rng.pick(&targets);
-                    let typed = scope.assigned.contains(&target)
-                        || !scope.local_pool.iter().any(|(name, _)| *name == target);
-                    let value = self.val(scope, ty, 3, false, typed);
+                    let value = self.val(scope, ty, 3, false);
                     scope.assigned.insert(target.clone());
                     return Stmt::Assign(target, value);
                 }
@@ -705,11 +736,18 @@ impl Generator {
                     return Stmt::Compound(target, op, value);
                 }
                 40..=43 => {
-                    let targets = scope.item_targets();
-                    if targets.is_empty() {
+                    let lists = scope.item_targets();
+                    let strs = scope.str_item_targets();
+                    if !strs.is_empty() && (lists.is_empty() || self.rng.chance(30)) {
+                        let (name, len) = self.rng.pick(&strs);
+                        let index = self.list_index(scope, len, 1);
+                        let value = self.str_expr(scope, 1);
+                        return Stmt::SetStr(name, index, value);
+                    }
+                    if lists.is_empty() {
                         continue;
                     }
-                    let (name, len) = self.rng.pick(&targets);
+                    let (name, len) = self.rng.pick(&lists);
                     let index = self.list_index(scope, len, 1);
                     let value = self.expr(scope, 2);
                     return Stmt::SetItem(name, index, value);
@@ -791,10 +829,10 @@ impl Generator {
         Stmt::If(branches, else_branch)
     }
 
-    fn loop_body(&mut self, scope: &mut Scope, depth: usize, loop_name: &str) -> Vec<Stmt> {
+    fn loop_body(&mut self, scope: &mut Scope, depth: usize, loop_name: &str, ty: Ty) -> Vec<Stmt> {
         let before = scope.assigned.clone();
         scope.loops += 1;
-        scope.loop_names.push(loop_name.to_string());
+        scope.loop_names.push((loop_name.to_string(), ty));
         // A call in a loop runs on every pass, so a loop body gets at most
         // one of the function's calls.
         let calls_left = scope.calls_left;
@@ -831,7 +869,7 @@ impl Generator {
             scope.calls_left = calls_left;
             extra
         });
-        let body = self.loop_body(scope, depth, &counter);
+        let body = self.loop_body(scope, depth, &counter, Ty::Int);
         Stmt::While {
             counter,
             limit,
@@ -871,19 +909,29 @@ impl Generator {
                 Expr::Lit(self.rng.pick(&[1, 2, -1, -2])),
             ],
         };
-        let body = self.loop_body(scope, depth, &target);
+        let body = self.loop_body(scope, depth, &target, Ty::Int);
         Stmt::For { target, args, body }
     }
 
+    /// A `for` loop over a list of numbers or of strings.
     fn foreach_statement(&mut self, scope: &mut Scope, depth: usize) -> Stmt {
         let target = self.fresh("v");
-        let lists = scope.readable_lists();
-        let list = if !lists.is_empty() && self.rng.chance(60) {
-            List::Var(self.rng.pick(&lists).0)
+        let strings = self.rng.chance(35);
+        let names: Vec<String> = if strings {
+            scope.readable_strs().into_iter().map(|(n, _)| n).collect()
         } else {
-            let length = self.rng.range(1, 3);
-            List::Lit(
-                (0..length)
+            scope.readable_lists().into_iter().map(|(n, _)| n).collect()
+        };
+        let length = self.rng.range(1, 3);
+        let (list, ty) = match (strings, !names.is_empty() && self.rng.chance(60)) {
+            (true, true) => (Val::Strs(Strs::Var(self.rng.pick(&names))), Ty::Str),
+            (true, false) => {
+                let items = (0..length).map(|_| self.str_expr(scope, 1)).collect();
+                (Val::Strs(Strs::Lit(items)), Ty::Str)
+            }
+            (false, true) => (Val::List(List::Var(self.rng.pick(&names))), Ty::Int),
+            (false, false) => {
+                let items = (0..length)
                     .map(|_| {
                         if self.rng.chance(50) {
                             Expr::Lit(self.literal())
@@ -891,14 +939,19 @@ impl Generator {
                             self.expr(scope, 2)
                         }
                     })
-                    .collect(),
-            )
+                    .collect();
+                (Val::List(List::Lit(items)), Ty::Int)
+            }
         };
-        if let List::Var(name) = &list {
+        let iterated = match &list {
+            Val::List(List::Var(name)) | Val::Strs(Strs::Var(name)) => Some(name.clone()),
+            _ => None,
+        };
+        if let Some(name) = &iterated {
             scope.iterated.push(name.clone());
         }
-        let body = self.loop_body(scope, depth, &target);
-        if matches!(list, List::Var(_)) {
+        let body = self.loop_body(scope, depth, &target, ty);
+        if iterated.is_some() {
             scope.iterated.pop();
         }
         Stmt::ForEach { target, list, body }
@@ -923,6 +976,11 @@ impl Generator {
                     .iter()
                     .map(|(s, len)| (s.to_string(), Ty::List(*len))),
             )
+            .chain(
+                STRS_LOCALS
+                    .iter()
+                    .map(|(s, len)| (s.to_string(), Ty::Strs(*len))),
+            )
             .collect();
         for (var, ty) in &module_vars {
             if params.iter().any(|(p, _)| p == var) {
@@ -932,7 +990,7 @@ impl Generator {
             match ty {
                 Ty::Int if roll <= 3 => globals.push(var.clone()),
                 Ty::Str if roll <= 2 => globals.push(var.clone()),
-                Ty::List(_) if roll <= 1 => globals.push(var.clone()),
+                Ty::List(_) | Ty::Strs(_) if roll <= 1 => globals.push(var.clone()),
                 _ if roll == 4 => local_pool.push((var.clone(), *ty)),
                 _ => {}
             }
@@ -1076,6 +1134,10 @@ impl Generator {
             })
             .collect();
         vars.push((spec.list.to_string(), Val::List(List::Lit(items))));
+        let strings = (0..spec.strs_len)
+            .map(|_| Str::Lit(self.rng.pick(&STRINGS)))
+            .collect();
+        vars.push((spec.strs.to_string(), Val::Strs(Strs::Lit(strings))));
 
         let mut functions = Vec::new();
         let mut own: Vec<Callee> = Vec::new();
@@ -1224,6 +1286,7 @@ fn module_vars(spec: &ModuleSpec) -> Vec<(String, Ty)> {
     let mut vars: Vec<(String, Ty)> = spec.ints.iter().map(|v| (v.to_string(), Ty::Int)).collect();
     vars.push((spec.string.to_string(), Ty::Str));
     vars.push((spec.list.to_string(), Ty::List(spec.list_len)));
+    vars.push((spec.strs.to_string(), Ty::Strs(spec.strs_len)));
     vars
 }
 
@@ -1307,8 +1370,19 @@ fn val_text(val: &Val, language: Language) -> String {
         Val::Int(expr) => expr_text(expr, language),
         Val::Str(Str::Lit(text)) => format!("\"{text}\""),
         Val::Str(Str::Var(name)) => name.clone(),
-        Val::Str(Str::Char(name, index)) => format!("{name}[{}]", expr_text(index, language)),
+        Val::Str(Str::Char(name, index) | Str::Item(name, index)) => {
+            format!("{name}[{}]", expr_text(index, language))
+        }
         Val::List(list) => list_text(list, language),
+        Val::Strs(Strs::Lit(items)) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|item| val_text(&Val::Str(item.clone()), language))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Val::Strs(Strs::Var(name)) => name.clone(),
     }
 }
 
@@ -1405,6 +1479,10 @@ fn print_block(out: &mut String, body: &[Stmt], indent: usize, language: Languag
             Stmt::SetItem(target, index, value) => {
                 writeln!(out, "{pad}{target}[{}] = {}", expr(index), expr(value)).unwrap();
             }
+            Stmt::SetStr(target, index, value) => {
+                let value = val_text(&Val::Str(value.clone()), language);
+                writeln!(out, "{pad}{target}[{}] = {value}", expr(index)).unwrap();
+            }
             Stmt::Call(name, args) => {
                 writeln!(
                     out,
@@ -1483,7 +1561,7 @@ fn print_block(out: &mut String, body: &[Stmt], indent: usize, language: Languag
                 print_block(out, body, indent + 1, language);
             }
             Stmt::ForEach { target, list, body } => {
-                writeln!(out, "{pad}for {target} in {}:", list_text(list, language)).unwrap();
+                writeln!(out, "{pad}for {target} in {}:", val_text(list, language)).unwrap();
                 print_block(out, body, indent + 1, language);
             }
             Stmt::Return(value) => writeln!(out, "{pad}return {}", expr(value)).unwrap(),
@@ -1603,9 +1681,15 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
     fn val(v: &mut Val, visit: &mut dyn FnMut(&mut Expr, bool)) {
         match v {
             Val::Int(e) => expr(e, false, visit),
-            Val::Str(Str::Char(_, index)) => expr(index, false, visit),
-            Val::Str(_) => {}
+            Val::Str(s) => string(s, visit),
             Val::List(l) => list_items(l, visit),
+            Val::Strs(Strs::Lit(items)) => items.iter_mut().for_each(|item| string(item, visit)),
+            Val::Strs(Strs::Var(_)) => {}
+        }
+    }
+    fn string(s: &mut Str, visit: &mut dyn FnMut(&mut Expr, bool)) {
+        if let Str::Char(_, index) | Str::Item(_, index) = s {
+            expr(index, false, visit);
         }
     }
     fn list_items(l: &mut List, visit: &mut dyn FnMut(&mut Expr, bool)) {
@@ -1636,6 +1720,10 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
                     expr(index, false, visit);
                     expr(value, false, visit);
                 }
+                Stmt::SetStr(_, index, value) => {
+                    expr(index, false, visit);
+                    string(value, visit);
+                }
                 Stmt::Call(_, args) => args.iter_mut().for_each(|arg| val(arg, visit)),
                 Stmt::If(branches, else_branch) => {
                     for (condition, body) in branches.iter_mut() {
@@ -1660,7 +1748,7 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
                     block(body, visit);
                 }
                 Stmt::ForEach { list, body, .. } => {
-                    list_items(list, visit);
+                    val(list, visit);
                     block(body, visit);
                 }
                 Stmt::Raw(..) | Stmt::Say(_) => {}
@@ -1717,10 +1805,135 @@ fn shrink_candidates(program: &Program) -> Vec<Program> {
     // Removing a final `return 0` gives the same program back.
     let original = print_program(program, Language::Cobble);
     candidates.retain(|candidate| print_program(candidate, Language::Cobble) != original);
-    // Python only looks a function up when the call runs, but Cobble
-    // rejects a call to a function that doesn't exist.
-    candidates.retain(calls_resolve);
+    // Python only looks a name up when the code runs, but Cobble rejects a
+    // call to a function, or a read of a variable, that doesn't exist.
+    candidates.retain(|candidate| calls_resolve(candidate) && names_resolve(candidate));
     candidates
+}
+
+/// Whether every variable a function reads is one of its parameters, a name
+/// it assigns or loops over somewhere, or a variable of its module.
+fn names_resolve(program: &Program) -> bool {
+    fn expr_reads(expr: &Expr, reads: &mut Vec<String>) {
+        match expr {
+            Expr::Var(name) | Expr::Len(name) => reads.push(name.clone()),
+            Expr::Item(name, index) => {
+                reads.push(name.clone());
+                expr_reads(index, reads);
+            }
+            Expr::Neg(inner) => expr_reads(inner, reads),
+            Expr::Bin(_, left, right) => {
+                expr_reads(left, reads);
+                expr_reads(right, reads);
+            }
+            Expr::Call(_, args) => args.iter().for_each(|arg| val_reads(arg, reads)),
+            Expr::Lit(_) => {}
+        }
+    }
+    fn str_reads(value: &Str, reads: &mut Vec<String>) {
+        match value {
+            Str::Var(name) => reads.push(name.clone()),
+            Str::Char(name, index) | Str::Item(name, index) => {
+                reads.push(name.clone());
+                expr_reads(index, reads);
+            }
+            Str::Lit(_) => {}
+        }
+    }
+    fn val_reads(value: &Val, reads: &mut Vec<String>) {
+        match value {
+            Val::Int(expr) => expr_reads(expr, reads),
+            Val::Str(value) => str_reads(value, reads),
+            Val::List(List::Lit(items)) => items.iter().for_each(|item| expr_reads(item, reads)),
+            Val::Strs(Strs::Lit(items)) => items.iter().for_each(|item| str_reads(item, reads)),
+            Val::List(List::Var(name)) | Val::Strs(Strs::Var(name)) => reads.push(name.clone()),
+        }
+    }
+    fn cond_reads(cond: &Cond, reads: &mut Vec<String>) {
+        match cond {
+            Cond::Cmp(_, left, right) => {
+                expr_reads(left, reads);
+                expr_reads(right, reads);
+            }
+            Cond::Truthy(expr) => expr_reads(expr, reads),
+            Cond::Not(inner, _) => cond_reads(inner, reads),
+            Cond::And(left, right) | Cond::Or(left, right) => {
+                cond_reads(left, reads);
+                cond_reads(right, reads);
+            }
+        }
+    }
+    fn walk(body: &[Stmt], reads: &mut Vec<String>, defined: &mut Vec<String>) {
+        for statement in body {
+            match statement {
+                Stmt::Assign(target, value) => {
+                    defined.push(target.clone());
+                    val_reads(value, reads);
+                }
+                Stmt::Compound(target, _, value) => {
+                    reads.push(target.clone());
+                    expr_reads(value, reads);
+                }
+                Stmt::SetItem(target, index, value) => {
+                    reads.push(target.clone());
+                    expr_reads(index, reads);
+                    expr_reads(value, reads);
+                }
+                Stmt::SetStr(target, index, value) => {
+                    reads.push(target.clone());
+                    expr_reads(index, reads);
+                    str_reads(value, reads);
+                }
+                Stmt::Call(_, args) => args.iter().for_each(|arg| val_reads(arg, reads)),
+                Stmt::Raw(_, target, _) => reads.push(target.clone()),
+                Stmt::Say(names) => reads.extend(names.iter().cloned()),
+                Stmt::If(branches, else_branch) => {
+                    for (condition, body) in branches {
+                        cond_reads(condition, reads);
+                        walk(body, reads, defined);
+                    }
+                    if let Some(body) = else_branch {
+                        walk(body, reads, defined);
+                    }
+                }
+                Stmt::While {
+                    counter,
+                    limit,
+                    extra,
+                    body,
+                } => {
+                    defined.push(counter.clone());
+                    expr_reads(limit, reads);
+                    if let Some(extra) = extra {
+                        cond_reads(extra, reads);
+                    }
+                    walk(body, reads, defined);
+                }
+                Stmt::For { target, args, body } => {
+                    defined.push(target.clone());
+                    args.iter().for_each(|arg| expr_reads(arg, reads));
+                    walk(body, reads, defined);
+                }
+                Stmt::ForEach { target, list, body } => {
+                    defined.push(target.clone());
+                    val_reads(list, reads);
+                    walk(body, reads, defined);
+                }
+                Stmt::Return(value) => expr_reads(value, reads),
+            }
+        }
+    }
+    program.modules.iter().all(|module| {
+        let module_vars: Vec<&String> = module.vars.iter().map(|(name, _)| name).collect();
+        module.functions.iter().all(|function| {
+            let mut reads = Vec::new();
+            let mut defined = function.params.clone();
+            walk(&function.body, &mut reads, &mut defined);
+            reads
+                .iter()
+                .all(|name| defined.contains(name) || module_vars.contains(&name))
+        })
+    })
 }
 
 /// Whether every call names a function that its module defines or imports.
@@ -2030,7 +2243,7 @@ for line in sys.stdin:
 enum Value {
     Int(i64),
     Str(String),
-    List(Vec<i64>),
+    List(Vec<Value>),
     Missing,
 }
 
@@ -2042,7 +2255,7 @@ impl Value {
             Some(serde_json::Value::Array(items)) => Value::List(
                 items
                     .iter()
-                    .map(|item| item.as_f64().map_or(i64::MIN, |n| n as i64))
+                    .map(|item| Value::from_json(Some(item)))
                     .collect(),
             ),
             _ => Value::Missing,

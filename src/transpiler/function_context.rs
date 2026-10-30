@@ -16,6 +16,9 @@ pub(in crate::transpiler) struct FunctionContext {
     /// Where the function reads a local variable before assigning it.
     /// Lowering that statement fails, so the error points at it.
     pub(in crate::transpiler) unbound_read: Option<UnboundRead>,
+    /// Names whose score a raw command or a `store ... score` header in the
+    /// function writes. Such a name holds a number.
+    pub(in crate::transpiler) score_writes: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -32,6 +35,7 @@ impl FunctionContext {
             locals: Vec::new(),
             globals: Vec::new(),
             unbound_read: None,
+            score_writes: HashSet::new(),
         }
     }
 
@@ -56,7 +60,9 @@ impl FunctionContext {
             locals,
             globals,
             unbound_read: None,
+            score_writes: HashSet::new(),
         };
+        collect_score_writes(body, &mut context.score_writes);
         context.unbound_read =
             context
                 .first_read_before_assignment(body)
@@ -273,6 +279,51 @@ fn collect_bindings(
                 }
             }
             Statement::Execute(exec_block) => collect_bindings(&exec_block.body, assigned, globals),
+            _ => {}
+        }
+    }
+}
+
+/// Names whose score a raw command or a `store ... score` header in `body`
+/// writes. Nested function definitions have their own scope.
+fn collect_score_writes(body: &[Statement], writes: &mut HashSet<String>) {
+    let objective = crate::transpiler::vars_objective::SOURCE_OBJECTIVE;
+    let add = |writes: &mut HashSet<String>, command: &str| {
+        writes.extend(
+            crate::transpiler::score_holders::written_holders(command, objective)
+                .into_iter()
+                .map(str::to_string),
+        );
+    };
+    for statement in body {
+        match statement {
+            Statement::MinecraftCommand(command) => {
+                add(writes, command.strip_prefix('/').unwrap_or(command));
+            }
+            Statement::Execute(block) => {
+                for modifier in &block.modifiers {
+                    if let crate::ast::ExecuteModifier::Store(store) = modifier {
+                        add(writes, &format!("execute store {store} run say store"));
+                    }
+                }
+                collect_score_writes(&block.body, writes);
+            }
+            Statement::If(if_stmt) => {
+                collect_score_writes(&if_stmt.then_branch, writes);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_score_writes(branch, writes);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_score_writes(branch, writes);
+                }
+            }
+            Statement::For(for_loop) => collect_score_writes(&for_loop.body, writes),
+            Statement::While(while_loop) => collect_score_writes(&while_loop.body, writes),
+            Statement::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    collect_score_writes(&case.body, writes);
+                }
+            }
             _ => {}
         }
     }

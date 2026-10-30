@@ -87,6 +87,7 @@ impl Transpiler {
         self.register_source_locations_from_spans(&import_path, &source, &spans);
 
         // Nested imports first, then the imported statements.
+        self.record_container_writes(&program);
         self.process_imports(&program)?;
         self.register_program_function_metadata(&program);
         if import.items.is_empty() {

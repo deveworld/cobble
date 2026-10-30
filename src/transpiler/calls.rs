@@ -1,6 +1,6 @@
-use crate::ast::{Assignment, Expression};
+use crate::ast::{Assignment, CobbleType, Expression};
 use crate::stdlib::EventType;
-use crate::transpiler::storage_paths::StorageValueOps;
+use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{escape_quoted, TranspileError, Transpiler};
 
 impl Transpiler {
@@ -43,12 +43,19 @@ impl Transpiler {
         let mut argument_commands = Vec::new();
         for (param_name, arg) in param_names.iter().zip(args) {
             let target_path = staging.argument_path(param_name);
-            argument_commands.extend(self.call_argument_commands(
-                func_name,
-                param_name,
-                &target_path,
-                arg,
-            )?);
+            let before = self.current_function.as_ref().map_or(0, Vec::len);
+            let staged = self.call_argument_commands(func_name, param_name, &target_path, arg)?;
+            // An argument computed into a scratch score first, such as the
+            // call in `f(x, g(1))`, keeps its place, so `x` is read before
+            // `g` runs, as in Python.
+            if let Some(function) = self.current_function.as_mut() {
+                argument_commands.extend(function.drain(before..));
+            }
+            // The statement's commands get their metadata once it is done.
+            if let Some(metadata) = self.current_function_metadata.as_mut() {
+                metadata.retain(|index, _| *index < before);
+            }
+            argument_commands.extend(staged);
         }
         let commands = staging.wrap(
             &namespace,
@@ -158,9 +165,22 @@ impl Transpiler {
             Expression::Array(_) | Expression::Map(_) => {
                 self.storage_value_commands(target_path, arg)
             }
-            Expression::Subscript(base, index) if self.string_variable_path(base).is_some() => {
-                let base_path = self.string_variable_path(base).unwrap_or_default();
-                self.string_char_commands(target_path, &base_path, index)
+            Expression::Subscript(base, index) if self.is_string_base(base) => {
+                self.string_char_commands(target_path, base, index)
+            }
+            // A value whose type isn't a number keeps its storage value.
+            Expression::Subscript(base, index)
+                if !self.is_string_key(index) && self.unknown_value_path(base).is_some() =>
+            {
+                let base_path = self.unknown_value_path(base).unwrap_or_default();
+                self.unknown_item_commands(target_path, &base_path, index)
+            }
+            Expression::Subscript(..) | Expression::Attribute(..)
+                if self.storage_read_type(arg) != CobbleType::Integer
+                    && self.resolve_storage_path_plan(arg).is_some() =>
+            {
+                let plan = self.resolve_storage_path_plan(arg).expect("checked above");
+                self.copy_storage_commands(target_path, &plan)
             }
             Expression::Binary(..)
             | Expression::Unary(..)

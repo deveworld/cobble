@@ -3,7 +3,7 @@ use crate::transpiler::expression_evaluator::{min_constant_commands, ExpressionE
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{escape_quoted, GeneratedCommandKind, ModuleLevelAssignment};
-use crate::transpiler::{TranspileError, Transpiler};
+use crate::transpiler::{StoragePathPlan, TranspileError, Transpiler};
 
 /// How an assignment's *target* routes it. Produced by
 /// `Transpiler::classify_assignment_target`; the variants are checked in
@@ -275,10 +275,14 @@ impl Transpiler {
 
         // Infer the type of the value being assigned. A value of unknown
         // type, such as a parameter, keeps the variable's type.
-        let value_type = match (
-            self.infer_type(&assign.value),
-            self.symbols.variable_types.get(&assign.target),
-        ) {
+        let inferred = match &assign.value {
+            Expression::Subscript(base, _) if self.is_string_base(base) => CobbleType::String,
+            Expression::Subscript(..) | Expression::Attribute(..) => {
+                self.storage_read_type(&assign.value)
+            }
+            value => self.infer_type(value),
+        };
+        let value_type = match (inferred, self.symbols.variable_types.get(&assign.target)) {
             (CobbleType::Unknown, Some(existing)) => existing.clone(),
             (value_type, _) => value_type,
         };
@@ -303,22 +307,8 @@ impl Transpiler {
             return Ok(());
         }
 
-        // A parameter's type is unknown. Copied into a string, list, or map
-        // variable, it keeps that variable in storage.
-        let target_path = self
-            .symbols
-            .variable_storage_paths
-            .get(&assign.target)
-            .cloned();
-        if let (Expression::Identifier(name), Some(target_path)) = (&assign.value, &target_path) {
-            if self.current_context.is_param(name) {
-                let namespace = &self.data_pack.namespace;
-                let command = format!(
-                    "data modify storage {namespace}:global {target_path} set from storage {namespace}:global args.{name}"
-                );
-                self.extend_current_function(vec![command]);
-                return Ok(());
-            }
+        if let Some(read) = self.storage_read(&assign.target, &assign.value) {
+            return self.lower_storage_read(&assign.target, read);
         }
 
         // A score value replaces a storage one. A copy of a storage
@@ -330,7 +320,7 @@ impl Transpiler {
                 self.symbols.variable_storage_paths.contains_key(name)
                     && !self.copies_a_score(&assign.target, name)
             }
-            Expression::Subscript(base, _) => self.string_variable_path(base).is_some(),
+            Expression::Subscript(base, _) => self.is_string_base(base),
             _ => false,
         };
         if !storage_value {
@@ -350,6 +340,95 @@ impl Transpiler {
             AssignValueKind::StringChar => self.lower_string_char_assignment(assign),
             AssignValueKind::ScoreSimple => self.lower_simple_score_assignment(assign),
         }
+    }
+
+    /// How `target = value` reads `value` from storage, when it copies a
+    /// value whose type isn't a number: a parameter, an item of a list, or
+    /// a field of a map. A number goes through the score path instead.
+    fn storage_read(&self, target: &str, value: &Expression) -> Option<StorageRead> {
+        let target_type = self
+            .symbols
+            .variable_types
+            .get(target)
+            .cloned()
+            .unwrap_or(CobbleType::Unknown);
+        if matches!(target_type, CobbleType::Integer | CobbleType::Boolean)
+            || self.current_context.score_writes.contains(target)
+        {
+            return None;
+        }
+        // A value of unknown type also gets a score, for arithmetic.
+        let score = !matches!(
+            target_type,
+            CobbleType::String | CobbleType::List | CobbleType::Map
+        );
+        match value {
+            Expression::Identifier(name) if self.current_context.is_param(name) => {
+                Some(StorageRead::Path {
+                    plan: StoragePathPlan::static_path(format!("args.{name}")),
+                    score,
+                })
+            }
+            Expression::Subscript(base, _) if self.is_string_base(base) => None,
+            Expression::Subscript(base, index) if !self.is_string_key(index) => {
+                match self.unknown_value_path(base) {
+                    Some(base_path) => Some(StorageRead::Item {
+                        base_path,
+                        index: (**index).clone(),
+                        score,
+                    }),
+                    None => self
+                        .resolve_storage_path_plan(value)
+                        .map(|plan| StorageRead::Path { plan, score }),
+                }
+            }
+            Expression::Subscript(..) | Expression::Attribute(..) => self
+                .resolve_storage_path_plan(value)
+                .map(|plan| StorageRead::Path { plan, score }),
+            _ => None,
+        }
+    }
+
+    /// Copy a value read from storage into `target`'s storage, and into its
+    /// score when the value's type is unknown.
+    fn lower_storage_read(
+        &mut self,
+        target: &str,
+        read: StorageRead,
+    ) -> Result<(), TranspileError> {
+        let target_path = self.variable_storage_path(target);
+        let (mut commands, score) = match read {
+            StorageRead::Path { plan, score } => {
+                (self.copy_storage_commands(&target_path, &plan)?, score)
+            }
+            StorageRead::Item {
+                base_path,
+                index,
+                score,
+            } => (
+                self.unknown_item_commands(&target_path, &base_path, &index)?,
+                score,
+            ),
+        };
+        self.symbols
+            .variable_storage_paths
+            .insert(target.to_string(), target_path.clone());
+        if score {
+            self.data_pack.track_objective("temp");
+            self.symbols
+                .variable_objectives
+                .insert(target.to_string(), "temp".to_string());
+            self.symbols.scoreboard_variables.insert(target.to_string());
+            commands.push(format!(
+                "execute store result score {target} temp run data get storage {}:global {target_path}",
+                self.data_pack.namespace
+            ));
+        } else {
+            self.symbols.scoreboard_variables.remove(target);
+            self.symbols.variable_objectives.remove(target);
+        }
+        self.extend_current_function(commands);
+        Ok(())
     }
 
     /// Whether `target = source` copies a score: the target holds a number
@@ -387,9 +466,10 @@ impl Transpiler {
                 )
                 .into());
             }
-            Expression::Subscript(base, index) if self.string_variable_path(base).is_some() => {
-                let base_path = self.string_variable_path(base).unwrap_or_default();
-                self.string_char_commands(&path, &base_path, index)?
+            // A character, an item, or a field: storage keeps a string as a
+            // string.
+            Expression::Subscript(..) | Expression::Attribute(..) => {
+                self.storage_value_commands(&path, &assign.value)?
             }
             // A copy of a string, list, map, or another parameter.
             _ if storage_source.is_some() => vec![format!(
@@ -445,8 +525,7 @@ impl Transpiler {
             return AssignValueKind::ConditionFlag;
         }
 
-        if matches!(value, Expression::Subscript(base, _) if self.string_variable_path(base).is_some())
-        {
+        if matches!(value, Expression::Subscript(base, _) if self.is_string_base(base)) {
             return AssignValueKind::StringChar;
         }
 
@@ -512,12 +591,22 @@ impl Transpiler {
             self.symbols.variable_types.get(&assign.target),
             Some(CobbleType::String | CobbleType::List | CobbleType::Map)
         );
-        if storage {
+        // An item or field of unknown type keeps a score next to its
+        // storage copy, like a list loop target.
+        let both = matches!(
+            &assign.value,
+            Expression::Subscript(..) | Expression::Attribute(..)
+        ) && matches!(
+            self.symbols.variable_types.get(&assign.target),
+            None | Some(CobbleType::Unknown)
+        );
+        if storage || both {
             let storage_path = format!("vars.{}", assign.target);
             self.symbols
                 .variable_storage_paths
                 .insert(assign.target.clone(), storage_path);
-        } else {
+        }
+        if both || !storage {
             self.data_pack.track_objective("temp");
             self.symbols
                 .variable_objectives
@@ -651,11 +740,8 @@ impl Transpiler {
         let Expression::Subscript(base, index) = &assign.value else {
             unreachable!("classified as a string character");
         };
-        let base_path = self
-            .string_variable_path(base)
-            .expect("classified as a string character");
         let storage_path = self.variable_storage_path(&assign.target);
-        let value_commands = self.string_char_commands(&storage_path, &base_path, index)?;
+        let value_commands = self.string_char_commands(&storage_path, base, index)?;
         self.symbols
             .variable_storage_paths
             .insert(assign.target.clone(), storage_path);
@@ -1191,6 +1277,18 @@ pub(in crate::transpiler) fn serialize_snbt(
             expr
         ).into()),
     }
+}
+
+/// A value an assignment copies from storage.
+enum StorageRead {
+    /// The value at a path: a parameter, `names[i]`, or `config.title`.
+    Path { plan: StoragePathPlan, score: bool },
+    /// `base[index]` of a value that can be a list or a string.
+    Item {
+        base_path: String,
+        index: Expression,
+        score: bool,
+    },
 }
 
 /// One side of an atom-op-atom score assignment.

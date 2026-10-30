@@ -424,12 +424,17 @@ impl Sim {
                 }
                 "store" => {
                     let tokens: Vec<&str> = after.splitn(7, ' ').collect();
-                    assert_eq!(tokens[0], "result", "only `store result` is simulated");
+                    let success = match tokens[0] {
+                        "result" => false,
+                        "success" => true,
+                        other => panic!("unsupported `execute store {other}`"),
+                    };
                     match tokens[1] {
                         "score" => {
                             stores.push(Store::Score {
                                 holder: tokens[2].to_string(),
                                 objective: tokens[3].to_string(),
+                                success,
                             });
                             rest = after.splitn(5, ' ').nth(4).expect("store chain");
                         }
@@ -437,6 +442,7 @@ impl Sim {
                             stores.push(Store::Storage {
                                 path: tokens[3].to_string(),
                                 scale: tokens[5].parse().expect("store scale"),
+                                success,
                             });
                             rest = after.splitn(7, ' ').nth(6).expect("store chain");
                         }
@@ -449,15 +455,25 @@ impl Sim {
     }
 
     fn apply_store(&mut self, store: &Store, value: Option<i32>, ctx: &Context) {
-        // A failed command still stores: `execute store result` writes 0.
-        let value = value.unwrap_or(0);
+        // A failed command still stores: `execute store result` and
+        // `execute store success` write 0.
+        let success = match store {
+            Store::Score { success, .. } | Store::Storage { success, .. } => *success,
+        };
+        let value = if success {
+            i32::from(value.is_some())
+        } else {
+            value.unwrap_or(0)
+        };
         match store {
-            Store::Score { holder, objective } => {
+            Store::Score {
+                holder, objective, ..
+            } => {
                 self.require_objective(objective);
                 let holder = self.holder(holder, ctx);
                 self.scores.insert((holder, objective.clone()), value);
             }
-            Store::Storage { path, scale } => {
+            Store::Storage { path, scale, .. } => {
                 let scaled = (value as f64 * scale) as i64;
                 self.storage_set(path, Value::from(scaled));
             }
@@ -558,8 +574,12 @@ impl Sim {
                         .map(|v| v.parse::<i64>().expect("string index"))
                 };
                 let (start, end) = (offset(), offset());
-                let Value::String(text) = self.storage_get(source_path)? else {
-                    panic!("`set string` of a value that is not a string at {source_path}");
+                // A number becomes its text. Minecraft fails the command
+                // for a list or a compound ("Expected a value").
+                let text = match self.storage_get(source_path)? {
+                    Value::String(text) => text.clone(),
+                    Value::Array(_) | Value::Object(_) => return None,
+                    other => other.to_string(),
                 };
                 let chars: Vec<char> = text.chars().collect();
                 let len = chars.len() as i64;
@@ -583,6 +603,10 @@ impl Sim {
                 list.push(value);
                 self.storage_set(path, Value::Array(list));
             } else {
+                // `set` fails when the value is already there.
+                if self.storage_get(path) == Some(&value) {
+                    return None;
+                }
                 self.storage_set(path, value);
             }
             return Some(1);
@@ -782,8 +806,16 @@ impl Sim {
 }
 
 enum Store {
-    Score { holder: String, objective: String },
-    Storage { path: String, scale: f64 },
+    Score {
+        holder: String,
+        objective: String,
+        success: bool,
+    },
+    Storage {
+        path: String,
+        scale: f64,
+        success: bool,
+    },
 }
 
 enum Segment {

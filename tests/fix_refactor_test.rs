@@ -380,7 +380,8 @@ def check():
 
 #[test]
 fn test_assignment_param_and_complex_values_use_expression_evaluator() {
-    // Macro-parameter reads and nested arithmetic both route through the
+    // A copy of a parameter keeps the value in storage too, since the
+    // parameter may hold a string. Nested arithmetic routes through the
     // expression evaluator rather than the simple scoreboard ladder.
     let source = r#"
 def take(p):
@@ -392,7 +393,8 @@ def take(p):
     let content = read_function(&output_dir, "take");
     assert_eq!(
         content,
-        "execute store result score #take.q cobble.vars run data get storage cobble:global args.p\n\
+        "data modify storage cobble:global locals.take.q set from storage cobble:global args.p\n\
+         execute store result score #take.q cobble.vars run data get storage cobble:global locals.take.q\n\
          execute store result score #take.z cobble.vars run data get storage cobble:global args.p\n\
          scoreboard players add #take.z cobble.vars 1\n\
          scoreboard players set #multiplier cobble.vars 2\n\

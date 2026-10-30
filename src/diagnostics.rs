@@ -1951,6 +1951,25 @@ def main():
     }
 
     #[test]
+    fn loop_targets_can_index_and_be_indexed() {
+        let diagnostics = analyze_source(
+            r#"
+items = [1, 2, 3]
+names = ["Steve", "Alex"]
+
+def main():
+    for i in range(3):
+        picked = items[i]
+    for name in names:
+        first = name[0]
+        rest = first
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
     fn reports_undefined_before_type_mismatch_for_unknown_expression_inputs() {
         let diagnostics = analyze_source(
             r#"

@@ -111,7 +111,11 @@ A function with parameters runs as a macro function with the storage
 `mypack:global args`. It reads its parameters from `args.<name>`: macro lines
 use `$(name)`, and conditions and arithmetic use
 `data get storage mypack:global args.<name>`. Assigning a parameter writes
-`args.<name>`.
+`args.<name>`. A local assigned from a parameter, such as `copy = value`,
+gets both `locals.<function>.copy` and `#<function>.copy`, because the
+parameter can hold a string as well as a number. When a raw command in the
+function writes the local's score, the local holds a number and only the
+score is kept.
 
 A call builds the arguments in a storage path of its own and copies them to
 `args` right before the `function` command:

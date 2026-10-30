@@ -420,9 +420,22 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Array(_) | Expression::Map(_) => {
                 self.storage_value_commands(target_path, arg)
             }
-            Expression::Subscript(base, index) if self.string_variable_path(base).is_some() => {
-                let base_path = self.string_variable_path(base).unwrap_or_default();
-                self.string_char_commands(target_path, &base_path, index)
+            Expression::Subscript(base, index) if self.is_string_base(base) => {
+                self.string_char_commands(target_path, base, index)
+            }
+            // A value whose type isn't a number keeps its storage value.
+            Expression::Subscript(base, index)
+                if !self.is_string_key(index) && self.unknown_value_path(base).is_some() =>
+            {
+                let base_path = self.unknown_value_path(base).unwrap_or_default();
+                self.unknown_item_commands(target_path, &base_path, index)
+            }
+            Expression::Subscript(..) | Expression::Attribute(..)
+                if self.storage_read_type(arg) != CobbleType::Integer
+                    && self.resolve_storage_path_plan(arg).is_some() =>
+            {
+                let plan = self.resolve_storage_path_plan(arg).expect("checked above");
+                self.copy_storage_commands(target_path, &plan)
             }
             _ => {
                 let id = self.next_temp_id();

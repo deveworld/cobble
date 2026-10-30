@@ -405,6 +405,11 @@ fn compile_project(
         )
     })?;
 
+    // A file can write the lists and maps of a file compiled before it.
+    for parsed in &parsed_files {
+        transpiler.record_container_writes(&parsed.program);
+    }
+
     // Compile all files
     for (file_path, parsed) in project.files_to_compile.iter().zip(parsed_files.iter()) {
         // A file that an earlier file imports was compiled with it.
