@@ -143,6 +143,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   condition written as a list or as an entity predicate without `type`.
   Minecraft 26.3 rejects the advancement, and then `/reload` fails for every
   pack.
+- A string parameter with a `"` or a `\` shows in `tellraw` and `title` text.
+  The value used to go into the JSON as a macro, which broke the command,
+  and Minecraft then ran none of the function, not even its other commands.
+  A parameter in `tellraw` text now shows from `args`; a parameter in a
+  target, a `color`, or a `selector` is still a macro value.
+- `grid[r][c] = v` with parameter indexes writes the item of a list of lists.
+  It used to write a field named after `c` in `grid[r]`, so nothing changed.
+- `for ch in word` over a string parameter gives its characters, as `word[i]`
+  does. `ch` used to be empty.
+- The build summary counts every file the build compiled, imported files
+  included. It used to count only the entry files, so a project with one
+  entry point always showed `Source files: 1`. `cobble inspect` labels the
+  manifest's entry files `Entry files`.
 - A build compiles each file once. A file that an earlier file imports used
   to be compiled again when the build reached it in the source folder, which
   left unused helper functions in the pack and set its module variables

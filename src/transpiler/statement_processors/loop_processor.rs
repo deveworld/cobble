@@ -450,11 +450,21 @@ impl Transpiler {
                 transpiler.runtime_range_condition(&index_var, &len_var, &step, &step_var)
             }),
             body: Box::new(|transpiler| {
-                let item_plan = list_plan
-                    .clone()
-                    .append_dynamic_index(Expression::Identifier(index_var.clone()));
-                let binding_commands =
-                    transpiler.runtime_storage_list_item_commands(&item_plan, &for_loop.target)?;
+                let binding_commands = match transpiler.unknown_iterable_path(&for_loop.iter) {
+                    // A parameter can hold a string, whose items are its
+                    // characters, so the item is read as `p[i]` reads it.
+                    Some(base_path) => transpiler.runtime_unknown_item_commands(
+                        &base_path,
+                        &index_var,
+                        &for_loop.target,
+                    )?,
+                    None => {
+                        let item_plan = list_plan
+                            .clone()
+                            .append_dynamic_index(Expression::Identifier(index_var.clone()));
+                        transpiler.runtime_storage_list_item_commands(&item_plan, &for_loop.target)?
+                    }
+                };
 
                 let mut statements = for_loop.body.clone();
                 statements.push(Statement::Assignment(Assignment {
@@ -591,6 +601,50 @@ impl Transpiler {
                 ),
             ]
         })
+    }
+
+    /// The storage path of a loop's iterable when it is a parameter, or a
+    /// copy of one, which can hold a list or a string.
+    fn unknown_iterable_path(&self, iter: &Expression) -> Option<String> {
+        let Expression::Identifier(name) = iter else {
+            return None;
+        };
+        if self.current_context.is_param(name) {
+            return Some(format!("args.{name}"));
+        }
+        match self.symbols.variable_types.get(name) {
+            None | Some(CobbleType::Unknown) => {
+                self.symbols.variable_storage_paths.get(name).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    /// Copies item `index` of the list or string at `base_path` into the loop
+    /// variable `target`, in storage and as a score.
+    fn runtime_unknown_item_commands(
+        &mut self,
+        base_path: &str,
+        index_var: &str,
+        target: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        let namespace = self.data_pack.namespace.clone();
+        let target_path = self.variable_storage_path(target);
+        let mut commands = vec![format!(
+            "data remove storage {}:global {}",
+            namespace, target_path
+        )];
+        commands.extend(self.unknown_item_commands(
+            &target_path,
+            base_path,
+            &Expression::Identifier(index_var.to_string()),
+        )?);
+        commands.push(format!("scoreboard players set {} temp 0", target));
+        commands.push(format!(
+            "execute store result score {} temp run data get storage {}:global {}",
+            target, namespace, target_path
+        ));
+        Ok(commands)
     }
 
     fn runtime_storage_list_item_commands(

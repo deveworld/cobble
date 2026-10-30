@@ -952,9 +952,15 @@ def greet(player, message):
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "greet");
 
-    // Parameters should be converted to macro syntax
+    // The target is a macro value; the text shows the argument from `args`,
+    // so a `"` in it can't break the JSON.
     assert!(content.contains("$tellraw $(player)"));
-    assert!(content.contains("$(message)"));
+    assert!(!content.contains("$(message)"), "{content}");
+    assert!(
+        content.contains("set string storage cobble:global args.message"),
+        "{content}"
+    );
+    assert!(content.contains(r#""nbt":"_text.message""#), "{content}");
 }
 
 #[test]

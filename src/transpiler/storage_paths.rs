@@ -44,9 +44,12 @@ pub(in crate::transpiler) trait StoragePathOps {
             Expression::Identifier(name) => {
                 self.storage_symbols().variable_types.get(name).cloned()
             }
+            // An item or a field is a list, a map, or a string when its
+            // literal and every write say so, as in `grid[r]` of a list of
+            // lists; otherwise its type is known only when the pack runs.
             Expression::Attribute(obj, _) => {
                 if matches!(self.storage_expr_type(obj), Some(CobbleType::Map)) {
-                    Some(CobbleType::Unknown)
+                    Some(self.storage_container_type(expr))
                 } else {
                     None
                 }
@@ -56,12 +59,83 @@ pub(in crate::transpiler) trait StoragePathOps {
                     self.storage_expr_type(obj),
                     Some(CobbleType::List | CobbleType::Map | CobbleType::String)
                 ) {
-                    Some(CobbleType::Unknown)
+                    Some(self.storage_container_type(expr))
                 } else {
                     None
                 }
             }
             _ => None,
+        }
+    }
+
+    /// The type of the value `expr` reads from storage: an item of a list or
+    /// a field of a map whose last assigned literal tells, when every write
+    /// of the program into that item or field has the same type. A
+    /// parameter, a list or map Cobble didn't see a literal for, or an item
+    /// written with values of other types gives `Unknown`.
+    fn storage_read_type(&self, expr: &Expression) -> CobbleType {
+        let symbols = self.storage_symbols();
+        let value_type = |value: &Expression| match value {
+            Expression::Number(_) | Expression::Boolean(_) => CobbleType::Integer,
+            Expression::String(_) => CobbleType::String,
+            Expression::Array(_) => CobbleType::List,
+            Expression::Map(_) => CobbleType::Map,
+            Expression::Identifier(name) => match symbols.variable_types.get(name) {
+                Some(CobbleType::Boolean) => CobbleType::Integer,
+                Some(known) => known.clone(),
+                None => CobbleType::Unknown,
+            },
+            Expression::Binary(..) | Expression::Unary(..) => CobbleType::Integer,
+            _ => CobbleType::Unknown,
+        };
+        let (base, key) = match expr {
+            Expression::Subscript(base, index) => (base, Some(&**index)),
+            Expression::Attribute(base, _) => (base, None),
+            _ => return CobbleType::Unknown,
+        };
+        let Expression::Identifier(name) = &**base else {
+            return CobbleType::Unknown;
+        };
+        if self.is_storage_current_param(name) {
+            return CobbleType::Unknown;
+        }
+        // The type all the values share, if they do.
+        let shared = |values: &mut dyn Iterator<Item = &Expression>| {
+            let mut types = values.map(value_type);
+            let first = types.next().unwrap_or(CobbleType::Unknown);
+            if types.all(|other| other == first) {
+                first
+            } else {
+                CobbleType::Unknown
+            }
+        };
+        let field = match (expr, key) {
+            (Expression::Attribute(_, field), _) | (_, Some(Expression::String(field))) => {
+                Some(field.as_str())
+            }
+            _ => None,
+        };
+        let literal = match (symbols.variables.get(name), field, key) {
+            (Some(Expression::Array(items)), _, Some(_)) => shared(&mut items.iter()),
+            (Some(Expression::Map(entries)), Some(field), _) => entries
+                .iter()
+                .find(|(key, _)| key == field)
+                .map_or(CobbleType::Unknown, |(_, value)| value_type(value)),
+            // A key known only when the pack runs can pick any field.
+            (Some(Expression::Map(entries)), None, Some(_)) => {
+                shared(&mut entries.iter().map(|(_, value)| value))
+            }
+            _ => CobbleType::Unknown,
+        };
+        container_writes::read_type(&symbols.container_writes, name, field, literal)
+    }
+
+    /// `List`, `Map`, or `String` when an item or field read has that type,
+    /// and `Unknown` otherwise.
+    fn storage_container_type(&self, expr: &Expression) -> CobbleType {
+        match self.storage_read_type(expr) {
+            known @ (CobbleType::List | CobbleType::Map | CobbleType::String) => known,
+            _ => CobbleType::Unknown,
         }
     }
 
@@ -264,68 +338,6 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
     fn storage_scoreboard_objective(&self, name: &str) -> Option<&str>;
     /// Static SNBT serialization for literal/const expressions.
     fn storage_static_snbt(&self, expr: &Expression) -> Result<String, TranspileError>;
-
-    /// The type of the value `expr` reads from storage: an item of a list or
-    /// a field of a map whose last assigned literal tells, when every write
-    /// of the program into that item or field has the same type. A
-    /// parameter, a list or map Cobble didn't see a literal for, or an item
-    /// written with values of other types gives `Unknown`.
-    fn storage_read_type(&self, expr: &Expression) -> CobbleType {
-        let symbols = self.storage_symbols();
-        let value_type = |value: &Expression| match value {
-            Expression::Number(_) | Expression::Boolean(_) => CobbleType::Integer,
-            Expression::String(_) => CobbleType::String,
-            Expression::Array(_) => CobbleType::List,
-            Expression::Map(_) => CobbleType::Map,
-            Expression::Identifier(name) => match symbols.variable_types.get(name) {
-                Some(CobbleType::Boolean) => CobbleType::Integer,
-                Some(known) => known.clone(),
-                None => CobbleType::Unknown,
-            },
-            Expression::Binary(..) | Expression::Unary(..) => CobbleType::Integer,
-            _ => CobbleType::Unknown,
-        };
-        let (base, key) = match expr {
-            Expression::Subscript(base, index) => (base, Some(&**index)),
-            Expression::Attribute(base, _) => (base, None),
-            _ => return CobbleType::Unknown,
-        };
-        let Expression::Identifier(name) = &**base else {
-            return CobbleType::Unknown;
-        };
-        if self.is_storage_current_param(name) {
-            return CobbleType::Unknown;
-        }
-        // The type all the values share, if they do.
-        let shared = |values: &mut dyn Iterator<Item = &Expression>| {
-            let mut types = values.map(value_type);
-            let first = types.next().unwrap_or(CobbleType::Unknown);
-            if types.all(|other| other == first) {
-                first
-            } else {
-                CobbleType::Unknown
-            }
-        };
-        let field = match (expr, key) {
-            (Expression::Attribute(_, field), _) | (_, Some(Expression::String(field))) => {
-                Some(field.as_str())
-            }
-            _ => None,
-        };
-        let literal = match (symbols.variables.get(name), field, key) {
-            (Some(Expression::Array(items)), _, Some(_)) => shared(&mut items.iter()),
-            (Some(Expression::Map(entries)), Some(field), _) => entries
-                .iter()
-                .find(|(key, _)| key == field)
-                .map_or(CobbleType::Unknown, |(_, value)| value_type(value)),
-            // A key known only when the pack runs can pick any field.
-            (Some(Expression::Map(entries)), None, Some(_)) => {
-                shared(&mut entries.iter().map(|(_, value)| value))
-            }
-            _ => CobbleType::Unknown,
-        };
-        container_writes::read_type(&symbols.container_writes, name, field, literal)
-    }
 
     /// The storage path of a variable or parameter whose type Cobble
     /// doesn't know, which can hold a list or a string.

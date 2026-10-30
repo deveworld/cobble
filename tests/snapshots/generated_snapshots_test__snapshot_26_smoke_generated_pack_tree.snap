@@ -27,7 +27,7 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Cobble 26.3 smoke fixture",
   "generated": {
     "advancements": 0,
-    "commands": 63,
+    "commands": 67,
     "custom_function_tags": 0,
     "function_tags": 2,
     "functions": 14,
@@ -37,7 +37,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 0,
     "recipes": 0,
-    "source_map_entries": 66,
+    "source_map_entries": 70,
     "stdlib_function_tags": 2,
     "total_json_resources": 1
   },
@@ -247,7 +247,51 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_smoke/function/announce.mcfunction",
       "generated_line": 1,
-      "command": "$tellraw @a {\"text\":\"$(message)\",\"color\":\"aqua\"}",
+      "command": "data remove storage cobble_26_smoke:global _text.message",
+      "source": {
+        "file": "src/utils.cbl",
+        "line": 5,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/announce.mcfunction",
+      "generated_line": 2,
+      "command": "data remove storage cobble_26_smoke:global _text_snbt.message",
+      "source": {
+        "file": "src/utils.cbl",
+        "line": 5,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/announce.mcfunction",
+      "generated_line": 3,
+      "command": "data modify storage cobble_26_smoke:global _text.message set string storage cobble_26_smoke:global args.message",
+      "source": {
+        "file": "src/utils.cbl",
+        "line": 5,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/announce.mcfunction",
+      "generated_line": 4,
+      "command": "execute unless data storage cobble_26_smoke:global _text.message run data modify storage cobble_26_smoke:global _text_snbt.message set from storage cobble_26_smoke:global args.message",
+      "source": {
+        "file": "src/utils.cbl",
+        "line": 5,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_smoke/function/announce.mcfunction",
+      "generated_line": 5,
+      "command": "tellraw @a {\"color\":\"aqua\",\"extra\":[{\"extra\":[{\"interpret\":true,\"nbt\":\"_text.message\",\"storage\":\"cobble_26_smoke:global\"},{\"nbt\":\"_text_snbt.message\",\"storage\":\"cobble_26_smoke:global\"}],\"text\":\"\"}],\"text\":\"\"}",
       "source": {
         "file": "src/utils.cbl",
         "line": 5,
@@ -844,7 +888,11 @@ return run say nested return ok
 test run minecraft:always_pass 1 true
 
 ===== data/cobble_26_smoke/function/announce.mcfunction =====
-$tellraw @a {"text":"$(message)","color":"aqua"}
+data remove storage cobble_26_smoke:global _text.message
+data remove storage cobble_26_smoke:global _text_snbt.message
+data modify storage cobble_26_smoke:global _text.message set string storage cobble_26_smoke:global args.message
+execute unless data storage cobble_26_smoke:global _text.message run data modify storage cobble_26_smoke:global _text_snbt.message set from storage cobble_26_smoke:global args.message
+tellraw @a {"color":"aqua","extra":[{"extra":[{"interpret":true,"nbt":"_text.message","storage":"cobble_26_smoke:global"},{"nbt":"_text_snbt.message","storage":"cobble_26_smoke:global"}],"text":""}],"text":""}
 
 ===== data/cobble_26_smoke/function/elif_temp_7.mcfunction =====
 execute store result storage cobble_26_smoke:global _say_args.score int 1 run scoreboard players get score cobble_26_smoke.vars

@@ -45,6 +45,11 @@ impl Transpiler {
         self.imports.files.contains(&canonical_path)
     }
 
+    /// How many files this transpiler compiled, imported files included.
+    pub fn compiled_file_count(&self) -> usize {
+        self.imports.files.len()
+    }
+
     pub fn set_current_file_with_source(&mut self, file_path: &Path, source: &str) {
         self.set_current_file(file_path);
         self.register_source_locations(file_path, source);

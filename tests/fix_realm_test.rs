@@ -19,11 +19,18 @@
 //!   can't load
 //! - `elif` and `else` after `if entity ...:` gave a bare parse error
 //! - `module.variable` asked for a map literal instead of an import
+//! - the build summary counted only the entry files as source files
+//! - a string parameter with a `"` in `tellraw` text broke the JSON, and
+//!   Minecraft then ran none of the function
+//! - `grid[r][c] = v` with parameter indexes wrote a map key of `grid[r]`
+//! - `for ch in word` over a string parameter left `ch` empty
 
 mod common;
 
 use common::mcsim::{compile, compile_project, load_functions, Sim};
+use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 #[test]
 fn string_values_show_without_quotes_in_text_commands() {
@@ -349,5 +356,116 @@ fn module_variables_read_through_the_module_name_suggest_an_import() {
         error.contains("`a.count` names a variable of the module `a`")
             && error.contains("from a import count"),
         "{error}"
+    );
+}
+
+#[test]
+fn build_summary_counts_imported_files() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let source = temp.path().join("src");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        temp.path().join("cobble.toml"),
+        "[project]\nname = \"two\"\ndescription = \"Two files\"\nnamespace = \"two\"\nversion = \"1.0.0\"\npack_format = \"121.0\"\n\n[build]\nentry_points = [\"main.cbl\"]\n",
+    )
+    .unwrap();
+    fs::write(source.join("util.cbl"), "def helper():\n    /say hi\n").unwrap();
+    fs::write(
+        source.join("main.cbl"),
+        "import util\n\ndef main():\n    helper()\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_cobble"))
+        .arg("build")
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("  Source files: 2\n"), "{stdout}");
+}
+
+#[test]
+fn parameters_with_quotes_show_in_text_commands() {
+    let mut sim = Sim::load(
+        r#"
+def announce(msg):
+    /tellraw @a {"text":"[News] {msg}","color":"gold"}
+    /say {msg}
+
+def main():
+    announce("He said \"hi\"")
+    announce(42)
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(
+        sim.log,
+        [
+            "[News] He said \"hi\"",
+            "Server: He said \"hi\"",
+            "[News] 42",
+            "Server: 42"
+        ]
+    );
+    let announce = sim.function_text("announce");
+    assert!(
+        announce.lines().any(|line| line.starts_with("tellraw @a ")),
+        "{announce}"
+    );
+}
+
+#[test]
+fn nested_list_items_take_parameter_indexes() {
+    let mut sim = Sim::load(
+        r#"
+grid = [[0, 0, 0], [0, 0, 0]]
+
+def set_cell(r, c, v):
+    grid[r][c] = v
+
+def main():
+    set_cell(1, 2, 7)
+    set_cell(0, 0, 3)
+    total = 0
+    for row in grid:
+        for cell in row:
+            total += cell
+    return total * 100 + grid[1][2]
+"#,
+        &[],
+    );
+    assert_eq!(sim.call("main"), Some(1007));
+}
+
+#[test]
+fn loops_over_a_string_parameter_give_its_characters() {
+    let mut sim = Sim::load(
+        r#"
+def spell(word):
+    for ch in word:
+        /say {ch}
+
+def main():
+    spell("hey")
+    spell(["x", "y"])
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(
+        sim.log,
+        [
+            "Server: h",
+            "Server: e",
+            "Server: y",
+            "Server: x",
+            "Server: y"
+        ]
     );
 }

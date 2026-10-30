@@ -268,7 +268,16 @@ impl<'a> CommandProcessor<'a> {
 
                     if is_simple_var {
                         // Try to convert simple variables
-                        if self.is_param(var_name) {
+                        if self.is_param(var_name)
+                            && !vars_as_macros
+                            && is_text_command(&result)
+                            && in_text_string(&chars[..i])
+                        {
+                            // Shown from `args` like a variable, because a
+                            // macro value with a `"` would break the JSON.
+                            scoreboard_vars_found.push((i, j, var_name.to_string()));
+                            i = j;
+                        } else if self.is_param(var_name) {
                             // Function parameter - convert to macro
                             let replacement = format!("$({})", var_name);
                             replacements.push((i, j, replacement));
@@ -440,7 +449,9 @@ impl<'a> CommandProcessor<'a> {
     }
 
     fn variable_text_component(&self, var_name: &str) -> serde_json::Value {
-        if let Some(storage_path) = self.symbols.variable_storage_paths.get(var_name) {
+        if self.is_param(var_name) {
+            self.storage_text_component(var_name, &format!("args.{var_name}"))
+        } else if let Some(storage_path) = self.symbols.variable_storage_paths.get(var_name) {
             self.storage_text_component(var_name, storage_path)
         } else {
             let objective = self
@@ -465,7 +476,12 @@ impl<'a> CommandProcessor<'a> {
     /// copies [`Self::text_copy_commands`] makes before the command.
     fn storage_text_component(&self, var_name: &str, storage_path: &str) -> serde_json::Value {
         let storage = format!("{}:global", self.namespace);
-        match self.symbols.variable_types.get(var_name) {
+        let known_type = if self.is_param(var_name) {
+            None
+        } else {
+            self.symbols.variable_types.get(var_name)
+        };
+        match known_type {
             Some(CobbleType::String) => serde_json::json!({
                 "nbt": storage_path,
                 "storage": storage,
@@ -506,15 +522,21 @@ impl<'a> CommandProcessor<'a> {
         let mut copied: Vec<&str> = Vec::new();
         let mut commands = Vec::new();
         for (_, _, name) in &vars {
-            let Some(path) = self.symbols.variable_storage_paths.get(name) else {
-                continue;
-            };
-            if copied.contains(&name.as_str())
-                || matches!(
+            let path = if self.is_param(name) {
+                format!("args.{name}")
+            } else {
+                let Some(path) = self.symbols.variable_storage_paths.get(name) else {
+                    continue;
+                };
+                if matches!(
                     self.symbols.variable_types.get(name),
                     Some(CobbleType::String | CobbleType::List | CobbleType::Map)
-                )
-            {
+                ) {
+                    continue;
+                }
+                path.clone()
+            };
+            if copied.contains(&name.as_str()) {
                 continue;
             }
             copied.push(name);
@@ -779,11 +801,9 @@ impl<'a> CommandProcessor<'a> {
                     escape_quoted(&remaining[..pos])
                 ));
             }
-            if let Some(storage_path) = self.symbols.variable_storage_paths.get(var_name) {
-                json_components.push(
-                    self.storage_text_component(var_name, storage_path)
-                        .to_string(),
-                );
+            if self.is_param(var_name) || self.symbols.variable_storage_paths.contains_key(var_name)
+            {
+                json_components.push(self.variable_text_component(var_name).to_string());
             } else {
                 // The variable's name is its fake player.
                 let objective = self
@@ -973,6 +993,52 @@ pub(in crate::transpiler) fn unknown_selector(command: &str) -> Option<String> {
 /// Operates on a char slice so callers holding a char index never have to
 /// byte-slice the underlying `String` (which panics mid-character on
 /// non-ASCII text).
+/// Whether `command` is a `tellraw` or `title` command, whose JSON text can
+/// show values as text components.
+fn is_text_command(command: &str) -> bool {
+    let command = command.trim_start();
+    command.starts_with("tellraw ") || command.starts_with("title ")
+}
+
+/// Whether the text right after `chars` is inside a JSON string that is
+/// shown as text: a `text` value or a string item of an array. Other strings,
+/// such as a `selector`, a `color`, or a click event's `value`, take the
+/// value as it is.
+fn in_text_string(chars: &[char]) -> bool {
+    let mut open: Option<usize> = None;
+    let mut escaped = false;
+    for (index, &ch) in chars.iter().enumerate() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            open = match open {
+                Some(_) => None,
+                None => Some(index),
+            };
+        }
+    }
+    let Some(open) = open else {
+        return false;
+    };
+    let before: String = chars[..open].iter().collect();
+    let before = before.trim_end();
+    if before.ends_with('[') || before.ends_with(',') {
+        return true;
+    }
+    let Some(key) = before.strip_suffix(':') else {
+        return false;
+    };
+    let key = key.trim_end();
+    key.ends_with("\"text\"")
+        || key.ends_with("'text'")
+        || key.ends_with("text")
+            && !key
+                .trim_end_matches("text")
+                .ends_with(|c: char| c.is_alphanumeric() || c == '_')
+}
+
 fn is_inside_quotes(chars: &[char]) -> bool {
     let mut quote_count = 0;
     let mut prev_was_backslash = false;

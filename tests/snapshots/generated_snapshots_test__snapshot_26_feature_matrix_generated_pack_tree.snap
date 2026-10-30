@@ -27,7 +27,7 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Cobble 26.3 feature matrix fixture",
   "generated": {
     "advancements": 0,
-    "commands": 279,
+    "commands": 283,
     "custom_function_tags": 1,
     "function_tags": 3,
     "functions": 15,
@@ -37,7 +37,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 2,
     "recipes": 0,
-    "source_map_entries": 286,
+    "source_map_entries": 290,
     "stdlib_function_tags": 2,
     "total_json_resources": 5
   },
@@ -1429,7 +1429,51 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/announce.mcfunction",
       "generated_line": 1,
-      "command": "$tellraw @a {\"text\":\"$(message)\",\"color\":\"light_purple\"}",
+      "command": "data remove storage cobble_26_feature_matrix:global _text.message",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/announce.mcfunction",
+      "generated_line": 2,
+      "command": "data remove storage cobble_26_feature_matrix:global _text_snbt.message",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/announce.mcfunction",
+      "generated_line": 3,
+      "command": "data modify storage cobble_26_feature_matrix:global _text.message set string storage cobble_26_feature_matrix:global args.message",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/announce.mcfunction",
+      "generated_line": 4,
+      "command": "execute unless data storage cobble_26_feature_matrix:global _text.message run data modify storage cobble_26_feature_matrix:global _text_snbt.message set from storage cobble_26_feature_matrix:global args.message",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 17,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/announce.mcfunction",
+      "generated_line": 5,
+      "command": "tellraw @a {\"color\":\"light_purple\",\"extra\":[{\"extra\":[{\"interpret\":true,\"nbt\":\"_text.message\",\"storage\":\"cobble_26_feature_matrix:global\"},{\"nbt\":\"_text_snbt.message\",\"storage\":\"cobble_26_feature_matrix:global\"}],\"text\":\"\"}],\"text\":\"\"}",
       "source": {
         "file": "src/systems.cbl",
         "line": 17,
@@ -2774,7 +2818,11 @@ schedule function cobble_26_feature_matrix:tick 20t replace
 return run say audit complete
 
 ===== data/cobble_26_feature_matrix/function/announce.mcfunction =====
-$tellraw @a {"text":"$(message)","color":"light_purple"}
+data remove storage cobble_26_feature_matrix:global _text.message
+data remove storage cobble_26_feature_matrix:global _text_snbt.message
+data modify storage cobble_26_feature_matrix:global _text.message set string storage cobble_26_feature_matrix:global args.message
+execute unless data storage cobble_26_feature_matrix:global _text.message run data modify storage cobble_26_feature_matrix:global _text_snbt.message set from storage cobble_26_feature_matrix:global args.message
+tellraw @a {"color":"light_purple","extra":[{"extra":[{"interpret":true,"nbt":"_text.message","storage":"cobble_26_feature_matrix:global"},{"nbt":"_text_snbt.message","storage":"cobble_26_feature_matrix:global"}],"text":""}],"text":""}
 
 ===== data/cobble_26_feature_matrix/function/give_kit.mcfunction =====
 $give $(player) minecraft:$(item) $(count)

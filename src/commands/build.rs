@@ -69,13 +69,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     };
 
     if options.dry_run {
-        finish_dry_run(
-            &options,
-            &project,
-            &transpiler,
-            &output,
-            validation_summary.as_ref(),
-        );
+        finish_dry_run(&options, &transpiler, &output, validation_summary.as_ref());
         return Ok(());
     }
 
@@ -99,7 +93,7 @@ pub fn build(options: BuildOptions) -> Result<(), String> {
     if !options.quiet {
         print_build_summary(
             &transpiler,
-            project.files_to_compile.len(),
+            transpiler.compiled_file_count(),
             validation_summary.as_ref(),
             zip_path.as_deref(),
             false,
@@ -568,7 +562,6 @@ fn validate_build_output(
 
 fn finish_dry_run(
     options: &BuildOptions,
-    project: &BuildProject,
     transpiler: &Transpiler,
     output: &OutputDirs,
     validation_summary: Option<&BuildManifestValidation>,
@@ -583,7 +576,7 @@ fn finish_dry_run(
     }
     print_build_summary(
         transpiler,
-        project.files_to_compile.len(),
+        transpiler.compiled_file_count(),
         validation_summary,
         None,
         true,

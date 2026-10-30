@@ -95,7 +95,7 @@ fn print_inspection(input: &Path, summary: &InspectionSummary) {
             println!("  Source: {source}");
         }
         if let Some(compiled_files) = input.get("compiled_files").and_then(Value::as_array) {
-            println!("  Source files: {}", compiled_files.len());
+            println!("  Entry files: {}", compiled_files.len());
         }
     }
 
