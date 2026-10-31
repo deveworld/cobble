@@ -251,10 +251,12 @@ start, stop, count, or step expressions compile to scoreboard-backed recursive
 helper functions. Runtime literal arrays such as `[first, first + 3]` are
 materialized into temporary storage and then iterated as runtime lists. Loops
 over storage-backed list expressions such as `for value in values:` or
-`for value in groups[row]:` compile to an index loop that reads the list length
-at runtime and copies each element into the loop variable before running the
-body. `by` steps also work for runtime list loops; negative steps start at the
-last item.
+`for value in groups[row]:` compile to an index loop that copies each element
+into the loop variable before running the body. As in Python, a forward loop
+reads the list's length again before each pass, so items the body appends are
+visited and the loop stops early when the body removes items. `by` steps also
+work for runtime list loops; negative steps start at the last item, with the
+length read once at the start.
 
 **Unrolling Support:**
 - `range(n)` iterates `0..n`.

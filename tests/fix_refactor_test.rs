@@ -316,10 +316,12 @@ def main():
         read_function(&output, "for_range_body_2").ends_with("function cobble:for_range_temp_1\n")
     );
 
+    // Each pass reads the list's length again, as Python does.
     let list_loop = read_function(&output, "for_list_temp_5");
     assert_eq!(
         list_loop,
-        "execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_body_6\n"
+        "execute store result score #for_list_len_4 cobble.vars run data get storage cobble:global vars.values\n\
+         execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_body_6\n"
     );
 
     let while_loop = read_function(&output, "while_temp_8");

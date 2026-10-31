@@ -359,3 +359,34 @@ def go():
     sim.call("go");
     assert_eq!(sim.log, vec!["Server: step 3", "Server: step 4"]);
 }
+
+#[test]
+fn runtime_for_over_a_list_reads_the_length_on_each_pass() {
+    // Python prints `2 3 [10, 20, 30]`.
+    let mut sim = Sim::load(
+        r#"
+items = [1, 2]
+
+def go():
+    a = [1, 2, 3, 4]
+    for v in a:
+        a.pop()
+    n = len(a)
+    b = [1]
+    c = 0
+    for v in b:
+        c += 1
+        if c < 3:
+            b.append(c)
+    seen = []
+    for v in items:
+        seen.append(v * 10)
+        if v == 2:
+            items.append(3)
+    /say {n} {c} {seen}
+"#,
+        &[],
+    );
+    sim.call("go");
+    assert_eq!(sim.log, vec!["Server: 2 3 [10,20,30]"]);
+}

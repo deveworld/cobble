@@ -488,7 +488,32 @@ impl Transpiler {
                 Ok(init_commands)
             }),
             condition: Box::new(|transpiler| {
-                transpiler.runtime_range_condition(&index_var, &len_var, &step, &step_var)
+                let (args, mut capture) =
+                    transpiler.runtime_range_condition(&index_var, &len_var, &step, &step_var)?;
+                // Walking forward, each pass reads the length again, as
+                // Python does, so the body can grow or shrink the list.
+                if matches!(step, RuntimeRangeStep::Static(step) if step > 0) {
+                    let length = transpiler.runtime_storage_list_len_commands(&list_plan, &len_var)?;
+                    let source = transpiler.current_statement_source.clone();
+                    let shift = length.len();
+                    capture.metadata = capture
+                        .metadata
+                        .into_iter()
+                        .map(|(index, command)| (index + shift, command))
+                        .chain(length.iter().enumerate().map(|(index, command)| {
+                            (
+                                index,
+                                GeneratedCommand::new(
+                                    command.clone(),
+                                    source.clone(),
+                                    GeneratedCommandKind::ControlFlow,
+                                ),
+                            )
+                        }))
+                        .collect();
+                    capture.commands.splice(0..0, length);
+                }
+                Ok((args, capture))
             }),
             body: Box::new(|transpiler| {
                 let binding_commands = match transpiler
