@@ -198,3 +198,30 @@ def main():
     );
     assert!(error.contains("main.cbl:4"), "{error}");
 }
+
+// --- A local copied from an imported map ---
+
+#[test]
+fn a_local_copy_of_an_imported_map_reads_its_fields() {
+    let mut sim = Sim::load_project(
+        &[
+            ("state.cbl", "inv = {\"gold\": 3}\nnames = [\"a\", \"b\"]\n"),
+            (
+                "main.cbl",
+                r#"import state
+from state import inv, names
+def main():
+    local = inv
+    g = local.gold
+    h = local["gold"]
+    people = names
+    first = people[0]
+    /say {g} {h} {first}
+"#,
+            ),
+        ],
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(chat(&sim), ["3 3 a"]);
+}

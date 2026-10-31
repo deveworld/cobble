@@ -2328,10 +2328,14 @@ pub(super) fn check_storage_backed_access(
                 }
 
                 // A field, an item, or `pop()` of a container can be a list,
-                // a map, or a string: the compiler checks its use.
+                // a map, or a string: the compiler checks its use. So can a
+                // variable imported from another file, whose type the
+                // compiler knows.
                 let new_type = infer_expression_type_for_diagnostics(&assignment.value, type_env)
                     .or_else(|| {
-                        reads_a_container(&assignment.value).then_some(CobbleType::Unknown)
+                        (reads_a_container(&assignment.value)
+                            || imported.names.contains(assignment.value.trim()))
+                        .then_some(CobbleType::Unknown)
                     });
                 if let Some(new_type) = new_type {
                     match type_env.get(&assignment.target) {
