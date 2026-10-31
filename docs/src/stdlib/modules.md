@@ -184,6 +184,15 @@ def setup_ui():
     entity.teleport(selector.current(), position.relative(0, 1, 0))
 ```
 
+`schedule.once()` and `schedule.clear()` take the name of a function. A name
+without a namespace, such as `"tick"`, names a function of the pack, and a
+literal with a namespace, such as `"other:tick"`, is used as it is. A
+parameter is a function name in the pack's namespace: `schedule.once(name,
+"1t")` writes `$schedule function <namespace>:$(name) 1t`, so a value with its
+own namespace, such as `other:tick`, gives `<namespace>:other:tick`. Minecraft
+refuses that line when the function runs, and the whole call of the function
+does nothing. To schedule a function in another namespace, pass a literal.
+
 `selector.*` and `position.*` return plain selector or coordinate strings for
 use inside other helpers and emit no commands when used by themselves. These
 helpers are thin wrappers over Minecraft commands, so use raw commands when a
