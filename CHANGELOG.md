@@ -101,6 +101,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- A Minecraft condition joined by `and` or `or` to a function call, as `if
+  entity @a and f():`, tests the Minecraft condition, and the call runs only
+  when needed. Before, the call always ran and decided the result alone.
+- `/tellraw @a {msg}` and `/title ... {msg}` with a parameter holding `"` or `\`
+  no longer stop the function from running: a parameter in plain `tellraw` or
+  `title` text is shown from the function's arguments, as `{"text":"{msg}"}`
+  already was.
+- The variable of a runtime `for` loop holds its last value after the loop, with
+  its type, as in Python. Before, `/say {n}` printed `{n}`, and `x = n` copied a
+  text item's length.
+- A local copied from a map or list imported from another file, as `local =
+  inv`, can be read by field or item.
+- `in` and `not in` beside a Minecraft condition, as `if entity @a and name in
+  names:`, work. After `as` in the same header they are a compile error that
+  says to test them inside the block.
+- Two files that each have a module-level `for i in range(3):` no longer fail as
+  a duplicate module variable, and a module-level loop variable read after the
+  loop holds its last value.
+- Text joined from values known at compile time, as `"t" + str(i)` in an
+  expanded loop, works as a stdlib helper argument, and an error in a statement
+  nested in an expanded loop points at that statement.
+- Per-entity condition flags under `as` no longer share the objective of the
+  module variables, so a player named like a module variable can't change a
+  condition's result.
+- A program with thousands of functions and module variables builds in about a
+  second instead of 20 to 30, and a line of unclosed braces is reported once
+  instead of once per brace.
 - A literal map key with a line break reads and writes its field instead of
   stopping the function from loading.
 - A call whose argument reads a missing item or field, as `show(cfg.nick)` with
