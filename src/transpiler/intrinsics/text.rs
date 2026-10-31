@@ -53,7 +53,23 @@ impl Transpiler {
     ) -> Result<serde_json::Value, TranspileError> {
         match expr {
             Expression::String(s) => Ok(serde_json::json!({ "text": s })),
+            Expression::Identifier(name) if self.current_context.is_param(name) => {
+                Ok(serde_json::json!({ "text": format!("{{{name}}}") }))
+            }
             _ => self.expr_to_json_value(expr),
+        }
+    }
+
+    /// The text of a component: a string keeps its `{name}` placeholders,
+    /// and a parameter becomes one, so the command shows them as text
+    /// components as a raw `tellraw` does.
+    fn expr_to_shown_text(&self, expr: &Expression, label: &str) -> Result<String, TranspileError> {
+        match expr {
+            Expression::String(s) => Ok(s.clone()),
+            Expression::Identifier(name) if self.current_context.is_param(name) => {
+                Ok(format!("{{{name}}}"))
+            }
+            _ => self.expr_to_plain_arg(expr, label),
         }
     }
 
@@ -78,14 +94,14 @@ impl Transpiler {
                 if args.len() != 1 {
                     return Err("text.plain() takes 1 argument".into());
                 }
-                let text = self.expr_to_plain_arg(&args[0], "text.plain text")?;
+                let text = self.expr_to_shown_text(&args[0], "text.plain text")?;
                 serde_json::json!({ "text": text })
             }
             "colored" => {
                 if args.len() != 2 {
                     return Err("text.colored() takes 2 arguments".into());
                 }
-                let text = self.expr_to_plain_arg(&args[0], "text.colored text")?;
+                let text = self.expr_to_shown_text(&args[0], "text.colored text")?;
                 let color = self.expr_to_plain_arg(&args[1], "text color")?;
                 validate_text_color(&color)?;
                 serde_json::json!({ "text": text, "color": color })

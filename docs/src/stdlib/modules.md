@@ -42,6 +42,30 @@ build. Helper behavior and generated output are the same under both versions.
 version = 2
 ```
 
+## Helper Arguments
+
+A helper writes its arguments into a command when the pack is built, so each
+argument is a literal, a `const`, or a parameter of the function that calls
+the helper. A parameter becomes a macro argument, as in a raw command, and
+`{name}` placeholders in a string work the same way:
+
+```python
+from stdlib import entity
+
+def mark(who, label):
+    entity.tag_add(who, label)
+```
+
+```mcfunction
+$tag $(who) add $(label)
+```
+
+Any other variable, such as a module variable, a local, or a joined string,
+holds a value that is known only when the function runs, so passing it is a
+compile error. Pass it to a function parameter and call the helper there. A
+function's own name, as in `schedule.once(tick, "1t")`, names that function.
+The text that `text` helpers show can hold variables, as described below.
+
 ## Text
 
 ```python

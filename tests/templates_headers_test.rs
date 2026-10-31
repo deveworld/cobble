@@ -400,6 +400,79 @@ def main():
 }
 
 #[test]
+fn a_helper_takes_a_parameter_as_a_macro_argument() {
+    let mut sim = Sim::load(
+        r#"
+from stdlib import score, entity, schedule
+
+const START = 7
+
+def put(name):
+    score.set(name, START)
+    score.add("{name}", 2)
+
+def mark(label, fn):
+    entity.tag_add("@s", label)
+    schedule.once(tick, "1t")
+    schedule.clear(fn)
+
+def tick():
+    pass
+
+def main():
+    put("alex")
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.score("alex", "sim.vars"), 9);
+    assert_eq!(
+        sim.function_text("put"),
+        "$scoreboard players set $(name) sim.vars 7\n\
+         $scoreboard players add $(name) sim.vars 2"
+    );
+    assert_eq!(
+        sim.function_text("mark"),
+        "$tag @s add $(label)\n\
+         schedule function sim:tick 1t\n\
+         $schedule clear sim:$(fn)"
+    );
+}
+
+#[test]
+fn a_helper_rejects_a_value_known_only_at_run_time() {
+    for (source, value) in [
+        (
+            "from stdlib import entity\nmodtag = \"m\"\ndef main():\n    entity.tag_add(\"@s\", modtag)\n",
+            "not the variable `modtag`",
+        ),
+        (
+            "from stdlib import entity\ndef main():\n    local = \"x\"\n    entity.tag_add(\"@s\", local)\n",
+            "not the variable `local`",
+        ),
+        (
+            "from stdlib import entity\ndef main():\n    for i in range(2):\n        entity.tag_add(\"@s\", \"m\" + str(i))\n",
+            "not a value computed when the function runs",
+        ),
+        (
+            "from stdlib import score\nkey = 1\ndef main():\n    score.set(key, 1)\n",
+            "not the variable `key`",
+        ),
+        (
+            "from stdlib import storage\nkey = 1\ndef main():\n    storage.set(key, 1)\n",
+            "not the variable `key`",
+        ),
+    ] {
+        let error = compile(source).expect_err(source);
+        assert!(
+            error.contains("must be a literal, a const, or a parameter of this function")
+                && error.contains(value),
+            "{source}\n{error}"
+        );
+    }
+}
+
+#[test]
 fn an_escaped_name_is_text_next_to_a_variable() {
     let mut sim = Sim::load(
         r#"

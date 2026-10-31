@@ -664,6 +664,19 @@ impl Transpiler {
     }
 
     fn push_current_command(&mut self, command: String) -> Result<(), TranspileError> {
+        // A helper argument that is a parameter reads `$(name)`, so the
+        // command runs as a macro line.
+        let command = if !command.starts_with('$')
+            && self
+                .current_context
+                .params
+                .iter()
+                .any(|param| command.contains(&format!("$({})", param)))
+        {
+            format!("${}", command)
+        } else {
+            command
+        };
         if let Some(ref mut commands) = self.current_function {
             let command_index = commands.len();
             commands.push(command);

@@ -245,7 +245,8 @@ impl Transpiler {
             Expression::String(s) if s.contains(['\n', '\r']) => {
                 Err(format!("{} can't contain a line break", label).into())
             }
-            Expression::String(s) | Expression::Identifier(s) => Ok(s.clone()),
+            Expression::String(s) => self.fill_helper_placeholders(s, label),
+            Expression::Identifier(name) => self.helper_name_arg(name, label),
             Expression::Number(n) if n.fract() == 0.0 => Ok((*n as i32).to_string()),
             Expression::Number(n) => Ok(n.to_string()),
             Expression::Call(func, args) => {

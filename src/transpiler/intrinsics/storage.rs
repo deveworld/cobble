@@ -9,9 +9,12 @@ impl Transpiler {
         label: &str,
     ) -> Result<StoragePathPlan, TranspileError> {
         match expr {
-            Expression::String(s) | Expression::Identifier(s) => {
-                Ok(StoragePathPlan::static_path(s.clone()))
-            }
+            Expression::String(s) => Ok(StoragePathPlan::static_path(
+                self.fill_helper_placeholders(s, label)?,
+            )),
+            Expression::Identifier(name) => Ok(StoragePathPlan::static_path(
+                self.helper_name_arg(name, label)?,
+            )),
             Expression::Number(n) if n.fract() == 0.0 => {
                 Ok(StoragePathPlan::static_path((*n as i32).to_string()))
             }
