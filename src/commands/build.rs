@@ -464,7 +464,7 @@ fn print_warnings(
             .zip(parsed_files)
             .find(|(path, _)| path.canonicalize().ok().as_deref() == Some(file))
             .map(|(_, parsed)| parsed.source.clone())
-            .or_else(|| fs::read_to_string(file).ok())?;
+            .or_else(|| crate::diagnostics::read_source_file(file).ok())?;
         Some((PathBuf::from(path_display_relative(file, root)), source))
     };
     let current = path_display_relative(file_path, root);
@@ -1875,7 +1875,11 @@ fn create_zip(
         .map_err(|e| format!("Failed to create temporary zip file: {}", e))?;
 
     let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    // Every entry gets the same time, 1980-01-01 00:00, so the same pack
+    // gives a byte-identical ZIP.
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .last_modified_time(zip::DateTime::default());
 
     // Add all files from output directory to zip, in a stable order so the
     // same pack gives the same ZIP.

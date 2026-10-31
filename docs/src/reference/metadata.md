@@ -57,7 +57,10 @@ Native CLI builds set `project_root` to the canonical project/source root and
 `project_id` to the SHA-1 identity derived from that path. Browser/WASM
 compilation has no local project root, so its manifest leaves `project_root` and
 `project_id` empty. Browser/WASM output also uses `0` for
-`generated_at_unix_epoch_ms`; native CLI builds use the current system time.
+`generated_at_unix_epoch_ms`; native CLI builds use the current system time,
+or `SOURCE_DATE_EPOCH` (in seconds) when that environment variable is set, so
+two builds of the same source can give identical files. ZIP entries always
+carry the time 1980-01-01 00:00, so a ZIP of the same pack is byte-identical.
 Only local CLI link, watch, doctor, and clean workflows use `project_id` for
 ownership checks.
 

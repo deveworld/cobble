@@ -25,7 +25,7 @@ pub use reporting::{
     warning_diagnostics, DiagnosticSeverity, FileSourceDiagnostics, ParsedSourceFile,
     SourceDiagnostic,
 };
-pub use text::byte_offset_for_line_column;
+pub use text::{byte_offset_for_line_column, read_source_file};
 
 pub(crate) use text::mask_non_code;
 use text::{

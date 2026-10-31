@@ -1,3 +1,14 @@
+/// Reads a `.cbl` source file. A UTF-8 byte order mark at the start is
+/// dropped, as `cobble fmt` drops it, so editors that write one don't break
+/// the build.
+pub fn read_source_file(path: &std::path::Path) -> std::io::Result<String> {
+    let mut source = std::fs::read_to_string(path)?;
+    if source.starts_with('\u{feff}') {
+        source.drain(..'\u{feff}'.len_utf8());
+    }
+    Ok(source)
+}
+
 pub fn byte_offset_for_line_column(source: &str, line: usize, column: usize) -> usize {
     let target_line = line.max(1);
     let target_column = column.max(1);

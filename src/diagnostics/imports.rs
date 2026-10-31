@@ -6,7 +6,6 @@ use super::reporting::{FileSourceDiagnostics, ParsedSourceFile, SourceDiagnostic
 use super::semantic::{self, SemanticContext};
 use super::text::{mask_non_code, source_position_at};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 // Keep diagnostics import traversal aligned with the transpiler guard so
@@ -120,7 +119,7 @@ pub fn parse_source_files(
 fn parse_source_file_tree(
     path: &Path,
 ) -> Result<Vec<ParsedSourceFile>, Vec<FileSourceDiagnostics>> {
-    let source = fs::read_to_string(path).map_err(|error| {
+    let source = super::read_source_file(path).map_err(|error| {
         vec![FileSourceDiagnostics::new(
             path,
             "",
@@ -279,7 +278,7 @@ fn analyze_import_tree(file: SourceFileRef<'_>, walk: &mut ImportWalk) {
             continue;
         }
 
-        let imported_source = match fs::read_to_string(&import_path) {
+        let imported_source = match super::read_source_file(&import_path) {
             Ok(source) => source,
             Err(error) => {
                 walk.output.push(FileSourceDiagnostics::new(
@@ -471,7 +470,7 @@ fn validate_import_items_from_path(
     // A module that cannot be read (or re-parsed) here is silently skipped
     // (`.ok()?`): it was read and parsed successfully when it was first
     // visited in this run, so a failure here is a mid-run race.
-    let imported_source = fs::read_to_string(import_path).ok()?;
+    let imported_source = super::read_source_file(import_path).ok()?;
     let imported_program = crate::parser::parse(&imported_source).ok()?;
     validate_import_items(file, import, import_span, &imported_program)
 }

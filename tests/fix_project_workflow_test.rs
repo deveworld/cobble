@@ -417,3 +417,37 @@ fn a_continued_command_is_validated_as_one_command() {
     assert!(!output.status.success());
     assert!(text(&output).contains("| nope b\n"), "{}", text(&output));
 }
+
+#[test]
+fn a_byte_order_mark_at_the_start_of_a_file_is_ignored() {
+    let temp_dir = TempDir::new().unwrap();
+    let project = write_project(temp_dir.path());
+    fs::write(
+        project.join("src/main.cbl"),
+        "\u{feff}import other\n\ndef hello():\n    other_say()\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/other.cbl"),
+        "\u{feff}def other_say():\n    /say other\n",
+    )
+    .unwrap();
+
+    succeed(cobble().current_dir(&project).args(["build", "-q"]));
+    succeed(cobble().current_dir(&project).args(["check"]));
+    assert_eq!(
+        fs::read_to_string(project.join("output/data/workflow/function/other_say.mcfunction"))
+            .unwrap(),
+        "say other\n"
+    );
+
+    // Columns on the first line don't count the mark.
+    fs::write(project.join("src/main.cbl"), "\u{feff}x = (\n").unwrap();
+    let output = cobble()
+        .current_dir(&project)
+        .args(["check", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!text(&output).contains('\u{feff}'), "{}", text(&output));
+}

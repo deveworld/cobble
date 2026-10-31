@@ -978,7 +978,7 @@ fn scan_source_files(source_path: &Path, report_temp: bool) -> Result<SourceScan
     };
 
     for file in scan.files.clone() {
-        match fs::read_to_string(&file) {
+        match crate::diagnostics::read_source_file(&file) {
             Ok(contents) => {
                 let relative_file = path_display_relative(&file, source_path);
                 let signals = analyze_source(&contents, &relative_file, report_temp);

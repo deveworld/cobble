@@ -42,6 +42,14 @@ impl DataPack {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            // The reproducible-builds convention: a build with
+            // SOURCE_DATE_EPOCH set (seconds) writes that time instead.
+            if let Some(seconds) = std::env::var("SOURCE_DATE_EPOCH")
+                .ok()
+                .and_then(|value| value.trim().parse::<u64>().ok())
+            {
+                return seconds.saturating_mul(1000);
+            }
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)

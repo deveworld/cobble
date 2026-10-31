@@ -5017,6 +5017,41 @@ def middle():
 }
 
 #[test]
+fn cli_builds_of_the_same_source_are_byte_identical() {
+    // ZIP entries carry a fixed time, and SOURCE_DATE_EPOCH pins the
+    // manifest's generation time.
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input = write_source(temp_dir.path(), "def hello():\n    /say hi\n");
+    let output_dir = temp_dir.path().join("pack");
+    let build = || {
+        run_ok(
+            cobble()
+                .env("SOURCE_DATE_EPOCH", "1700000000")
+                .arg("build")
+                .arg(&input)
+                .arg("--zip")
+                .arg("-o")
+                .arg(&output_dir),
+            "build --zip",
+        );
+        (
+            fs::read(temp_dir.path().join("cobble.zip")).unwrap(),
+            fs::read(output_dir.join(".cobble/build_manifest.json")).unwrap(),
+        )
+    };
+    let (first_zip, first_manifest) = build();
+    std::thread::sleep(std::time::Duration::from_millis(2100));
+    let (second_zip, second_manifest) = build();
+    assert!(first_zip == second_zip, "the two ZIPs differ");
+    assert_eq!(
+        String::from_utf8(first_manifest.clone()).unwrap(),
+        String::from_utf8(second_manifest).unwrap()
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(&first_manifest).unwrap();
+    assert_eq!(manifest["generated_at_unix_epoch_ms"], 1_700_000_000_000u64);
+}
+
+#[test]
 fn cli_build_experimental_resource_pack_flag_writes_assets_zip_and_manifest() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let input = write_source(

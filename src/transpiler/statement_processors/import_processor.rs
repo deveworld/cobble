@@ -153,7 +153,7 @@ impl Transpiler {
         import_path: &Path,
         module: &str,
     ) -> Result<(String, crate::parser::LocatedProgram), TranspileError> {
-        let source = std::fs::read_to_string(import_path).map_err(|e| {
+        let source = crate::diagnostics::read_source_file(import_path).map_err(|e| {
             format!(
                 "Failed to read import file '{}': {}",
                 import_path.display(),
