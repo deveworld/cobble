@@ -11,4 +11,12 @@ pub mod registries {
     pub fn tag_entry_problem(_tag_type: &str, _id: &str) -> Option<String> {
         None
     }
+
+    /// Minecraft's own ids aren't built in, so resources aren't checked
+    /// against them.
+    pub(crate) fn vanilla_ids(
+        _registry: &str,
+    ) -> Option<&'static std::collections::HashSet<String>> {
+        None
+    }
 }

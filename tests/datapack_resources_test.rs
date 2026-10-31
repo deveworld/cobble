@@ -356,6 +356,12 @@ fn duplicate_datapack_tags_are_merged_deterministically() {
 import stdlib
 datapack.function_tag("minecraft:load", ["resources:setup"])
 datapack.function_tag("minecraft:load", ["resources:other"])
+
+def setup():
+    /say setup
+
+def other():
+    /say other
 "#,
     )
     .unwrap();
@@ -377,6 +383,15 @@ fn duplicate_datapack_tags_dedup_identical_values() {
 import stdlib
 datapack.function_tag("utility", ["resources:setup", "resources:tick"])
 datapack.function_tag("utility", ["resources:tick", "resources:init"])
+
+def setup():
+    /say setup
+
+def tick():
+    /say tick
+
+def init():
+    /say init
 "#,
     )
     .unwrap();
@@ -2872,7 +2887,7 @@ datapack.block_tag("kept", [
 ])
 datapack.item_tag("kept", [{"id": "minecraft:chain", "required": False}])
 datapack.entity_type_tag("kept", [{"id": "minecraft:potion", "required": False}])
-datapack.function_tag("kept", ["minecraft:nope"])
+datapack.function_tag("kept", [{"id": "minecraft:nope", "required": False}])
 "##,
     )
     .unwrap();

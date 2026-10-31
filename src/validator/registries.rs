@@ -48,7 +48,42 @@ struct Registries {
     slot_source: HashSet<String>,
     world_clock: HashSet<String>,
     timeline: HashSet<String>,
+    entity_type_tag: HashSet<String>,
+    dialog_tag: HashSet<String>,
+    advancement: HashSet<String>,
+    recipe: HashSet<String>,
     block_properties: HashMap<String, HashMap<String, Vec<String>>>,
+}
+
+/// The names of Minecraft's own entries of `registry`, without the
+/// `minecraft:` namespace: `item`, `block`, `entity_type`, `mob_effect`,
+/// `enchantment`, the tags `block_tag`, `item_tag`, `entity_type_tag`, and
+/// `dialog_tag`, and the data pack resources `loot_table`, `predicate`,
+/// `item_modifier`, `dialog`, `advancement`, and `recipe`. Any other name
+/// has no entries. `None` where the lists aren't built in (the browser
+/// build), so nothing is checked against them.
+pub(crate) fn vanilla_ids(registry: &str) -> Option<&'static HashSet<String>> {
+    static EMPTY: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
+    let registries = &*REGISTRIES;
+    Some(match registry {
+        "item" => &registries.item,
+        "block" => &registries.block,
+        "entity_type" => &registries.entity_type,
+        "mob_effect" => &registries.mob_effect,
+        "enchantment" => &registries.enchantment,
+        "world_clock" => &registries.world_clock,
+        "block_tag" => &registries.block_tag,
+        "item_tag" => &registries.item_tag,
+        "entity_type_tag" => &registries.entity_type_tag,
+        "dialog_tag" => &registries.dialog_tag,
+        "loot_table" => &registries.loot_table,
+        "predicate" => &registries.predicate,
+        "item_modifier" => &registries.item_modifier,
+        "dialog" => &registries.dialog,
+        "advancement" => &registries.advancement,
+        "recipe" => &registries.recipe,
+        _ => &EMPTY,
+    })
 }
 
 static REGISTRIES: LazyLock<Registries> = LazyLock::new(|| {
@@ -608,7 +643,7 @@ fn inline_resource_problem(parser_type: &str, token: &str) -> Option<String> {
         Ok(value) => value,
         Err(problem) => return Some(problem),
     };
-    let mut problems = Vec::new();
+    let mut problems = resource_format::Problems::default();
     match parser_type {
         "minecraft:loot_predicate" if !value.is_object() => {
             problems.push("an inline predicate must be one compound".to_string())
@@ -624,7 +659,7 @@ fn inline_resource_problem(parser_type: &str, token: &str) -> Option<String> {
         "minecraft:dialog" => resource_format::check_dialog(&value, &mut problems),
         _ => {}
     }
-    problems.into_iter().next()
+    problems.errors.into_iter().next()
 }
 
 fn criterion_problem(criterion: &str) -> Option<String> {

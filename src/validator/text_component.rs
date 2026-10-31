@@ -557,9 +557,9 @@ fn check_page(page: &Value) -> Option<String> {
 
 fn check_shown_dialog(dialog: &Value) -> Option<String> {
     if dialog.is_object() {
-        let mut problems = Vec::new();
+        let mut problems = resource_format::Problems::default();
         resource_format::check_dialog(dialog, &mut problems);
-        return problems.into_iter().next();
+        return problems.errors.into_iter().next();
     }
     check_id("dialog", dialog)
 }

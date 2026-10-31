@@ -177,7 +177,9 @@ fn compile(
         ..TranspilerOptions::new(namespace.to_string(), PathBuf::from("cobble-web-demo"))
     });
     transpiler.set_current_file_with_source(Path::new("demo.cbl"), source);
-    let result = transpiler.transpile(&program);
+    let result = transpiler
+        .transpile(&program)
+        .and_then(|()| transpiler.check_resource_references());
     let warnings = warning_details(&transpiler.take_warnings(), source);
     if let Err(error) = result {
         let mut details = transpile_error_diagnostics(&error, source);

@@ -15,6 +15,7 @@ mod intrinsics;
 mod module_init;
 mod placeholders;
 pub(crate) mod resource_format;
+mod resource_references;
 mod score_holders;
 mod snbt_text;
 mod source_map;
@@ -110,6 +111,9 @@ pub struct Transpiler {
     in_prelude: bool,
     imports: ImportState,
     source_locations: SourceLocations,
+    /// The references between `datapack.*` resources, checked once every
+    /// file is compiled (see [`Transpiler::check_resource_references`]).
+    resource_references: Vec<resource_references::DeclaredReference>,
     stdlib: StdlibState,
     /// Whether experimental resource-pack output is enabled for this build.
     experimental_resource_pack: bool,
@@ -246,6 +250,7 @@ impl Transpiler {
             in_prelude: false,
             imports: ImportState::default(),
             source_locations: SourceLocations::default(),
+            resource_references: Vec::new(),
             stdlib: StdlibState::default(),
             experimental_resource_pack: options.experimental_resource_pack,
             unroll: UnrollState::default(),

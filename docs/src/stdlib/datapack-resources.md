@@ -106,26 +106,86 @@ a server whose packs fail to load refuses to start, Cobble reports the common
 pre-26.3 shapes and missing fields as `datapack-resource-format` errors:
 
 - predicates need a `type` (formerly `condition`), including inside `all_of`,
-  `any_of`, and `inverted` terms;
+  `any_of`, and `inverted` terms, and the fields of their type:
+  `minecraft:random_chance` a `chance`, `minecraft:entity_properties` an
+  `entity`, `minecraft:entity_scores` an `entity` and `scores`,
+  `minecraft:table_bonus` an `enchantment` and `chances`, `all_of` and `any_of`
+  `terms`, `inverted` a `term`, `minecraft:int_value_check` a `value` and a
+  `test`, `minecraft:enchantment_active_check` `active`, and
+  `minecraft:time_check` a `clock` (new in 26.3) and a `value`;
+- a `condition` is one predicate or the id of a predicate file, not a list
+  (combine several with `minecraft:all_of`);
 - item modifiers need a `type` (formerly `function`) and take a single
-  `condition` (formerly a `conditions` list);
+  `condition` (formerly a `conditions` list), also inside a
+  `minecraft:sequence`, and the fields of their type: `minecraft:set_count` a
+  `count`, `minecraft:set_lore` a `lore` and a `mode`,
+  `minecraft:set_components` `components`, `minecraft:set_custom_data` a `tag`,
+  `minecraft:sequence` `functions`, `minecraft:set_damage` `damage`,
+  `minecraft:set_item` an `item`, `minecraft:set_potion` an `id`,
+  `minecraft:enchant_with_levels` `levels`, `minecraft:limit_count` a `limit`,
+  `minecraft:copy_name` a `source`, `minecraft:toggle_tooltips` `toggles`, and
+  `minecraft:apply_bonus` an `enchantment` and a `formula`;
 - loot tables use `modifier` (formerly `functions`) and a single `condition`
-  (formerly `conditions`) on tables, pools, and entries, and a
-  `minecraft:tag` entry names its tag in `items` (`"#minecraft:logs"`);
-- a root advancement with `display` sets `display.background`;
-- an advancement criterion's `player` and `entity` conditions are one
-  predicate with a `type` (formerly a list of predicates, or an entity
-  predicate on its own), such as `{"type": "minecraft:entity_properties",
-  "entity": "this", "predicate": {...}}`;
+  (formerly `conditions`) on tables, pools, and entries; a pool needs `rolls`
+  and `entries`, and an entry a `type`; a `minecraft:item` entry needs a `name`
+  that isn't `minecraft:air` (a pool entry that drops nothing is
+  `{"type": "minecraft:empty"}`); a `minecraft:tag` entry names its tag in
+  `items`, with its `#` (`"#minecraft:logs"`); and a `minecraft:loot_table`
+  entry names its table in `value` (formerly `name`);
+- an advancement needs at least one criterion, each with a `trigger`;
+  `requirements` is a list of lists that names every criterion and no other;
+  a `display` needs an `icon`, a `title`, and a `description`, its `frame` is
+  `task`, `goal`, or `challenge`, and a root advancement with a `display` sets
+  `display.background` (`"display": None` is no display);
+- an advancement criterion's `player` condition, and its `entity` condition on
+  the triggers that have one, are one predicate with a `type` (formerly a list
+  of predicates, or an entity predicate on its own), such as
+  `{"type": "minecraft:entity_properties", "entity": "this", "predicate": {...}}`.
+  Minecraft ignores `entity` on the other triggers, such as `minecraft:tick`,
+  so it's a warning there;
 - an advancement's `display.icon` and a recipe's `result` name the item in `id`
   (formerly `item`);
-- recipe ingredients are an item id, a `#tag`, or a list of item ids (formerly
-  `{"item": ...}` or `{"tag": ...}` objects), except the `input` of a
-  `minecraft:brewing` recipe, which is an object that names a potion;
-- cooking recipes set `cookingtime`;
+- a recipe needs a `type`; recipe ingredients are an item id, a `#tag`, or a
+  non-empty list of item ids, without tags (formerly `{"item": ...}` or
+  `{"tag": ...}` objects), in every ingredient field of the type, except the
+  `input` and `reagent` of a `minecraft:brewing` recipe, which are objects;
+- a shaped recipe's `pattern` has 1 to 3 rows of 1 to 3 symbols, all as wide,
+  and its `key` defines each symbol of the pattern, and no other, and not the
+  space;
+- a shapeless recipe takes 1 to 9 ingredients;
+- crafting, cooking, stonecutting, and smithing transform recipes, and
+  `minecraft:crafting_dye`, need a `result`; the result of the first four
+  names its item in `id`, which isn't `minecraft:air`, and makes 1 to 99 items
+  (a `minecraft:crafting_transmute` result may leave out its id);
+- a recipe's `category` is one of its type's (`building`, `redstone`,
+  `equipment`, `misc` for crafting; `food`, `blocks`, `misc` for cooking);
+- cooking recipes set `cookingtime`, as a number;
 - every dialog needs a `type` and a `title`. `minecraft:confirmation` also needs
   `yes` and `no`, `minecraft:multi_action` needs `actions`, and
   `minecraft:dialog_list` needs `dialogs`.
+
+Ids that Minecraft looks up when it loads the pack must exist. A data pack
+can't add items, blocks, entity types, or effects, so an unknown `minecraft:`
+id of these is an error: a loot entry's item, a recipe's ingredients and
+result, an advancement's icon, and the `items`, `blocks`, and
+`minecraft:entity_type` lists and the `effects` of item, location, and entity
+predicates. The enchantments of `minecraft:enchant_randomly` are checked too.
+A `minecraft:match_block` predicate with an unknown block loads, so its block
+isn't checked.
+
+References to other resources must exist once every file is compiled: a
+`#tag` in a tag, a recipe ingredient, a loot `minecraft:tag` entry, or a
+predicate; the dialogs of a dialog tag, a `minecraft:dialog_list`, and a
+`minecraft:show_dialog` action; a predicate, item modifier, or loot table that
+a loot table names by id; the loot tables of an advancement's `rewards.loot`;
+the recipes of `minecraft:recipe_unlocked`; an advancement's `parent`; and the
+functions and function tags of a function tag. A `minecraft:` id counts if
+Minecraft or the pack defines it. An id without a namespace in a function tag
+means `minecraft:`, so write `mypack:setup` for the pack's own `setup`. Ids of
+namespaces the pack declares nothing in aren't checked, since another pack or
+a mod can define them, and a tag entry with `"required": False` may be
+missing. A tag that includes itself, directly or through other tags, is an
+error too: Minecraft drops the tag and every function that names it.
 
 Types must exist in Minecraft 26.3, because data packs can't add new ones: the
 `type` of a predicate, an item modifier, a loot entry, a recipe, and a dialog,

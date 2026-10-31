@@ -156,7 +156,14 @@ impl Transpiler {
                 format!("datapack.{}() JSON value must be an object", resource_type).into(),
             );
         }
-        self.check_datapack_resource_format(resource_type, &json)?;
+        let resource_namespace = namespace
+            .clone()
+            .unwrap_or_else(|| self.data_pack.namespace.clone());
+        self.check_datapack_resource_format(
+            resource_type,
+            &format!("{resource_namespace}:{name}"),
+            &json,
+        )?;
         // A file can't hold a list, so a list becomes the sequence it means.
         let json = match json {
             serde_json::Value::Array(functions) => {
@@ -177,15 +184,18 @@ impl Transpiler {
             .map_err(TranspileError::from)
     }
 
-    /// Minecraft rejects data pack resources written in pre-26.3 shapes, and a
-    /// server whose packs fail to load refuses to start, so the common
-    /// renames are reported at compile time.
+    /// Minecraft rejects data pack resources written in pre-26.3 shapes or
+    /// without the fields they need, and a server whose packs fail to load
+    /// refuses to start, so these are reported at compile time. Fields
+    /// Minecraft ignores are warnings. The resources the declaration `id`
+    /// names are checked once every file is compiled.
     pub(in crate::transpiler) fn check_datapack_resource_format(
-        &self,
+        &mut self,
         resource_type: &str,
+        id: &str,
         json: &serde_json::Value,
     ) -> Result<(), TranspileError> {
-        let mut problems = Vec::new();
+        let mut problems = resource_format::Problems::default();
         match resource_type {
             "predicate" => resource_format::check_predicate(json, "", &mut problems),
             "item_modifier" => match json.as_array() {
@@ -204,14 +214,36 @@ impl Transpiler {
             "dialog" => resource_format::check_dialog(json, &mut problems),
             _ => {}
         }
-        if problems.is_empty() {
+        let resource_format::Problems {
+            errors,
+            warnings,
+            references,
+        } = problems;
+        for warning in warnings {
+            self.warn(
+                "datapack-resource-format",
+                format!("datapack.{resource_type}(): {warning}"),
+                None,
+            );
+        }
+        let declaration = format!("{} `{id}`", resource_type.replace('_', " "));
+        for reference in references {
+            self.resource_references.push(
+                crate::transpiler::resource_references::DeclaredReference {
+                    declaration: declaration.clone(),
+                    source: self.current_statement_source.clone(),
+                    reference,
+                },
+            );
+        }
+        if errors.is_empty() {
             return Ok(());
         }
         let mut message = format!(
             "datapack.{}() uses fields Minecraft {} rejects or ignores (a server refuses to start when a pack fails to load):\n{}",
             resource_type,
             crate::pack_format::SUPPORTED_MINECRAFT_VERSION,
-            problems
+            errors
                 .iter()
                 .map(|problem| format!("  - {}", problem))
                 .collect::<Vec<_>>()

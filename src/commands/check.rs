@@ -552,6 +552,22 @@ fn semantic_check(
             errors.push(transpile_error_report(error, path, parsed, report_file));
         }
     }
+    // The resources a declaration names may be declared in a later file.
+    if errors.is_empty() {
+        if let Err(error) = transpiler.check_resource_references() {
+            let declared_in = error.location.as_ref().and_then(|location| {
+                files_to_check
+                    .iter()
+                    .zip(parsed_files.iter())
+                    .find(|(path, _)| canonical_or_original(path) == location.file)
+            });
+            if let Some((path, parsed)) =
+                declared_in.or_else(|| files_to_check.iter().zip(parsed_files.iter()).next())
+            {
+                errors.push(transpile_error_report(error, path, parsed, report_file));
+            }
+        }
+    }
 
     SemanticCheck { errors, warnings }
 }
