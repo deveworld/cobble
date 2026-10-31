@@ -1,6 +1,6 @@
 use crate::ast::{CobbleType, EntityDef, Expression};
 use crate::transpiler::container_writes::ContainerWrites;
-use crate::transpiler::FunctionReturnKind;
+use crate::transpiler::{FunctionReturnKind, SourceLocation};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// What each name in the program refers to. Variables are module-wide
@@ -70,4 +70,6 @@ pub(in crate::transpiler) struct FunctionTable {
     /// The user function each generated function was lowered for, such as
     /// `main` for `if_temp_3`.
     pub(in crate::transpiler) owners: HashMap<String, String>,
+    /// Where each user function is defined.
+    pub(in crate::transpiler) def_sources: HashMap<String, Option<SourceLocation>>,
 }

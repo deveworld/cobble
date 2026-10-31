@@ -4,6 +4,9 @@ use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+/// The longest file name most file systems accept, in bytes.
+pub(crate) const MAX_FILE_NAME_BYTES: usize = 255;
+
 pub(crate) fn write_file_atomic(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     let (mut file, temp_path) = create_temp_output_file(path)?;
     let result = (|| {
@@ -79,13 +82,21 @@ fn create_temp_output_file_with_permissions(
         .and_then(|name| name.to_str())
         .unwrap_or("output");
     for attempt in 0..32 {
-        let temp_path = parent.join(format!(
-            ".{}.cobble-write-{}-{}-{}.tmp",
-            name,
+        let suffix = format!(
+            ".cobble-write-{}-{}-{}.tmp",
             std::process::id(),
             timestamp_nanos(),
             attempt
-        ));
+        );
+        // Keep the temporary name within the usual 255-byte file name limit,
+        // so any output name that fits can be written.
+        let mut keep = name
+            .len()
+            .min(MAX_FILE_NAME_BYTES.saturating_sub(1 + suffix.len()));
+        while !name.is_char_boundary(keep) {
+            keep -= 1;
+        }
+        let temp_path = parent.join(format!(".{}{}", &name[..keep], suffix));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]

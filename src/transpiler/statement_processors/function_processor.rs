@@ -1,4 +1,5 @@
 use crate::ast::{CobbleType, Expression, FunctionDef, IfStatement, Statement};
+use crate::fs_safety::MAX_FILE_NAME_BYTES;
 use crate::transpiler::function_context::unbound_local_message;
 use crate::transpiler::score_holders::{rename_holders, written_holders};
 use crate::transpiler::symbols::Symbols;
@@ -8,6 +9,19 @@ use crate::transpiler::{
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
+
+/// The extension of a function file.
+const FUNCTION_FILE_SUFFIX: &str = ".mcfunction";
+
+/// The error for a function whose name Cobble also gives a generated helper.
+fn generated_name_collision(name: &str) -> TranspileError {
+    TranspileError::new(
+        TranspileErrorKind::Semantic,
+        format!(
+            "Function name `{name}` is also the name of a helper function that Cobble generates, so one would replace the other. Rename `{name}`."
+        ),
+    )
+}
 
 /// `giveReward` as `give_reward`.
 fn snake_case(name: &str) -> String {
@@ -52,6 +66,19 @@ impl Transpiler {
             )
             .with_location_if_missing(def_source));
         }
+        if !self.in_prelude && func.name.starts_with("_cobble") {
+            return Err(TranspileError::new(
+                TranspileErrorKind::Semantic,
+                format!(
+                    "Function name `{}` starts with `_cobble`, which Cobble reserves for the functions it generates. Rename it.",
+                    func.name
+                ),
+            )
+            .with_location_if_missing(def_source));
+        }
+        self.functions
+            .def_sources
+            .insert(func.name.clone(), def_source.clone());
 
         // Save previous function context
         let previous_function = self.current_function.take();
@@ -152,8 +179,19 @@ impl Transpiler {
                     ));
                 }
             }
+            // A helper generated earlier, maybe for this very body, has the
+            // name already.
+            if self.data_pack.functions.contains_key(&func.name)
+                && !self.data_pack.user_functions.contains(&func.name)
+            {
+                return Err(
+                    generated_name_collision(&func.name).with_location_if_missing(def_source)
+                );
+            }
+            self.data_pack.user_functions.remove(&func.name);
             self.data_pack
                 .add_function_with_metadata(func.name.clone(), commands, metadata);
+            self.data_pack.user_functions.insert(func.name.clone());
         }
 
         // Restore previous context. Lowering the body can add hidden locals.
@@ -180,7 +218,47 @@ impl Transpiler {
         if recursive {
             self.add_recursion_frame(&func.name, &locals, &globals, return_context.as_ref());
         }
-        Ok(())
+
+        // A helper generated for this body took the name of a function
+        // defined earlier.
+        if let Some(name) = self.data_pack.overwritten_user_functions.first().cloned() {
+            let location = self.functions.def_sources.get(&name).cloned().flatten();
+            return Err(generated_name_collision(&name).with_location_if_missing(location));
+        }
+        self.check_function_file_names(&func.name, &functions_before)
+            .map_err(|error| error.with_location_if_missing(def_source))
+    }
+
+    /// Every function file must fit the 255-byte file name limit, which
+    /// Minecraft can't load past either.
+    fn check_function_file_names(
+        &self,
+        function: &str,
+        functions_before: &HashSet<String>,
+    ) -> Result<(), TranspileError> {
+        let longest = self
+            .data_pack
+            .functions
+            .keys()
+            .filter(|name| *name == function || !functions_before.contains(*name))
+            .filter(|name| name.len() + FUNCTION_FILE_SUFFIX.len() > MAX_FILE_NAME_BYTES)
+            .max_by_key(|name| name.len());
+        let Some(name) = longest else {
+            return Ok(());
+        };
+        let excess = name.len() + FUNCTION_FILE_SUFFIX.len() - MAX_FILE_NAME_BYTES;
+        let limit = function.len().saturating_sub(excess);
+        let message = if name == function {
+            format!(
+                "Function name `{function}` is {} bytes long, so its file `{function}{FUNCTION_FILE_SUFFIX}` would be longer than the 255-byte file name limit. Shorten the name to at most {limit} bytes.",
+                function.len()
+            )
+        } else {
+            format!(
+                "Function name `{function}` is too long: the helper `{name}` that Cobble generates for it would need a file name longer than the 255-byte limit. Shorten the name to at most {limit} bytes."
+            )
+        };
+        Err(TranspileError::new(TranspileErrorKind::Semantic, message))
     }
 
     /// In a recursive function, every way out of the function goes through

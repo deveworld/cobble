@@ -81,6 +81,7 @@ impl DataPack {
     ) {
         let commands = self.map_objectives(commands);
         let metadata = Self::metadata_for_commands(&commands, kind);
+        self.note_overwritten_user_function(&name);
         self.command_metadata.insert(name.clone(), metadata);
         self.functions.insert(name, commands);
     }
@@ -95,8 +96,18 @@ impl DataPack {
         let metadata = self.map_metadata_objectives(metadata);
         let metadata =
             Self::complete_metadata(&commands, metadata, GeneratedCommandKind::ControlFlow);
+        self.note_overwritten_user_function(&name);
         self.command_metadata.insert(name.clone(), metadata);
         self.functions.insert(name, commands);
+    }
+
+    /// Records that a function is about to replace the user function
+    /// `name`. The transpiler removes `name` from `user_functions` first
+    /// when it writes the user function itself.
+    fn note_overwritten_user_function(&mut self, name: &str) {
+        if self.user_functions.contains(name) {
+            self.overwritten_user_functions.push(name.to_string());
+        }
     }
 
     pub fn insert_function_commands_with_metadata(

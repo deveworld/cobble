@@ -8,6 +8,12 @@ def greet():
     /tellraw @a {"text":"Hello!", "color":"green"}
 ```
 
+Each `def` becomes the function file `<name>.mcfunction`, so a name has no
+capital letters and at most 244 bytes, which keeps the file name within 255
+bytes. Names that start with `_cobble` are reserved for the helper functions
+Cobble generates, and a name that Cobble also gives a generated helper, such
+as `if_temp_0`, is a compile error.
+
 ## Functions with Parameters
 
 Cobble supports function parameters using Minecraft's macro system:

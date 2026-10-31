@@ -153,3 +153,70 @@ fn out_of_range_module_variable_warns_at_its_own_line() {
         "{stderr}"
     );
 }
+
+#[test]
+fn def_with_the_reserved_cobble_prefix_is_an_error() {
+    for source in [
+        "x = 1\n\ndef _cobble_say_0():\n    /say mine\n\ndef a():\n    /say {x}\n",
+        "def _cobble_init():\n    /say mine\n\nx = 1\n",
+    ] {
+        let error = build_error(source);
+        assert!(
+            error.contains("main.cbl:1:1") || error.contains("main.cbl:3:1"),
+            "{error}"
+        );
+        assert!(
+            error.contains("starts with `_cobble`, which Cobble reserves"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn def_named_like_a_generated_helper_is_an_error() {
+    // The helper comes after the def, and before it.
+    for (source, line) in [
+        (
+            "x = 1\n\ndef if_temp_0():\n    /say mine\n\ndef a():\n    if x > 0:\n        /say pos\n        /say pos2\n",
+            3,
+        ),
+        (
+            "x = 1\n\ndef a():\n    if x > 0:\n        /say pos\n        /say pos2\n\ndef if_temp_0():\n    /say mine\n",
+            8,
+        ),
+    ] {
+        let error = build_error(source);
+        assert!(error.contains(&format!("main.cbl:{line}:1")), "{error}");
+        assert!(
+            error.contains("`if_temp_0` is also the name of a helper function"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn long_def_names_build_while_the_file_name_fits() {
+    let name = "a".repeat(244);
+    let (_dir, output) = compile(&format!("def {name}():\n    /say a\n")).unwrap();
+    let file = output.join(format!("data/sim/function/{name}.mcfunction"));
+    assert!(file.exists(), "{}", file.display());
+
+    let longer = "a".repeat(245);
+    let error = build_error(&format!("def {longer}():\n    /say a\n"));
+    assert!(error.contains("main.cbl:1:1"), "{error}");
+    assert!(
+        error.contains(&format!("Function name `{longer}` is 245 bytes long")),
+        "{error}"
+    );
+    assert!(error.contains("at most 244 bytes"), "{error}");
+
+    // A helper named after the function must fit too.
+    let recursive = "b".repeat(240);
+    let error = build_error(&format!(
+        "def {recursive}(k):\n    if k > 0:\n        return {recursive}(k - 1)\n    return 0\n"
+    ));
+    assert!(
+        error.contains(&format!("the helper `_cobble_exit_{recursive}`")),
+        "{error}"
+    );
+}
