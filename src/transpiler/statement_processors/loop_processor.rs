@@ -1,6 +1,6 @@
 use crate::ast::*;
-use crate::transpiler::placeholders::{self, Piece};
 use crate::transpiler::function_context;
+use crate::transpiler::placeholders::{self, Piece};
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
     FunctionCapture, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, SourceLocation,

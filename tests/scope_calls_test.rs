@@ -116,29 +116,23 @@ def f():
 }
 
 #[test]
-fn module_variable_whose_type_is_known_only_at_its_assignment_is_used_above_it() {
-    // `[0] * 3` is a list only once it is lowered, so a function above it
-    // can't know its type: a clear error instead of reading a score.
-    let error = build_error(
-        r#"
-def f():
-    n = len(zeros)
-    /say {n}
-
-zeros = [0] * 3
-"#,
-    );
-    assert!(
-        error.contains("`zeros` is declared later in the file, and `f` above it uses it"),
-        "{error}"
-    );
-    // Below the assignment it works.
-    let mut sim = Sim::load(
-        "zeros = [0] * 3\n\ndef f():\n    n = len(zeros)\n    /say {n}\n",
-        &[],
-    );
-    sim.call("f");
-    assert_eq!(sim.log, vec!["Server: 3"]);
+fn module_variable_that_lowering_changes_resolves_above_its_assignment() {
+    // `[0] * 3` becomes a list literal and `"ab" * 2` text only when they
+    // are lowered; a function above them still sees their types.
+    let source = |order_first: bool| {
+        let function = "def f():\n    n = len(zeros)\n    t = word\n    /say {n} {zeros} {t}\n";
+        let module = "zeros = [0] * 3\nword = \"ab\" * 2\n";
+        if order_first {
+            format!("{module}\n{function}")
+        } else {
+            format!("{function}\n{module}")
+        }
+    };
+    for order_first in [false, true] {
+        let mut sim = Sim::load(&source(order_first), &[]);
+        sim.call("f");
+        assert_eq!(sim.log, vec!["Server: 3 [0,0,0] abab"], "{order_first}");
+    }
 }
 
 /// Builds `source` as `main.cbl` with the `cobble` binary. Returns whether

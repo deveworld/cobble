@@ -223,6 +223,17 @@ impl Transpiler {
         Ok(())
     }
 
+    /// The type a plain assignment gives its variable, from the lowered
+    /// value. `register_module_declarations` uses it too, so a module
+    /// variable recorded early gets the type its assignment gives it.
+    pub(in crate::transpiler) fn assigned_value_type(&self, value: &Expression) -> CobbleType {
+        match value {
+            Expression::Subscript(base, _) if self.is_string_base(base) => CobbleType::String,
+            Expression::Subscript(..) | Expression::Attribute(..) => self.storage_read_type(value),
+            value => self.infer_type(value),
+        }
+    }
+
     /// Process a plain `target = value` assignment statement.
     ///
     /// The steps run in this order, and reordering them changes the output:
@@ -287,17 +298,33 @@ impl Transpiler {
 
         // Infer the type of the value being assigned. A value of unknown
         // type, such as a parameter, keeps the variable's type.
-        let inferred = match &assign.value {
-            Expression::Subscript(base, _) if self.is_string_base(base) => CobbleType::String,
-            Expression::Subscript(..) | Expression::Attribute(..) => {
-                self.storage_read_type(&assign.value)
-            }
-            value => self.infer_type(value),
-        };
+        let inferred = self.assigned_value_type(&assign.value);
         let value_type = match (inferred, self.symbols.variable_types.get(&assign.target)) {
             (CobbleType::Unknown, Some(existing)) => existing.clone(),
             (value_type, _) => value_type,
         };
+        // A module variable recorded before the function bodies were
+        // lowered (see `register_module_declarations`) must keep that type,
+        // since the functions above used it.
+        if matches!(target_kind, AssignTargetKind::ModuleLevel)
+            && self
+                .symbols
+                .pending_module_declarations
+                .contains(&assign.target)
+        {
+            if let Some(recorded) = self.symbols.variable_types.get(&assign.target) {
+                if *recorded != value_type
+                    && *recorded != CobbleType::Unknown
+                    && value_type != CobbleType::Unknown
+                {
+                    return Err(format!(
+                        "Cobble can't tell the type of the module variable `{}` before this line, and functions above it use it. Move `{} = ...` above those functions.",
+                        assign.target, assign.target
+                    )
+                    .into());
+                }
+            }
+        }
 
         // Check if this assignment is type-safe
         self.check_type_assignment(&assign.target, &value_type)?;

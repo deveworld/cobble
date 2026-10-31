@@ -84,24 +84,42 @@ impl Transpiler {
                                 && !self.symbols.late_module_declarations.contains(*root)
                         })
                     });
-                if !known_here {
-                    self.symbols.late_module_declarations.insert(name.clone());
-                    continue;
-                }
-                // The same inference `process_assignment` makes.
-                let value_type = match &assign.value {
-                    Expression::Subscript(base, _) if self.is_string_base(base) => {
-                        CobbleType::String
+                // A value lowering doesn't change has the type its assignment
+                // gives it. Lowering turns any other value into one of a
+                // known type, such as `[0] * 3` into a list, which the
+                // value's type before lowering tells.
+                let value_type = if known_here {
+                    self.assigned_value_type(&assign.value)
+                } else {
+                    match self.value_type(&assign.value) {
+                        known @ (CobbleType::String | CobbleType::List | CobbleType::Map) => known,
+                        // A number from variables known here, or from a
+                        // call, is a score, which a function above reads
+                        // without knowing more.
+                        CobbleType::Integer | CobbleType::Boolean
+                            if {
+                                let mut reads = Vec::new();
+                                expression_reads(&assign.value, &mut reads);
+                                reads.iter().all(|read| {
+                                    self.is_declared_name(read)
+                                        && !self.symbols.late_module_declarations.contains(*read)
+                                })
+                            } =>
+                        {
+                            continue;
+                        }
+                        _ => {
+                            self.symbols.late_module_declarations.insert(name.clone());
+                            continue;
+                        }
                     }
-                    Expression::Subscript(..) | Expression::Attribute(..) => {
-                        self.storage_read_type(&assign.value)
-                    }
-                    value => self.infer_type(value),
                 };
                 self.symbols.variable_types.insert(name.clone(), value_type);
-                self.symbols
-                    .variables
-                    .insert(name.clone(), assign.value.clone());
+                if known_here {
+                    self.symbols
+                        .variables
+                        .insert(name.clone(), assign.value.clone());
+                }
                 self.register_module_variable_backing(&assign);
             }
         }

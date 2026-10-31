@@ -377,7 +377,7 @@ impl Transpiler {
     }
 
     /// The type of `expr`, as far as Cobble can tell before lowering it.
-    fn value_type(&self, expr: &Expression) -> CobbleType {
+    pub(in crate::transpiler) fn value_type(&self, expr: &Expression) -> CobbleType {
         match expr {
             Expression::Subscript(base, _) if self.is_string_base(base) => CobbleType::String,
             Expression::Subscript(..) | Expression::Attribute(..) => self.storage_read_type(expr),
