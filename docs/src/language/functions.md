@@ -30,6 +30,12 @@ Use `{param_name}` in Cobble source. Cobble compiles it to Minecraft's
 function. Text outside the braces, such as `minecraft:diamond`, stays
 literal.
 
+A fractional number passed to a parameter that the function only uses in
+command text, as in `play_sound(0.6)` for `/playsound ... {pitch}`, arrives as
+written. When the function uses the parameter as a value, such as
+`pitch + 1`, the number is a score, so `1.5` is stored as `1` with the same
+`fractional-number` warning as `x = 1.5`.
+
 Parameter names must be unique. Default parameter values, `*args`, and
 `**kwargs` are not supported.
 

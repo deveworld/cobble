@@ -247,6 +247,10 @@ impl Transpiler {
             if let Statement::FunctionDef(func) = statement {
                 let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
                 self.functions.params.insert(func.name.clone(), param_names);
+                self.functions.params_used_as_values.insert(
+                    func.name.clone(),
+                    crate::transpiler::function_context::params_read_in_expressions(func),
+                );
                 self.functions.returns.insert(
                     func.name.clone(),
                     Self::analyze_function_return_kind(&func.body),

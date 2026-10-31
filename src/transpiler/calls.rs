@@ -122,7 +122,24 @@ impl Transpiler {
         };
         match arg {
             Expression::String(s) => Ok(set_value(&format!("\"{}\"", escape_quoted(s)))),
-            Expression::Number(n) => Ok(set_value(&(*n as i32))),
+            // A fractional number reaches a parameter used only in command
+            // text as written, which only text keeps (a stored double
+            // `0.6` prints as `.6`). A parameter used as a value is a score.
+            Expression::Number(n)
+                if n.fract() != 0.0
+                    && n.is_finite()
+                    && self
+                        .functions
+                        .params_used_as_values
+                        .get(func_name)
+                        .is_some_and(|used| !used.contains(param_name)) =>
+            {
+                Ok(set_value(&format!("\"{n}\"")))
+            }
+            Expression::Number(n) => {
+                self.warn_score_value(*n);
+                Ok(set_value(&(*n as i32)))
+            }
             Expression::Boolean(b) => Ok(set_value(&i32::from(*b))),
             // A selector is passed as text.
             Expression::Identifier(var) if var.starts_with('@') => {

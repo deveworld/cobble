@@ -422,3 +422,44 @@ def each():
     assert_eq!(sim.score("alex", "pts"), 10);
     assert_eq!(sim.score("steve", "pts"), 10);
 }
+
+#[test]
+fn fractional_literal_reaches_a_text_parameter_unchanged() {
+    let mut sim = Sim::load(
+        r#"
+def show(v):
+    /say show {v}
+
+def num(v):
+    w = v + 1
+    /say num {w}
+
+def test():
+    show(0.6)
+    show(-1.5)
+    num(1.5)
+"#,
+        &[],
+    );
+    sim.call("test");
+    assert_eq!(
+        sim.log,
+        vec!["Server: show 0.6", "Server: show -1.5", "Server: num 2"]
+    );
+}
+
+#[test]
+fn fractional_literal_used_as_a_number_warns() {
+    let (ok, stderr) = cli_build(
+        "def num(v):\n    w = v + 1\n    /say {w}\n\ndef test():\n    num(1.5)\n    num(2)\n",
+        &[],
+    );
+    assert!(ok, "{stderr}");
+    assert!(
+        stderr.contains(
+            "main.cbl:6:5: warning[fractional-number] Scores hold integers, so 1.5 is stored as 1."
+        ),
+        "{stderr}"
+    );
+    assert_eq!(stderr.matches("warning[").count(), 1, "{stderr}");
+}

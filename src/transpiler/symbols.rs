@@ -73,6 +73,9 @@ pub(in crate::transpiler) struct FunctionTable {
     /// The user function each generated function was lowered for, such as
     /// `main` for `if_temp_3`.
     pub(in crate::transpiler) owners: HashMap<String, String>,
+    /// Parameters each function reads in an expression, as a number or a
+    /// value, rather than only in command text.
+    pub(in crate::transpiler) params_used_as_values: HashMap<String, HashSet<String>>,
     /// Where each user function is defined.
     pub(in crate::transpiler) def_sources: HashMap<String, Option<SourceLocation>>,
 }

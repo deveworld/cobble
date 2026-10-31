@@ -610,6 +610,23 @@ pub(in crate::transpiler) fn called_functions(body: &[Statement]) -> BTreeSet<St
     calls
 }
 
+/// Parameters of `function` that its body reads in an expression, such as
+/// `v + 1` or `other(v)`, rather than only in command text as `{v}`.
+pub(in crate::transpiler) fn params_read_in_expressions(function: &FunctionDef) -> HashSet<String> {
+    let mut expressions = Vec::new();
+    collect_statement_expressions(&function.body, &mut expressions);
+    let mut reads = Vec::new();
+    for expr in expressions {
+        expression_reads(expr, &mut reads);
+    }
+    function
+        .params
+        .iter()
+        .filter(|param| reads.contains(&param.name.as_str()))
+        .map(|param| param.name.clone())
+        .collect()
+}
+
 fn collect_statement_expressions<'a>(body: &'a [Statement], out: &mut Vec<&'a Expression>) {
     for statement in body {
         match statement {
