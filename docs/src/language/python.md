@@ -30,17 +30,25 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   storage path. List and string indexes may be literals, constants, or runtime
   integers such as `items[i]`, and a negative index counts from the end;
   `name[i]` of a string is a one-character string. Map keys may be
-  attributes, string literals, or runtime strings such as `config[key]`. A
-  key can hold any text, such as spaces, dots, colons, quotes, and
-  backslashes, as in `prices["minecraft:diamond"]`, but it can't be empty:
-  Minecraft refuses an empty key in a path and in a map. An empty runtime key
-  stores nothing, reads as a missing key, and shows `<file>:<line>: a map key
-  can't be empty` in chat; `"" in config` is False.
+  attributes, string literals, or runtime strings such as `config[key]` or
+  `config[names[0]]`. A key can hold any text, such as spaces, dots, colons,
+  quotes, and backslashes, as in `prices["minecraft:diamond"]`, but it can't
+  be empty: Minecraft refuses an empty key in a path and in a map. An empty
+  runtime key stores nothing, reads as a missing key, and shows
+  `<file>:<line>: a map key can't be empty` in chat; `"" in config` is False.
+- At any depth, as in `grid[r][c]`, the key's type decides: text picks a
+  field of a map, and a number an item of a list or a character of text.
+  When Cobble can't tell the key's type, as for a parameter, the type of
+  what it indexes decides, and when that isn't known either, the pack checks
+  when it runs whether the key holds text or a number. A number is never a
+  map key, so `5 in {"5": 1}` is false, as in Python.
 - A list or map is a value: assigning it to another variable or passing it to
   a function copies it, so a change through one name doesn't show through the
   other.
 - An item of a list or a field of a map keeps its type when you assign it or
-  pass it on: `name = names[1]` holds a string when `names` holds strings.
+  pass it on, at any depth and through unpacking and `pop()`: `name =
+  names[1]` holds a string when `names` holds strings, and `a, b = names`
+  gives two strings.
   When Cobble can't tell the type, as for a parameter or an item that the
   program also sets to a value of another type, the value is kept as text and
   as a number.

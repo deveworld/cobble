@@ -459,10 +459,9 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             // A value whose type isn't a number keeps its storage value.
             Expression::Subscript(base, index)
-                if !self.picks_field(base, index) && self.unknown_value_path(base).is_some() =>
+                if !self.picks_field(base, index) && self.is_unknown_base(base) =>
             {
-                let base_path = self.unknown_value_path(base).unwrap_or_default();
-                self.unknown_item_commands(target_path, &base_path, index)
+                self.unknown_base_item_commands(target_path, base, index)
             }
             Expression::Subscript(..) | Expression::Attribute(..)
                 if self.storage_read_type(arg) != CobbleType::Integer

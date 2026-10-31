@@ -491,7 +491,10 @@ impl Transpiler {
                 transpiler.runtime_range_condition(&index_var, &len_var, &step, &step_var)
             }),
             body: Box::new(|transpiler| {
-                let binding_commands = match transpiler.unknown_iterable_path(&for_loop.iter) {
+                let binding_commands = match transpiler
+                    .unknown_iterable_path(&for_loop.iter)
+                    .or_else(|| transpiler.unknown_item_iterable_path(&for_loop.iter, &list_plan))
+                {
                     // A parameter can hold a string, whose items are its
                     // characters, so the item is read as `p[i]` reads it.
                     Some(base_path) => transpiler.runtime_unknown_item_commands(
@@ -595,6 +598,25 @@ impl Transpiler {
                         TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, "runtime-for-unsupported: storage-backed iterable must be a list."),
                     );
                 }
+                // A list or text at a path known only when the pack runs,
+                // as `rows[i].s`, is read from a copy, which tells them
+                // apart (see `unknown_item_iterable_path`).
+                if path.as_static().is_none()
+                    && self.storage_read_type(iter) == CobbleType::Unknown
+                {
+                    let copy = format!("_cobble_for_iter_{}", self.next_temp_id());
+                    let namespace = self.data_pack.namespace.clone();
+                    let mut setup_commands =
+                        vec![format!("data remove storage {namespace}:global {copy}")];
+                    setup_commands.extend(self.copy_storage_commands(&copy, &path)?);
+                    return Ok(RuntimeStorageListPlan {
+                        path: StoragePathPlan::static_path(copy.clone()),
+                        setup_commands,
+                        cleanup_commands: vec![format!(
+                            "data remove storage {namespace}:global {copy}"
+                        )],
+                    });
+                }
                 Ok(RuntimeStorageListPlan {
                     path,
                     setup_commands: Vec::new(),
@@ -659,6 +681,22 @@ impl Transpiler {
             }
             _ => None,
         }
+    }
+
+    /// The storage path of a loop's iterable when it is an item or a field
+    /// whose type only the running pack knows, which can hold a list or a
+    /// string, as `cache.name` of `cache = {}`.
+    fn unknown_item_iterable_path(
+        &self,
+        iter: &Expression,
+        list_plan: &StoragePathPlan,
+    ) -> Option<String> {
+        if !matches!(iter, Expression::Attribute(..) | Expression::Subscript(..))
+            || self.storage_read_type(iter) != CobbleType::Unknown
+        {
+            return None;
+        }
+        list_plan.as_static().map(str::to_string)
     }
 
     /// Copies item `index` of the list or string at `base_path` into the loop

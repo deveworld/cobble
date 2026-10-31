@@ -613,10 +613,63 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
         symbols.variable_storage_paths.get(name).cloned()
     }
 
-    /// Whether `base[i]` picks a character: `base` is a string variable or a
-    /// string literal, which an unrolled loop over strings leaves.
+    /// Whether `base[i]` picks a character: `base` is a string variable, a
+    /// string literal, which an unrolled loop over strings leaves, or an
+    /// item or a field that holds text, as `cfg.s` of `cfg = {"s": "hi"}`.
     fn is_string_base(&self, base: &Expression) -> bool {
-        matches!(base, Expression::String(_)) || self.string_variable_path(base).is_some()
+        matches!(base, Expression::String(_))
+            || self.string_variable_path(base).is_some()
+            || (matches!(base, Expression::Subscript(..) | Expression::Attribute(..))
+                && self.storage_read_type(base) == CobbleType::String
+                && self.resolve_storage_path_plan(base).is_some())
+    }
+
+    /// Whether `base` holds a value whose type only the running pack knows:
+    /// a parameter, a copy of one, or an item or a field of unknown type.
+    fn is_unknown_base(&self, base: &Expression) -> bool {
+        self.unknown_value_path(base).is_some()
+            || (matches!(base, Expression::Subscript(..) | Expression::Attribute(..))
+                && self.storage_read_type(base) == CobbleType::Unknown
+                && self.resolve_storage_path_plan(base).is_some())
+    }
+
+    /// [`Self::unknown_item_commands`] for any base that
+    /// [`Self::is_unknown_base`] accepts.
+    fn unknown_base_item_commands(
+        &mut self,
+        target_path: &str,
+        base: &Expression,
+        index: &Expression,
+    ) -> Result<Vec<String>, TranspileError> {
+        if let Some(base_path) = self.unknown_value_path(base) {
+            return self.unknown_item_commands(target_path, &base_path, index);
+        }
+        self.at_base_path(base, |this, base_path| {
+            this.unknown_item_commands(target_path, base_path, index)
+        })
+    }
+
+    /// Runs `commands` with the static path of the item or field `base`. A
+    /// path known only when the pack runs is copied to a path of its own
+    /// first, and removed after.
+    fn at_base_path(
+        &mut self,
+        base: &Expression,
+        commands: impl FnOnce(&mut Self, &str) -> Result<Vec<String>, TranspileError>,
+    ) -> Result<Vec<String>, TranspileError> {
+        let plan = self
+            .resolve_storage_path_plan(base)
+            .ok_or("The base of this subscript doesn't resolve to storage.")?;
+        if let Some(path) = plan.as_static() {
+            return commands(self, path);
+        }
+        let namespace = self.storage_data_pack().namespace.clone();
+        let copy = format!("_cobble_base_{}", self.storage_next_temp_id());
+        let mut result = vec![format!("data remove storage {namespace}:global {copy}")];
+        result.extend(self.copy_storage_commands(&copy, &plan)?);
+        result.extend(commands(self, &copy)?);
+        result.push(format!("data remove storage {namespace}:global {copy}"));
+        Ok(result)
     }
 
     /// Commands that store the character of the string `base` that `index`
@@ -630,10 +683,12 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
     ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.storage_data_pack().namespace.clone();
         let Expression::String(text) = base else {
-            let base_path = self
-                .string_variable_path(base)
-                .ok_or("Only a string can give a character.")?;
-            return self.string_char_from_path(target_path, &base_path, index);
+            if let Some(base_path) = self.string_variable_path(base) {
+                return self.string_char_from_path(target_path, &base_path, index);
+            }
+            return self.at_base_path(base, |this, base_path| {
+                this.string_char_from_path(target_path, base_path, index)
+            });
         };
         if let Some(index) = static_integer(self.storage_symbols(), index) {
             let chars: Vec<char> = text.chars().collect();
@@ -895,10 +950,9 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
                 self.string_char_commands(target_path, base, index)
             }
             Expression::Subscript(base, index)
-                if !self.picks_field(base, index) && self.unknown_value_path(base).is_some() =>
+                if !self.picks_field(base, index) && self.is_unknown_base(base) =>
             {
-                let base_path = self.unknown_value_path(base).unwrap_or_default();
-                self.unknown_item_commands(target_path, &base_path, index)
+                self.unknown_base_item_commands(target_path, base, index)
             }
             Expression::Subscript(..) | Expression::Attribute(..)
                 if self.storage_read_type(expr) != CobbleType::Integer

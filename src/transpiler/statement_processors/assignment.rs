@@ -429,17 +429,14 @@ impl Transpiler {
                 })
             }
             Expression::Subscript(base, _) if self.is_string_base(base) => None,
-            Expression::Subscript(base, index) if !self.picks_field(base, index) => {
-                match self.unknown_value_path(base) {
-                    Some(base_path) => Some(StorageRead::Item {
-                        base_path,
-                        index: (**index).clone(),
-                        score,
-                    }),
-                    None => self
-                        .resolve_storage_path_plan(value)
-                        .map(|plan| StorageRead::Path { plan, score }),
-                }
+            Expression::Subscript(base, index)
+                if !self.picks_field(base, index) && self.is_unknown_base(base) =>
+            {
+                Some(StorageRead::Item {
+                    base: (**base).clone(),
+                    index: (**index).clone(),
+                    score,
+                })
             }
             Expression::Subscript(..) | Expression::Attribute(..) => self
                 .resolve_storage_path_plan(value)
@@ -490,12 +487,8 @@ impl Transpiler {
                     )
                 }
             },
-            StorageRead::Item {
-                base_path,
-                index,
-                score,
-            } => {
-                let commands = self.unknown_item_commands(READ_SCRATCH, &base_path, &index)?;
+            StorageRead::Item { base, index, score } => {
+                let commands = self.unknown_base_item_commands(READ_SCRATCH, &base, &index)?;
                 (
                     self.read_through_scratch(commands, &target_path, empty),
                     score,
@@ -1409,7 +1402,7 @@ enum StorageRead {
     Path { plan: StoragePathPlan, score: bool },
     /// `base[index]` of a value that can be a list or a string.
     Item {
-        base_path: String,
+        base: Expression,
         index: Expression,
         score: bool,
     },

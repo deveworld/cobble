@@ -578,3 +578,114 @@ def main():
     assert_eq!(storage(&sim, "m"), json!({"k": 1}));
     assert_eq!(sim.var("got"), 1);
 }
+
+// --- Text in containers ---
+
+#[test]
+fn indexing_text_inside_a_list_or_map() {
+    assert_eq!(
+        said(
+            r#"cfg = {"s": "hi"}
+names = ["ab"]
+rows = [[{"s": "xyz"}]]
+
+def main():
+    i = 1
+    a = cfg["s"][1]
+    b = names[0][1]
+    c = cfg.s[-1]
+    d = names[0][i]
+    e = rows[0][0].s[1]
+    /say {a} {b} {c} {d} {e}
+    if cfg.s[i] == "i":
+        /say yes
+"#
+        ),
+        ["i b i b y", "yes"]
+    );
+}
+
+#[test]
+fn for_over_text_in_a_field_of_a_list_item() {
+    let mut sim = Sim::load(
+        r#"rows = [{"s": "hi"}]
+res = ""
+
+def main():
+    global res
+    for ch in rows[0].s:
+        res = ch + res
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(storage(&sim, "res"), json!("ih"));
+}
+
+#[test]
+fn repeating_text_in_a_field_or_item() {
+    let mut sim = Sim::load(
+        r#"m = {"s": "ab"}
+items = ["cd"]
+
+def main():
+    m.s *= 2
+    items[0] *= 2
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(storage(&sim, "m"), json!({"s": "abab"}));
+    assert_eq!(storage(&sim, "items"), json!(["cdcd"]));
+}
+
+#[test]
+fn indexing_a_string_held_in_a_map_field() {
+    assert_eq!(
+        said(
+            r#"words = {"name": "Bob"}
+cache = {}
+
+def fill():
+    global cache
+    cache.name = "Bob"
+
+def main():
+    n = words.name[0]
+    /say first {n}
+    fill()
+    m = cache.name[0]
+    /say first {m}
+    for ch in cache.name:
+        /say char {ch}
+"#
+        ),
+        ["first B", "first B", "char B", "char o", "char b"]
+    );
+}
+
+#[test]
+fn text_or_a_list_in_a_container_filled_at_run_time() {
+    assert_eq!(
+        said(
+            r#"rows = []
+
+def fill():
+    rows.append({"s": "hey"})
+    rows.append({"s": [7, 8]})
+
+def main():
+    fill()
+    i = 0
+    a = rows[i].s[1]
+    b = rows[i + 1].s[-1]
+    /say {a} {b}
+    for ch in rows[i].s:
+        /say char {ch}
+    for n in rows[1].s:
+        /say item {n}
+"#
+        ),
+        ["e 8", "char h", "char e", "char y", "item 7", "item 8"]
+    );
+}

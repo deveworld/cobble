@@ -77,7 +77,8 @@ Cobble doesn't know a parameter's type, so a copy of a parameter keeps its
 value in storage and in a score: `{name}` and `len(name)` read the value, and
 arithmetic reads the number. `name[i]` of a parameter checks when the pack
 runs whether the value is a list or a string, and gives an item or a
-character. `for` goes through the items of a list parameter or the
+character; text in `i`, such as a string parameter, gives the field of a
+map. `for` goes through the items of a list parameter or the
 characters of a string parameter. In `tellraw` and `title` text, `{name}`
 shows the argument as text, so quotes and backslashes in a string are shown
 as they are. A parameter can't also be
