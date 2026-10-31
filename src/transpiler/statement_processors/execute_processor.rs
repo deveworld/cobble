@@ -4,6 +4,7 @@ use crate::transpiler::condition_lowering::RAW_CONDITION_KEYWORDS;
 use crate::transpiler::condition_translator::{
     condition_clauses, negate_clause, TranslatedCondition,
 };
+use crate::transpiler::placeholders::{self, Piece};
 use crate::transpiler::raw_minecraft_condition_verdict;
 use crate::transpiler::{
     FunctionCapture, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, TranspileError,
@@ -22,7 +23,7 @@ enum DeferredExecuteCondition {
 }
 
 impl DeferredExecuteCondition {
-    fn map_text(&mut self, f: impl Fn(&str) -> String) {
+    fn map_text(&mut self, mut f: impl FnMut(&str) -> String) {
         match self {
             Self::Or(alternatives) => {
                 for alternative in alternatives {
@@ -44,12 +45,12 @@ struct ExecuteChain {
 }
 
 impl ExecuteChain {
-    fn map_text(&mut self, f: impl Fn(&str) -> String) {
+    fn map_text(&mut self, mut f: impl FnMut(&str) -> String) {
         for part in &mut self.parts {
             *part = f(part);
         }
         for deferred in &mut self.deferred {
-            deferred.map_text(&f);
+            deferred.map_text(&mut f);
         }
     }
 }
@@ -116,7 +117,7 @@ impl Transpiler {
         exec_block: &ExecuteBlock,
     ) -> Result<(), TranspileError> {
         let mut chain = self.build_execute_chain(&exec_block.modifiers)?;
-        self.expand_execute_header_placeholders(&mut chain);
+        self.expand_execute_header_placeholders(&mut chain)?;
         self.lower_deferred_execute_conditions(&mut chain);
         let execute_prefix = chain.parts.join(" ");
 
@@ -453,32 +454,75 @@ impl Transpiler {
 
     /// Selector aliases, `{CONST}`, and `{param}` placeholders may sit
     /// anywhere in the header, such as `if entity @Spawn`,
-    /// `as @a[distance=..{RADIUS}]`, or `positioned {x} 100 0`.
-    fn expand_execute_header_placeholders(&self, chain: &mut ExecuteChain) {
+    /// `as @a[distance=..{RADIUS}]`, or `positioned {x} 100 0`. `{{` and
+    /// `}}` are literal braces, as in a raw command. Any other placeholder
+    /// would reach Minecraft as written and fail the whole function, so it
+    /// is an error.
+    fn expand_execute_header_placeholders(
+        &self,
+        chain: &mut ExecuteChain,
+    ) -> Result<(), TranspileError> {
         let aliases = &self.symbols.selector_aliases;
         chain.map_text(|text| expand_selector_aliases(text, aliases));
-        for (name, value) in &self.symbols.compile_time_constants {
-            let from = format!("{{{}}}", name);
-            let to = if value.fract() == 0.0 {
-                format!("{}", *value as i64)
-            } else {
-                value.to_string()
-            };
-            chain.map_text(|text| text.replace(&from, &to));
-        }
-        chain.has_macro_params |= self.current_context.params.iter().any(|param| {
-            let placeholder = format!("{{{}}}", param);
-            chain.parts.iter().any(|part| part.contains(&placeholder))
+        let mut has_macro_params = chain.has_macro_params;
+        let mut error = None;
+        chain.map_text(|text| match self.fill_header_placeholders(text) {
+            Ok((filled, uses_params)) => {
+                has_macro_params |= uses_params;
+                filled
+            }
+            Err(message) => {
+                error.get_or_insert(message);
+                text.to_string()
+            }
         });
+        if let Some(message) = error {
+            return Err(message.into());
+        }
+        chain.has_macro_params = has_macro_params;
+        Ok(())
+    }
 
-        // If we have macro params, replace {param} with $(param) in execute parts
-        if chain.has_macro_params {
-            for param in &self.current_context.params {
-                let from = format!("{{{}}}", param);
-                let to = format!("$({})", param);
-                chain.map_text(|text| text.replace(&from, &to));
+    /// `text` with its placeholders filled in, and whether it uses a
+    /// parameter as a macro argument.
+    fn fill_header_placeholders(&self, text: &str) -> Result<(String, bool), String> {
+        let mut filled = String::with_capacity(text.len());
+        let mut uses_params = false;
+        for piece in placeholders::pieces(text) {
+            let (raw, name) = match piece {
+                Piece::Text { text, .. } => {
+                    filled.push_str(&text);
+                    continue;
+                }
+                Piece::Field { raw, name, .. } => (raw, name),
+            };
+            if self.current_context.is_param(name) {
+                uses_params = true;
+                filled.push_str(&format!("$({})", name));
+            } else if let Some(value) = self.symbols.compile_time_constants.get(name) {
+                if value.fract() == 0.0 {
+                    filled.push_str(&format!("{}", *value as i64));
+                } else {
+                    filled.push_str(&value.to_string());
+                }
+            } else if self.symbols.scoreboard_variables.contains(name)
+                || self.symbols.variable_storage_paths.contains_key(name)
+                || self.symbols.variables.contains_key(name)
+            {
+                return Err(format!(
+                    "Cannot use the variable `{name}` as a placeholder in an execute header. \
+                     Only a function parameter or a const can fill `{raw}` there. \
+                     To use the variable's value, pass it to a function parameter and \
+                     write the header inside that function."
+                ));
+            } else {
+                return Err(format!(
+                    "Undefined placeholder `{raw}` in an execute header. Define `{name}` as a \
+                     const or a function parameter, or write `{{{{{name}}}}}` for literal braces."
+                ));
             }
         }
+        Ok((filled, uses_params))
     }
 
     /// Lower each deferred condition to a flag score: setup commands reset

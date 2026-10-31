@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::transpiler::placeholders::{self, Piece};
 use crate::transpiler::{TranspileError, Transpiler};
 
 impl Transpiler {
@@ -28,13 +29,17 @@ impl Transpiler {
             .into());
         }
 
+        // A `{CONST}` in the selector is filled in here, so the alias reads
+        // the same in a raw command, a text component, and a header.
+        let selector = self.fill_alias_constants(selector_def)?;
+
         // Re-processing an imported file as a directory entry can encounter the
         // same alias again. Identical definitions are idempotent.
         if self
             .symbols
             .selector_aliases
             .get(&selector_def.name)
-            .is_some_and(|selector| selector == &selector_def.selector)
+            .is_some_and(|existing| existing == &selector)
         {
             return Ok(());
         }
@@ -58,8 +63,36 @@ impl Transpiler {
         // @Player -> @a[type=player,gamemode=survival]
         self.symbols
             .selector_aliases
-            .insert(selector_def.name.clone(), selector_def.selector.clone());
+            .insert(selector_def.name.clone(), selector);
 
         Ok(())
+    }
+
+    /// The alias's selector with each `{CONST}` replaced by its value. An
+    /// alias is defined once for the whole pack, so any other placeholder
+    /// has no value to take.
+    fn fill_alias_constants(&self, selector_def: &SelectorDef) -> Result<String, TranspileError> {
+        let mut filled = String::with_capacity(selector_def.selector.len());
+        for piece in placeholders::pieces(&selector_def.selector) {
+            match piece {
+                Piece::Text { text, .. } => filled.push_str(&text),
+                Piece::Field { raw, name, .. } => {
+                    let Some(value) = self.symbols.compile_time_constants.get(name) else {
+                        return Err(format!(
+                            "Selector alias `@{}` uses `{raw}`, but `{name}` is not a const defined above it. \
+                             An alias takes only const placeholders; write the value, or define `const {name} = ...` before the alias.",
+                            selector_def.name
+                        )
+                        .into());
+                    };
+                    if value.fract() == 0.0 {
+                        filled.push_str(&format!("{}", *value as i64));
+                    } else {
+                        filled.push_str(&value.to_string());
+                    }
+                }
+            }
+        }
+        Ok(filled)
     }
 }

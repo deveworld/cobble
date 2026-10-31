@@ -239,6 +239,82 @@ def main():
 }
 
 #[test]
+fn a_header_placeholder_must_be_a_parameter_or_a_const() {
+    for (source, message) in [
+        (
+            "def main():\n    as @a[tag=t{nope}]:\n        /say hi\n",
+            "Undefined placeholder `{nope}` in an execute header",
+        ),
+        (
+            "def main():\n    if entity @a[tag=t{nope}]:\n        /say hi\n",
+            "Undefined placeholder `{nope}` in an execute header",
+        ),
+        (
+            "w = 1\ndef main():\n    as @a[tag=t{w}]:\n        /say hi\n",
+            "Cannot use the variable `w` as a placeholder in an execute header",
+        ),
+        (
+            "w = 1\ndef main():\n    if score @s {w} matches 1:\n        /say hi\n",
+            "Cannot use the variable `w` as a placeholder in an execute header",
+        ),
+        (
+            "w = 1\ndef main():\n    positioned ~ ~{w} ~:\n        /say hi\n",
+            "Cannot use the variable `w` as a placeholder in an execute header",
+        ),
+    ] {
+        let error = compile(source).expect_err(source);
+        assert!(error.contains(message), "{source}\n{error}");
+    }
+
+    let main = function(
+        r#"
+const UP = 2
+
+def lift(tag):
+    as @a[tag={tag}] positioned ~ ~{UP} ~ if data storage sim:a {{x:{{y:1}}}}:
+        /say up
+
+def main():
+    lift("t")
+"#,
+        "lift",
+    );
+    assert_eq!(
+        main,
+        "$execute as @a[tag=$(tag)] positioned ~ ~2 ~ if data storage sim:a {x:{y:1}} run say up"
+    );
+}
+
+#[test]
+fn a_selector_alias_takes_a_const() {
+    let main = function(
+        r#"
+const R = 8
+@Near = @e[distance=..{R}]
+
+def main():
+    /tellraw @a {"selector":"@Near"}
+    /kill @Near
+    as @Near:
+        /say x
+"#,
+        "main",
+    );
+    assert_eq!(
+        main,
+        "tellraw @a {\"selector\":\"@e[distance=..8]\"}\n\
+         kill @e[distance=..8]\n\
+         execute as @e[distance=..8] run say x"
+    );
+    let error = compile("@Near = @e[distance=..{R}]\ndef main():\n    /kill @Near\n")
+        .expect_err("an alias needs a const");
+    assert!(
+        error.contains("Selector alias `@Near` uses `{R}`"),
+        "{error}"
+    );
+}
+
+#[test]
 fn an_escaped_name_is_text_next_to_a_variable() {
     let mut sim = Sim::load(
         r#"
