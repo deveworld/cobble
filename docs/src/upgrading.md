@@ -210,6 +210,10 @@ says, so 0.11 reports them:
   that isn't a parameter or a const. The function used to fail to load.
 - Module-level code that reads a module variable before its assignment.
 - A literal map key that is empty, `m[""]`, which Minecraft refuses.
+- A text key of a value Cobble knows is a list, as `rows[0]["k"]`, which
+  read a missing field.
+- A function of an imported file that reads a list, map, or string defined
+  only in the file that imports it, which read an unset score.
 - `datapack.*` resources that a 26.3 server refuses to load: missing required
   fields, unknown `minecraft:` ids, references to tags, functions, and
   resources that neither Minecraft nor the pack defines, and the other rules

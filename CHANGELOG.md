@@ -64,6 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"required": False`.
 
 ### Changed
+- A text key of a value Cobble knows is a list, as `rows[0]["k"]` after `rows =
+  [[1, 2]]`, is a compile error, where Python raises TypeError.
+- A function of an imported file that reads a list, map, or string defined only
+  in the file that imports it is a compile error naming the variable and its
+  file, where Python raises NameError.
+- An empty literal map key, as in `m[""] = 1` or `{"": 1}`, is a compile error
+  at its line instead of a pack that Minecraft refuses to load.
 - Function tags keep the order their values were declared in, which is the order
   Minecraft runs them; merged declarations are appended in order and repeats are
   dropped. In `minecraft:load` and `minecraft:tick`, event listeners and
@@ -94,6 +101,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- A literal map key with a line break reads and writes its field instead of
+  stopping the function from loading.
+- A call whose argument reads a missing item or field, as `show(cfg.nick)` with
+  `cfg = {}`, runs with 0 or an empty value instead of being skipped.
+- A function that changes an item or a field of a parameter, as `t[0] = 9` or
+  `t.append(3)`, shows the current value in later commands such as `/say {t}`.
+- Undefined variables in the Python conditions of an execute header, as `as @a
+  if nope > 3:`, and in mixed conditions such as `if entity @a and gone > 1:`,
+  are reported.
+- Reading a fractional item or field as a number, as `show(y[0])` after `y =
+  [0.6, 2.5]`, gives the `fractional-number` warning instead of truncating
+  silently.
 - `--validate` accepts macro lines where a placeholder stands for several
   arguments, such as `$fill $(from) $(to) $(block) hollow` and `$data modify
   storage $(to) set value 1`.
