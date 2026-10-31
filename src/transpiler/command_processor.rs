@@ -99,7 +99,9 @@ impl<'a> CommandProcessor<'a> {
             result = self.handle_scoreboard_vars_in_command(&result, &scoreboard_vars_found)?;
         }
 
-        if has_macro_vars && scoreboard_vars_found.is_empty() {
+        // A line written with `$(name)` is the author's own macro text and
+        // stays as written.
+        if has_macro_vars && scoreboard_vars_found.is_empty() && !cmd.contains("$(") {
             result = self.normalize_macro_text_component_command(&result)?;
         }
 
@@ -307,44 +309,33 @@ impl<'a> CommandProcessor<'a> {
         })
     }
 
+    /// A macro `tellraw` or `title` whose whole text is a placeholder, as
+    /// `/tellraw @a {msg}`, shows the value as plain text: it gets a
+    /// `{"text":...}` wrapper, so a sentence with spaces still works. `title
+    /// ... times` takes numbers, and `clear` and `reset` take nothing, so
+    /// they stay as they are.
     fn normalize_macro_text_component_command(&self, cmd: &str) -> Result<String, TranspileError> {
         let trimmed = cmd.trim();
-        if trimmed.starts_with("title ") {
-            let parts: Vec<&str> = trimmed.splitn(4, ' ').collect();
-            if parts.len() < 4 {
+        let (head, message) = if trimmed.starts_with("title ") {
+            let parts = split_command_words(trimmed, 4);
+            if parts.len() < 4 || !matches!(parts[2], "title" | "subtitle" | "actionbar") {
                 return Ok(cmd.to_string());
             }
-            let message = parts[3].trim();
-            if Self::looks_like_text_component(message) {
-                return Ok(cmd.to_string());
-            }
-            return Ok(format!(
-                "{} {} {} {}",
-                parts[0],
-                parts[1],
-                parts[2],
-                Self::plain_text_component(message)
-            ));
-        }
-
-        if trimmed.starts_with("tellraw ") {
-            let parts: Vec<&str> = trimmed.splitn(3, ' ').collect();
+            (parts[..3].join(" "), parts[3])
+        } else if trimmed.starts_with("tellraw ") {
+            let parts = split_command_words(trimmed, 3);
             if parts.len() < 3 {
                 return Ok(cmd.to_string());
             }
-            let message = parts[2].trim();
-            if Self::looks_like_text_component(message) {
-                return Ok(cmd.to_string());
-            }
-            return Ok(format!(
-                "{} {} {}",
-                parts[0],
-                parts[1],
-                Self::plain_text_component(message)
-            ));
+            (parts[..2].join(" "), parts[2])
+        } else {
+            return Ok(cmd.to_string());
+        };
+        let message = message.trim();
+        if Self::looks_like_text_component(message) {
+            return Ok(cmd.to_string());
         }
-
-        Ok(cmd.to_string())
+        Ok(format!("{} {}", head, Self::plain_text_component(message)))
     }
 
     fn looks_like_text_component(message: &str) -> bool {
@@ -1042,7 +1033,7 @@ fn split_text_command(cmd: &str) -> Result<(&str, &str, Option<&str>, &str), Tra
     let cmd = cmd.trim();
     let command = cmd.split(' ').next().unwrap_or("");
     if command == "title" {
-        let parts: Vec<&str> = cmd.splitn(4, ' ').collect();
+        let parts = split_command_words(cmd, 4);
         if parts.len() < 4 {
             return Err(
                 "Title command requires action (title/subtitle/actionbar). Format: /title <selector> <action> <text>".into()
@@ -1050,12 +1041,54 @@ fn split_text_command(cmd: &str) -> Result<(&str, &str, Option<&str>, &str), Tra
         }
         Ok((command, parts[1], Some(parts[2]), parts[3]))
     } else {
-        let parts: Vec<&str> = cmd.splitn(3, ' ').collect();
+        let parts = split_command_words(cmd, 3);
         if parts.len() < 3 {
             return Err("Invalid tellraw command format".into());
         }
         Ok((command, parts[1], None, parts[2]))
     }
+}
+
+/// `command` split at spaces into at most `limit` words, the last holding
+/// the rest. A space inside a selector's `[...]`, braces, or quotes, as in
+/// `@a[tag=x, limit=1]` or `@a[name="a b"]`, doesn't split.
+fn split_command_words(command: &str, limit: usize) -> Vec<&str> {
+    let mut words = Vec::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut start = 0;
+    for (index, ch) in command.char_indices() {
+        if words.len() + 1 == limit {
+            break;
+        }
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' | '{' | '(' => depth += 1,
+            ']' | '}' | ')' => depth = depth.saturating_sub(1),
+            ' ' if depth == 0 => {
+                if index > start {
+                    words.push(&command[start..index]);
+                }
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < command.len() {
+        words.push(&command[start..]);
+    }
+    words
 }
 
 #[cfg(test)]

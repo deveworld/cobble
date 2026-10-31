@@ -110,6 +110,20 @@ Function parameters become macro arguments, so that line compiles to a macro
 line such as `$tp $(player) $(x) $(y) $(z)`. Constants and the values of those
 loops are substituted at compile time.
 
+In `tellraw` and `title`, a placeholder that fills the whole text shows the
+value as plain text, so a sentence with spaces works: `/tellraw @a {msg}`
+compiles to `$tellraw @a {"text":"$(msg)"}`. To pass a ready text component,
+such as `{text:"hi",color:"red"}`, write the macro argument yourself:
+
+```python
+def show(msg):
+    /tellraw @a $(msg)
+```
+
+A line written with `$(name)` is kept exactly as written, apart from the
+leading `$` Cobble adds. `title ... times` takes numbers and is never
+wrapped.
+
 A Cobble variable, including the variable of a runtime loop, works as a
 placeholder only in `say`, `tellraw`, and `title` text, as described under
 [JSON Text](#json-and-snbt-text) and [Variables In `say`](#variables-in-say). In any

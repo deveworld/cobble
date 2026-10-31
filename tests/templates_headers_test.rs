@@ -315,6 +315,60 @@ def main():
 }
 
 #[test]
+fn macro_text_commands_keep_their_arguments() {
+    let functions = functions(
+        r#"
+score = 4
+
+def times(a, b, c):
+    /title @a times {a} {b} {c}
+    /title @a times $(a) 20 10
+
+def raw_macro():
+    /title @s actionbar $(prompt)
+    /tellraw @a $(msg)
+    /tellraw @a[tag=x, limit=1] {"text":"$(m)"}
+    /title @a[tag=x, limit=1] title {"text":"$(m)"}
+    /tellraw @a[name="a b"] {"text":"$(m)"}
+
+def whole(msg):
+    /tellraw @a {msg}
+    /title @a[tag=x, limit=1] actionbar {msg}
+
+def shown():
+    /tellraw @a[name="a b"] {"text":"score {score}"}
+
+def main():
+    times(10, 20, 30)
+    whole("hi there")
+"#,
+    );
+    let text = |name: &str| functions[name].join("\n");
+    assert_eq!(
+        text("times"),
+        "$title @a times $(a) $(b) $(c)\n$title @a times $(a) 20 10"
+    );
+    assert_eq!(
+        text("raw_macro"),
+        "$title @s actionbar $(prompt)\n\
+         $tellraw @a $(msg)\n\
+         $tellraw @a[tag=x, limit=1] {\"text\":\"$(m)\"}\n\
+         $title @a[tag=x, limit=1] title {\"text\":\"$(m)\"}\n\
+         $tellraw @a[name=\"a b\"] {\"text\":\"$(m)\"}"
+    );
+    // A placeholder that fills the whole text shows it as plain text.
+    assert_eq!(
+        text("whole"),
+        "$tellraw @a {\"text\":\"$(msg)\"}\n$title @a[tag=x, limit=1] actionbar {\"text\":\"$(msg)\"}"
+    );
+    assert!(
+        text("shown").starts_with("tellraw @a[name=\"a b\"] {"),
+        "{}",
+        text("shown")
+    );
+}
+
+#[test]
 fn an_escaped_name_is_text_next_to_a_variable() {
     let mut sim = Sim::load(
         r#"
