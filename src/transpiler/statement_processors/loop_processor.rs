@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::transpiler::placeholders::{self, Piece};
+use crate::transpiler::function_context;
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
     FunctionCapture, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, SourceLocation,
@@ -216,6 +217,27 @@ impl Transpiler {
         self.unroll.depth += 1;
         self.unroll.iteration_factor = projected_iterations;
 
+        // As in Python, the target is a variable: it holds the last value
+        // after the loop, a `global` target writes the module variable, and
+        // the body may assign it. When any of that can be seen, the target
+        // is a real variable set at the start of each pass. Otherwise each
+        // pass reads the value itself.
+        let target = &for_loop.target;
+        let assigned_in_body = function_context::assigns_name(&for_loop.body, target);
+        let reads_in_loop = function_context::count_reads(
+            std::slice::from_ref(&Statement::For(for_loop.clone())),
+            target,
+        );
+        let read_outside_loop = self
+            .current_context
+            .for_target_reads
+            .get(target)
+            .is_some_and(|reads| *reads > reads_in_loop);
+        let real_target = self.current_function.is_some()
+            && (assigned_in_body
+                || read_outside_loop
+                || self.symbols.global_variables.contains(target));
+
         let result = (|| {
             self.data_pack.unrolled_loops += 1;
             let body_sources = for_loop
@@ -224,7 +246,25 @@ impl Transpiler {
                 .map(|statement| self.take_unrolled_body_statement_source(statement))
                 .collect::<Vec<_>>();
             for value in values {
-                let substituted = substitute_statements(&for_loop.body, &for_loop.target, &value)?;
+                if real_target {
+                    let start_index = self.current_function.as_ref().map(Vec::len);
+                    let process_result =
+                        self.process_statement(&Statement::Assignment(Assignment {
+                            target: target.clone(),
+                            target_expr: None,
+                            value: value.as_expression(),
+                            persist: false,
+                        }));
+                    if let Some(start_index) = start_index {
+                        self.mark_current_function_commands_as_unrolled(start_index);
+                    }
+                    process_result?;
+                }
+                let substituted = if assigned_in_body {
+                    for_loop.body.clone()
+                } else {
+                    substitute_statements(&for_loop.body, &for_loop.target, &value)?
+                };
                 for (statement, body_source) in substituted.into_iter().zip(body_sources.iter()) {
                     let saved_statement_source = self.current_statement_source.clone();
                     if body_source.is_some() {

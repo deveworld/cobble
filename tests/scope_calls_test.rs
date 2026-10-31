@@ -115,6 +115,32 @@ def f():
     );
 }
 
+#[test]
+fn module_variable_whose_type_is_known_only_at_its_assignment_is_used_above_it() {
+    // `[0] * 3` is a list only once it is lowered, so a function above it
+    // can't know its type: a clear error instead of reading a score.
+    let error = build_error(
+        r#"
+def f():
+    n = len(zeros)
+    /say {n}
+
+zeros = [0] * 3
+"#,
+    );
+    assert!(
+        error.contains("`zeros` is declared later in the file, and `f` above it uses it"),
+        "{error}"
+    );
+    // Below the assignment it works.
+    let mut sim = Sim::load(
+        "zeros = [0] * 3\n\ndef f():\n    n = len(zeros)\n    /say {n}\n",
+        &[],
+    );
+    sim.call("f");
+    assert_eq!(sim.log, vec!["Server: 3"]);
+}
+
 /// Builds `source` as `main.cbl` with the `cobble` binary. Returns whether
 /// the build succeeded and what it printed to stderr.
 fn cli_build(source: &str, extra_args: &[&str]) -> (bool, String) {
@@ -218,4 +244,124 @@ fn long_def_names_build_while_the_file_name_fits() {
         error.contains(&format!("the helper `_cobble_exit_{recursive}`")),
         "{error}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Loops and calls
+// ---------------------------------------------------------------------------
+
+#[test]
+fn expanded_for_target_holds_its_last_value_after_the_loop() {
+    let mut sim = Sim::load(
+        r#"
+mod = 5
+out = []
+
+def go():
+    for v in [1, 2]:
+        pass
+    w = v + 1
+    /say w={w} v={v}
+
+def go_global():
+    global mod
+    for mod in [1, 2]:
+        pass
+    /say global={mod}
+
+def go_local():
+    for mod in [1, 2]:
+        pass
+    /say local={mod}
+
+def go_range():
+    i = 5
+    for i in range(2):
+        pass
+    /say range={i}
+
+def go_append():
+    for j in [7, 8]:
+        pass
+    out.append(j)
+    /say out={out}
+
+def go_text():
+    for s in ["a", "b"]:
+        /say in {s}
+    /say last={s}
+"#,
+        &[],
+    );
+    for function in [
+        "go",
+        "go_global",
+        "go_local",
+        "go_range",
+        "go_append",
+        "go_text",
+    ] {
+        sim.call(function);
+    }
+    assert_eq!(
+        sim.log,
+        vec![
+            "Server: w=3 v=2",
+            "Server: global=2",
+            "Server: local=2",
+            "Server: range=1",
+            "Server: out=[8]",
+            "Server: in a",
+            "Server: in b",
+            "Server: last=b",
+        ]
+    );
+    // `global` wrote the module variable; the local loop didn't.
+    assert_eq!(sim.var("mod"), 2);
+}
+
+#[test]
+fn expanded_for_body_may_assign_its_target() {
+    let mut sim = Sim::load(
+        r#"
+def go():
+    total = 0
+    for i in range(3):
+        i = i * 10
+        total += i
+        /say {i}
+    /say total={total} i={i}
+"#,
+        &[],
+    );
+    sim.call("go");
+    assert_eq!(
+        sim.log,
+        vec![
+            "Server: 0",
+            "Server: 10",
+            "Server: 20",
+            "Server: total=30 i=20"
+        ]
+    );
+}
+
+#[test]
+fn expanded_for_global_target_is_seen_by_a_called_function() {
+    let mut sim = Sim::load(
+        r#"
+step = 0
+
+def show():
+    /say step {step}
+
+def go():
+    global step
+    for step in [3, 4]:
+        show()
+"#,
+        &[],
+    );
+    sim.call("go");
+    assert_eq!(sim.log, vec!["Server: step 3", "Server: step 4"]);
 }

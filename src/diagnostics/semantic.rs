@@ -3577,6 +3577,12 @@ fn walk_placeholder_statements(
                     diagnostics,
                 );
                 scopes.loop_targets.truncate(loop_targets);
+                // As in Python, the targets keep their last value after the
+                // loop.
+                let targets = scoped_target.then(|| for_loop.target.clone());
+                scopes
+                    .defining_set()
+                    .extend(targets.into_iter().chain(for_loop.index.iter().cloned()));
             }
             Statement::While(while_loop) => {
                 walk_placeholder_statements(
