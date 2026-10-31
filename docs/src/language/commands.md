@@ -127,16 +127,25 @@ def reward():
 ```
 
 Unknown, invalid, and unclosed placeholders are errors. Write `{{` and `}}` for
-literal braces:
+literal braces. They work as in a Python format string: they nest, and a
+placeholder between them is still filled in, so `{{{x}}}` is `{`, the
+placeholder `x`, and `}`:
 
 ```python
-def help():
+def help(x):
     /say Type {{name}} to see a placeholder
+    /data merge storage mypack:a {{a:{{b:1}},c:2}}
+    /say {{{x}}}
 ```
 
 ```mcfunction
 say Type {name} to see a placeholder
+data merge storage mypack:a {a:{b:1},c:2}
+$say {$(x)}
 ```
+
+A single brace that holds no name, as in the SNBT `{Tags:["a"]}`, stays as
+it is.
 
 ## The `temp` Objective
 

@@ -3618,12 +3618,10 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
                 continue;
             }
             if ch == '{' {
+                // `{{` is a literal brace; a placeholder between escapes is
+                // still a placeholder, as in a Python format string.
                 if line[index..].starts_with("{{") {
-                    if let Some(close_index) = find_escaped_brace_end(line, index + 2) {
-                        index = close_index + 2;
-                    } else {
-                        index += 2;
-                    }
+                    index += 2;
                     continue;
                 }
                 if let Some(close_index) = placeholder_close_before_quote(line, index, active_quote)
@@ -3659,11 +3657,7 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
         }
 
         if line[index..].starts_with("{{") {
-            if let Some(close_index) = find_escaped_brace_end(line, index + 2) {
-                index = close_index + 2;
-            } else {
-                index += 2;
-            }
+            index += 2;
             continue;
         }
 
@@ -3761,10 +3755,6 @@ fn placeholder_close_before_quote(text: &str, open_index: usize, quote: char) ->
     }
 
     None
-}
-
-fn find_escaped_brace_end(text: &str, start: usize) -> Option<usize> {
-    text.get(start..)?.find("}}").map(|offset| start + offset)
 }
 
 // ===========================================================================

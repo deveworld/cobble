@@ -159,3 +159,97 @@ def main():
     assert_eq!(text("summon_kind"), "$execute summon $(kind) run say d");
     assert_eq!(text("asat_who"), "$execute as $(who) at @s run say e");
 }
+
+#[test]
+fn brace_escapes_follow_python_format_strings() {
+    // Each expected line is Python's `str.format` of the same text, with
+    // `x="$(x)"`, `n="$(n)"`, and `k="$(k)"`.
+    let functions = functions(
+        r#"
+def tags(n):
+    /summon pig ~ ~ ~ {{Tags:["{n}"]}}
+
+def wrap(x):
+    /say {{ {x} }}
+    /say {{{x}}}
+    /say {{y={x}}}
+    /kill @e[scores={{obj={x}}}]
+
+def key(k):
+    /data merge storage sim:a {{{k}:1}}
+
+def main():
+    /data merge storage sim:a {{a:{{b:1}},c:2}}
+    /say {{{{a}}}}
+    /say Type {{name}} to see a placeholder
+    /tellraw @a {"text":"a","hover_event":{"action":"show_text","value":"b"}}
+    tags("t")
+    wrap("w")
+    key("k")
+"#,
+    );
+    let text = |name: &str| functions[name].join("\n");
+    assert_eq!(text("tags"), r#"$summon pig ~ ~ ~ {Tags:["$(n)"]}"#);
+    assert_eq!(
+        text("wrap"),
+        "$say { $(x) }\n$say {$(x)}\n$say {y=$(x)}\n$kill @e[scores={obj=$(x)}]"
+    );
+    assert_eq!(text("key"), "$data merge storage sim:a {$(k):1}");
+    let main = text("main");
+    for line in [
+        "data merge storage sim:a {a:{b:1},c:2}",
+        "say {{a}}",
+        "say Type {name} to see a placeholder",
+        r#"tellraw @a {"text":"a","hover_event":{"action":"show_text","value":"b"}}"#,
+    ] {
+        assert!(
+            main.lines().any(|command| command == line),
+            "{line}\n{main}"
+        );
+    }
+}
+
+#[test]
+fn an_escaped_placeholder_in_a_loop_is_filled_in() {
+    let mut sim = Sim::load(
+        r#"
+def main():
+    for i in [1, 2]:
+        /say {{n={i}}} {{i}}
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.log, ["Server: {n=1} {i}", "Server: {n=2} {i}"]);
+}
+
+#[test]
+fn a_placeholder_between_escapes_is_checked() {
+    let error = compile(
+        r#"
+def main():
+    /say {{y={nope}}}
+"#,
+    )
+    .expect_err("an unknown placeholder inside an escape is an error");
+    assert!(
+        error.contains("Undefined command placeholder `nope`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_escaped_name_is_text_next_to_a_variable() {
+    let mut sim = Sim::load(
+        r#"
+coins = 3
+
+def main():
+    /tellraw @a {"text":"{{coins}} is {coins}"}
+    /say {{coins}} is {coins}
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.log, ["{coins} is 3", "Server: {coins} is 3"]);
+}

@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::transpiler::placeholders::{self, Piece};
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
     FunctionCapture, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, SourceLocation,
@@ -1873,77 +1874,15 @@ fn substitute_expression(
     Ok(substituted)
 }
 
+/// `text` with each `{target}` placeholder replaced, read as the command
+/// processor reads placeholders: an escape `{{` or `}}` stays for it, and a
+/// placeholder between escapes is replaced too.
 fn replace_unroll_placeholder(text: &str, target: &str, replacement: &str) -> String {
-    let mut output = String::new();
-    let mut index = 0;
-
-    while index < text.len() {
-        let remaining = &text[index..];
-        if let Some(stripped) = remaining.strip_prefix("{{") {
-            if let Some(end) = stripped.find("}}") {
-                let end_index = index + 2 + end + 2;
-                output.push_str(&text[index..end_index]);
-                index = end_index;
-            } else {
-                output.push_str(&text[index..]);
-                break;
-            }
-        } else if remaining.starts_with('{') {
-            if let Some(end_index) = find_matching_unroll_brace(text, index) {
-                let placeholder = text[index + 1..end_index].trim();
-                if placeholder == target {
-                    output.push_str(replacement);
-                } else {
-                    output.push('{');
-                    output.push_str(&replace_unroll_placeholder(
-                        &text[index + 1..end_index],
-                        target,
-                        replacement,
-                    ));
-                    output.push('}');
-                }
-                index = end_index + 1;
-            } else {
-                output.push_str(&text[index..]);
-                break;
-            }
-        } else {
-            let ch = remaining.chars().next().expect("non-empty string slice");
-            output.push(ch);
-            index += ch.len_utf8();
-        }
-    }
-
-    output
-}
-
-fn find_matching_unroll_brace(text: &str, open_index: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    let mut index = open_index;
-
-    while index < text.len() {
-        let remaining = &text[index..];
-        if let Some(stripped) = remaining.strip_prefix("{{") {
-            if let Some(end) = stripped.find("}}") {
-                index += 2 + end + 2;
-                continue;
-            }
-            return None;
-        }
-
-        let ch = remaining.chars().next()?;
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-        index += ch.len_utf8();
-    }
-
-    None
+    placeholders::pieces(text)
+        .into_iter()
+        .map(|piece| match piece {
+            Piece::Field { name, .. } if name == target => replacement,
+            Piece::Field { raw, .. } | Piece::Text { raw, .. } => raw,
+        })
+        .collect()
 }
