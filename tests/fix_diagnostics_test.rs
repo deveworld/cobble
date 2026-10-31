@@ -436,3 +436,14 @@ fn a_continued_command_takes_no_statement_checks() {
     let source = "def main():\n    /say a \\\n  x = (\n    /say b \\\n'\n    /say c\n";
     assert_eq!(analyze_source(source), []);
 }
+
+#[test]
+fn a_line_of_unclosed_braces_is_reported_once() {
+    let source = format!("def f():\n    /say {}\n", "{a:".repeat(50));
+    let diagnostics = cobble::diagnostics::analyze_source(&source);
+    let unclosed = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.kind == "unclosed-placeholder")
+        .count();
+    assert_eq!(unclosed, 1, "{diagnostics:?}");
+}

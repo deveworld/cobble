@@ -3877,6 +3877,7 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
     // which a long line makes quadratic.
     let mut closes: HashMap<usize, Option<usize>> = HashMap::new();
     let mut columns = ColumnCounter::new(line);
+    let mut reported_unclosed = false;
 
     while index < line.len() {
         let ch = line[index..].chars().next().unwrap();
@@ -3938,10 +3939,15 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
         }
 
         let Some(close_index) = matching_brace_quote_aware(line, index, &mut closes) else {
-            placeholders.push(CommandPlaceholder {
-                name: String::new(),
-                column: columns.at(index),
-            });
+            // One report per line: every brace after an unclosed one is
+            // unclosed too, and each report repeats the line.
+            if !reported_unclosed {
+                reported_unclosed = true;
+                placeholders.push(CommandPlaceholder {
+                    name: String::new(),
+                    column: columns.at(index),
+                });
+            }
             index = next_index;
             continue;
         };
