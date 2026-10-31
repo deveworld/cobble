@@ -131,17 +131,14 @@ def _cobble_text_slice(text, start, stop):
     else:
         /data modify storage NS:global _cobble_result set value ""
 
+# Joining, repeating, `str`, and map keys pass text through a macro line,
+# which reads backslashes and quotes again; the `_cobble_esc_` functions
+# (text_escape.rs) escape it first.
 def _cobble_text_join(left, right):
-    /data modify storage NS:global _cobble_result set value "{left}{right}"
+    /function NS:_cobble_esc_join
 
 def _cobble_text_repeat(text, count):
-    out = ""
-    done = 0
-    while done < count:
-        _cobble_text_join(out, text)
-        /data modify storage NS:global locals._cobble_text_repeat.out set from storage NS:global _cobble_result
-        done += 1
-    /data modify storage NS:global _cobble_result set from storage NS:global locals._cobble_text_repeat.out
+    /function NS:_cobble_esc_repeat
 
 def _cobble_text_find(text, part):
     size = len(part)
@@ -155,7 +152,7 @@ def _cobble_text_find(text, part):
     return -1
 
 def _cobble_str(value):
-    /data modify storage NS:global _cobble_result set value "{value}"
+    /function NS:_cobble_esc_str
 
 def _cobble_has_key(box, key):
     # A number is never a key. Its text differs from it, so the second
@@ -164,8 +161,11 @@ def _cobble_has_key(box, key):
     /data remove storage NS:global _cobble_kind
     /data modify storage NS:global _cobble_kind set string storage NS:global args.key
     /execute store success score number temp run data modify storage NS:global _cobble_kind set from storage NS:global args.key
-    /execute if score number temp matches 0 if data storage NS:global args.box."{key}" run return 1
-    return 0
+    if number == 1:
+        return 0
+    found = 0
+    /execute store result score found temp run function NS:_cobble_esc_has
+    return found
 
 def _cobble_is_text(value):
     found = 0

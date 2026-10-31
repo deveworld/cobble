@@ -22,6 +22,7 @@ mod statement_processors;
 mod stdlib_modules;
 mod storage_paths;
 mod symbols;
+mod text_escape;
 mod types;
 pub mod vars_objective;
 

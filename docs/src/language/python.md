@@ -31,8 +31,11 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   integers such as `items[i]`, and a negative index counts from the end;
   `name[i]` of a string is a one-character string. Map keys may be
   attributes, string literals, or runtime strings such as `config[key]`. A
-  key can hold spaces, dots, and colons, as in `prices["minecraft:diamond"]`;
-  only a runtime key can't hold a `"`.
+  key can hold any text, such as spaces, dots, colons, quotes, and
+  backslashes, as in `prices["minecraft:diamond"]`, but it can't be empty,
+  because no storage path names an empty key. Storing or reading with an
+  empty runtime key does nothing and shows `<file>:<line>: a map key can't be
+  empty` in chat; `"" in config` works.
 - A list or map is a value: assigning it to another variable or passing it to
   a function copies it, so a change through one name doesn't show through the
   other.
@@ -46,8 +49,8 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
 - `/` and `//` are both floor division, and `^` and `**` are both power.
 - `+` joins text and lists when Cobble can tell that one side is text or a
   list. Two parameters add as numbers, so write `str(a) + b` to join them.
-- Text joined or repeated while the pack runs can't hold a `"`, because it goes
-  through a macro line.
+- Text joined, repeated, or passed to `str()` while the pack runs keeps every
+  character, `"` and `\` included.
 - In `items[f()]`, a list that `f` changes in place shows the change, as in
   Python, and so does one that `f` replaces, where Python keeps the old list.
 - `sort()` and `sorted()` order numbers. `index()` gives -1 and `pop()` gives 0

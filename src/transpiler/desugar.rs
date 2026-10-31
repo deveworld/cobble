@@ -25,6 +25,14 @@ type LoweredValue = Result<Expression, TranspileError>;
 /// also a variable of that path, so Cobble code can read it.
 pub(in crate::transpiler) const RESULT: &str = "_cobble_result";
 
+/// Prelude helpers that call the runtime text functions.
+const TEXT_ESCAPE_HELPERS: [&str; 4] = [
+    "_cobble_text_join",
+    "_cobble_text_repeat",
+    "_cobble_str",
+    "_cobble_has_key",
+];
+
 /// `str` and the list forms of `min`, `max`, and `sum` aren't functions of
 /// their own in a pack, but a function with the same name replaces them.
 const BUILTIN_FUNCTIONS: [&str; 7] = ["abs", "enumerate", "max", "min", "sorted", "str", "sum"];
@@ -1424,6 +1432,9 @@ impl Transpiler {
             if callee.starts_with("_cobble_") {
                 self.require_prelude(&callee)?;
             }
+        }
+        if TEXT_ESCAPE_HELPERS.contains(&name) {
+            crate::transpiler::text_escape::add_functions(&mut self.data_pack);
         }
         self.symbols
             .variable_storage_paths

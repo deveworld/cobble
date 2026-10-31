@@ -13,6 +13,7 @@ use crate::transpiler::data_pack::DataPack;
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
 use crate::transpiler::statement_processors::serialize_snbt;
 use crate::transpiler::symbols::Symbols;
+use crate::transpiler::text_escape;
 use crate::transpiler::{
     escape_quoted, GeneratedCommand, GeneratedCommandKind, SourceLocation, TranspileError,
     Transpiler,
@@ -295,8 +296,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
                 }
                 DynamicStoragePathArgKind::Key => {
                     let target_path = format!("{}.{}", args_path, arg.placeholder);
-                    commands
-                        .extend(self.dynamic_storage_key_arg_commands(&target_path, &arg.expr)?);
+                    commands.extend(self.escaped_key_commands(&target_path, &arg.expr)?);
                 }
                 DynamicStoragePathArgKind::Runtime => {
                     let base = format!("{}.{}", args_path, arg.placeholder);
@@ -336,8 +336,54 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
                 "execute store success score {kind_score} temp run data modify storage {namespace}:global {base}_t set from storage {namespace}:global {base}_k"
             ),
         ]);
+        // As text, the key goes in a quoted path key; a number stays as it is.
+        commands.push(format!(
+            "data modify storage {namespace}:global {} set from storage {namespace}:global {base}_k",
+            text_escape::KEY_INPUT
+        ));
+        commands.extend(self.escape_key_input_commands(&format!("{base}_k")));
         self.storage_data_pack_mut().track_objective("temp");
         Ok(commands)
+    }
+
+    /// Commands that store the map key `expr` at `target_path`, escaped for
+    /// the quoted path key `."$(key)"`, which reads `\\` and `\"`. Text known
+    /// only when the pack runs is escaped then.
+    fn escaped_key_commands(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+    ) -> Result<Vec<String>, TranspileError> {
+        if let Expression::String(value) = expr {
+            if value.is_empty() {
+                return Err("A map key can't be empty, because no storage path names it.".into());
+            }
+            let namespace = self.storage_data_pack().namespace.clone();
+            return Ok(vec![format!(
+                "data modify storage {namespace}:global {target_path} set value \"{}\"",
+                escape_quoted(&text_escape::escape_path_key(value))
+            )]);
+        }
+        let mut commands = self.dynamic_storage_key_arg_commands(text_escape::KEY_INPUT, expr)?;
+        commands.extend(self.escape_key_input_commands(target_path));
+        Ok(commands)
+    }
+
+    /// Commands that escape the key at [`text_escape::KEY_INPUT`] into
+    /// `target_path`. An empty key, which no path can name, shows an error
+    /// in chat that names the source line.
+    fn escape_key_input_commands(&mut self, target_path: &str) -> Vec<String> {
+        let refusal = match self.storage_helper_source() {
+            Some(source) => {
+                let file = source.file.file_name().map_or_else(
+                    || source.file.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                format!("{file}:{}: a map key can't be empty", source.line)
+            }
+            None => "A map key can't be empty".to_string(),
+        };
+        text_escape::key_commands(self.storage_data_pack_mut(), target_path, &refusal)
     }
 
     /// Commands that store the map key `expr` at `target_path`. A key must

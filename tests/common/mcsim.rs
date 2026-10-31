@@ -122,6 +122,9 @@ pub struct Sim {
     pub log: Vec<String>,
     load_tag: Vec<String>,
     budget: usize,
+    /// Whether the command running came from a macro line. Text Minecraft
+    /// can't read fails such a command; in a plain line it stops the load.
+    in_macro_line: bool,
 }
 
 impl Sim {
@@ -158,6 +161,7 @@ impl Sim {
             log: Vec::new(),
             load_tag: read_tag(output_dir, "load"),
             budget: 1_000_000,
+            in_macro_line: false,
         };
         for handler in sim.load_tag.clone() {
             sim.call(&handler);
@@ -238,8 +242,11 @@ impl Sim {
             .get(name)
             .unwrap_or_else(|| panic!("function `{name}` not found in generated pack"))
             .clone();
+        // Minecraft fills every macro line before the function runs, and a
+        // missing argument fails the whole call.
+        let mut lines = Vec::with_capacity(commands.len());
         for command in &commands {
-            let command = match command.strip_prefix('$') {
+            lines.push(match command.strip_prefix('$') {
                 Some(macro_line) => {
                     // Minecraft refuses to load the function at all.
                     assert!(
@@ -249,11 +256,16 @@ impl Sim {
                     let args = macro_args.unwrap_or_else(|| {
                         panic!("macro line in `{name}` run without arguments: {command}")
                     });
-                    expand_macro(macro_line, args)
+                    (expand_macro(macro_line, args)?, true)
                 }
-                None => command.clone(),
-            };
-            if let Flow::Return(value) = self.exec(&command, context) {
+                None => (command.clone(), false),
+            });
+        }
+        for (command, from_macro) in lines {
+            let outer = std::mem::replace(&mut self.in_macro_line, from_macro);
+            let flow = self.exec(&command, context);
+            self.in_macro_line = outer;
+            if let Flow::Return(value) = flow {
                 return value;
             }
         }
@@ -298,10 +310,8 @@ impl Sim {
             let (target, args) = match rest.split_once(" with storage ") {
                 Some((target, storage)) => {
                     let (_, path) = storage.split_once(' ').expect("storage path");
-                    let args = self
-                        .storage_get(path)
-                        .cloned()
-                        .unwrap_or_else(|| panic!("`function ... with storage` of missing {path}"));
+                    // Arguments from a missing path fail the command.
+                    let args = self.storage_get(path)?.clone();
                     (target, Some(args))
                 }
                 None => (rest, None),
@@ -554,18 +564,53 @@ impl Sim {
         }
     }
 
+    /// SNBT from a command. Text Minecraft can't read fails a command that a
+    /// macro line built; in a plain line Minecraft refuses to load the
+    /// function, so the simulator panics.
+    fn read_snbt(&self, text: &str) -> Option<Value> {
+        match parse_snbt(text) {
+            Ok(value) => Some(value),
+            Err(_) if self.in_macro_line => None,
+            Err(error) => panic!("{error}"),
+        }
+    }
+
+    /// Fails a command whose storage path Minecraft refuses, as
+    /// [`Self::read_snbt`] does for SNBT.
+    fn check_path(&self, path: &str) -> Option<()> {
+        if parse_path(path).is_some() {
+            return Some(());
+        }
+        assert!(self.in_macro_line, "invalid storage path {path}");
+        None
+    }
+
     fn exec_data(&mut self, rest: &str) -> Option<i32> {
         if let Some(after) = rest.strip_prefix("modify storage ") {
             let (_, after) = after.split_once(' ').expect("storage id");
             let (path, after) = split_path(after);
+            self.check_path(path)?;
             let (append, source) = match after.split_once(' ') {
                 Some(("set", source)) => (false, source),
                 Some(("append", source)) => (true, source),
+                Some(("merge", source)) => {
+                    // A compound value merged into a compound, one level deep.
+                    let snbt = source.strip_prefix("value ").expect("merge value");
+                    let Some(Value::Object(fields)) = self.read_snbt(snbt.trim()) else {
+                        return None;
+                    };
+                    let Some(Value::Object(mut target)) = self.storage_get(path).cloned() else {
+                        return None;
+                    };
+                    target.extend(fields);
+                    self.storage_set(path, Value::Object(target));
+                    return Some(1);
+                }
                 Some(("insert", source)) => {
                     let (index, source) = source.split_once(' ').expect("insert index");
                     let index: usize = index.parse().expect("insert index");
                     let value = if let Some(snbt) = source.strip_prefix("value ") {
-                        parse_snbt(snbt.trim())
+                        self.read_snbt(snbt.trim())?
                     } else {
                         let source = source.strip_prefix("from storage ").expect("insert source");
                         let (_, source_path) = source.split_once(' ').expect("source path");
@@ -585,7 +630,7 @@ impl Sim {
                 _ => panic!("unsupported data modify: {rest}"),
             };
             let value = if let Some(snbt) = source.strip_prefix("value ") {
-                parse_snbt(snbt.trim())
+                self.read_snbt(snbt.trim())?
             } else if let Some(items) = source
                 .strip_prefix("from storage ")
                 .and_then(|source| source.trim().strip_suffix("[]"))
@@ -662,9 +707,8 @@ impl Sim {
             let (_, path_and_scale) = after.split_once(' ').expect("storage path");
             let (path, scale) = split_path(path_and_scale.trim());
             let scale = (!scale.is_empty()).then(|| scale.parse::<f64>().expect("data get scale"));
-            let value = self
-                .storage_get(path)
-                .unwrap_or_else(|| panic!("data get of missing path {path}"));
+            // A missing path fails the command.
+            let value = self.storage_get(path)?;
             // With a scale, `data get` only accepts numbers and fails on a
             // list, compound, or string.
             if let Some(scale) = scale {
@@ -750,7 +794,7 @@ impl Sim {
 
     fn storage_get(&self, path: &str) -> Option<&Value> {
         let mut current = &self.storage;
-        for segment in parse_path(path) {
+        for segment in parse_path(path)? {
             current = match segment {
                 Segment::Key(key) => current.get(&key)?,
                 Segment::Index(index) => {
@@ -768,7 +812,9 @@ impl Sim {
     }
 
     fn storage_set(&mut self, path: &str, value: Value) {
-        let segments = parse_path(path);
+        let Some(segments) = parse_path(path) else {
+            return;
+        };
         let mut current = &mut self.storage;
         for (position, segment) in segments.iter().enumerate() {
             let last = position + 1 == segments.len();
@@ -808,7 +854,9 @@ impl Sim {
     }
 
     fn storage_remove(&mut self, path: &str) {
-        let mut segments = parse_path(path);
+        let Some(mut segments) = parse_path(path) else {
+            return;
+        };
         let Some(last) = segments.pop() else {
             return;
         };
@@ -892,7 +940,9 @@ fn split_path(text: &str) -> (&str, &str) {
     (text, "")
 }
 
-fn parse_path(path: &str) -> Vec<Segment> {
+/// The segments of a storage path, or `None` for a path Minecraft refuses: a
+/// quoted key reads only the escapes `\\` and `\"`, and can't be empty.
+fn parse_path(path: &str) -> Option<Vec<Segment>> {
     let mut segments = Vec::new();
     let chars: Vec<char> = path.trim().chars().collect();
     let mut i = 0;
@@ -906,12 +956,18 @@ fn parse_path(path: &str) -> Vec<Segment> {
             }
             '"' => {
                 i += 1;
-                while i < chars.len() && chars[i] != '"' {
+                while chars.get(i) != Some(&'"') {
                     if chars[i] == '\\' {
                         i += 1;
+                        if !matches!(chars.get(i), Some('\\' | '"')) {
+                            return None;
+                        }
                     }
-                    current.push(chars[i]);
+                    current.push(*chars.get(i)?);
                     i += 1;
+                }
+                if current.is_empty() {
+                    return None;
                 }
             }
             '[' => {
@@ -936,34 +992,82 @@ fn parse_path(path: &str) -> Vec<Segment> {
     if !current.is_empty() {
         segments.push(Segment::Key(current));
     }
-    segments
+    Some(segments)
 }
 
 /// Parse the SNBT subset Cobble emits: ints (optionally suffixed `b`, `s`,
-/// `l`), doubles, quoted strings, lists, and compounds.
-fn parse_snbt(text: &str) -> Value {
+/// `l`), doubles, quoted strings, lists, and compounds. Text Minecraft can't
+/// read, such as an unknown escape or a string that a `"` ends early, is an
+/// error, which fails the command.
+fn parse_snbt(text: &str) -> Result<Value, String> {
     let chars: Vec<char> = text.chars().collect();
     let mut position = 0;
-    let value = parse_snbt_value(&chars, &mut position);
-    assert_eq!(position, chars.len(), "trailing SNBT input in {text}");
-    value
+    let value = parse_snbt_value(&chars, &mut position)?;
+    skip_spaces(&chars, &mut position);
+    if position != chars.len() {
+        return Err(format!("trailing SNBT input in {text}"));
+    }
+    Ok(value)
 }
 
-fn parse_snbt_value(chars: &[char], position: &mut usize) -> Value {
+fn char_at(chars: &[char], position: usize) -> Result<char, String> {
+    chars
+        .get(position)
+        .copied()
+        .ok_or_else(|| "SNBT input ends early".to_string())
+}
+
+/// The escape after a backslash in a quoted SNBT string, as Minecraft 26.3
+/// reads it. `\N{name}` isn't simulated.
+fn snbt_escape(chars: &[char], position: &mut usize) -> Result<char, String> {
+    let ch = char_at(chars, *position)?;
+    *position += 1;
+    let mut hex = |digits: usize| -> Result<char, String> {
+        let code: String = chars
+            .get(*position..*position + digits)
+            .ok_or("SNBT escape ends early")?
+            .iter()
+            .collect();
+        *position += digits;
+        u32::from_str_radix(&code, 16)
+            .ok()
+            .and_then(char::from_u32)
+            .ok_or_else(|| format!("bad SNBT escape {code}"))
+    };
+    match ch {
+        '\\' | '"' | '\'' => Ok(ch),
+        'b' => Ok('\u{8}'),
+        'f' => Ok('\u{c}'),
+        'n' => Ok('\n'),
+        'r' => Ok('\r'),
+        's' => Ok(' '),
+        't' => Ok('\t'),
+        'x' => hex(2),
+        'u' => hex(4),
+        'U' => hex(8),
+        other => Err(format!("invalid SNBT escape \\{other}")),
+    }
+}
+
+fn parse_snbt_value(chars: &[char], position: &mut usize) -> Result<Value, String> {
     skip_spaces(chars, position);
-    match chars[*position] {
+    Ok(match char_at(chars, *position)? {
         '"' | '\'' => {
             let quote = chars[*position];
             *position += 1;
             let mut text = String::new();
-            while chars[*position] != quote {
-                if chars[*position] == '\\' {
-                    *position += 1;
-                }
-                text.push(chars[*position]);
+            loop {
+                let ch = char_at(chars, *position)?;
                 *position += 1;
+                if ch == quote {
+                    break;
+                }
+                if ch == '\\' {
+                    text.push(snbt_escape(chars, position)?);
+                } else {
+                    text.push(ch);
+                }
             }
-            *position += 1;
             Value::String(text)
         }
         '[' => {
@@ -971,13 +1075,13 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Value {
             let mut items = Vec::new();
             loop {
                 skip_spaces(chars, position);
-                if chars[*position] == ']' {
+                if char_at(chars, *position)? == ']' {
                     *position += 1;
                     break;
                 }
-                items.push(parse_snbt_value(chars, position));
+                items.push(parse_snbt_value(chars, position)?);
                 skip_spaces(chars, position);
-                if chars[*position] == ',' {
+                if char_at(chars, *position)? == ',' {
                     *position += 1;
                 }
             }
@@ -988,21 +1092,23 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Value {
             let mut map = Map::new();
             loop {
                 skip_spaces(chars, position);
-                if chars[*position] == '}' {
+                if char_at(chars, *position)? == '}' {
                     *position += 1;
                     break;
                 }
-                let key = match parse_snbt_value(chars, position) {
+                let key = match parse_snbt_value(chars, position)? {
                     Value::String(key) => key,
                     other => other.to_string(),
                 };
                 skip_spaces(chars, position);
-                assert_eq!(chars[*position], ':', "SNBT compound key separator");
+                if char_at(chars, *position)? != ':' {
+                    return Err("SNBT compound key without `:`".to_string());
+                }
                 *position += 1;
-                let value = parse_snbt_value(chars, position);
+                let value = parse_snbt_value(chars, position)?;
                 map.insert(key, value);
                 skip_spaces(chars, position);
-                if chars[*position] == ',' {
+                if char_at(chars, *position)? == ',' {
                     *position += 1;
                 }
             }
@@ -1024,11 +1130,17 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Value {
                 Value::from(1)
             } else if token == "false" {
                 Value::from(0)
-            } else {
+            } else if !token.is_empty()
+                && token
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "_-.+".contains(c))
+            {
                 Value::String(token.to_string())
+            } else {
+                return Err(format!("bad SNBT value `{token}`"));
             }
         }
-    }
+    })
 }
 
 fn skip_spaces(chars: &[char], position: &mut usize) {
@@ -1037,24 +1149,24 @@ fn skip_spaces(chars: &[char], position: &mut usize) {
     }
 }
 
-fn expand_macro(line: &str, args: &Value) -> String {
+/// The line with each `$(key)` filled in, or `None` when an argument is
+/// missing. A string goes in as it is, so the command reads its backslashes
+/// and quotes again.
+fn expand_macro(line: &str, args: &Value) -> Option<String> {
     let mut result = String::new();
     let mut rest = line;
     while let Some(start) = rest.find("$(") {
         result.push_str(&rest[..start]);
         let end = rest[start..].find(')').expect("closed macro placeholder") + start;
         let key = &rest[start + 2..end];
-        let value = args
-            .get(key)
-            .unwrap_or_else(|| panic!("macro argument `{key}` missing for: {line}"));
-        match value {
+        match args.get(key)? {
             Value::String(text) => result.push_str(text),
             other => result.push_str(&other.to_string()),
         }
         rest = &rest[end + 1..];
     }
     result.push_str(rest);
-    result
+    Some(result)
 }
 
 /// Split a leading selector (with an optional `[...]` argument list) from the
