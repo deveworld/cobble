@@ -390,3 +390,35 @@ def go():
     sim.call("go");
     assert_eq!(sim.log, vec!["Server: 2 3 [10,20,30]"]);
 }
+
+#[test]
+fn store_block_around_a_call_with_arguments_stores_the_call_result() {
+    let mut sim = Sim::load(
+        r#"
+def double(a):
+    return a * 2
+
+
+def go():
+    x = 0
+    store result score x temp:
+        double(4)
+    y = 3
+    store result score y temp:
+        double(double(y))
+    /say {x} {y}
+
+
+def each():
+    /scoreboard objectives add pts dummy
+    as @a store result score @s pts:
+        double(5)
+"#,
+        &["alex", "steve"],
+    );
+    sim.call("go");
+    assert_eq!(sim.log, vec!["Server: 8 12"]);
+    sim.call("each");
+    assert_eq!(sim.score("alex", "pts"), 10);
+    assert_eq!(sim.score("steve", "pts"), 10);
+}

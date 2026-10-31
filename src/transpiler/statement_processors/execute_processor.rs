@@ -135,6 +135,54 @@ impl Transpiler {
             );
             return Ok(());
         }
+        // A `store` block around a call stores the call's result. The
+        // commands that pass the arguments, and clean them up afterwards,
+        // run without the `store`.
+        if let ([Statement::Expression(Expression::Call(..))], true) = (
+            exec_block.body.as_slice(),
+            chain.parts.iter().any(|part| part.starts_with("store ")),
+        ) {
+            let call_index = capture.commands.iter().rposition(|command| {
+                command
+                    .strip_prefix('$')
+                    .unwrap_or(command)
+                    .starts_with("function ")
+            });
+            if let Some(call_index) = call_index.filter(|_| capture.commands.len() > 1) {
+                let plain_prefix = chain
+                    .parts
+                    .iter()
+                    .filter(|part| !part.starts_with("store "))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let mut has_macro_params = chain.has_macro_params;
+                let mut index = 0;
+                return self.append_transformed_capture(capture, |cmd| {
+                    let is_call = index == call_index;
+                    index += 1;
+                    let inner_cmd = if let Some(stripped) = cmd.strip_prefix('$') {
+                        has_macro_params = true;
+                        stripped
+                    } else {
+                        cmd
+                    };
+                    let prefix = if is_call {
+                        &execute_prefix
+                    } else {
+                        &plain_prefix
+                    };
+                    let final_cmd = if prefix == "execute" {
+                        inner_cmd.to_string()
+                    } else if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
+                        format!("{} {}", prefix, inner_parts)
+                    } else {
+                        format!("{} run {}", prefix, inner_cmd)
+                    };
+                    Self::mark_macro_line(final_cmd, has_macro_params)
+                });
+            }
+        }
         self.emit_inline_execute_body(capture, &execute_prefix, chain.has_macro_params)
     }
 
