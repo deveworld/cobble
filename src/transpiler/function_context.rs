@@ -23,6 +23,10 @@ pub(in crate::transpiler) struct FunctionContext {
     /// `for` target. A compile-time `for` whose target is read outside the
     /// loop keeps the target in a real variable.
     pub(in crate::transpiler) for_target_reads: HashMap<String, usize>,
+    /// The `for` targets the function reads outside every loop over that
+    /// target, as after the loop. A runtime loop keeps such a target's last
+    /// value after it.
+    pub(in crate::transpiler) for_targets_read_after: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -41,6 +45,7 @@ impl FunctionContext {
             unbound_read: None,
             score_writes: HashSet::new(),
             for_target_reads: HashMap::new(),
+            for_targets_read_after: HashSet::new(),
         }
     }
 
@@ -71,10 +76,24 @@ impl FunctionContext {
             unbound_read: None,
             score_writes: HashSet::new(),
             for_target_reads: HashMap::new(),
+            for_targets_read_after: HashSet::new(),
         };
         collect_score_writes(body, &mut context.score_writes);
         let mut targets = BTreeSet::new();
         collect_for_targets(body, &mut targets);
+        context.for_targets_read_after = targets
+            .iter()
+            .filter(|target| {
+                let mut loops = Vec::new();
+                collect_target_loops(body, target, &mut loops);
+                let in_loops: usize = loops
+                    .into_iter()
+                    .map(|for_loop| count_reads(std::slice::from_ref(for_loop), target))
+                    .sum();
+                count_reads(body, target) > in_loops
+            })
+            .cloned()
+            .collect();
         context.for_target_reads = targets
             .into_iter()
             .map(|target| {
@@ -504,6 +523,34 @@ fn collect_for_targets(body: &[Statement], targets: &mut BTreeSet<String>) {
                 }
             }
             Statement::Execute(exec_block) => collect_for_targets(&exec_block.body, targets),
+            _ => {}
+        }
+    }
+}
+
+/// The outermost `for` loops over `target` in `body`. Nested function
+/// definitions are not searched.
+fn collect_target_loops<'a>(body: &'a [Statement], target: &str, loops: &mut Vec<&'a Statement>) {
+    for statement in body {
+        match statement {
+            Statement::For(for_loop) if for_loop.target == target => loops.push(statement),
+            Statement::For(for_loop) => collect_target_loops(&for_loop.body, target, loops),
+            Statement::If(if_stmt) => {
+                collect_target_loops(&if_stmt.then_branch, target, loops);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_target_loops(branch, target, loops);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_target_loops(branch, target, loops);
+                }
+            }
+            Statement::While(while_loop) => collect_target_loops(&while_loop.body, target, loops),
+            Statement::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    collect_target_loops(&case.body, target, loops);
+                }
+            }
+            Statement::Execute(exec_block) => collect_target_loops(&exec_block.body, target, loops),
             _ => {}
         }
     }

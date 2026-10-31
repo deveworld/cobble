@@ -275,6 +275,11 @@ length read once at the start.
   variable, and the body may assign it. When the variable is read outside the
   loop, assigned in the body, or declared `global`, it is set at the start of
   each pass; otherwise each pass uses the value directly.
+- The loop variable of a runtime loop also holds its last value after the
+  loop, with the item's type, and keeps its earlier value when the loop runs
+  no passes. If it held a value of another type before the loop, reading it
+  after the loop is a compile error, since its type would depend on whether
+  the loop ran.
 - Literal arrays containing runtime expressions are materialized and iterated
   at runtime.
 - Runtime storage-backed list iteration supports list expressions/paths. The

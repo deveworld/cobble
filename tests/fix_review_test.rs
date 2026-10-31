@@ -7,7 +7,14 @@
 
 mod common;
 
-use common::mcsim::Sim;
+use common::mcsim::{compile, Sim};
+
+fn compile_error(source: &str) -> String {
+    match compile(source) {
+        Ok(_) => panic!("expected a compile error for:\n{source}"),
+        Err(error) => error,
+    }
+}
 
 fn tag(sim: &mut Sim, player: &str, tag: &str) {
     sim.tags
@@ -135,4 +142,59 @@ def main():
             "ready",
         ]
     );
+}
+
+// --- A runtime loop's variable after the loop ---
+
+#[test]
+fn a_runtime_loop_variable_holds_its_last_value_after_the_loop() {
+    // Python prints `b 6 1`, `x=b`, then `3 0` and `7`.
+    let mut sim = Sim::load(
+        r#"names = ["a", "b"]
+nums = [5, 6]
+def main():
+    for n in names:
+        pass
+    for v in nums:
+        pass
+    for i in range(len(nums)):
+        pass
+    /say {n} {v} {i}
+    x = n
+    /say x={x}
+    y = v + i
+    k = len(nums) + 2
+    for d in range(k, 0, -1):
+        pass
+    for e in range(k - 4, k, 2):
+        /say e={e}
+    /say {d} {e}
+    w = 7
+    for w in range(k - 4):
+        pass
+    /say {w}
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(chat(&sim), ["b 6 1", "x=b", "e=0", "e=2", "1 2", "7"]);
+    assert_eq!(sim.var("#main.y"), 7);
+}
+
+#[test]
+fn a_loop_variable_of_another_type_before_the_loop_is_a_compile_error() {
+    let error = compile_error(
+        r#"names = ["a", "b"]
+def main():
+    n = 3
+    for n in names:
+        pass
+    /say {n}
+"#,
+    );
+    assert!(
+        error.contains("`n` holds a number before this loop and text in it"),
+        "{error}"
+    );
+    assert!(error.contains("main.cbl:4"), "{error}");
 }

@@ -224,15 +224,7 @@ impl Transpiler {
         // pass reads the value itself.
         let target = &for_loop.target;
         let assigned_in_body = function_context::assigns_name(&for_loop.body, target);
-        let reads_in_loop = function_context::count_reads(
-            std::slice::from_ref(&Statement::For(for_loop.clone())),
-            target,
-        );
-        let read_outside_loop = self
-            .current_context
-            .for_target_reads
-            .get(target)
-            .is_some_and(|reads| *reads > reads_in_loop);
+        let read_outside_loop = self.loop_target_read_outside(for_loop);
         let real_target = self.current_function.is_some()
             && (assigned_in_body
                 || read_outside_loop
@@ -299,6 +291,69 @@ impl Transpiler {
         })
     }
 
+    /// Whether the function reads the target of `for_loop` outside the
+    /// loop, as after it.
+    fn loop_target_read_outside(&self, for_loop: &ForLoop) -> bool {
+        let reads_in_loop = function_context::count_reads(
+            std::slice::from_ref(&Statement::For(for_loop.clone())),
+            &for_loop.target,
+        );
+        self.current_context
+            .for_target_reads
+            .get(&for_loop.target)
+            .is_some_and(|reads| *reads > reads_in_loop)
+    }
+
+    /// Whether a runtime loop over `target` must leave its last value in
+    /// it: the function reads `target` outside every loop over it.
+    fn runtime_loop_target_read_after(&self, target: &str) -> bool {
+        self.current_function.is_some()
+            && self.current_context.for_targets_read_after.contains(target)
+    }
+
+    /// After a runtime loop whose target is read outside it, the target
+    /// keeps the loop's binding, so it holds the last value as in Python.
+    /// If it held a value of another type before the loop, which one it
+    /// holds after the loop depends on whether the loop ran: a compile
+    /// error names the rewrite.
+    fn keep_runtime_loop_target(
+        &mut self,
+        target: &str,
+        before: VariableBindingSnapshot,
+    ) -> Result<(), TranspileError> {
+        let had_binding = before.is_scoreboard
+            || before.storage_path.is_some()
+            || before.value.is_some()
+            || before.compile_time_constant.is_some();
+        let loop_type = self.symbols.variable_types.get(target).cloned();
+        let known = |value_type: &Option<CobbleType>| {
+            value_type
+                .as_ref()
+                .is_some_and(|value_type| *value_type != CobbleType::Unknown)
+        };
+        if had_binding
+            && (known(&before.value_type) || known(&loop_type))
+            && before.value_type != loop_type
+        {
+            let kind = |value_type: &Option<CobbleType>| match value_type {
+                Some(CobbleType::Integer | CobbleType::Boolean) => "a number",
+                Some(CobbleType::String) => "text",
+                Some(CobbleType::List) => "a list",
+                Some(CobbleType::Map) => "a map",
+                _ => "a value of unknown type",
+            };
+            return Err(TranspileError::new(
+                TranspileErrorKind::RuntimeForUnsupported,
+                format!(
+                    "`{target}` holds {} before this loop and {} in it, so after the loop its type depends on whether the loop ran. Use another name for the loop variable, or assign `{target}` before the loop a value of the same type.",
+                    kind(&before.value_type),
+                    kind(&loop_type)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn is_range_iterable(iter: &Expression) -> bool {
         matches!(iter, Expression::Call(func, _) if is_identifier(func, "range"))
     }
@@ -321,6 +376,18 @@ impl Transpiler {
         } else {
             None
         };
+        // The loop counts in the target itself, which ends one step past
+        // the last value. When the target is read after the loop, it counts
+        // in a hidden score instead and the target is set from it at the
+        // start of each pass, so it keeps the last value, as in Python.
+        let keep_target = self.runtime_loop_target_read_after(&for_loop.target);
+        let counter = if keep_target {
+            format!("#for_range_value_{}", self.next_temp_id())
+        } else {
+            for_loop.target.clone()
+        };
+        let counter_snapshot =
+            keep_target.then(|| (counter.clone(), self.save_variable_binding(&counter)));
 
         let target_snapshot = self.save_variable_binding(&for_loop.target);
         let stop_snapshot = self.save_variable_binding(&stop_var);
@@ -328,6 +395,7 @@ impl Transpiler {
             .as_ref()
             .map(|step_var| (step_var.clone(), self.save_variable_binding(step_var)));
         self.bind_runtime_integer_variable(&for_loop.target);
+        self.bind_runtime_integer_variable(&counter);
         self.bind_runtime_integer_variable(&stop_var);
         if let Some(step_var) = &step_var {
             self.bind_runtime_integer_variable(step_var);
@@ -338,7 +406,7 @@ impl Transpiler {
             loop_helper_id_before_condition: false,
             init_commands: Box::new(|transpiler| {
                 let mut init_commands =
-                    transpiler.evaluate_expression_to_target(&plan.start, &for_loop.target)?;
+                    transpiler.evaluate_expression_to_target(&plan.start, &counter)?;
                 init_commands
                     .extend(transpiler.evaluate_expression_to_target(&plan.stop, &stop_var)?);
                 if let (RuntimeRangeStep::Dynamic(step), Some(step_var)) = (&plan.step, &step_var) {
@@ -346,11 +414,11 @@ impl Transpiler {
                     if plan.reverse_single_arg_on_negative_step {
                         init_commands.push(format!(
                             "execute if score {} temp matches ..-1 run scoreboard players operation {} temp = {} temp",
-                            step_var, for_loop.target, stop_var
+                            step_var, counter, stop_var
                         ));
                         init_commands.push(format!(
                             "execute if score {} temp matches ..-1 run scoreboard players remove {} temp 1",
-                            step_var, for_loop.target
+                            step_var, counter
                         ));
                         init_commands.push(format!(
                             "execute if score {} temp matches ..-1 run scoreboard players set {} temp -1",
@@ -361,39 +429,50 @@ impl Transpiler {
                 Ok(init_commands)
             }),
             condition: Box::new(|transpiler| {
-                transpiler.runtime_range_condition(
-                    &for_loop.target,
-                    &stop_var,
-                    &plan.step,
-                    &step_var,
-                )
+                transpiler.runtime_range_condition(&counter, &stop_var, &plan.step, &step_var)
             }),
             body: Box::new(|transpiler| {
                 let mut statements = for_loop.body.clone();
                 statements.push(Statement::Assignment(Assignment {
-                    target: for_loop.target.clone(),
+                    target: counter.clone(),
                     target_expr: None,
                     persist: false,
                     value: transpiler.runtime_range_increment_expression(
-                        &for_loop.target,
+                        &counter,
                         &plan.step,
                         &step_var,
                     )?,
                 }));
+                let binding_commands = if keep_target {
+                    vec![format!(
+                        "scoreboard players operation {} temp = {} temp",
+                        for_loop.target, counter
+                    )]
+                } else {
+                    Vec::new()
+                };
                 Ok(RuntimeLoopBody {
                     statements,
-                    binding_commands: Vec::new(),
+                    binding_commands,
                 })
             }),
             cleanup_commands: Vec::new(),
         });
 
-        self.restore_variable_binding(&for_loop.target, target_snapshot);
+        let kept = if keep_target && result.is_ok() {
+            self.keep_runtime_loop_target(&for_loop.target, target_snapshot)
+        } else {
+            self.restore_variable_binding(&for_loop.target, target_snapshot);
+            Ok(())
+        };
+        if let Some((counter, snapshot)) = counter_snapshot {
+            self.restore_variable_binding(&counter, snapshot);
+        }
         self.restore_variable_binding(&stop_var, stop_snapshot);
         if let Some((step_var, snapshot)) = step_snapshot {
             self.restore_variable_binding(&step_var, snapshot);
         }
-        result
+        result.and(kept)
     }
 
     fn process_runtime_storage_list_for(
@@ -554,13 +633,18 @@ impl Transpiler {
             cleanup_commands,
         });
 
-        self.restore_variable_binding(&for_loop.target, target_snapshot);
+        let kept = if self.runtime_loop_target_read_after(&for_loop.target) && result.is_ok() {
+            self.keep_runtime_loop_target(&for_loop.target, target_snapshot)
+        } else {
+            self.restore_variable_binding(&for_loop.target, target_snapshot);
+            Ok(())
+        };
         self.restore_variable_binding(&index_var, index_snapshot);
         self.restore_variable_binding(&len_var, len_snapshot);
         if let Some((step_var, snapshot)) = step_snapshot {
             self.restore_variable_binding(&step_var, snapshot);
         }
-        result
+        result.and(kept)
     }
 
     fn runtime_storage_list_candidate(&self, iter: &Expression) -> bool {
