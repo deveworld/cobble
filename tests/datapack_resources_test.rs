@@ -2053,6 +2053,11 @@ resource_pack = true
     .unwrap();
     fs::write(&asset_path, b"new asset").unwrap();
     fs::set_permissions(&asset_path, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(&asset_path).is_ok() {
+        // Running as root, so file permissions can't make the copy fail.
+        fs::set_permissions(&asset_path, fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
 
     let error = cobble::commands::build::build(build_options()).unwrap_err();
     assert!(error.contains("Failed to copy resource-pack asset"));
