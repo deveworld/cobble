@@ -280,6 +280,42 @@ def test():
 }
 
 #[test]
+fn test_validate_placeholders_that_stand_for_several_arguments() {
+    let Some(validator) = get_validator() else {
+        return;
+    };
+    // Each of these ran on a 26.3 server with values such as
+    // `{from:"0 0 0", to:"1 1 1"}` and `{to:"a:b path"}`.
+    for command in [
+        "$fill $(from) $(to) $(block) replace $(filter) $(mode)",
+        "$fill $(from) $(to) $(block) replace $(filter) strict",
+        "$fill $(from) $(to) $(block) hollow",
+        "$particle minecraft:heart $(pos) $(delta) 0 1 force @a",
+        "$particle $(p) $(pos) $(delta) $(speed) $(count) force @a",
+        "$spreadplayers $(center) $(dist) $(range) false @a",
+        "$clone $(a) $(b) $(c) replace force",
+        "$data modify storage $(to) set from storage game_data $(storage)[{id:$(pnum)}]",
+        "$data modify storage $(to) set value 1",
+        "$execute store result storage $(target) int 1 run say a",
+    ] {
+        assert_eq!(validator.validate_command(command), Ok(()), "{command}");
+    }
+    // What comes before the first placeholder is the final command's, and
+    // what follows one still has to fit somewhere after it.
+    for command in [
+        "$execute if score $generation.k bs.lambda< #generation.w bs.data positioned ~$(x) $(y) $(z) run say a",
+        "$nope $(from) $(to) stone",
+        "$fill $(from) $(to) $(block) replace stone nope",
+        "$fill $(from) $(to) stone replace stone nope",
+        "$swing $(who) bogus",
+        "$scoreboard players set $(who) 1 2 3 4",
+        "$item modify block ~ ~ ~ container.$(slot) {\"function\":\"minecraft:set_count\",\"count\":1}",
+    ] {
+        assert!(validator.validate_command(command).is_err(), "{command}");
+    }
+}
+
+#[test]
 fn test_validate_rejects_commands_above_function_permission_level() {
     // `transfer` (admins) and `stop` (owners) parse in chat but not in a data
     // pack function at the default function-permission-level of 2.

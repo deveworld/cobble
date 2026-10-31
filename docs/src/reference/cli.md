@@ -422,7 +422,11 @@ same value. Macro lines follow Minecraft's template rules: each `$` line needs
 at least one `$(variable)`, and variable names are letters, digits, or `_`.
 Message text (`say`, `msg`, `me`, `teammsg`) longer than 256 characters is
 reported, since Minecraft refuses to load the function; in a macro line only
-the text outside `$(...)` counts.
+the text outside `$(...)` counts. Minecraft checks the rest of a macro line
+only when the function runs, so the validator reports only what the values
+can't fix: a placeholder can stand for any number of arguments, as in
+`$fill $(from) $(to) stone`, and what follows it only has to fit some
+argument after it.
 Automatic generation of the default tree refuses a symlinked tree file or
 folder before creating temporary files or replacing the command tree.
 

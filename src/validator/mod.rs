@@ -8,7 +8,9 @@ pub mod values;
 
 use command_tree::CommandNode;
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use string_reader::StringReader;
 use walkdir::WalkDir;
 
@@ -119,16 +121,27 @@ impl CommandValidator {
         }
 
         let Some(macro_line) = trimmed.strip_prefix('$') else {
-            return self.walk_node(&self.root, &mut StringReader::new(trimmed), 0);
+            return self.walk_node(&self.root, &mut StringReader::new(trimmed), 0, None);
         };
         Self::validate_macro_placeholders(trimmed)?;
         let mut reader = StringReader::for_macro_line(macro_line);
-        self.walk_node(&self.root, &mut reader, 0)
+        self.walk_node(&self.root, &mut reader, 0, None)
             .or_else(|mut error| {
                 // A placeholder can be empty or hold spaces, so spaces next to
                 // one don't say where the arguments of the final command are.
                 let mut loose = StringReader::for_macro_line(macro_line).with_loose_spaces();
-                if self.walk_node(&self.root, &mut loose, 0).is_ok() {
+                if self.walk_node(&self.root, &mut loose, 0, None).is_ok() {
+                    return Ok(());
+                }
+                // A placeholder can also stand for several arguments, as in
+                // `$fill $(from) $(to) stone` or `$data modify storage $(to)
+                // set value 1`, so what follows it can be any argument after it.
+                let spans = RefCell::new(PlaceholderSpans::default());
+                let mut reader = StringReader::for_macro_line(macro_line);
+                if self
+                    .walk_node(&self.root, &mut reader, 0, Some(&spans))
+                    .is_ok()
+                {
                     return Ok(());
                 }
                 error.position += 1;
@@ -231,11 +244,40 @@ impl CommandValidator {
 
     /// Tree-walking validation against the command tree.
     /// Tries to match the input against the node's children using backtracking.
-    fn walk_node(
-        &self,
-        node: &CommandNode,
+    fn walk_node<'a>(
+        &'a self,
+        node: &'a CommandNode,
         reader: &mut StringReader,
         depth: usize,
+        spans: Option<&RefCell<PlaceholderSpans<'a>>>,
+    ) -> Result<(), CommandValidationError> {
+        let Some(spans) = spans else {
+            return self.walk_children(node, reader, depth, None);
+        };
+        // The same node at the same place reads the same way, and with
+        // placeholders standing for any number of arguments it is reached
+        // along many paths.
+        let key = (node as *const CommandNode, reader.cursor());
+        if spans.borrow().failed.contains(&key) {
+            return Err(CommandValidationError {
+                message: GENERIC_ARGUMENT_ERROR.to_string(),
+                position: reader.cursor(),
+            });
+        }
+        let result = self.walk_children(node, reader, depth, Some(spans));
+        if result.is_err() {
+            spans.borrow_mut().failed.insert(key);
+        }
+        result
+    }
+
+    /// Reads the rest of the command as one of `node`'s children.
+    fn walk_children<'a>(
+        &'a self,
+        node: &'a CommandNode,
+        reader: &mut StringReader,
+        depth: usize,
+        spans: Option<&RefCell<PlaceholderSpans<'a>>>,
     ) -> Result<(), CommandValidationError> {
         reader.skip_separator();
 
@@ -277,7 +319,7 @@ impl CommandValidator {
                         return Ok(());
                     }
 
-                    match self.walk_node(self.next_node(child), reader, depth + 1) {
+                    match self.walk_node(self.next_node(child), reader, depth + 1, spans) {
                         Ok(()) => return Ok(()),
                         Err(error) => {
                             Self::keep_better_error(&mut best_error, &mut best_error_pos, error);
@@ -323,7 +365,7 @@ impl CommandValidator {
                             return Ok(());
                         }
 
-                        match self.walk_node(self.next_node(child), reader, depth + 1) {
+                        match self.walk_node(self.next_node(child), reader, depth + 1, spans) {
                             Ok(()) => return Ok(()),
                             Err(error) => {
                                 Self::keep_better_error(
@@ -343,22 +385,34 @@ impl CommandValidator {
         // argument fits, as in `$$(command)` and `$execute run $(command)`,
         // what follows it is known only when the function runs. Where one
         // does, what follows can still fit a literal instead, as in
-        // `$return $(how) function a:b`.
+        // `$return $(how) function a:b`. The retry that lets a placeholder
+        // stand for several arguments checks what follows it either way.
         let saved = reader.cursor();
         if reader.is_macro_line() && reader.skip_token_with_macro() {
-            if !argument_read {
+            if !argument_read && spans.is_none() {
                 return Ok(());
             }
             let after_word = reader.cursor();
             for child in node.children.values() {
                 if child.node_type == "literal"
                     && self
-                        .walk_node(self.next_node(child), reader, depth + 1)
+                        .walk_node(self.next_node(child), reader, depth + 1, spans)
                         .is_ok()
                 {
                     return Ok(());
                 }
                 reader.set_cursor(after_word);
+            }
+            // The word can stand for any number of arguments, so what follows
+            // it can start at any node below this one.
+            if let Some(spans) = spans {
+                let reach = self.reach(node, spans);
+                for &next in reach.iter() {
+                    if self.walk_node(next, reader, depth + 1, Some(spans)).is_ok() {
+                        return Ok(());
+                    }
+                    reader.set_cursor(after_word);
+                }
             }
             reader.set_cursor(saved);
         }
@@ -375,6 +429,37 @@ impl CommandValidator {
                 position: reader.cursor(),
             }
         }))
+    }
+
+    /// The nodes the walk can be at after reading one or more arguments
+    /// from `node`. An empty placeholder leaves two spaces in a row, which
+    /// the retry with loose spaces covers.
+    fn reach<'a>(
+        &'a self,
+        node: &'a CommandNode,
+        spans: &RefCell<PlaceholderSpans<'a>>,
+    ) -> Rc<Vec<&'a CommandNode>> {
+        let key = node as *const CommandNode;
+        if let Some(reach) = spans.borrow().reach.get(&key) {
+            return Rc::clone(reach);
+        }
+        let mut seen = HashSet::new();
+        let mut reach = Vec::new();
+        let mut index = 0;
+        let mut current = Some(node);
+        while let Some(from) = current {
+            for child in from.children.values() {
+                let next = self.next_node(child);
+                if seen.insert(next as *const CommandNode) {
+                    reach.push(next);
+                }
+            }
+            current = reach.get(index).copied();
+            index += 1;
+        }
+        let reach = Rc::new(reach);
+        spans.borrow_mut().reach.insert(key, Rc::clone(&reach));
+        reach
     }
 
     /// The node that goes on after `child`.
@@ -476,6 +561,16 @@ impl CommandValidator {
         }
         Ok(())
     }
+}
+
+/// What the check of a macro line in which a placeholder can stand for any
+/// number of arguments has worked out so far.
+#[derive(Default)]
+struct PlaceholderSpans<'a> {
+    /// The nodes below each node, by [`CommandValidator::reach`].
+    reach: HashMap<*const CommandNode, Rc<Vec<&'a CommandNode>>>,
+    /// The nodes that didn't read the rest of the line from a cursor.
+    failed: HashSet<(*const CommandNode, usize)>,
 }
 
 /// Java's `String.trim`, which strips what is at most a space. Rust's `trim`
@@ -1445,6 +1540,19 @@ mod tests {
             "$nope $(x)",
             "$scoreboard players nope a $(x) 1",
             "$scoreboard players set a b $(x) extra",
+        ] {
+            assert!(validator.validate_command(command).is_err(), "{command}");
+        }
+        // A placeholder can stand for several arguments, so what follows it
+        // can be any argument after it. Past that, the line is still checked.
+        assert_eq!(
+            validator.validate_command("$scoreboard players set $(who) 1"),
+            Ok(())
+        );
+        for command in [
+            "$scoreboard players set $(who) x",
+            "$scoreboard players set $(who) 1 2 3 4",
+            "$scoreboard players nope $(who) 1",
         ] {
             assert!(validator.validate_command(command).is_err(), "{command}");
         }
