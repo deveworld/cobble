@@ -115,3 +115,41 @@ def f():
         "{error}"
     );
 }
+
+/// Builds `source` as `main.cbl` with the `cobble` binary. Returns whether
+/// the build succeeded and what it printed to stderr.
+fn cli_build(source: &str, extra_args: &[&str]) -> (bool, String) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let input = temp_dir.path().join("main.cbl");
+    std::fs::write(&input, source).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_cobble"))
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(temp_dir.path().join("output"))
+        .args(extra_args)
+        .output()
+        .unwrap();
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn out_of_range_module_variable_warns_at_its_own_line() {
+    let (ok, stderr) = cli_build(
+        "from stdlib import datapack\n\n\n\nhuge = 9999999999\nsmall = -9999999999\n",
+        &[],
+    );
+    assert!(ok, "{stderr}");
+    assert!(
+        stderr.contains("main.cbl:5:1: warning[number-out-of-range] 9999999999"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("5 | huge = 9999999999"), "{stderr}");
+    assert!(
+        stderr.contains("main.cbl:6:1: warning[number-out-of-range]"),
+        "{stderr}"
+    );
+}
