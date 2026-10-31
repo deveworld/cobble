@@ -210,6 +210,18 @@ impl Transpiler {
         expr: &Expression,
         label: &str,
     ) -> Result<(Option<String>, String), TranspileError> {
+        // A plain name is a variable, whose value isn't known when the pack
+        // is built; the file would be named after the variable instead. A
+        // bare `namespace:path` is an id, not a variable.
+        if let Some(name) = match expr {
+            Expression::Identifier(name) if !name.contains(':') => Some(name),
+            _ => None,
+        } {
+            return Err(format!(
+                "Identifier '{name}' cannot be used as the {label} here; the {label} must be known at compile time, so write it as a string literal"
+            )
+            .into());
+        }
         let id = self.expr_to_plain_arg(expr, label)?;
         self.plain_resource_id_to_parts(&id, label)
     }

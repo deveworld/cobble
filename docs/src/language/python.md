@@ -23,7 +23,9 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
 
 ## Values And Expressions
 
-- Numbers are 32-bit integers. Floats are truncated, with a warning.
+- Numbers are 32-bit integers. Floats are truncated, with a warning. Number
+  literals may have an exponent, as in Python: `1e3`, `1E3`, `2.5e-3`, and
+  `1e+3`.
 - Lists and maps live in storage. Subscripts work when the base resolves to a
   storage path. List and string indexes may be literals, constants, or runtime
   integers such as `items[i]`, and a negative index counts from the end;

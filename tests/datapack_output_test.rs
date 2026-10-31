@@ -140,3 +140,229 @@ datapack.dialog_tag("dt", ["sim:n1"])
         serde_json::json!(["sim:n1", "sim:n2"])
     );
 }
+
+// ---------------------------------------------------------------------------
+// Numbers in resource JSON
+// ---------------------------------------------------------------------------
+
+/// The `tag` of an item modifier declared with `tag`, as written.
+fn custom_data(tag: &str) -> Result<serde_json::Value, String> {
+    let source = format!(
+        "from stdlib import datapack\n\ndatapack.item_modifier(\"m\", {{\"type\": \"minecraft:set_custom_data\", \"tag\": {tag}}})\n"
+    );
+    let (_temp, output) = compile(&source)?;
+    Ok(read_json(&output, "data/sim/item_modifier/m.json")["tag"].clone())
+}
+
+#[test]
+fn whole_numbers_beyond_32_bits_keep_their_value() {
+    let tag = custom_data(
+        r#"{"a": 3000000000, "b": 2147483648, "c": 3000000000.0, "d": 9007199254740993, "e": -9223372036854775808, "f": -2147483649, "g": 3000000000.5, "h": 18446744073709551615, "i": -(2), "j": 2147483647}"#,
+    )
+    .unwrap();
+    assert_eq!(tag["a"].as_i64(), Some(3_000_000_000));
+    assert_eq!(tag["b"].as_i64(), Some(2_147_483_648));
+    assert_eq!(tag["c"].as_i64(), Some(3_000_000_000));
+    assert_eq!(tag["d"].as_i64(), Some(9_007_199_254_740_993));
+    assert_eq!(tag["e"].as_i64(), Some(i64::MIN));
+    assert_eq!(tag["f"].as_i64(), Some(-2_147_483_649));
+    assert_eq!(tag["g"].as_f64(), Some(3_000_000_000.5));
+    assert_eq!(tag["h"].as_u64(), Some(u64::MAX));
+    assert_eq!(tag["i"].as_i64(), Some(-2));
+    assert_eq!(tag["j"].as_i64(), Some(2_147_483_647));
+}
+
+#[test]
+fn numbers_json_cannot_hold_are_compile_errors() {
+    for (tag, expected) in [
+        (r#"{"a": 99999999999999999999}"#, "doesn't fit in 64 bits"),
+        (r#"{"a": 18446744073709551616}"#, "doesn't fit in 64 bits"),
+        (r#"{"a": -9223372036854775809}"#, "doesn't fit in 64 bits"),
+        (r#"{"a": 1e999}"#, "JSON has no infinity"),
+        (
+            r#"{"a": 9007199254740993, "b": 9007199254740992}"#,
+            "can't keep them apart",
+        ),
+    ] {
+        let error = custom_data(tag).unwrap_err();
+        assert!(error.contains(expected), "{tag}: {error}");
+        assert!(error.contains("main.cbl:3:1"), "{tag}: {error}");
+    }
+}
+
+#[test]
+fn a_const_beyond_2_53_is_a_compile_error_not_a_rounded_number() {
+    let error = compile_error(
+        "from stdlib import datapack\nconst BIG = 9007199254740993\ndatapack.item_modifier(\"m\", {\"type\": \"minecraft:set_custom_data\", \"tag\": {\"a\": BIG}})\n",
+    );
+    assert!(error.contains("past 2^53"), "{error}");
+}
+
+#[test]
+fn exponent_literals_work_in_resource_json_and_code() {
+    let tag = custom_data(
+        r#"{"a": 1e3, "b": 1E3, "c": 1e-3, "d": 1e+3, "e": 2.5e2, "f": 1.7976931348623157E308, "g": 1e20, "h": -1e3}"#,
+    )
+    .unwrap();
+    assert_eq!(tag["a"].as_i64(), Some(1000));
+    assert_eq!(tag["b"].as_i64(), Some(1000));
+    assert_eq!(tag["c"].as_f64(), Some(0.001));
+    assert_eq!(tag["d"].as_i64(), Some(1000));
+    assert_eq!(tag["e"].as_i64(), Some(250));
+    assert_eq!(tag["f"].as_f64(), Some(f64::MAX));
+    assert_eq!(tag["g"].as_f64(), Some(1e20));
+    assert_eq!(tag["h"].as_i64(), Some(-1000));
+
+    let mut sim = Sim::load(
+        r#"
+x = 1e3
+y = 2E+2
+z = 0
+
+def main():
+    global z
+    z = 5e1 + x
+"#,
+        &[],
+    );
+    assert_eq!(sim.var("x"), 1000);
+    assert_eq!(sim.var("y"), 200);
+    sim.call("main");
+    assert_eq!(sim.var("z"), 1050);
+}
+
+#[test]
+fn json_resources_keep_their_source_map_entry_whatever_the_number_text() {
+    let (_temp, output) = compile(
+        r#"from stdlib import datapack
+
+datapack.predicate("p1", {"type":"minecraft:random_chance","chance":0.5})
+datapack.predicate("p2", {"type":"minecraft:random_chance","chance":0.50})
+datapack.predicate("p3", {"type":"minecraft:random_chance","chance":1.0})
+datapack.predicate("p4", {"type":"minecraft:random_chance","chance":5e-1})
+"#,
+    )
+    .unwrap();
+    let source_map = read_json(&output, ".cobble/source_map.json");
+    for (name, line) in [("p1", 3), ("p2", 4), ("p3", 5), ("p4", 6)] {
+        let path = format!("data/sim/predicate/{name}.json");
+        let entry = source_map["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["generated_path"] == path.as_str())
+            .unwrap_or_else(|| panic!("no entry for {path}"));
+        assert_eq!(entry["source"]["line"], line, "{name}: {entry}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Continued raw commands
+// ---------------------------------------------------------------------------
+
+const CONTINUED: &str =
+    "def a():\n    /say a \\\n        b\n    /say c\n    /kill @e[x=1,x=2] \\\n        @s\n";
+
+#[test]
+fn continued_raw_commands_keep_their_source_location() {
+    let (_temp, output) = compile(CONTINUED).unwrap();
+    let source_map = read_json(&output, ".cobble/source_map.json");
+    let line_of = |command: &str| {
+        source_map["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["command"] == command)
+            .unwrap_or_else(|| panic!("no entry for {command}"))["source"]["line"]
+            .clone()
+    };
+    assert_eq!(line_of("say a b"), 2);
+    assert_eq!(line_of("say c"), 4);
+    assert_eq!(line_of("kill @e[x=1,x=2] @s"), 5);
+}
+
+#[test]
+fn build_validate_names_the_output_folder_and_the_source_line() {
+    if !Path::new("data/commands.json").exists() {
+        eprintln!("skipping: data/commands.json is not generated");
+        return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    let input = temp.path().join("main.cbl");
+    fs::write(&input, CONTINUED).unwrap();
+    let output = temp.path().join("out");
+    let result = cobble()
+        .args(["build", "--namespace", "sim", "--validate", "-q", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(!stderr.contains("cobble-staging"), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "{}:3: Selector argument `x` can appear once",
+            output.join("data/sim/function/a.mcfunction").display()
+        )),
+        "{stderr}"
+    );
+    assert!(stderr.contains("main.cbl:5:5"), "{stderr}");
+}
+
+// ---------------------------------------------------------------------------
+// Resource names and unsupported JSON values
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_identifier_as_a_resource_name_is_a_compile_error() {
+    let error = compile_error(
+        r#"from stdlib import datapack
+
+checks = "real_name"
+datapack.predicate(checks, {"type": "minecraft:random_chance", "chance": 1})
+"#,
+    );
+    assert!(
+        error.contains("Identifier 'checks' cannot be used as the resource name"),
+        "{error}"
+    );
+    assert!(error.contains("main.cbl:4:1"), "{error}");
+    let error = compile_error(
+        r#"from stdlib import datapack
+
+name = "a"
+datapack.block_tag(name, ["minecraft:stone"])
+"#,
+    );
+    assert!(
+        error.contains("Identifier 'name' cannot be used as the tag name"),
+        "{error}"
+    );
+}
+
+#[test]
+fn arithmetic_in_resource_json_is_named_in_cobble_terms() {
+    for (value, shown) in [("1 / 2", "`1/2`"), ("x * 2", "`x*2`"), ("-x", "`-x`")] {
+        let error = compile_error(&format!(
+            "from stdlib import datapack\n\nx = 1\ndatapack.predicate(\"a\", {{\"type\": \"minecraft:random_chance\", \"chance\": {value}}})\n"
+        ));
+        assert!(error.contains(shown), "{value}: {error}");
+        assert!(
+            error.contains("write the result as a literal"),
+            "{value}: {error}"
+        );
+        assert!(
+            !error.contains("Binary(") && !error.contains("Unary("),
+            "{error}"
+        );
+    }
+    let (_temp, output) = compile(
+        "from stdlib import datapack\n\ndatapack.predicate(\"a\", {\"type\": \"minecraft:random_chance\", \"chance\": \"x\" + \"y\"})\n",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        read_json(&output, "data/sim/predicate/a.json")["chance"],
+        "xy"
+    );
+}

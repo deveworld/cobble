@@ -70,7 +70,13 @@ multiple declarations are merged, `True` wins over `False`.
 Pass-through JSON declarations with identical JSON are accepted once; different
 JSON for the same ID is a compile error.
 Resource names may use nested paths and explicit namespaces, such as
-`other_pack:checks/is_ready`. Predicate, advancement, loot table, recipe, and
+`other_pack:checks/is_ready`. A name is a string literal: a variable's value
+isn't known when the pack is built, so a variable as a name is a compile error.
+JSON values are literals, consts, and the `text.*` and `item_component.*`
+helpers; write the result of arithmetic as a literal. Numbers keep their
+value: a whole number up to 64 bits is written exactly, even past the 32 bits
+of a score, a number with a fraction or an exponent (`1e-3`) is written as a
+float, and a number JSON can't hold exactly is a compile error. Predicate, advancement, loot table, recipe, and
 dialog declarations require object JSON values. An item modifier is an object
 or a list of objects. Minecraft 26.3 refuses a list in the file itself, so a
 list is written as one `minecraft:sequence`, which applies the modifiers in

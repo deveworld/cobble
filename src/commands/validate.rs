@@ -75,7 +75,7 @@ pub struct ValidateOptions {
 pub fn validate(options: ValidateOptions) -> Result<(), String> {
     let commands_json = resolve_commands_json(&options.commands_json);
     let report = run_validation(&options.input, &commands_json)?;
-    print_validation_report(&report, &commands_json, &options.input);
+    print_validation_report(&report, &commands_json, &options.input, &options.input);
 
     if report.errors.is_empty() && report.source_map_errors.is_empty() {
         println!("All commands valid");
@@ -546,16 +546,24 @@ fn find_generated_commands_json(work_dir: &Path) -> Option<PathBuf> {
         })
 }
 
+/// Prints the problems of the data pack validated in `datapack_dir`. Paths
+/// are shown under `shown_dir`, the folder the pack ends up in: a build
+/// validates a staging folder that is gone once the build fails.
 pub fn print_validation_report(
     report: &ValidationReport,
     commands_json: &Path,
     datapack_dir: &Path,
+    shown_dir: &Path,
 ) {
     let source_map = load_source_map(datapack_dir);
     for (file, error) in &report.errors {
+        let shown_file = file
+            .strip_prefix(datapack_dir)
+            .map(|relative| shown_dir.join(relative))
+            .unwrap_or_else(|_| file.clone());
         eprintln!(
             "{}:{}: {}",
-            file.display(),
+            shown_file.display(),
             error.line_number,
             error.message
         );

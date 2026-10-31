@@ -16,6 +16,8 @@ pub(in crate::transpiler) struct SourceLocations {
         HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
     /// Where each top-level import of each file starts, in import order.
     pub(in crate::transpiler) imports: HashMap<PathBuf, Vec<SourceLocation>>,
+    /// The text of each source file, with continued raw commands joined.
+    pub(in crate::transpiler) sources: HashMap<PathBuf, String>,
 }
 
 impl Transpiler {
@@ -73,6 +75,8 @@ impl Transpiler {
         let canonical_path = file_path
             .canonicalize()
             .unwrap_or_else(|_| file_path.to_path_buf());
+        // A raw command continued with `\` is one command on its first line.
+        let source = &*crate::parser::tokenizer::join_continued_commands(source);
         let mut raw_locations: HashMap<String, VecDeque<SourceLocation>> = HashMap::new();
         let mut statement_locations: HashMap<String, VecDeque<SourceLocation>> = HashMap::new();
         let mut pending_statement: Option<(String, SourceLocation, i32)> = None;
@@ -172,6 +176,9 @@ impl Transpiler {
             .statements
             .insert(canonical_path.clone(), statement_locations);
         self.source_locations
+            .sources
+            .insert(canonical_path.clone(), source.to_string());
+        self.source_locations
             .imports
             .insert(canonical_path, import_locations);
     }
@@ -185,6 +192,9 @@ impl Transpiler {
         let canonical_path = file_path
             .canonicalize()
             .unwrap_or_else(|_| file_path.to_path_buf());
+        // A raw command continued with `\` is one command on its first line.
+        // Joining keeps every offset, so the spans still apply.
+        let source = &*crate::parser::tokenizer::join_continued_commands(source);
         let mut raw_locations: HashMap<String, VecDeque<SourceLocation>> = HashMap::new();
         let mut statement_locations: HashMap<String, VecDeque<SourceLocation>> = HashMap::new();
 
@@ -215,8 +225,125 @@ impl Transpiler {
             .statements
             .insert(canonical_path.clone(), statement_locations);
         self.source_locations
+            .sources
+            .insert(canonical_path.clone(), source.to_string());
+        self.source_locations
             .imports
             .insert(canonical_path, import_locations);
+    }
+
+    /// The digits of the integer literal with the value `value` in the
+    /// statement being lowered: `Ok(Some(digits))` for one such literal,
+    /// `Ok(None)` when it is written as a float (`1e20`, `3.0e9`), and
+    /// otherwise the integer literals that read as this value: none when
+    /// the source can't tell, several when they can't be told apart. An
+    /// `f64` can't hold every integer past 2^53, so resource JSON reads them
+    /// from the source.
+    pub(in crate::transpiler) fn integer_literal_text(
+        &self,
+        value: f64,
+    ) -> Result<Option<String>, Vec<String>> {
+        // The statement's own lines, or the whole file when the statement's
+        // location isn't known.
+        let location = self.current_statement_source.as_ref();
+        let file = location
+            .map(|location| &location.file)
+            .or(self.imports.current_file.as_ref())
+            .ok_or_else(Vec::new)?;
+        let source = self
+            .source_locations
+            .sources
+            .get(file)
+            .ok_or_else(Vec::new)?;
+        let first_line = location.map_or(0, |location| location.line.saturating_sub(1));
+        let mut statement = String::new();
+        let mut depth = 0;
+        for line in source.lines().skip(first_line) {
+            let line = Self::strip_inline_comment(line).unwrap_or(line);
+            depth += Self::bracket_depth_delta(line);
+            statement.push_str(line);
+            statement.push('\n');
+            if location.is_some() && depth <= 0 {
+                break;
+            }
+        }
+        let magnitude = value.abs();
+        let mut integers = Vec::new();
+        let mut float_form = false;
+        for literal in Self::number_literals(&statement) {
+            if literal.parse::<f64>().ok() != Some(magnitude) {
+                continue;
+            }
+            if literal.bytes().all(|byte| byte.is_ascii_digit()) {
+                let digits = literal.trim_start_matches('0');
+                let digits = if digits.is_empty() { "0" } else { digits };
+                if !integers.contains(&digits) {
+                    integers.push(digits);
+                }
+            } else {
+                float_form = true;
+            }
+        }
+        let sign = if value < 0.0 { "-" } else { "" };
+        match (integers.as_slice(), float_form) {
+            ([digits], false) => Ok(Some(format!("{sign}{digits}"))),
+            ([], true) => Ok(None),
+            _ => Err(integers
+                .iter()
+                .map(|digits| format!("{sign}{digits}"))
+                .collect()),
+        }
+    }
+
+    /// The number literals of `text` outside strings, without their sign.
+    fn number_literals(text: &str) -> Vec<&str> {
+        let bytes = text.as_bytes();
+        let mut literals = Vec::new();
+        let mut quote: Option<u8> = None;
+        let mut index = 0;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            if let Some(active) = quote {
+                if byte == b'\\' {
+                    index += 1;
+                } else if byte == active {
+                    quote = None;
+                }
+                index += 1;
+                continue;
+            }
+            if byte == b'"' || byte == b'\'' {
+                quote = Some(byte);
+                index += 1;
+                continue;
+            }
+            let follows_name = index > 0
+                && (bytes[index - 1].is_ascii_alphanumeric()
+                    || bytes[index - 1] == b'_'
+                    || bytes[index - 1] == b'.');
+            if !byte.is_ascii_digit() || follows_name {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'.') {
+                index += 1;
+            }
+            if index < bytes.len() && matches!(bytes[index], b'e' | b'E') {
+                let mut exponent = index + 1;
+                if exponent < bytes.len() && matches!(bytes[exponent], b'+' | b'-') {
+                    exponent += 1;
+                }
+                if exponent < bytes.len() && bytes[exponent].is_ascii_digit() {
+                    index = exponent;
+                    while index < bytes.len() && bytes[index].is_ascii_digit() {
+                        index += 1;
+                    }
+                }
+            }
+            literals.push(&text[start..index]);
+        }
+        literals
     }
 
     fn register_statement_span_source(
@@ -509,7 +636,14 @@ impl Transpiler {
                             | crate::parser::Token::Eof
                     )
                 })
-                .map(|token| token.to_string())
+                .map(|token| match token {
+                    // `0.50` and `1.0` are the numbers `0.5` and `1`, the
+                    // way the statement's own key prints them.
+                    crate::parser::Token::Number(text) => {
+                        Self::number_source_key(text.parse().unwrap_or(0.0))
+                    }
+                    token => token.to_string(),
+                })
                 .collect::<Vec<_>>()
                 .join(""),
             Err(_) => Self::normalize_source_key(source),
@@ -617,10 +751,20 @@ impl Transpiler {
         }
     }
 
-    fn expression_source_key(expr: &Expression) -> String {
+    /// How a number reads in a source key: the same for `1`, `1.0`, and
+    /// `1e0`.
+    fn number_source_key(n: f64) -> String {
+        if n.fract() == 0.0 && n.abs() < 1e18 {
+            (n as i64).to_string()
+        } else {
+            n.to_string()
+        }
+    }
+
+    /// A statement or expression as compact source text, without spaces.
+    pub(in crate::transpiler) fn expression_source_key(expr: &Expression) -> String {
         match expr {
-            Expression::Number(n) if n.fract() == 0.0 => (*n as i32).to_string(),
-            Expression::Number(n) => n.to_string(),
+            Expression::Number(n) => Self::number_source_key(*n),
             Expression::String(value) => serde_json::to_string(value)
                 .unwrap_or_else(|_| format!("\"{}\"", value.replace('"', "\\\""))),
             Expression::Boolean(true) => "True".to_string(),

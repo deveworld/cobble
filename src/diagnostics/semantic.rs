@@ -1798,6 +1798,13 @@ fn identifier_references_in_expression(expression: &str) -> Vec<IdentifierRefere
     let mut index = 0;
 
     while index < bytes.len() {
+        // A number, including the `e3` of an exponent (`1e3`, `2.5e-3`).
+        if bytes[index].is_ascii_digit() {
+            while index < bytes.len() && is_ident_continue_byte(bytes[index]) {
+                index += 1;
+            }
+            continue;
+        }
         if !is_ident_start_byte(bytes[index]) {
             index += 1;
             continue;

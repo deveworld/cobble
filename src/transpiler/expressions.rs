@@ -1,4 +1,4 @@
-use crate::ast::{CobbleType, Expression};
+use crate::ast::{CobbleType, Expression, UnaryOp};
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{GeneratedCommandKind, StoragePathPlan, TranspileError, Transpiler};
@@ -350,8 +350,12 @@ impl Transpiler {
         expr: &Expression,
     ) -> Result<serde_json::Value, TranspileError> {
         match expr {
-            Expression::Number(n) if n.fract() == 0.0 => Ok(serde_json::json!(*n as i32)),
-            Expression::Number(n) => Ok(serde_json::json!(n)),
+            Expression::Number(n) => self.json_number(*n),
+            Expression::Unary(UnaryOp::Neg | UnaryOp::Pos, _)
+                if Self::signed_number(expr).is_some() =>
+            {
+                self.json_number(Self::signed_number(expr).unwrap_or_default())
+            }
             Expression::String(s) => Ok(serde_json::json!(s)),
             Expression::Boolean(b) => Ok(serde_json::json!(b)),
             Expression::None => Ok(serde_json::Value::Null),
@@ -378,11 +382,7 @@ impl Transpiler {
             }
             Expression::Identifier(name) => {
                 if let Some(value) = self.symbols.compile_time_constants.get(name) {
-                    if value.fract() == 0.0 {
-                        Ok(serde_json::json!(*value as i32))
-                    } else {
-                        Ok(serde_json::json!(value))
-                    }
+                    self.json_number(*value)
                 } else {
                     Err(format!(
                         "Identifier '{}' cannot be serialized to JSON here; use a literal or const",
@@ -391,7 +391,74 @@ impl Transpiler {
                     .into())
                 }
             }
-            _ => Err(format!("Unsupported expression in JSON value: {:?}", expr).into()),
+            Expression::Binary(..) | Expression::Unary(..) | Expression::Conditional(..) => {
+                Err(format!(
+                    "`{}` can't be worked out in resource JSON; write the result as a literal",
+                    Self::expression_source_key(expr)
+                )
+                .into())
+            }
+            _ => Err(format!(
+                "`{}` can't be written into resource JSON; use a literal, a const, or a text.* or item_component.* helper",
+                Self::expression_source_key(expr)
+            )
+            .into()),
+        }
+    }
+
+    /// A number literal with any leading `-` and `+` applied, as in `-(2)`.
+    fn signed_number(expr: &Expression) -> Option<f64> {
+        match expr {
+            Expression::Number(n) => Some(*n),
+            Expression::Unary(UnaryOp::Neg, inner) => Self::signed_number(inner).map(|n| -n),
+            Expression::Unary(UnaryOp::Pos, inner) => Self::signed_number(inner),
+            _ => None,
+        }
+    }
+
+    /// A number in resource JSON. A whole number keeps its exact value: up
+    /// below 2^53 the number itself, and past that the integer written in the
+    /// statement's source, since an `f64` can't hold every such integer.
+    /// A number JSON can't hold is a compile error, never clamped.
+    fn json_number(&self, n: f64) -> Result<serde_json::Value, TranspileError> {
+        const EXACT: f64 = 9_007_199_254_740_992.0; // 2^53
+        if !n.is_finite() {
+            return Err(
+                "A number in resource JSON is too large: JSON has no infinity"
+                    .to_string()
+                    .into(),
+            );
+        }
+        if n.fract() != 0.0 {
+            return Ok(serde_json::json!(n));
+        }
+        if n.abs() < EXACT {
+            return Ok(serde_json::json!(n as i64));
+        }
+        match self.integer_literal_text(n) {
+            // Written with a decimal point or an exponent: a float, as in
+            // Python.
+            Ok(None) => Ok(serde_json::json!(n)),
+            Ok(Some(text)) => text
+                .parse::<i64>()
+                .map(serde_json::Number::from)
+                .or_else(|_| text.parse::<u64>().map(serde_json::Number::from))
+                .map(serde_json::Value::Number)
+                .map_err(|_| {
+                    format!(
+                        "The integer {text} doesn't fit in 64 bits, so it can't be written into resource JSON exactly; Minecraft's longs go from -9223372036854775808 to 9223372036854775807"
+                    )
+                    .into()
+                }),
+            Err(candidates) if candidates.len() > 1 => Err(format!(
+                "The integers {} in this declaration read as the same number past 2^53, so Cobble can't keep them apart; declare them in separate resources",
+                candidates.join(" and ")
+            )
+            .into()),
+            Err(_) => Err(format!(
+                "The integer {n} is past 2^53, where Cobble needs its digits from the source; write it as a literal in this declaration"
+            )
+            .into()),
         }
     }
 }

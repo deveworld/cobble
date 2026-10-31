@@ -834,9 +834,20 @@ impl LineTokenizer<'_> {
         let after_sign = start + num.len();
         // A dot followed by another dot is the range operator (`1..5`) and
         // ends the number; a single dot is part of a decimal number.
-        let end = self.take_while(&mut num, after_sign, |index, ch| {
+        let mut end = self.take_while(&mut num, after_sign, |index, ch| {
             ch.is_ascii_digit() || (ch == '.' && !line[index..].starts_with(".."))
         });
+        // An exponent, as in Python: `1e3`, `1E-3`, `2.5e+4`.
+        let exponent = line[end..]
+            .strip_prefix(['e', 'E'])
+            .map(|rest| rest.strip_prefix(['+', '-']).unwrap_or(rest))
+            .filter(|digits| digits.starts_with(|ch: char| ch.is_ascii_digit()));
+        if let Some(digits) = exponent {
+            let digits_start = line.len() - digits.len();
+            end = self.take_while(&mut num, end, |index, ch| {
+                index < digits_start || ch.is_ascii_digit()
+            });
+        }
         // Validate that the number can be parsed
         if num.parse::<f64>().is_err() {
             return Err(self.error_at(

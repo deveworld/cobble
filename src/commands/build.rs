@@ -537,7 +537,12 @@ fn validate_build_output(
         output.discard_staging_on_error(run_validation(output.build_dir(), &commands_json))?;
     let has_validation_errors = !report.errors.is_empty() || !report.source_map_errors.is_empty();
     if !options.quiet || has_validation_errors {
-        print_validation_report(&report, &commands_json, output.build_dir());
+        print_validation_report(
+            &report,
+            &commands_json,
+            output.build_dir(),
+            &output.final_dir,
+        );
     }
     if has_validation_errors {
         output.discard_staging();
