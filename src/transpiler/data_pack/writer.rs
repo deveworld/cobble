@@ -290,15 +290,21 @@ impl DataPack {
         let Ok(existing_content) = fs::read_to_string(file_path) else {
             return Ok(new_json.to_string());
         };
-        Self::merge_tag_json(&existing_content, new_json)
+        Self::merge_tag_json(relative_path, &existing_content, new_json)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }
 
     /// Merge a tag file written earlier in this build (`existing_json`) with
     /// another declaration of the same tag. Shared by the CLI writer and the
-    /// in-memory web compiler so both produce identical tag files. Input that
-    /// is not tag-shaped JSON leaves `new_json` unchanged.
-    pub fn merge_tag_json(existing_json: &str, new_json: &str) -> Result<String, String> {
+    /// in-memory web compiler so both produce identical tag files. `path`
+    /// tells a function tag, whose values keep their order, from the others,
+    /// which are sorted. Input that is not tag-shaped JSON leaves `new_json`
+    /// unchanged.
+    pub fn merge_tag_json(
+        path: &str,
+        existing_json: &str,
+        new_json: &str,
+    ) -> Result<String, String> {
         let Ok(mut merged_value) = serde_json::from_str::<serde_json::Value>(existing_json) else {
             return Ok(new_json.to_string());
         };
@@ -316,12 +322,12 @@ impl DataPack {
             return Ok(new_json.to_string());
         };
 
-        // Run both value lists through the same normalize + sort + dedup
+        // Run both value lists through the same normalize + order + dedup
         // pipeline as the in-memory typed tag merge (tags.rs) so the on-disk
         // merge produces identical, stable output across rebuilds.
         let mut combined = Self::normalize_tag_values_lossy(merged_values);
         combined.extend(Self::normalize_tag_values_lossy(new_values));
-        Self::sort_and_dedup_tag_values(&mut combined);
+        Self::order_tag_values(path, &mut combined);
         *merged_values = combined;
 
         let replace = merged_value

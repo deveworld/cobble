@@ -525,7 +525,7 @@ fn push_or_merge_file(
 ) -> Result<(), Vec<CompileDiagnostic>> {
     if let Some(existing) = files.iter_mut().find(|existing| existing.path == file.path) {
         if is_tag_path(&file.path) {
-            existing.content = merge_tag_json(&existing.content, &file.content)?;
+            existing.content = merge_tag_json(&file.path, &existing.content, &file.content)?;
             if file.kind == "tag" {
                 existing.kind = file.kind;
             }
@@ -541,9 +541,13 @@ fn is_tag_path(path: &str) -> bool {
     path.starts_with("data/") && path.contains("/tags/") && path.ends_with(".json")
 }
 
-fn merge_tag_json(existing_json: &str, new_json: &str) -> Result<String, Vec<CompileDiagnostic>> {
-    // Same normalize + sort + dedup merge as the CLI writer.
-    transpiler::DataPack::merge_tag_json(existing_json, new_json)
+fn merge_tag_json(
+    path: &str,
+    existing_json: &str,
+    new_json: &str,
+) -> Result<String, Vec<CompileDiagnostic>> {
+    // Same normalize + order + dedup merge as the CLI writer.
+    transpiler::DataPack::merge_tag_json(path, existing_json, new_json)
         .map_err(|error| vec![generic_diagnostic("serialization", error)])
 }
 

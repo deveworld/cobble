@@ -143,8 +143,8 @@ expression: datapack_tree_snapshot(&output_dir)
 ===== data/minecraft/tags/function/load.json =====
 {
   "values": [
-    "snapshot_merge:extra_load",
-    "snapshot_merge:load"
+    "snapshot_merge:load",
+    "snapshot_merge:extra_load"
   ]
 }
 

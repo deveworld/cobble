@@ -4,17 +4,27 @@ use crate::stdlib::EventType;
 
 impl DataPack {
     /// Returns true when `relative_path` points at a Cobble-owned typed tag
-    /// resource (`tags/function/`, `tags/block/`, `tags/item/`, or
-    /// `tags/entity_type/`).
+    /// resource (`tags/function/`, `tags/block/`, `tags/item/`,
+    /// `tags/entity_type/`, or `tags/dialog/`).
     pub(in crate::transpiler::data_pack) fn is_typed_tag_path(relative_path: &str) -> bool {
         relative_path.starts_with("tags/function/")
             || relative_path.starts_with("tags/block/")
             || relative_path.starts_with("tags/item/")
             || relative_path.starts_with("tags/entity_type/")
+            || relative_path.starts_with("tags/dialog/")
+    }
+
+    /// Whether `path` (`tags/function/x` or `data/ns/tags/function/x.json`)
+    /// is a function tag. Minecraft runs a function tag in the order of its
+    /// values, so its values keep their order instead of being sorted.
+    pub fn is_function_tag_path(path: &str) -> bool {
+        path.starts_with("tags/function/") || path.contains("/tags/function/")
     }
 
     /// Merge a typed tag resource. Duplicate declarations for the same tag
-    /// ID have their `values` arrays combined, deduplicated, and sorted.
+    /// ID have their `values` arrays combined and deduplicated. Function
+    /// tags keep the declared order, with later declarations appended and
+    /// repeats after the first dropped; other tags are sorted.
     /// Object entries with `required: true` are normalized to the equivalent
     /// string entry; `required: false` entries stay distinct.
     pub(in crate::transpiler::data_pack) fn merge_tag_resource(
@@ -67,7 +77,7 @@ impl DataPack {
 
             let mut merged: Vec<serde_json::Value> = existing_values;
             merged.extend(new_values);
-            Self::sort_and_dedup_tag_values(&mut merged);
+            Self::order_tag_values(relative_path, &mut merged);
 
             let mut merged_obj = serde_json::Map::new();
             merged_obj.insert("values".to_string(), serde_json::Value::Array(merged));
@@ -81,7 +91,7 @@ impl DataPack {
         } else {
             // First declaration: store canonical values in deterministic order.
             let mut sorted_values = new_values;
-            Self::sort_and_dedup_tag_values(&mut sorted_values);
+            Self::order_tag_values(relative_path, &mut sorted_values);
 
             let mut obj = serde_json::Map::new();
             obj.insert(
@@ -188,9 +198,21 @@ impl DataPack {
         }
     }
 
-    pub(in crate::transpiler::data_pack) fn sort_and_dedup_tag_values(
+    /// Function tags keep their order and drop repeats after the first;
+    /// other tags are sorted and deduplicated.
+    pub(in crate::transpiler::data_pack) fn order_tag_values(
+        path: &str,
         values: &mut Vec<serde_json::Value>,
     ) {
+        if Self::is_function_tag_path(path) {
+            let mut seen = std::collections::HashSet::new();
+            values.retain(|value| seen.insert(value.to_string()));
+        } else {
+            Self::sort_and_dedup_tag_values(values);
+        }
+    }
+
+    fn sort_and_dedup_tag_values(values: &mut Vec<serde_json::Value>) {
         values.sort_by(|a, b| {
             let (a_id, a_required_rank) = Self::tag_value_sort_key(a);
             let (b_id, b_required_rank) = Self::tag_value_sort_key(b);
@@ -210,10 +232,9 @@ impl DataPack {
             .then(|| format!("{}:{}", self.namespace, INIT_FUNCTION))
     }
 
-    /// Moves `_cobble_init` to the front of a merged `minecraft:load` tag.
-    /// Merged tags are sorted, so a `datapack.function_tag` entry that sorts
-    /// earlier would otherwise run before the pack's objectives exist. The
-    /// other entries keep their sorted order. Other tags are returned
+    /// Moves `_cobble_init` to the front of a merged `minecraft:load` tag, so
+    /// no `datapack.function_tag` entry runs before the pack's objectives
+    /// exist. The other entries keep their order. Other tags are returned
     /// unchanged.
     pub fn order_load_tag_json(
         &self,

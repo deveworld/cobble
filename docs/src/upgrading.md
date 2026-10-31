@@ -147,6 +147,9 @@ compile error; use Cobble's `return`. See
   reset module variables the entry had set. 0.11 moves the setup into its own
   load function, `_cobble_init`, which runs first; the other load functions
   keep their 0.10 order.
+- **Function tag order.** A function tag now keeps the order its values were
+  declared in, which is the order Minecraft runs them; merged declarations are
+  appended in declaration order. Earlier versions sorted the values.
 - **Command limit.** 0.10 set the gamerule `max_command_sequence_length` to
   1,000,000,000 in every pack. 0.11 sets it only in packs with a runtime loop
   (a `while` loop, or a `for` loop that is not expanded at compile time), a

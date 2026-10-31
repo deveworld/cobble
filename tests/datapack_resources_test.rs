@@ -234,12 +234,13 @@ stdlib.addEventListener(event.LOAD, load)
     .unwrap();
     let values = tag["values"].as_array().unwrap().clone();
 
-    // No runtime setup, so no `_cobble_init`: the merged entries stay sorted.
+    // No runtime setup, so no `_cobble_init`: the event listener comes
+    // first, then the declared entries in declaration order.
     assert_eq!(
         values,
         vec![
-            serde_json::json!("resources:extra_load"),
-            serde_json::json!("resources:load")
+            serde_json::json!("resources:load"),
+            serde_json::json!("resources:extra_load")
         ]
     );
 
@@ -288,7 +289,7 @@ stdlib.addEventListener(event.LOAD, load)
     assert_eq!(tag["replace"], true);
     assert_eq!(
         tag["values"],
-        serde_json::json!(["resources:extra_load", "resources:load"])
+        serde_json::json!(["resources:load", "resources:extra_load"])
     );
 }
 
@@ -364,9 +365,9 @@ datapack.function_tag("minecraft:load", ["resources:other"])
         serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
     let values = tag["values"].as_array().unwrap();
     assert_eq!(values.len(), 2);
-    // Values are sorted lexicographically.
-    assert_eq!(values[0], "resources:other");
-    assert_eq!(values[1], "resources:setup");
+    // Function tags keep the declaration order, which is the order they run.
+    assert_eq!(values[0], "resources:setup");
+    assert_eq!(values[1], "resources:other");
 }
 
 #[test]
@@ -384,14 +385,15 @@ datapack.function_tag("utility", ["resources:tick", "resources:init"])
     let tag: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&tag_path).unwrap()).unwrap();
     let values = tag["values"].as_array().unwrap();
+    // Repeats after the first are dropped; the order stays as declared.
     assert_eq!(values.len(), 3);
-    assert_eq!(values[0], "resources:init");
-    assert_eq!(values[1], "resources:setup");
-    assert_eq!(values[2], "resources:tick");
+    assert_eq!(values[0], "resources:setup");
+    assert_eq!(values[1], "resources:tick");
+    assert_eq!(values[2], "resources:init");
 }
 
 #[test]
-fn typed_datapack_tags_merge_dedup_and_sort_for_each_registry() {
+fn typed_datapack_tags_merge_and_dedup_for_each_registry() {
     let (_temp, output_dir) = compile_source(
         r#"
 from stdlib import datapack, event
@@ -424,10 +426,11 @@ stdlib.addEventListener(event.LOAD, load)
                 .unwrap();
         tag["values"].clone()
     };
-    // The event listener's entry merges with the declared ones.
+    // The event listener's entry comes first, then the declared ones in
+    // order, without repeats.
     assert_eq!(
         tag_values("data/minecraft/tags/function/load.json"),
-        serde_json::json!(["qa:extra", "qa:load", "qa:setup", "resources:load"])
+        serde_json::json!(["resources:load", "qa:extra", "qa:load", "qa:setup"])
     );
     assert_eq!(
         tag_values("data/resources/tags/block/mineable/test.json"),

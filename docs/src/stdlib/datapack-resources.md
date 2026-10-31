@@ -50,7 +50,12 @@ Supported resource declarations:
 - `datapack.item_modifier(name, json)`
 - `datapack.dialog(name, json)`
 
-Typed tag declarations with the same ID are merged, deduplicated, and sorted.
+Typed tag declarations with the same ID are merged and deduplicated. Minecraft
+runs a function tag in the order of its values, so a function tag keeps the
+declared order: later declarations are appended in declaration order, and a
+repeated value stays where it first appeared. In `minecraft:load`, the pack's
+setup function `_cobble_init` and the `event.LOAD` listeners come first. Block,
+item, entity type, and dialog tags are sorted.
 Tag values may be string resource IDs or object entries with `id` and optional
 `required`. Object entries with `required: true` are equivalent to strings;
 `required: false` entries remain optional Minecraft tag entries.
