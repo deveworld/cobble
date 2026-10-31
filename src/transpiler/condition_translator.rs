@@ -85,6 +85,12 @@ impl<'a> ConditionTranslator<'a> {
                 }
             }
             Expression::Identifier(var) => {
+                // A Minecraft condition masked out of a mixed condition is
+                // its own execute clause, so every command that tests it
+                // (a short-circuit flag, a helper) tests the real condition.
+                if let Some(minecraft) = self.symbols.minecraft_conditions.get(var) {
+                    return Ok(TranslatedCondition::Simple(format!("if {minecraft}")));
+                }
                 self.reject_storage_backed_operand(condition)?;
 
                 // A compile-time constant has no score; fold its truthiness

@@ -37,6 +37,10 @@ pub(in crate::transpiler) struct Symbols {
     /// What the program writes into lists and maps, collected before any
     /// statement is lowered (see `container_writes.rs`).
     pub(in crate::transpiler) container_writes: ContainerWrites,
+    /// Minecraft conditions of a mixed condition (`entity @a and f()`),
+    /// keyed by the identifier that stands for each while the rest is
+    /// translated as Python (see `mask_minecraft_conditions`).
+    pub(in crate::transpiler) minecraft_conditions: HashMap<String, String>,
 }
 
 impl Symbols {

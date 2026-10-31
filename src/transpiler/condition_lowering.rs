@@ -42,7 +42,8 @@ pub(crate) fn raw_minecraft_condition_verdict(condition: &str) -> Option<bool> {
 /// `or`, or `not`, as `entity @a and x > 3` or `not entity @a`, with each
 /// Minecraft condition replaced by an identifier, so the whole condition
 /// parses as Python. Returns the masked text and (identifier, condition)
-/// pairs for [`restore_minecraft_conditions`]. A condition that is all
+/// pairs; while the masked text is translated, each identifier translates to
+/// its condition (`Symbols::minecraft_conditions`). A condition that is all
 /// Minecraft conditions joined by `and` or `or`, or has none, gives `None`.
 pub(crate) fn mask_minecraft_conditions(
     condition: &str,
@@ -131,23 +132,6 @@ fn operand_end(text: &str) -> usize {
         index += 1;
     }
     text.len()
-}
-
-/// Puts the Minecraft conditions [`mask_minecraft_conditions`] replaced back
-/// into the translated condition. Each identifier was read as a value that
-/// is true unless its score is 0.
-pub(in crate::transpiler) fn restore_minecraft_conditions(
-    translated: &mut TranslatedCondition,
-    conditions: &[(String, String)],
-) {
-    for (identifier, condition) in conditions {
-        let holds = format!("unless score {identifier} temp matches 0");
-        let fails = format!("if score {identifier} temp matches 0");
-        translated.map_simple(&|text| {
-            text.replace(&holds, &format!("if {condition}"))
-                .replace(&fails, &format!("unless {condition}"))
-        });
-    }
 }
 
 impl Transpiler {

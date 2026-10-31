@@ -1,8 +1,6 @@
 use crate::ast::*;
 use crate::transpiler::command_processor::expand_selector_aliases;
-use crate::transpiler::condition_lowering::{
-    mask_minecraft_conditions, restore_minecraft_conditions, RAW_CONDITION_KEYWORDS,
-};
+use crate::transpiler::condition_lowering::{mask_minecraft_conditions, RAW_CONDITION_KEYWORDS};
 use crate::transpiler::condition_translator::{
     condition_clauses, negate_clause, TranslatedCondition,
 };
@@ -347,7 +345,15 @@ impl Transpiler {
         let Some((masked, conditions)) = mask_minecraft_conditions(condition) else {
             return Ok(None);
         };
-        let Some(mut translated) = self.capture_execute_python_condition(chain, &masked)? else {
+        // Each identifier translates to its Minecraft condition, so the
+        // commands a short-circuit `and`/`or` writes test the real condition.
+        let saved = std::mem::replace(
+            &mut self.symbols.minecraft_conditions,
+            conditions.iter().cloned().collect(),
+        );
+        let captured = self.capture_execute_python_condition(chain, &masked);
+        self.symbols.minecraft_conditions = saved;
+        let Some(translated) = captured? else {
             return Err(format!(
                 "Can't combine the Minecraft conditions in `{}` with `and`, `or`, or `not`. \
                  Chain them as modifiers instead, as in `if entity @a if x > 3:`, and use \
@@ -356,7 +362,6 @@ impl Transpiler {
             )
             .into());
         };
-        restore_minecraft_conditions(&mut translated, &conditions);
         Ok(Some(translated))
     }
 

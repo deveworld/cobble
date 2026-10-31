@@ -120,6 +120,8 @@ pub struct Sim {
     /// Chat output: `say` lines as `<executor>: <message>`, `tellraw` lines as
     /// rendered plain text.
     pub log: Vec<String>,
+    /// Entity tags, by entity name, for `[tag=...]` selector filters.
+    pub tags: HashMap<String, HashSet<String>>,
     load_tag: Vec<String>,
     budget: usize,
     /// Whether the command running came from a macro line. Text Minecraft
@@ -159,6 +161,7 @@ impl Sim {
             objectives: HashSet::new(),
             storage: Value::Object(Map::new()),
             log: Vec::new(),
+            tags: HashMap::new(),
             load_tag: read_tag(output_dir, "load"),
             budget: 1_000_000,
             in_macro_line: false,
@@ -388,6 +391,15 @@ impl Sim {
                 "if" | "unless" => {
                     let negate = keyword == "unless";
                     let (kind, after) = after.split_once(' ').expect("condition kind");
+                    if kind == "entity" {
+                        // `entity <selector>`: passes when it selects anyone.
+                        let (selector, after_selector) = split_selector(after);
+                        contexts.retain(|ctx| {
+                            self.resolve_selector(selector, ctx).is_empty() == negate
+                        });
+                        rest = after_selector;
+                        continue;
+                    }
                     if kind == "data" {
                         // `data storage <id> <path>`: passes when the path exists.
                         let tokens: Vec<&str> = after.splitn(3, ' ').collect();
@@ -732,6 +744,24 @@ impl Sim {
     }
 
     fn resolve_selector(&self, selector: &str, ctx: &Context) -> Vec<String> {
+        // `[tag=x]` and `[tag=!x]` filters, separated by commas.
+        if let Some((base, filters)) = selector.split_once('[') {
+            let filters = filters.strip_suffix(']').expect("selector closes");
+            let mut selected = self.resolve_selector(base, ctx);
+            for filter in filters.split(',') {
+                let tag = filter
+                    .strip_prefix("tag=")
+                    .unwrap_or_else(|| panic!("unsupported selector filter `{filter}`"));
+                let (tag, wanted) = match tag.strip_prefix('!') {
+                    Some(tag) => (tag, false),
+                    None => (tag, true),
+                };
+                selected.retain(|name| {
+                    self.tags.get(name).is_some_and(|tags| tags.contains(tag)) == wanted
+                });
+            }
+            return selected;
+        }
         match selector {
             "@a" | "@e" => self.players.clone(),
             "@p" => self.players.first().cloned().into_iter().collect(),
