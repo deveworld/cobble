@@ -3122,6 +3122,62 @@ def main():
     }
 
     #[test]
+    fn parse_source_file_reports_module_variables_defined_in_two_files() {
+        for (other_line, main_line) in [
+            ("shared = 2", "shared = 1"),
+            ("shared = [1]", "persist shared = [2]"),
+            ("shared, extra = 1, 2", "shared = 3"),
+        ] {
+            let temp_dir = TempDir::new("cross-file-duplicate-module-variables");
+            let main = temp_dir.path().join("main.cbl");
+            let other = temp_dir.path().join("other.cbl");
+            std::fs::write(
+                &main,
+                format!("import other\n\n{main_line}\n\ndef test():\n    a = shared\n"),
+            )
+            .unwrap();
+            std::fs::write(
+                &other,
+                format!("{other_line}\n\ndef other_get():\n    return shared\n"),
+            )
+            .unwrap();
+
+            let diagnostics = parse_source_file(&main).expect_err("duplicate should fail");
+
+            assert_eq!(diagnostics.len(), 1, "{main_line}");
+            assert_eq!(diagnostics[0].path, main);
+            let diagnostic = &diagnostics[0].diagnostics[0];
+            assert_eq!(diagnostic.kind, "duplicate-symbol");
+            let column = main_line.find("shared").unwrap() + 1;
+            assert_eq!((diagnostic.line, diagnostic.column), (3, column), "{main_line}");
+            assert_eq!(
+                diagnostic.message,
+                "Module variable `shared` is defined in both other.cbl and main.cbl"
+            );
+            assert!(diagnostic
+                .help
+                .as_deref()
+                .unwrap()
+                .contains(&format!("{}:1:1", other.display())));
+        }
+    }
+
+    #[test]
+    fn parse_source_file_accepts_module_variables_used_from_another_file() {
+        let temp_dir = TempDir::new("cross-file-module-variable-import");
+        let main = temp_dir.path().join("main.cbl");
+        let other = temp_dir.path().join("other.cbl");
+        std::fs::write(
+            &main,
+            "from other import shared\nimport other\n\nmine = 1\n\ndef bump():\n    global shared\n    shared += 1\n    x = shared\n",
+        )
+        .unwrap();
+        std::fs::write(&other, "shared = 2\n\ndef other_get():\n    return shared\n").unwrap();
+
+        parse_source_file(&main).expect("an imported module variable is not a definition");
+    }
+
+    #[test]
     fn parse_source_file_reports_cross_file_duplicate_selector_aliases() {
         let temp_dir = TempDir::new("cross-file-duplicate-selectors");
         let main = temp_dir.path().join("main.cbl");

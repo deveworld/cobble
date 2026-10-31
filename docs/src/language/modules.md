@@ -36,9 +36,15 @@ of names, so a function can be called as `helper_function()` or
 the name exists in `utils.cbl`. Imported functions that return an integer can
 be used in expressions and conditions.
 
+Module variables are shared the same way: every file that names `score` reads
+and changes one value, and `from utils import score` checks that the name
+exists in `utils.cbl`. So define each module variable at module level in one
+file only, and use it from the others.
+
 These are compile errors:
 
-- the same function, selector alias, or entity template name in two files;
+- the same function, selector alias, entity template, or module variable name
+  in two files;
 - a circular import (the message shows the import chain);
 - a missing file (the message shows the importing file and the expected path).
 

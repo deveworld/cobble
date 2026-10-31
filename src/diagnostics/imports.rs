@@ -454,7 +454,56 @@ fn analyze_cross_file_named_symbols(
         }
     }
 
+    // Every file's module variables share one holder per name (scores and
+    // `vars.<name>` keep the plain name so `persist` and `migrate` find
+    // them), so the same name in two files would silently be one value.
+    let mut variables: HashMap<String, (usize, usize, usize)> = HashMap::new();
+    for (file_index, context) in contexts.iter().enumerate() {
+        for variable in semantic::collect_module_variable_defs(context) {
+            if let Some(&(first_index, first_line, first_column)) = variables.get(&variable.name)
+            {
+                let first_path = &files[first_index].path;
+                let this_path = &files[file_index].path;
+                duplicate_diagnostics.entry(file_index).or_default().push(
+                    SourceDiagnostic::error(
+                        "duplicate-symbol",
+                        variable.line,
+                        variable.column,
+                        format!(
+                            "Module variable `{}` is defined in both {} and {}",
+                            variable.name,
+                            display_file_name(first_path),
+                            display_file_name(this_path),
+                        ),
+                    )
+                    .with_help(format!(
+                        "First definition is at {}:{}:{}. Module variables of every file share one value per name, so rename one of them, or define it in one file and use it from the other (`from {} import {}`).",
+                        first_path.display(),
+                        first_line,
+                        first_column,
+                        first_path
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                        variable.name,
+                    )),
+                );
+            } else {
+                variables.insert(
+                    variable.name,
+                    (file_index, variable.line, variable.column),
+                );
+            }
+        }
+    }
+
     file_diagnostics_from_map(files, duplicate_diagnostics)
+}
+
+fn display_file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn validate_import_items_from_path(

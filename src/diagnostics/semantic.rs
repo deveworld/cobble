@@ -417,6 +417,64 @@ pub(super) fn collect_named_symbol_defs(context: &SemanticContext<'_>) -> Vec<Na
     symbols
 }
 
+/// A module variable: a name the file binds at module level.
+pub(super) struct ModuleVariableDef {
+    pub(super) name: String,
+    pub(super) line: usize,
+    pub(super) column: usize,
+}
+
+/// Every name the program binds at module level (`name = ...`,
+/// `persist name = ...`, `a, b = ...`, or a module-level `for` target), the
+/// first binding of each name, in source order. Names a function binds under
+/// `global`, and names brought in with `from x import y`, are not counted:
+/// they refer to a variable another file may own.
+pub(super) fn collect_module_variable_defs(
+    context: &SemanticContext<'_>,
+) -> Vec<ModuleVariableDef> {
+    let nodes = context.spans.map(|tree| tree.statements.as_slice());
+    let mut seen = HashSet::new();
+    let mut variables = Vec::new();
+    for (index, statement) in context.program.statements.iter().enumerate() {
+        let node = nodes.and_then(|nodes| nodes.get(index));
+        let names: Vec<&str> = match statement {
+            Statement::Assignment(assignment) if assignment.assigns_name() => {
+                vec![assignment.target.as_str()]
+            }
+            Statement::MultiAssign(multi) => multi
+                .targets
+                .iter()
+                .filter_map(|target| match target {
+                    Expression::Identifier(name) => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect(),
+            Statement::For(for_loop) => std::iter::once(for_loop.target.as_str())
+                .chain(for_loop.index.as_deref())
+                .collect(),
+            _ => Vec::new(),
+        };
+        let (line, column) = match statement {
+            Statement::Assignment(assignment) if assignment.persist => {
+                context.keyword_argument_position(node, "persist")
+            }
+            _ => node
+                .map(|node| (node.span.line, node.span.column))
+                .unwrap_or((1, 1)),
+        };
+        for name in names {
+            if is_simple_module_name(name) && seen.insert(name.to_string()) {
+                variables.push(ModuleVariableDef {
+                    name: name.to_string(),
+                    line,
+                    column,
+                });
+            }
+        }
+    }
+    variables
+}
+
 /// A function call found in the program's expressions, located at the callee
 /// name inside its statement's source slice.
 pub(super) struct CallSite {
