@@ -243,7 +243,26 @@ enum Commands {
     },
 }
 
+/// Stack for the thread that compiles. Expressions and JSON values nest as
+/// deep as the parser's limit allows, and walking them recursively in a
+/// debug build needs far more than the default main-thread stack.
+const COMPILER_STACK_BYTES: usize = 512 * 1024 * 1024;
+
 fn main() {
+    let compiler = std::thread::Builder::new()
+        .name("cobble".to_string())
+        .stack_size(COMPILER_STACK_BYTES)
+        .spawn(run);
+    match compiler.map(std::thread::JoinHandle::join) {
+        Ok(Ok(())) => {}
+        // The panic message is already printed.
+        Ok(Err(_)) => std::process::exit(101),
+        // No thread with a large stack: compile on this one.
+        Err(_) => run(),
+    }
+}
+
+fn run() {
     let cli = Cli::parse();
 
     let result = match cli.command {

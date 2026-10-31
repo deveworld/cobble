@@ -1404,6 +1404,21 @@ fn logical_expression<'a>(
         .boxed()
 }
 
+/// Rejects a statement that nests deeper than the parser and the later
+/// passes can walk without running out of stack.
+fn check_nesting_depth(tokens: &[SpannedToken]) -> Result<(), Vec<ParseDiagnostic>> {
+    match super::depth::find_too_deep_statement(tokens) {
+        Some((span, depth)) => Err(vec![ParseDiagnostic {
+            span,
+            message: format!(
+                "This statement nests too deeply (about {depth} levels of blocks, brackets, and operators; the limit is {}). Split it into smaller statements.",
+                super::depth::MAX_NESTING_DEPTH
+            ),
+        }]),
+        None => Ok(()),
+    }
+}
+
 /// Parse source code into AST
 pub fn parse(source: &str) -> Result<Program, Vec<String>> {
     parse_with_diagnostics(source).map_err(|errors| {
@@ -1422,6 +1437,7 @@ pub fn parse_with_diagnostics(source: &str) -> Result<Program, Vec<ParseDiagnost
             message: error.message,
         }]
     })?;
+    check_nesting_depth(&spanned_tokens)?;
     let tokens = spanned_tokens
         .iter()
         .map(|token| token.token.clone())
@@ -1450,6 +1466,7 @@ pub fn parse_located_with_diagnostics(
             message: error.message,
         }]
     })?;
+    check_nesting_depth(&spanned_tokens)?;
     let tokens = spanned_tokens
         .iter()
         .map(|token| token.token.clone())

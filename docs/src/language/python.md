@@ -15,7 +15,10 @@ These fail with a diagnostic before compilation:
 - list and dict comprehensions;
 - `for ... else`, and `for` over the keys of a map;
 - a slice with a step, such as `items[::2]`;
-- dotted or relative imports, import aliases, and `import a, b`.
+- dotted or relative imports, import aliases, and `import a, b`;
+- a statement that nests more than 1000 levels deep, counting blocks,
+  brackets, and operators, such as a chain of 1000 `and`s or a JSON value
+  nested 1000 levels deep.
 
 `cobble check --experimental-python-compat` lists the supported Python-like
 constructs and suggests a Cobble rewrite for unsupported ones; see

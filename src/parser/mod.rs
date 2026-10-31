@@ -6,6 +6,9 @@ pub mod tokenizer;
 // Combinators module - handles parsing token streams into AST
 mod combinators;
 
+// Nesting limit checked before parsing
+mod depth;
+
 // Re-export public API
 pub use combinators::{
     parse, parse_located_with_diagnostics, parse_with_diagnostics, token_parser,

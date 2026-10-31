@@ -463,3 +463,61 @@ fn fractional_literal_used_as_a_number_warns() {
     );
     assert_eq!(stderr.matches("warning[").count(), 1, "{stderr}");
 }
+
+#[test]
+fn deep_input_is_a_diagnostic_not_a_stack_overflow() {
+    let deep_not = format!("def f():\n    x = 1\n    y = {}x\n", "not ".repeat(20_000));
+    let deep_list = format!(
+        "def f():\n    y = {}1{}\n",
+        "[".repeat(20_000),
+        "]".repeat(20_000)
+    );
+    let deep_json = format!(
+        "from stdlib import datapack\ndatapack.predicate(\"p\", {}1{})\n",
+        "{\"a\": ".repeat(20_000),
+        "}".repeat(20_000)
+    );
+    let long_and = format!(
+        "def f():\n    x = 1\n    y = {}\n",
+        vec!["x"; 20_000].join(" and ")
+    );
+    let deep_calls = format!(
+        "def g(a):\n    return a\n\ndef f():\n    y = {}1{}\n",
+        "g(".repeat(20_000),
+        ")".repeat(20_000)
+    );
+    for source in [deep_not, deep_list, deep_json, long_and, deep_calls] {
+        let (ok, stderr) = cli_build(&source, &[]);
+        assert!(!ok);
+        assert!(
+            !stderr.contains("overflow"),
+            "{}",
+            &stderr[..stderr.len().min(500)]
+        );
+        assert!(
+            stderr.contains("This statement nests too deeply"),
+            "{}",
+            &stderr[..stderr.len().min(500)]
+        );
+    }
+    // The library reports it without recursing, even on a small stack.
+    let deep = format!(
+        "def f():\n    y = {}1{}\n",
+        "(".repeat(50_000),
+        ")".repeat(50_000)
+    );
+    let errors = cobble::parser::parse(&deep).unwrap_err();
+    assert!(errors[0].contains("the limit is 1000"), "{errors:?}");
+}
+
+#[test]
+fn input_below_the_nesting_limit_builds() {
+    let nested = format!(
+        "def f():\n    x = 1\n    y = {}x{}\n    z = {}x\n    /say {{y}} {{z}}\n",
+        "(".repeat(900),
+        ")".repeat(900),
+        "not ".repeat(900)
+    );
+    let (ok, stderr) = cli_build(&nested, &[]);
+    assert!(ok, "{}", &stderr[..stderr.len().min(500)]);
+}
