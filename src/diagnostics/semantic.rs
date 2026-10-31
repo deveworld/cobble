@@ -9,6 +9,7 @@
 //! `diagnostics.rs`; it must not touch the filesystem (`std::fs`) or
 //! reference `crate::commands`.
 
+use crate::transpiler::scoped::{Mark, ScopedMap};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
@@ -2247,23 +2248,44 @@ pub(super) fn check_storage_backed_access(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
-    let mut module_types: HashMap<String, CobbleType> = HashMap::new();
-    let mut module_constants: HashMap<String, f64> = HashMap::new();
-    // Every function scope starts from a clone of the MODULE environment
-    // (nested definitions included).
-    let mut function_scopes: Vec<(HashMap<String, CobbleType>, HashMap<String, f64>)> = Vec::new();
+    let mut module_types: ScopedMap<String, CobbleType> = ScopedMap::default();
+    let mut module_constants: ScopedMap<String, f64> = ScopedMap::default();
     let imported = Imports::of(context.program);
     let events = collect_assignment_scan_events(context);
     // A function body runs after the whole module, so it sees the module
-    // variables declared below it too.
+    // variables declared below it too. Every function scope starts from
+    // this view of the MODULE environment (nested definitions included):
+    // the declared types with the module-level ones over them, kept up to
+    // date as module-level code runs. A function's changes to it are
+    // undone when it ends, so it is never copied, except for a nested
+    // definition.
     let declared_module_types = module_level_assignment_types(context, &events);
+    let mut view_types: ScopedMap<String, CobbleType> =
+        declared_module_types.clone().into_iter().collect();
+    let mut view_constants: ScopedMap<String, f64> = ScopedMap::default();
+    let mut function_scopes: Vec<ScanScope> = Vec::new();
 
     for event in events {
-        match event {
+        let module_level = function_scopes.is_empty();
+        let touched = match event {
             AssignmentScanEvent::EnterFunction { params, locals } => {
-                let mut types = declared_module_types.clone();
-                types.extend(module_types.clone());
-                let mut constants = module_constants.clone();
+                let (types, constants) = match function_scopes.first() {
+                    None => {
+                        function_scopes
+                            .push(ScanScope::Shared(view_types.open(), view_constants.open()));
+                        (&mut view_types, &mut view_constants)
+                    }
+                    Some(ScanScope::Shared(types_mark, constants_mark)) => {
+                        let types = view_types.snapshot_at(*types_mark);
+                        let constants = view_constants.snapshot_at(*constants_mark);
+                        function_scopes.push(ScanScope::Own(types, constants));
+                        match function_scopes.last_mut() {
+                            Some(ScanScope::Own(types, constants)) => (types, constants),
+                            _ => unreachable!("an own scope was just pushed"),
+                        }
+                    }
+                    Some(ScanScope::Own(..)) => unreachable!("the outermost scope is shared"),
+                };
                 for local in locals {
                     constants.remove(&local);
                     types.remove(&local);
@@ -2273,18 +2295,24 @@ pub(super) fn check_storage_backed_access(
                     constants.remove(&param);
                     types.insert(param, CobbleType::Unknown);
                 }
-                function_scopes.push((types, constants));
+                None
             }
             AssignmentScanEvent::LeaveFunction => {
-                function_scopes.pop();
+                if let Some(ScanScope::Shared(types_mark, constants_mark)) = function_scopes.pop() {
+                    view_types.undo_to(types_mark);
+                    view_constants.undo_to(constants_mark);
+                }
+                None
             }
             AssignmentScanEvent::LoopTarget(target, target_type) => {
-                let (type_env, constant_env) = match function_scopes.last_mut() {
-                    Some((types, constants)) => (types, constants),
-                    None => (&mut module_types, &mut module_constants),
-                };
+                let (type_env, constant_env) = scan_envs(
+                    &mut function_scopes,
+                    (&mut view_types, &mut view_constants),
+                    (&mut module_types, &mut module_constants),
+                );
                 constant_env.remove(&target);
-                type_env.insert(target, target_type);
+                type_env.insert(target.clone(), target_type);
+                Some(target)
             }
             AssignmentScanEvent::Assignment { line } => {
                 let line_text = context.line_text(line);
@@ -2299,10 +2327,11 @@ pub(super) fn check_storage_backed_access(
                     continue;
                 };
 
-                let (type_env, constant_env) = match function_scopes.last_mut() {
-                    Some((types, constants)) => (types, constants),
-                    None => (&mut module_types, &mut module_constants),
-                };
+                let (type_env, constant_env) = scan_envs(
+                    &mut function_scopes,
+                    (&mut view_types, &mut view_constants),
+                    (&mut module_types, &mut module_constants),
+                );
 
                 if let Some(diagnostic) = unsupported_storage_access_in_expression(
                     &assignment.value,
@@ -2351,12 +2380,57 @@ pub(super) fn check_storage_backed_access(
                     match type_env.get(&assignment.target) {
                         Some(existing_type) if *existing_type != new_type => {}
                         _ => {
-                            type_env.insert(assignment.target, new_type);
+                            type_env.insert(assignment.target.clone(), new_type);
                         }
                     }
                 }
+                Some(assignment.target)
             }
+        };
+        // Keep the module view up to date with module-level code.
+        if let Some(name) = touched.filter(|_| module_level) {
+            match module_types
+                .get(&name)
+                .or_else(|| declared_module_types.get(&name))
+            {
+                Some(value_type) => view_types.insert(name.clone(), value_type.clone()),
+                None => view_types.remove(&name),
+            };
+            match module_constants.get(&name) {
+                Some(value) => view_constants.insert(name, *value),
+                None => view_constants.remove(&name),
+            };
         }
+    }
+}
+
+/// A function scope of an assignment scan: the outermost one changes the
+/// shared module view and undoes its changes at the end; a nested
+/// definition starts from a copy of the module view.
+enum ScanScope {
+    Shared(Mark, Mark),
+    Own(ScopedMap<String, CobbleType>, ScopedMap<String, f64>),
+}
+
+/// The type and constant tables the current scope of a scan reads.
+fn scan_envs<'a>(
+    scopes: &'a mut [ScanScope],
+    view: (
+        &'a mut ScopedMap<String, CobbleType>,
+        &'a mut ScopedMap<String, f64>,
+    ),
+    module: (
+        &'a mut ScopedMap<String, CobbleType>,
+        &'a mut ScopedMap<String, f64>,
+    ),
+) -> (
+    &'a mut ScopedMap<String, CobbleType>,
+    &'a mut ScopedMap<String, f64>,
+) {
+    match scopes.last_mut() {
+        Some(ScanScope::Own(types, constants)) => (types, constants),
+        Some(ScanScope::Shared(..)) => view,
+        None => module,
     }
 }
 
@@ -2406,25 +2480,44 @@ pub(super) fn check_type_mismatches(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
-    let mut module_types: HashMap<String, CobbleType> = HashMap::new();
-    let mut function_scopes: Vec<HashMap<String, CobbleType>> = Vec::new();
+    // A function scope changes the module table and undoes its changes at
+    // the end, so the table is never copied, except for a nested definition.
+    let mut module_types: ScopedMap<String, CobbleType> = ScopedMap::default();
+    let mut module_mark: Option<Mark> = None;
+    let mut function_scopes: Vec<Option<ScopedMap<String, CobbleType>>> = Vec::new();
 
     for event in collect_assignment_scan_events(context) {
         match event {
             AssignmentScanEvent::EnterFunction { params, locals } => {
-                let mut types = module_types.clone();
+                let types = match module_mark {
+                    None => {
+                        module_mark = Some(module_types.open());
+                        function_scopes.push(None);
+                        &mut module_types
+                    }
+                    Some(mark) => {
+                        function_scopes.push(Some(module_types.snapshot_at(mark)));
+                        function_scopes
+                            .last_mut()
+                            .and_then(Option::as_mut)
+                            .expect("a nested scope was just pushed")
+                    }
+                };
                 for name in params.iter().chain(&locals) {
                     types.remove(name);
                 }
-                function_scopes.push(types);
             }
             AssignmentScanEvent::LeaveFunction => {
-                function_scopes.pop();
+                if let Some(None) = function_scopes.pop() {
+                    if let Some(mark) = module_mark.take() {
+                        module_types.undo_to(mark);
+                    }
+                }
             }
             AssignmentScanEvent::LoopTarget(target, _) => {
                 match function_scopes.last_mut() {
-                    Some(types) => types,
-                    None => &mut module_types,
+                    Some(Some(types)) => types,
+                    _ => &mut module_types,
                 }
                 .remove(&target);
             }
@@ -2442,8 +2535,8 @@ pub(super) fn check_type_mismatches(
                 };
 
                 let type_env = match function_scopes.last_mut() {
-                    Some(types) => types,
-                    None => &mut module_types,
+                    Some(Some(types)) => types,
+                    _ => &mut module_types,
                 };
                 // A value of unknown type, such as an item of a list, fits
                 // any variable.

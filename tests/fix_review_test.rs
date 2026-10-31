@@ -289,3 +289,46 @@ fn a_dimension_after_a_mixed_condition_stays_an_execute_modifier() {
         "{main}"
     );
 }
+
+// --- Many functions and many module lists ---
+
+/// Builds `source` without writing the pack and returns the seconds taken.
+fn dry_build_seconds(source: &str) -> f64 {
+    let temp = tempfile::TempDir::new().unwrap();
+    let input = temp.path().join("main.cbl");
+    std::fs::write(&input, source).unwrap();
+    let start = std::time::Instant::now();
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input),
+        output: Some(temp.path().join("output")),
+        namespace: Some("sim".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: true,
+        commands_json: std::path::PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+    start.elapsed().as_secs_f64()
+}
+
+#[test]
+fn many_functions_beside_many_module_lists_build_in_linear_time() {
+    // Each function used to copy every module table, so this took about
+    // a minute in a debug build; it takes a few seconds now.
+    let count = 4000;
+    let defs: String = (0..count)
+        .map(|i| format!("def f{i}():\n    x = {i}\n    /say {{x}}\n"))
+        .collect();
+    let lists: String = (0..count)
+        .map(|i| format!("l{i} = [{i}, {}]\n", i + 1))
+        .collect();
+    for source in [format!("{defs}{lists}"), format!("{lists}{defs}")] {
+        let seconds = dry_build_seconds(&source);
+        assert!(seconds < 40.0, "took {seconds:.1} s");
+    }
+}

@@ -1634,7 +1634,11 @@ fn annotate_loop_error(
     error
 }
 
-fn restore_optional<T>(map: &mut HashMap<String, T>, name: &str, value: Option<T>) {
+fn restore_optional<T: Clone>(
+    map: &mut crate::transpiler::scoped::ScopedMap<String, T>,
+    name: &str,
+    value: Option<T>,
+) {
     if let Some(value) = value {
         map.insert(name.to_string(), value);
     } else {

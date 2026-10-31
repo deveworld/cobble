@@ -1,6 +1,6 @@
 use crate::ast::{Assignment, CobbleType, Expression, FunctionDef, Program, Statement};
 use crate::transpiler::function_context::{
-    count_reads, expression_reads, global_literal_assignments, FunctionContext,
+    expression_reads, global_literal_assignments, read_names, FunctionContext,
 };
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
@@ -175,13 +175,20 @@ impl Transpiler {
         function: &FunctionDef,
         context: &FunctionContext,
     ) -> Result<(), TranspileError> {
-        let mut late: Vec<&String> = self.symbols.late_module_declarations.iter().collect();
-        late.sort();
-        match late.into_iter().find(|name| {
-            !context.is_param(name)
-                && !context.is_local(name)
-                && count_reads(&function.body, name) > 0
-        }) {
+        let late = &self.symbols.late_module_declarations;
+        if late.is_empty() {
+            return Ok(());
+        }
+        // One walk of the body, then the first late name it reads in name
+        // order, so the error doesn't depend on hash order.
+        let reads = read_names(&function.body);
+        match reads
+            .iter()
+            .filter(|name| {
+                late.contains(*name) && !context.is_param(name) && !context.is_local(name)
+            })
+            .min()
+        {
             Some(name) => Err(format!(
                 "`{name}` is declared later in the file, and `{}` above it uses it. Move the module-level `{name} = ...` above `def {}`.",
                 function.name, function.name

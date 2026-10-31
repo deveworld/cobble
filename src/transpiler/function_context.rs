@@ -422,79 +422,121 @@ fn collect_changed_containers(body: &[Statement], changed: &mut BTreeSet<String>
     }
 }
 
+/// A place where a function body reads names: an expression, or the text
+/// of a raw command or an execute header, which reads `{name}`.
+enum ReadSite<'a> {
+    Expression(&'a Expression),
+    Text(&'a str),
+}
+
+/// Visits every [`ReadSite`] of `body`. Assigning a name, or using it as a
+/// `for` target, is not a read. Nested function definitions are not
+/// searched.
+fn visit_read_sites(body: &[Statement], visit: &mut impl FnMut(ReadSite<'_>)) {
+    for statement in body {
+        match statement {
+            Statement::Assignment(assign) => {
+                if let Some(target) = assign
+                    .target_expr
+                    .as_ref()
+                    .filter(|_| !assign.assigns_name())
+                {
+                    visit(ReadSite::Expression(target));
+                }
+                visit(ReadSite::Expression(&assign.value));
+            }
+            Statement::MultiAssign(multi) => {
+                for value in &multi.values {
+                    visit(ReadSite::Expression(value));
+                }
+                for target in &multi.targets {
+                    if !matches!(target, Expression::Identifier(_)) {
+                        visit(ReadSite::Expression(target));
+                    }
+                }
+            }
+            Statement::Expression(expr) | Statement::Return(Some(expr)) => {
+                visit(ReadSite::Expression(expr))
+            }
+            Statement::MinecraftCommand(command) => visit(ReadSite::Text(command)),
+            Statement::If(if_stmt) => {
+                visit(ReadSite::Expression(&if_stmt.condition));
+                visit_read_sites(&if_stmt.then_branch, visit);
+                for (condition, branch) in &if_stmt.elif_branches {
+                    visit(ReadSite::Expression(condition));
+                    visit_read_sites(branch, visit);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    visit_read_sites(branch, visit);
+                }
+            }
+            Statement::For(for_loop) => {
+                visit(ReadSite::Expression(&for_loop.iter));
+                if let Some(step) = &for_loop.step {
+                    visit(ReadSite::Expression(step));
+                }
+                visit_read_sites(&for_loop.body, visit);
+            }
+            Statement::While(while_loop) => {
+                visit(ReadSite::Expression(&while_loop.condition));
+                visit_read_sites(&while_loop.body, visit);
+            }
+            Statement::Match(match_stmt) => {
+                visit(ReadSite::Expression(&match_stmt.value));
+                for case in &match_stmt.cases {
+                    visit_read_sites(&case.body, visit);
+                }
+            }
+            Statement::Execute(exec_block) => {
+                visit(ReadSite::Text(&format!("{:?}", exec_block.modifiers)));
+                visit_read_sites(&exec_block.body, visit);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// How often `body` reads `name`: in expressions, and as a `{name}`
 /// placeholder in raw commands and execute headers. Assigning a name, or
 /// using it as a `for` target, is not a read. Nested function definitions
 /// are not searched.
 pub(in crate::transpiler) fn count_reads(body: &[Statement], name: &str) -> usize {
-    let in_expression = |expr: &Expression| {
-        let mut reads = Vec::new();
-        expression_reads(expr, &mut reads);
-        reads.into_iter().filter(|read| *read == name).count()
-    };
     let placeholder = format!("{{{name}}}");
-    let in_text = |text: &str| text.matches(placeholder.as_str()).count();
     let mut count = 0;
-    for statement in body {
-        count += match statement {
-            Statement::Assignment(assign) => {
-                let target = assign
-                    .target_expr
-                    .as_ref()
-                    .filter(|_| !assign.assigns_name())
-                    .map_or(0, in_expression);
-                target + in_expression(&assign.value)
-            }
-            Statement::MultiAssign(multi) => {
-                multi.values.iter().map(in_expression).sum::<usize>()
-                    + multi
-                        .targets
-                        .iter()
-                        .filter(|target| !matches!(target, Expression::Identifier(_)))
-                        .map(in_expression)
-                        .sum::<usize>()
-            }
-            Statement::Expression(expr) | Statement::Return(Some(expr)) => in_expression(expr),
-            Statement::MinecraftCommand(command) => in_text(command),
-            Statement::If(if_stmt) => {
-                in_expression(&if_stmt.condition)
-                    + count_reads(&if_stmt.then_branch, name)
-                    + if_stmt
-                        .elif_branches
-                        .iter()
-                        .map(|(condition, branch)| {
-                            in_expression(condition) + count_reads(branch, name)
-                        })
-                        .sum::<usize>()
-                    + if_stmt
-                        .else_branch
-                        .as_ref()
-                        .map_or(0, |branch| count_reads(branch, name))
-            }
-            Statement::For(for_loop) => {
-                in_expression(&for_loop.iter)
-                    + for_loop.step.as_ref().map_or(0, in_expression)
-                    + count_reads(&for_loop.body, name)
-            }
-            Statement::While(while_loop) => {
-                in_expression(&while_loop.condition) + count_reads(&while_loop.body, name)
-            }
-            Statement::Match(match_stmt) => {
-                in_expression(&match_stmt.value)
-                    + match_stmt
-                        .cases
-                        .iter()
-                        .map(|case| count_reads(&case.body, name))
-                        .sum::<usize>()
-            }
-            Statement::Execute(exec_block) => {
-                in_text(&format!("{:?}", exec_block.modifiers))
-                    + count_reads(&exec_block.body, name)
-            }
-            _ => 0,
-        };
-    }
+    visit_read_sites(body, &mut |site| match site {
+        ReadSite::Expression(expr) => {
+            let mut reads = Vec::new();
+            expression_reads(expr, &mut reads);
+            count += reads.into_iter().filter(|read| *read == name).count();
+        }
+        ReadSite::Text(text) => count += text.matches(placeholder.as_str()).count(),
+    });
     count
+}
+
+/// Every name `body` reads, as [`count_reads`] counts them, in one walk.
+pub(in crate::transpiler) fn read_names(body: &[Statement]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    visit_read_sites(body, &mut |site| match site {
+        ReadSite::Expression(expr) => {
+            let mut reads = Vec::new();
+            expression_reads(expr, &mut reads);
+            names.extend(reads.into_iter().map(str::to_string));
+        }
+        ReadSite::Text(text) => {
+            let mut rest = text;
+            while let Some(open) = rest.find('{') {
+                rest = &rest[open + 1..];
+                let end = rest
+                    .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .unwrap_or(rest.len());
+                if end > 0 && rest[end..].starts_with('}') {
+                    names.insert(rest[..end].to_string());
+                }
+            }
+        }
+    });
+    names
 }
 
 /// The targets of every `for` loop in `body`. Nested function definitions

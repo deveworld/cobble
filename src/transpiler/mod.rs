@@ -16,6 +16,7 @@ mod module_init;
 mod placeholders;
 pub(crate) mod resource_format;
 mod resource_references;
+pub(crate) mod scoped;
 mod score_holders;
 mod snbt_text;
 mod source_map;

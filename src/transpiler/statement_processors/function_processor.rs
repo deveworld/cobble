@@ -2,7 +2,6 @@ use crate::ast::{CobbleType, Expression, FunctionDef, IfStatement, Statement};
 use crate::fs_safety::MAX_FILE_NAME_BYTES;
 use crate::transpiler::function_context::unbound_local_message;
 use crate::transpiler::score_holders::{rename_holders, written_holders};
-use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{
     FunctionContext, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, ReturnContext,
     SourceLocation, TranspileError, TranspileErrorKind, Transpiler,
@@ -88,7 +87,7 @@ impl Transpiler {
         let previous_context = self.current_context.clone();
         let previous_return = self.current_return.clone();
         let previous_function_name = self.current_function_name.take();
-        let previous_symbols = self.symbols.clone();
+        let symbols_mark = self.symbols.open_scope();
         let functions_mark = self.data_pack.created_functions.len();
 
         // Parameters and local variables hide module variables and constants
@@ -149,12 +148,17 @@ impl Transpiler {
 
         // Process function body
         for statement in &func.body {
-            self.process_statement(statement)?;
+            if let Err(error) = self.process_statement(statement) {
+                self.symbols.keep_scope(symbols_mark);
+                return Err(error);
+            }
         }
         // A read inside an unrolled loop is lowered from a copy of its
         // statement, so it is reported here.
         if let Some(read) = &self.current_context.unbound_read {
-            return Err(unbound_local_message(&read.name, &func.name).into());
+            let error = unbound_local_message(&read.name, &func.name).into();
+            self.symbols.keep_scope(symbols_mark);
+            return Err(error);
         }
         // A local whose assignments were never lowered, such as one in a
         // branch the compiler drops, warns at the `def` line.
@@ -186,6 +190,7 @@ impl Transpiler {
             if self.data_pack.functions.contains_key(&func.name)
                 && !self.data_pack.user_functions.contains(&func.name)
             {
+                self.symbols.keep_scope(symbols_mark);
                 return Err(
                     generated_name_collision(&func.name).with_location_if_missing(def_source)
                 );
@@ -205,16 +210,10 @@ impl Transpiler {
         self.current_function_name = previous_function_name;
         // Variables assigned in the body don't outlive it. Constants,
         // selector aliases, and entity templates it declares stay visible.
-        let Symbols {
-            mut compile_time_constants,
-            selector_aliases,
-            entity_templates,
-            ..
-        } = std::mem::replace(&mut self.symbols, previous_symbols);
-        compile_time_constants.extend(shadowed_constants);
-        self.symbols.compile_time_constants = compile_time_constants;
-        self.symbols.selector_aliases = selector_aliases;
-        self.symbols.entity_templates = entity_templates;
+        self.symbols.end_function_scope(symbols_mark);
+        self.symbols
+            .compile_time_constants
+            .extend(shadowed_constants);
 
         let created = self.data_pack.created_functions[functions_mark..].to_vec();
         self.localize_function(&func.name, &locals, &created);

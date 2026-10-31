@@ -1,39 +1,42 @@
 use crate::ast::{CobbleType, EntityDef, Expression};
 use crate::transpiler::container_writes::ContainerWrites;
+use crate::transpiler::scoped::{Mark, ScopedMap, ScopedSet};
 use crate::transpiler::{FunctionReturnKind, SourceLocation};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// What each name in the program refers to. Variables are module-wide
-/// scores or storage paths; a function saves and restores parts of this
-/// around its body (see `process_function_def`).
+/// scores or storage paths; a function restores parts of this after its
+/// body (see `process_function_def`). The tables a body can change undo
+/// their changes back to a mark (see [`Symbols::open_scope`]) instead of
+/// being copied.
 #[derive(Clone, Default)]
 pub(in crate::transpiler) struct Symbols {
     /// The last value assigned to each variable.
-    pub(in crate::transpiler) variables: HashMap<String, Expression>,
+    pub(in crate::transpiler) variables: ScopedMap<String, Expression>,
     /// The objective that holds each score variable.
-    pub(in crate::transpiler) variable_objectives: HashMap<String, String>,
+    pub(in crate::transpiler) variable_objectives: ScopedMap<String, String>,
     /// Variables backed by a score.
-    pub(in crate::transpiler) scoreboard_variables: HashSet<String>,
+    pub(in crate::transpiler) scoreboard_variables: ScopedSet<String>,
     /// Storage path of each list, map, or string variable, such as
     /// `vars.items` for `items`.
-    pub(in crate::transpiler) variable_storage_paths: HashMap<String, String>,
-    pub(in crate::transpiler) variable_types: HashMap<String, CobbleType>,
-    pub(in crate::transpiler) compile_time_constants: HashMap<String, f64>,
+    pub(in crate::transpiler) variable_storage_paths: ScopedMap<String, String>,
+    pub(in crate::transpiler) variable_types: ScopedMap<String, CobbleType>,
+    pub(in crate::transpiler) compile_time_constants: ScopedMap<String, f64>,
     /// Names declared `global` in the current function.
-    pub(in crate::transpiler) global_variables: HashSet<String>,
+    pub(in crate::transpiler) global_variables: ScopedSet<String>,
     /// `@Name = @a[...]` definitions.
-    pub(in crate::transpiler) selector_aliases: HashMap<String, String>,
-    pub(in crate::transpiler) entity_templates: HashMap<String, EntityDef>,
+    pub(in crate::transpiler) selector_aliases: ScopedMap<String, String>,
+    pub(in crate::transpiler) entity_templates: ScopedMap<String, EntityDef>,
     /// Names assigned at module level in any compiled file. A function
     /// assigning one of them without `global` gets a local variable instead.
     pub(in crate::transpiler) module_variables: BTreeSet<String>,
     /// Module variables recorded ahead of their module-level assignment, so
     /// function bodies above it can use them. Module-level code that runs
     /// before the assignment can't.
-    pub(in crate::transpiler) pending_module_declarations: HashSet<String>,
+    pub(in crate::transpiler) pending_module_declarations: ScopedSet<String>,
     /// Module variables whose type only their module-level assignment can
     /// decide, before that assignment is lowered.
-    pub(in crate::transpiler) late_module_declarations: HashSet<String>,
+    pub(in crate::transpiler) late_module_declarations: ScopedSet<String>,
     /// What the program writes into lists and maps, collected before any
     /// statement is lowered (see `container_writes.rs`).
     pub(in crate::transpiler) container_writes: ContainerWrites,
@@ -43,7 +46,96 @@ pub(in crate::transpiler) struct Symbols {
     pub(in crate::transpiler) minecraft_conditions: HashMap<String, String>,
 }
 
+/// The marks of a scope opened by [`Symbols::open_scope`].
+pub(in crate::transpiler) struct SymbolsMark {
+    variables: Mark,
+    variable_objectives: Mark,
+    scoreboard_variables: Mark,
+    variable_storage_paths: Mark,
+    variable_types: Mark,
+    compile_time_constants: Mark,
+    global_variables: Mark,
+    selector_aliases: Mark,
+    entity_templates: Mark,
+    pending_module_declarations: Mark,
+    late_module_declarations: Mark,
+}
+
 impl Symbols {
+    /// Opens a scope over the tables a body can change. `module_variables`
+    /// and `container_writes` are filled in before any statement is
+    /// lowered, and `minecraft_conditions` is restored where it is set.
+    pub(in crate::transpiler) fn open_scope(&mut self) -> SymbolsMark {
+        SymbolsMark {
+            variables: self.variables.open(),
+            variable_objectives: self.variable_objectives.open(),
+            scoreboard_variables: self.scoreboard_variables.open(),
+            variable_storage_paths: self.variable_storage_paths.open(),
+            variable_types: self.variable_types.open(),
+            compile_time_constants: self.compile_time_constants.open(),
+            global_variables: self.global_variables.open(),
+            selector_aliases: self.selector_aliases.open(),
+            entity_templates: self.entity_templates.open(),
+            pending_module_declarations: self.pending_module_declarations.open(),
+            late_module_declarations: self.late_module_declarations.open(),
+        }
+    }
+
+    /// Undoes every change since `mark`.
+    pub(in crate::transpiler) fn undo_scope(&mut self, mark: SymbolsMark) {
+        self.undo_variables(&mark);
+        self.compile_time_constants
+            .undo_to(mark.compile_time_constants);
+        self.selector_aliases.undo_to(mark.selector_aliases);
+        self.entity_templates.undo_to(mark.entity_templates);
+    }
+
+    /// Undoes the variables a function body assigned since `mark`, and
+    /// keeps the constants, selector aliases, and entity templates it
+    /// declared.
+    pub(in crate::transpiler) fn end_function_scope(&mut self, mark: SymbolsMark) {
+        self.undo_variables(&mark);
+        self.compile_time_constants
+            .keep_from(mark.compile_time_constants);
+        self.selector_aliases.keep_from(mark.selector_aliases);
+        self.entity_templates.keep_from(mark.entity_templates);
+    }
+
+    /// Keeps every change since `mark`, as when lowering stopped with an
+    /// error.
+    pub(in crate::transpiler) fn keep_scope(&mut self, mark: SymbolsMark) {
+        self.variables.keep_from(mark.variables);
+        self.variable_objectives.keep_from(mark.variable_objectives);
+        self.scoreboard_variables
+            .keep_from(mark.scoreboard_variables);
+        self.variable_storage_paths
+            .keep_from(mark.variable_storage_paths);
+        self.variable_types.keep_from(mark.variable_types);
+        self.compile_time_constants
+            .keep_from(mark.compile_time_constants);
+        self.global_variables.keep_from(mark.global_variables);
+        self.selector_aliases.keep_from(mark.selector_aliases);
+        self.entity_templates.keep_from(mark.entity_templates);
+        self.pending_module_declarations
+            .keep_from(mark.pending_module_declarations);
+        self.late_module_declarations
+            .keep_from(mark.late_module_declarations);
+    }
+
+    fn undo_variables(&mut self, mark: &SymbolsMark) {
+        self.variables.undo_to(mark.variables);
+        self.variable_objectives.undo_to(mark.variable_objectives);
+        self.scoreboard_variables.undo_to(mark.scoreboard_variables);
+        self.variable_storage_paths
+            .undo_to(mark.variable_storage_paths);
+        self.variable_types.undo_to(mark.variable_types);
+        self.global_variables.undo_to(mark.global_variables);
+        self.pending_module_declarations
+            .undo_to(mark.pending_module_declarations);
+        self.late_module_declarations
+            .undo_to(mark.late_module_declarations);
+    }
+
     /// The objective of the score behind `name`, when a score holds it.
     pub(in crate::transpiler) fn scoreboard_objective(&self, name: &str) -> Option<&str> {
         if self.scoreboard_variables.contains(name)

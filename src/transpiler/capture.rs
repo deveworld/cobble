@@ -1,5 +1,5 @@
 use crate::ast::Statement;
-use crate::transpiler::symbols::Symbols;
+use crate::transpiler::symbols::SymbolsMark;
 use crate::transpiler::{
     FunctionContext, GeneratedCommand, GeneratedCommandKind, TranspileError, Transpiler,
 };
@@ -17,7 +17,7 @@ pub(in crate::transpiler) struct SavedFunctionCapture {
 
 pub(in crate::transpiler) struct SavedCompilerState {
     current_context: FunctionContext,
-    symbols: Symbols,
+    symbols: SymbolsMark,
 }
 
 impl FunctionCapture {
@@ -117,16 +117,16 @@ impl Transpiler {
         self.current_function_metadata = saved.metadata;
     }
 
-    pub(in crate::transpiler) fn save_compiler_state(&self) -> SavedCompilerState {
+    pub(in crate::transpiler) fn save_compiler_state(&mut self) -> SavedCompilerState {
         SavedCompilerState {
             current_context: self.current_context.clone(),
-            symbols: self.symbols.clone(),
+            symbols: self.symbols.open_scope(),
         }
     }
 
     pub(in crate::transpiler) fn restore_compiler_state(&mut self, saved: SavedCompilerState) {
         self.current_context = saved.current_context;
-        self.symbols = saved.symbols;
+        self.symbols.undo_scope(saved.symbols);
     }
 
     pub(in crate::transpiler) fn add_captured_function(
