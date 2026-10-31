@@ -225,3 +225,67 @@ def main():
     sim.call("main");
     assert_eq!(chat(&sim), ["3 3 a"]);
 }
+
+// --- `in` beside a Minecraft condition ---
+
+const MIXED_IN: &str = r#"names = ["Steve", "Alex"]
+def main():
+    x = 5
+    if entity @a and x in [1, 5]:
+        /say A
+    if entity @a and "Steve" in names:
+        /say B
+    if entity @a and "Bo" not in names:
+        /say C
+    if entity @a and x not in [1, 5]:
+        /say WRONG-D
+    unless entity @a or "Bo" in names:
+        /say E
+    if entity @a or x in [2]:
+        /say F
+"#;
+
+#[test]
+fn in_beside_a_minecraft_condition_tests_membership() {
+    let mut sim = Sim::load(MIXED_IN, &["Alex"]);
+    sim.call("main");
+    assert_eq!(chat(&sim), ["A", "B", "C", "F"]);
+
+    // With no one online, only the `unless` passes.
+    let mut sim = Sim::load(MIXED_IN, &[]);
+    sim.call("main");
+    assert_eq!(chat(&sim), ["E"]);
+}
+
+#[test]
+fn in_beside_a_per_entity_minecraft_condition_is_a_compile_error() {
+    let error = compile_error(
+        "names = [\"Steve\"]\ndef main():\n    as @a if entity @s[tag=x] and \"Steve\" in names:\n        /say hi\n",
+    );
+    assert!(error.contains("main.cbl:3"), "{error}");
+    assert!(
+        error.contains("Test it with an `if` inside the block"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_undefined_name_after_in_beside_a_minecraft_condition_is_reported() {
+    let error =
+        compile_error("def main():\n    if entity @a and \"Steve\" in nobody:\n        /say hi\n");
+    assert!(error.contains("Undefined variable `nobody`"), "{error}");
+    assert!(error.contains("main.cbl:2"), "{error}");
+}
+
+#[test]
+fn a_dimension_after_a_mixed_condition_stays_an_execute_modifier() {
+    let (_temp, output) = compile(
+        "def main():\n    ready = 1\n    if entity @a and ready in minecraft:the_nether:\n        /say hi\n",
+    )
+    .unwrap();
+    let main = common::mcsim::load_functions(&output)["main"].join("\n");
+    assert!(
+        main.contains(" in minecraft:the_nether run say hi"),
+        "{main}"
+    );
+}

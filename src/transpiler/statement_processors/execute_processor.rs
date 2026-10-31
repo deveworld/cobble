@@ -1,6 +1,8 @@
 use crate::ast::*;
 use crate::transpiler::command_processor::expand_selector_aliases;
-use crate::transpiler::condition_lowering::{mask_minecraft_conditions, RAW_CONDITION_KEYWORDS};
+use crate::transpiler::condition_lowering::{
+    mask_minecraft_conditions, merged_execute_in_condition, RAW_CONDITION_KEYWORDS,
+};
 use crate::transpiler::condition_translator::{
     condition_clauses, negate_clause, TranslatedCondition,
 };
@@ -193,7 +195,30 @@ impl Transpiler {
             deferred: Vec::new(),
             has_macro_params: false,
         };
+        let mut merged_condition: Option<ExecuteModifier> = None;
         for (index, modifier) in modifiers.iter().enumerate() {
+            if merged_condition.take().is_some() {
+                // The `in` of a condition merged into the one before it.
+                continue;
+            }
+            // `if entity @a and x in items:` reads as `if entity @a and x`
+            // and the modifier `in items`: the `in` is the operator of the
+            // Python operand before it.
+            if let (
+                ExecuteModifier::IfRaw(value) | ExecuteModifier::UnlessRaw(value),
+                Some(ExecuteModifier::In(container)),
+            ) = (modifier, modifiers.get(index + 1))
+            {
+                if let Some(merged) = merged_execute_in_condition(value, container) {
+                    merged_condition = Some(modifier.clone());
+                    if matches!(modifier, ExecuteModifier::IfRaw(_)) {
+                        self.push_execute_if(&mut chain, &merged)?;
+                    } else {
+                        self.push_execute_unless(&mut chain, &merged)?;
+                    }
+                    continue;
+                }
+            }
             // `if x in items:` reads as `if x` and the modifier `in items`.
             if let (
                 ExecuteModifier::IfRaw(value) | ExecuteModifier::UnlessRaw(value),
@@ -351,7 +376,7 @@ impl Transpiler {
             &mut self.symbols.minecraft_conditions,
             conditions.iter().cloned().collect(),
         );
-        let captured = self.capture_execute_python_condition(chain, &masked);
+        let captured = self.capture_lowered_mixed_condition(chain, &masked, condition);
         self.symbols.minecraft_conditions = saved;
         let Some(translated) = captured? else {
             return Err(format!(
@@ -362,6 +387,56 @@ impl Transpiler {
             )
             .into());
         };
+        Ok(Some(translated))
+    }
+
+    /// A mixed condition whose Python part takes statements to compute, as
+    /// `entity @a and x in [1, 5]`: the statements run first, under the
+    /// modifiers collected so far, with the right side of `and`/`or` in a
+    /// branch so it runs only when needed. Under `as`, those statements
+    /// would share one result between the entities, so that is an error.
+    /// Other conditions translate as usual.
+    fn capture_lowered_mixed_condition(
+        &mut self,
+        chain: &mut ExecuteChain,
+        masked: &str,
+        condition: &str,
+    ) -> Result<Option<TranslatedCondition>, TranspileError> {
+        let (masked_tokens, operand_tokens) = Self::mask_condition_operand_tokens(masked);
+        let expression = Self::parse_raw_condition_expression(&masked_tokens)
+            .filter(|expression| self.needs_lowering(expression));
+        let Some(expression) = expression else {
+            return self.capture_execute_python_condition(chain, masked);
+        };
+        if Self::has_as_modifier(&chain.parts) {
+            return Err(format!(
+                "Unsupported condition `{}`: under `as`, an execute header can't compute `in`, a join, or another value that takes commands. Test it with an `if` inside the block.",
+                condition.trim()
+            )
+            .into());
+        }
+        let (translated, mut capture) = self
+            .capture_commands_with_result(|transpiler| {
+                let mut statements = Vec::new();
+                let value = transpiler.lower_value(&expression, &mut statements)?;
+                for statement in &statements {
+                    transpiler.process_statement(statement)?;
+                }
+                let processed = transpiler.preprocess_condition(&value)?;
+                transpiler.translate_condition(&processed)
+            })
+            .map_err(|error| Self::restore_condition_operand_tokens(error, &operand_tokens))?;
+        let mut translated = Self::fold_always_false_conditions(translated);
+        for (placeholder, original) in &operand_tokens {
+            translated.map_simple(&|text| text.replace(placeholder.as_str(), original));
+            for command in &mut capture.commands {
+                *command = command.replace(placeholder, original);
+            }
+            for generated in capture.metadata.values_mut() {
+                generated.text = generated.text.replace(placeholder, original);
+            }
+        }
+        self.append_scoped_execute_capture(capture, &chain.parts, &mut chain.has_macro_params)?;
         Ok(Some(translated))
     }
 

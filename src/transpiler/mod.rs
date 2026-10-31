@@ -46,7 +46,9 @@ use std::path::PathBuf;
 use stdlib_modules::StdlibState;
 use symbols::{FunctionTable, Symbols};
 
-pub(crate) use condition_lowering::{mask_minecraft_conditions, raw_minecraft_condition_verdict};
+pub(crate) use condition_lowering::{
+    mask_minecraft_conditions, merged_execute_in_condition, raw_minecraft_condition_verdict,
+};
 pub(crate) use function_context::function_locals;
 pub use function_context::module_variables_made_local;
 

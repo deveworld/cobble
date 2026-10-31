@@ -124,6 +124,15 @@ execute if entity @a[tag=winner] if score level mypack.vars matches 4.. run say 
 execute unless entity @a[tag=winner] run say nobody won
 ```
 
+A Cobble operand beside a Minecraft condition may also call a function, test
+`in` or `not in`, or join text, as in `if entity @a and name in names:`. Its
+commands run before the test, and the right side of `and` or `or` runs only
+when the left side doesn't decide the result. After `as` in the same header,
+`in` or a join would compute one result for all the entities, so it is a
+compile error there; test it with an `if` inside the block. A word after `in`
+that names a dimension, as `minecraft:the_nether` or `the_end`, is still the
+`in` modifier.
+
 An `if` whose condition is a Minecraft condition, such as
 `if entity @s[tag=special]:`, runs as an execute block, so it can't have
 `elif` or `else`. Store the test in a variable and branch on that:

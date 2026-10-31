@@ -1702,12 +1702,20 @@ fn collect_reference_line_scans(
 /// conditions, as in `entity @a and x > 3`, read as `True`.
 fn execute_python_conditions(block: &crate::ast::ExecuteBlock) -> Vec<String> {
     use crate::ast::ExecuteModifier;
-    block
-        .modifiers
+    let modifiers = &block.modifiers;
+    modifiers
         .iter()
-        .filter_map(|modifier| match modifier {
+        .enumerate()
+        .filter_map(|(index, modifier)| match modifier {
             ExecuteModifier::IfRaw(condition) | ExecuteModifier::UnlessRaw(condition) => {
-                Some(condition.trim())
+                // `entity @a and x in items` reaches here split at `in`.
+                match modifiers.get(index + 1) {
+                    Some(ExecuteModifier::In(container)) => {
+                        crate::transpiler::merged_execute_in_condition(condition, container)
+                    }
+                    _ => None,
+                }
+                .or_else(|| Some(condition.trim().to_string()))
             }
             _ => None,
         })
@@ -1716,7 +1724,6 @@ fn execute_python_conditions(block: &crate::ast::ExecuteBlock) -> Vec<String> {
                 && (crate::transpiler::mask_minecraft_conditions(condition).is_some()
                     || crate::transpiler::raw_minecraft_condition_verdict(condition) != Some(true))
         })
-        .map(str::to_string)
         .collect()
 }
 
@@ -1727,15 +1734,18 @@ fn execute_condition_spans(trimmed: &str, conditions: &[String]) -> Vec<Expressi
     let mut spans = Vec::new();
     let mut from = 0;
     for condition in conditions {
-        let Some(found) = trimmed[from..].find(condition.as_str()) else {
+        // The line is masked, so a condition holding text is found masked.
+        let masked = mask_non_code(condition);
+        let Some(found) = trimmed[from..].find(masked.as_str()) else {
             continue;
         };
         let offset = from + found;
-        from = offset + condition.len();
-        let mut text = condition.clone();
+        from = offset + masked.len();
+        let mut text = masked;
         if let Some((_, minecraft)) = crate::transpiler::mask_minecraft_conditions(condition) {
             let mut at = 0;
             for (_, part) in minecraft {
+                let part = mask_non_code(&part);
                 if let Some(found) = text[at..].find(&part) {
                     let start = at + found;
                     let filler = format!("{:<width$}", "True", width = part.len());

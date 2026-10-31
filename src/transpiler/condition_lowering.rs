@@ -98,6 +98,31 @@ pub(crate) fn mask_minecraft_conditions(
         .then_some((masked, conditions))
 }
 
+/// The parser reads `if entity @a and x in items:` as the condition
+/// `entity @a and x` and the modifier `in items`. When the condition before
+/// `in` is a mixed condition and what follows is no dimension, the `in` is
+/// the Python operator: returns the whole condition.
+pub(crate) fn merged_execute_in_condition(condition: &str, container: &str) -> Option<String> {
+    let container = container.trim();
+    let is_path = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'_' | b'-' | b'.' | b'/')
+            })
+    };
+    let is_dimension = match container.split_once(':') {
+        Some((namespace, path)) => is_path(namespace) && is_path(path),
+        None => matches!(container, "overworld" | "the_nether" | "the_end"),
+    };
+    if is_dimension {
+        return None;
+    }
+    let merged = format!("{} in {}", condition.trim(), container);
+    mask_minecraft_conditions(&merged).map(|_| merged)
+}
+
 /// The byte offset where the operand at the start of `text` ends: at the
 /// next ` and ` or ` or `, or a `)` it didn't open, outside brackets and
 /// quotes.

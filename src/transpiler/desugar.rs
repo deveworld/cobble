@@ -277,7 +277,7 @@ impl Transpiler {
     }
 
     /// Whether `expr` holds a form this module lowers.
-    fn needs_lowering(&self, expr: &Expression) -> bool {
+    pub(in crate::transpiler) fn needs_lowering(&self, expr: &Expression) -> bool {
         let lowers = match expr {
             Expression::Conditional(..) | Expression::Slice(..) => true,
             Expression::Binary(_, BinaryOp::In | BinaryOp::NotIn, _) => true,
@@ -992,7 +992,7 @@ impl Transpiler {
 
     /// `expr` without the forms this module lowers. Statements that compute
     /// a part go to `out`, which runs before `expr`.
-    fn lower_value(
+    pub(in crate::transpiler) fn lower_value(
         &mut self,
         expr: &Expression,
         out: &mut Vec<Statement>,
