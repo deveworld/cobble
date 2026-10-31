@@ -969,12 +969,47 @@ fn in_text_string(chars: &[char]) -> bool {
         return false;
     };
     let key = key.trim_end();
-    key.ends_with("\"text\"")
-        || key.ends_with("'text'")
-        || key.ends_with("text")
-            && !key
-                .trim_end_matches("text")
-                .ends_with(|c: char| c.is_alphanumeric() || c == '_')
+    if ends_with_key(key, "text") {
+        return true;
+    }
+    // The hover text of `show_text`: `value` in a `hover_event` object.
+    // Only `show_text` has a `value` there.
+    ends_with_key(key, "value")
+        && enclosing_object_start(key)
+            .and_then(|start| before[..start].trim_end().strip_suffix(':'))
+            .is_some_and(|outer| ends_with_key(outer.trim_end(), "hover_event"))
+}
+
+/// Whether `text` ends with the object key `key`, quoted or bare.
+fn ends_with_key(text: &str, key: &str) -> bool {
+    text.ends_with(&format!("\"{key}\""))
+        || text.ends_with(&format!("'{key}'"))
+        || text.strip_suffix(key).is_some_and(|rest| {
+            !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '"' || c == '\'')
+        })
+}
+
+/// The byte offset of the `{` that opens the object `text` ends inside.
+fn enclosing_object_start(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let bytes = text.as_bytes();
+    for index in (0..bytes.len()).rev() {
+        let byte = bytes[index];
+        let escaped = index > 0 && bytes[index - 1] == b'\\';
+        if byte == b'"' && !escaped {
+            in_string = !in_string;
+        } else if in_string {
+        } else if byte == b'}' || byte == b']' {
+            depth += 1;
+        } else if byte == b'{' || byte == b'[' {
+            if depth == 0 {
+                return (byte == b'{').then_some(index);
+            }
+            depth -= 1;
+        }
+    }
+    None
 }
 
 fn is_inside_quotes(chars: &[char]) -> bool {

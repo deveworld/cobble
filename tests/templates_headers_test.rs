@@ -369,6 +369,37 @@ def main():
 }
 
 #[test]
+fn a_parameter_in_hover_text_is_shown_from_storage() {
+    let functions = functions(
+        r#"
+def hover(note):
+    /tellraw @a {"text":"hover","hover_event":{"action":"show_text","value":"{note}"}}
+    /tellraw @a {text:"snbt",hover_event:{value:"{note}",action:"show_text"}}
+    /tellraw @a {"text":"click","click_event":{"action":"copy_to_clipboard","value":"{note}"}}
+
+def main():
+    hover("say \"hi\"")
+"#,
+    );
+    let hover = functions["hover"].join("\n");
+    let tellraws: Vec<&str> = hover
+        .lines()
+        .filter(|line| line.contains("tellraw"))
+        .collect();
+    assert_eq!(tellraws.len(), 3, "{hover}");
+    for line in &tellraws[..2] {
+        assert!(!line.contains("$(note)"), "{line}");
+        assert!(line.contains(r#""nbt":"_text.note""#), "{line}");
+    }
+    // A click event takes the value as it is.
+    assert!(
+        tellraws[2].starts_with("$tellraw") && tellraws[2].contains(r#""value":"$(note)""#),
+        "{}",
+        tellraws[2]
+    );
+}
+
+#[test]
 fn an_escaped_name_is_text_next_to_a_variable() {
     let mut sim = Sim::load(
         r#"
