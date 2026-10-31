@@ -65,5 +65,6 @@ lists them under Diagnostics.
 - `datapack-resource-format`: [Data Pack Resources](../stdlib/datapack-resources.md).
 - `resource-pack-*` kinds: [Resource Packs](../stdlib/resource-packs.md#diagnostics).
 - `temp-objective-reference`, `say-variable-text`, `load-function-tag`,
-  `entity-template-tag`, and `item-model-definition` in `cobble migrate`:
+  `function-tag-order`, `brace-escape`, `entity-template-tag`, and
+  `item-model-definition` in `cobble migrate`:
   [Upgrading](../upgrading.md#010-to-011).

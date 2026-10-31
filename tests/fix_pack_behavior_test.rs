@@ -506,6 +506,12 @@ def show():
 
 datapack.function_tag("minecraft:load", ["main:show"])
 resource_pack.item_model("main:wand", {"parent": "minecraft:item/handheld"})
+datapack.function_tag("main:order", ["main:show"])
+
+def braces(n):
+    /summon pig ~ ~ ~ {{Tags:["{n}"]}}
+    /say {{{n}}}
+    /say {{plain}}
 "#,
     )
     .unwrap();
@@ -546,6 +552,10 @@ resource_pack.item_model("main:wand", {"parent": "minecraft:item/handheld"})
             (18, 35, "temp-objective-reference".to_string()),
             (20, 1, "load-function-tag".to_string()),
             (21, 1, "item-model-definition".to_string()),
+            (22, 1, "function-tag-order".to_string()),
+            (25, 5, "brace-escape".to_string()),
+            (26, 5, "brace-escape".to_string()),
+            (26, 5, "say-variable-text".to_string()),
         ],
         "{report}"
     );

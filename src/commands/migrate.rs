@@ -1270,9 +1270,32 @@ fn output_change_notes(raw_line: &str) -> Vec<(usize, &'static str, &'static str
                 column,
                 "load-function-tag",
                 "The load handler that creates this pack's objectives now runs before these \
-                 `minecraft:load` entries (since 0.11).",
+                 `minecraft:load` entries, and the entries and event listeners run in source \
+                 order (since 0.11).",
             ));
         }
+    }
+    for needle in ["datapack.function_tag(\"", "datapack.function_tag('"] {
+        for column in match_columns(raw_line, needle) {
+            let rest = &raw_line[column - 1 + needle.len()..];
+            if rest.starts_with("minecraft:load") {
+                continue;
+            }
+            notes.push((
+                column,
+                "function-tag-order",
+                "A function tag now keeps the order its values were declared in, which is the \
+                 order Minecraft runs them; earlier versions sorted them (since 0.11).",
+            ));
+        }
+    }
+    if trimmed.starts_with('/') && changes_with_python_brace_escapes(trimmed) {
+        notes.push((
+            leading + 1,
+            "brace-escape",
+            "`{{` and `}}` now follow Python format strings (since 0.11): escapes nest, and a \
+             placeholder between them is filled in.",
+        ));
     }
     if trimmed.starts_with("define @")
         && trimmed.split(['[', ',', ']']).any(|arg| {
@@ -1297,6 +1320,19 @@ fn output_change_notes(raw_line: &str) -> Vec<(usize, &'static str, &'static str
         ));
     }
     notes
+}
+
+/// Whether a raw command reads differently now that `{{` and `}}` follow
+/// Python format strings: a run of three braces, or a `{name}` placeholder
+/// between an opening `{{` and a closing `}}`.
+fn changes_with_python_brace_escapes(command: &str) -> bool {
+    let (Some(open), Some(close)) = (command.find("{{"), command.rfind("}}")) else {
+        return false;
+    };
+    if command.contains("{{{") || command.contains("}}}") {
+        return true;
+    }
+    open + 2 <= close && has_simple_placeholder(&command[open + 2..close])
 }
 
 /// Whether `text` holds a `{name}` placeholder with a plain identifier.

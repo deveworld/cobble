@@ -29,7 +29,8 @@ cobble migrate --json
    the list shows where your pack reads or writes Cobble variables, which helps
    with step 3. It also marks the lines whose output changes for the reasons
    under [Other Output Changes](#other-output-changes): `say-variable-text`,
-   `load-function-tag`, `entity-template-tag`, and `item-model-definition`.
+   `load-function-tag`, `function-tag-order`, `brace-escape`,
+   `entity-template-tag`, and `item-model-definition`.
    `function-local-variable` marks each function that assigns a module
    variable without `global`; see
    [Function-Local Variables](#function-local-variables).
@@ -145,11 +146,20 @@ compile error; use Cobble's `return`. See
   `datapack.function_tag("minecraft:load", [...])` entry whose name sorted
   before that handler ran before the objectives existed, and the handler then
   reset module variables the entry had set. 0.11 moves the setup into its own
-  load function, `_cobble_init`, which runs first; the other load functions
-  keep their 0.10 order.
+  load function, `_cobble_init`, which runs first. After it, event listeners
+  and `datapack.function_tag("minecraft:load", ...)` entries run in the order
+  their statements appear in the source; 0.10 sorted them by name. `tick`
+  works the same way.
 - **Function tag order.** A function tag now keeps the order its values were
   declared in, which is the order Minecraft runs them; merged declarations are
-  appended in declaration order. Earlier versions sorted the values.
+  appended in declaration order and repeats are dropped. Earlier versions
+  sorted the values. `cobble migrate` marks each `datapack.function_tag` call
+  (`function-tag-order`).
+- **`{{` and `}}` in raw commands.** They now follow Python format strings:
+  `{{{x}}}` is `{`, the value of `x`, and `}`, escapes nest, and a placeholder
+  between `{{` and `}}` is filled in, so `/summon pig ~ ~ ~ {{Tags:["{n}"]}}`
+  gives `{Tags:["$(n)"]}`. 0.10 left such a placeholder as text. `cobble
+  migrate` marks the lines whose output changes (`brace-escape`).
 - **Command limit.** 0.10 set the gamerule `max_command_sequence_length` to
   1,000,000,000 in every pack. 0.11 sets it only in packs with a runtime loop
   (a `while` loop, or a `for` loop that is not expanded at compile time), a
@@ -182,6 +192,28 @@ compile error; use Cobble's `return`. See
   `execute unless entity @a[tag=x] unless entity @a[tag=y]`. Raw `if` and
   `unless` headers also stop splitting on `or` and `and` inside quotes and
   brackets, such as `@a[name="Tom and Jerry"]`.
+
+### New Compile Errors
+
+These programs compiled in 0.10 but did something other than what the source
+says, so 0.11 reports them:
+
+- The same module variable assigned at module level in two files. Each file
+  used to write the same score, so the last initializer won. Rename one, or
+  import it with `from other import name`.
+- A `def` whose name starts with `_cobble`, or that has the name of a helper
+  Cobble generates, such as `if_temp_0`. The two functions used to merge.
+- A variable, local, or joined string passed to a stdlib helper such as
+  `entity.tag_add(who, label)`. The helper wrote the variable's name into the
+  command. A parameter or a const still works.
+- A placeholder in an execute header, Minecraft condition, or selector alias
+  that isn't a parameter or a const. The function used to fail to load.
+- Module-level code that reads a module variable before its assignment.
+- A literal map key that is empty, `m[""]`, which Minecraft refuses.
+- `datapack.*` resources that a 26.3 server refuses to load: missing required
+  fields, unknown `minecraft:` ids, references to tags, functions, and
+  resources that neither Minecraft nor the pack defines, and the other rules
+  in [Data Pack Resources](stdlib/datapack-resources.md).
 
 ### Conditions, Parameters, And Evaluation Order
 
