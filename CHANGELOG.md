@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Number literals can have an exponent, as in `1e3`, `1E-3`, and `2.5e+2`, in
+  code and in `datapack.*` JSON.
+- `datapack.*` reports what stops a 26.3 server from loading a pack: missing
+  required fields, unknown `minecraft:` ids, conditions written as lists,
+  `#tags` inside id lists, shaped recipe patterns that don't match their keys,
+  recipe counts and categories, advancement requirements and display fields, and
+  references to tags, functions, and resources that neither Minecraft nor the
+  pack defines. See
+  [Data Pack Resources](https://deveworld.github.io/cobble/docs/stdlib/datapack-resources.html).
+- `and`, `or`, and `not` combine Minecraft conditions with each other and with
+  Cobble conditions, as in `if entity @a and x > 3:` and `if not entity @a:`.
+- `on`, `anchored`, `align`, `summon`, and `asat` take placeholders.
+- Any expression can be a map key, as in `box[cfg.key]` or `box[names[0]]`.
+- `cobble migrate` marks `datapack.function_tag` calls (`function-tag-order`)
+  and raw commands whose output changes with the new `{{` rules
+  (`brace-escape`).
+- `SOURCE_DATE_EPOCH` sets the build manifest's generation time, so two builds
+  of the same source give identical files.
 - A raw command in a `.cbl` file can go on in the next line after a trailing
   `\`, as in a `.mcfunction` file. See
   [Long Commands](https://deveworld.github.io/cobble/docs/language/commands.html#long-commands).
@@ -46,10 +64,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"required": False`.
 
 ### Changed
+- Function tags keep the order their values were declared in, which is the order
+  Minecraft runs them; merged declarations are appended in order and repeats are
+  dropped. In `minecraft:load` and `minecraft:tick`, event listeners and
+  `datapack.function_tag` entries run in source order, after `_cobble_init`.
+- `{{` and `}}` work as in a Python format string: they nest, and a placeholder
+  between them is filled in, so `{{Tags:["{n}"]}}` gives `{Tags:["$(n)"]}`.
+- stdlib helpers take a parameter as a macro argument and a const as its value.
+  Any other variable is a compile error instead of its name ending up in the
+  command.
+- A placeholder in an execute header, a Minecraft condition, or a selector alias
+  that isn't a parameter or a const is a compile error instead of a function
+  that fails to load.
+- A module variable defined at module level in two files is a compile error
+  naming both files.
+- A def named with the reserved `_cobble` prefix, or with the name of a
+  generated helper such as `if_temp_0`, is a compile error.
+- Module-level code that reads a module variable before its assignment is a
+  compile error.
+- A statement that nests more than 1000 levels deep is a parse error instead of
+  a stack overflow.
+- An empty runtime map key stores nothing and shows `<file>:<line>: a map key
+  can't be empty` in chat, because Minecraft can't store or read an empty key.
+- An advancement `entity` condition on a trigger that has none is a warning
+  instead of an error, and `"display": None` is accepted.
+- ZIP entries carry the time 1980-01-01 00:00, so a ZIP of the same pack is
+  byte-identical.
 - A plain number as a number provider, such as `compute default integer 5`, is
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- A subscript picks a map field for a text key and a list item for a number at
+  any depth, as in `tree[0][0][0][key]` or `grid[0][row][col]`, whatever else
+  the program assigns into the container. When neither the key's type nor the
+  container's is known, as for two parameters, the pack checks the key when it
+  runs. Reads, writes, `+=`, `in`, and `pop` all agree.
+- A value read from a field, a deep item, `pop()`, or unpacking keeps its type,
+  so `node = cfg.x` then `node[1]`, and `a, b = names` then `b + a`, work.
+- Indexing text held in a list or map, such as `cfg["s"][1]` or `names[0][i]`,
+  gives a character; `for` over such text yields its characters, and `*=`
+  repeats it.
+- `v[:1] + v[1:]` on a parameter joins lists or text instead of adding numbers,
+  comparing maps or lists gives 1 or 0, and `5 in m` is false for a map with the
+  key `"5"`.
+- A condition passed as an argument, a list item, or a map value gives 1 or 0,
+  and `and`/`or` over a list and a map reports the operands instead of an
+  internal variable.
+- Text joined with `+`, repeated with `*`, or passed to `str()` while the pack
+  runs keeps backslashes and double quotes, and so do runtime map keys and `in`.
+- A failed join, a read of a missing item or field, and `pop()` on an empty list
+  give 0 or empty text instead of a value from an earlier call or another join.
+- A function can use a module variable declared further down the file, or one
+  another function assigns under `global`.
+- The loop variable of a `for` over a literal list or range holds its last value
+  after the loop, a `global` loop variable changes the module variable, and the
+  body may assign it.
+- A runtime `for` over a list checks the list's length on each pass, as Python
+  does.
+- A `store` block around a call with arguments stores the call's result.
+- A fractional number passed to a parameter used only in command text arrives as
+  written; used as a value, it warns like `x = 1.5`.
+- Execute headers keep modifier words inside NBT paths, block states, and SNBT
+  (`x.in.y`, `[facing={facing}]`, `{on:1b}`), a variable named like a modifier
+  works (`as @a if on == 1`), and a number with a leading dot keeps its space
+  (`positioned 1.5 -60 .5`).
+- A `{CONST}` in a selector alias is filled in everywhere the alias is used.
+- Macro `title ... times` is no longer wrapped in a text component, a `tellraw`
+  or `title` line written with `$(name)` is kept as written, and selectors with
+  spaces in macro `tellraw` and `title` stay intact.
+- A parameter in show_text hover text is shown from storage, so quotes and
+  backslashes in it work.
+- `temp` names the pack's objective in `trigger`, item text components, inline
+  predicate `scores`, `datapack.*` resource JSON, and after a placeholder that
+  stands for a word.
+- Trailing U+00A0 and U+3000 stay at the end of raw commands, and `cobble fmt`
+  keeps them.
+- `datapack.dialog_tag` declarations with the same id are merged instead of
+  failing as a duplicate.
+- Whole numbers in `datapack.*` JSON keep their exact value up to 64 bits
+  instead of being clamped to 32 bits; a number JSON can't hold exactly is a
+  compile error.
+- A variable as a resource name is a compile error instead of naming the file
+  after the variable, and arithmetic in resource JSON is reported in Cobble
+  terms.
+- The source map keeps JSON resources whose number text differs from the printed
+  value, such as `0.50`, and raw commands continued with `\`; `build --validate`
+  names the output folder instead of the deleted staging folder.
+- Def names up to 244 bytes build; longer ones get an error naming the function.
+- An error in an augmented assignment such as `box[k] += 1` names its line, and
+  a warning for an out-of-range module variable points at its own line.
+- A `.cbl` file that starts with a UTF-8 byte order mark builds as `cobble fmt`
+  already read it.
+- Builds no longer slow down with the square of the size of the input: 30,000
+  defs, a 1 MB raw command, 100,000 placeholders on one line, and `--validate`
+  on a 100,000-line function each take about a second or less.
 - Score holders take everything up to a space, so names such as `#a>b` and `a:b`
   pass `--validate`.
 - `--validate` reads spaces the way Brigadier does: `give @s stone  1` is an
