@@ -405,7 +405,9 @@ that function from loading:
   `.`, and `+`, so `tag @s add my:tag` needs another name;
 - numbers with an exponent or a `+`, such as `1e3`, outside SNBT;
 - `waypoint` hex colors with a `#`, or with a number of digits other than 3 or 6;
-- a function file that ends after a `\`, which continues a line.
+- a function file that ends after a `\`, which continues a line, and a command
+  that a `\` and an empty line leave ending in a space, as in `kill @s `, unless
+  its last argument takes the space, as `say` does.
 
 Ids and tags of other namespaces, references into namespaces the pack doesn't
 have, and values with a `$(name)` placeholder aren't checked, so a mod or

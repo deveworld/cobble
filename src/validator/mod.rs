@@ -115,14 +115,23 @@ impl CommandValidator {
 
     /// Validate a single command string and retain the best-known error cursor.
     pub fn validate_command_detailed(&self, command: &str) -> Result<(), CommandValidationError> {
-        let trimmed = java_trim(command);
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        self.validate_trimmed_command(java_trim(command))
+    }
+
+    /// A command as Minecraft reads it after trimming each line of the file.
+    /// One continued by `\` and an empty line still ends in a space.
+    fn validate_trimmed_command(&self, command: &str) -> Result<(), CommandValidationError> {
+        if command.is_empty() || command.starts_with('#') {
             return Ok(()); // comment or empty
         }
 
-        let Some(macro_line) = trimmed.strip_prefix('$') else {
-            return self.walk_node(&self.root, &mut StringReader::new(trimmed), 0, None);
-        };
+        if !command.starts_with('$') {
+            return self.walk_node(&self.root, &mut StringReader::new(command), 0, None);
+        }
+        // The values of a macro line can end in an argument that takes a
+        // space at the end, as `say` does.
+        let trimmed = java_trim(command);
+        let macro_line = &trimmed[1..];
         Self::validate_macro_placeholders(trimmed)?;
         let mut reader = StringReader::for_macro_line(macro_line);
         self.walk_node(&self.root, &mut reader, 0, None)
@@ -178,7 +187,7 @@ impl CommandValidator {
                 position: command.len(),
             });
         }
-        self.validate_command_detailed(command)
+        self.validate_trimmed_command(command)
     }
 
     /// Validate all .mcfunction files in a datapack directory.
@@ -279,9 +288,19 @@ impl CommandValidator {
         depth: usize,
         spans: Option<&RefCell<PlaceholderSpans<'a>>>,
     ) -> Result<(), CommandValidationError> {
-        reader.skip_separator();
+        let separated = reader.skip_separator();
 
         if !reader.can_read() {
+            // Brigadier reads past a space only when something follows it.
+            if separated && !reader.is_macro_line() {
+                return Err(CommandValidationError {
+                    message: format!(
+                        "Incorrect argument for command at position {}: nothing follows the space at the end",
+                        reader.cursor() - 1
+                    ),
+                    position: reader.cursor() - 1,
+                });
+            }
             // The value of a placeholder can hold the rest of the command.
             if node.executable || reader.ends_in_macro() {
                 return Ok(());
@@ -1683,6 +1702,27 @@ mod tests {
         assert!(validator
             .validate_mcfunction("$say $(x) \\\n  b\n$say \\\n  $(x)\n")
             .is_empty());
+    }
+
+    #[test]
+    fn a_continued_line_can_end_in_a_space() {
+        // Minecraft doesn't trim a command joined from a line ending in ` \`
+        // and an empty line, and Brigadier reads past a space only when
+        // something follows it: a 26.3 server refuses `kill @s ` with
+        // "Incorrect argument for command at position 7".
+        let validator = targets_validator();
+        let errors = validator.validate_mcfunction("kill @s \\\n\n");
+        let [error] = errors.as_slice() else {
+            panic!("{errors:?}");
+        };
+        assert_eq!((error.command.as_str(), error.position), ("kill @s ", 7));
+        assert!(error.message.starts_with("Incorrect argument for command"));
+        assert_eq!(validator.validate_mcfunction("kill \\\n\n").len(), 1);
+        // A message takes the space, and a lone command is trimmed.
+        let validator = fixture_validator();
+        assert!(validator.validate_mcfunction("say a \\\n\n").is_empty());
+        assert_eq!(validator.validate_command("say a "), Ok(()));
+        assert_eq!(targets_validator().validate_command("kill @s "), Ok(()));
     }
 
     #[test]
