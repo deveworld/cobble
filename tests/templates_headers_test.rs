@@ -473,6 +473,58 @@ fn a_helper_rejects_a_value_known_only_at_run_time() {
 }
 
 #[test]
+fn temp_names_one_objective_everywhere() {
+    let mut sim = Sim::load(
+        r#"
+coins = 0
+
+def bump(op):
+    /scoreboard players {op} coins temp 1
+
+def main():
+    bump("add")
+    bump("add")
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("coins"), 2);
+    assert_eq!(
+        sim.function_text("bump"),
+        "$scoreboard players $(op) coins sim.vars 1"
+    );
+
+    let (_temp, output_dir) = compile(
+        r##"
+from stdlib import datapack
+
+datapack.predicate("has_one", {"type":"minecraft:int_value_check","value":{"type":"minecraft:score","target":{"type":"minecraft:fixed","name":"#x"},"score":"temp"},"test":1})
+
+def main():
+    /trigger temp set 1
+    /give @s stone[custom_name={"score":{"name":"x","objective":"temp"}}]
+    /execute if predicate {type:"minecraft:entity_scores",entity:"this",scores:{temp:1}} run say a
+"##,
+    )
+    .unwrap_or_else(|e| panic!("build failed: {e}"));
+    let predicate: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("data/sim/predicate/has_one.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(predicate["value"]["score"], "sim.vars");
+    let main = load_functions(&output_dir)
+        .remove("main")
+        .unwrap()
+        .join("\n");
+    assert_eq!(
+        main,
+        "trigger sim.vars set 1\n\
+         give @s stone[custom_name={\"score\":{\"name\":\"x\",\"objective\":\"sim.vars\"}}]\n\
+         execute if predicate {type:\"minecraft:entity_scores\",entity:\"this\",scores:{sim.vars:1}} run say a"
+    );
+}
+
+#[test]
 fn an_escaped_name_is_text_next_to_a_variable() {
     let mut sim = Sim::load(
         r#"

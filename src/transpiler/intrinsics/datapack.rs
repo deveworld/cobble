@@ -165,12 +165,14 @@ impl Transpiler {
             &json,
         )?;
         // A file can't hold a list, so a list becomes the sequence it means.
-        let json = match json {
+        let mut json = match json {
             serde_json::Value::Array(functions) => {
                 serde_json::json!({"type": "minecraft:sequence", "functions": functions})
             }
             json => json,
         };
+        // `temp` names the pack's objective here too, as in commands.
+        crate::transpiler::vars_objective::map_json(&mut json, &self.data_pack.vars_objective());
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode resource JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());

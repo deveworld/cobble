@@ -4,9 +4,14 @@
 //! variable objective `temp`. Every command that enters the data pack passes
 //! through [`map_command`], which rewrites `temp` to `<namespace>.vars` where a
 //! command expects an objective: `scoreboard` objective arguments, `execute`
-//! `if|unless score` and `store ... score` arguments, `scores={...}` selector
-//! filters, and score text components. Other text, such as chat messages or
-//! a fake player named `temp`, stays unchanged.
+//! `if|unless score` and `store ... score` arguments, `trigger`,
+//! `scores={...}` selector filters and `scores:{...}` predicate maps, and
+//! score text components and number providers, also inside an item's
+//! components. A macro placeholder that stands for a word, as `$(op)` in
+//! `scoreboard players $(op) x temp 1`, leaves the objective where it is
+//! for every word the placeholder can be. Other text, such as chat messages
+//! or a fake player named `temp`, stays unchanged. Resource JSON, such as a
+//! predicate, goes through [`map_json`].
 
 use std::borrow::Cow;
 
@@ -30,10 +35,8 @@ pub fn map_command<'a>(command: &'a str, target: &str) -> Cow<'a, str> {
 
     for &(start, end) in &tokens {
         let token = &command[start..end];
-        if token.starts_with('@') || token.starts_with('{') || token.starts_with('[') {
+        if token.contains(['[', '{']) {
             collect_scores_filters(token, start, &mut replacements);
-        }
-        if token.starts_with('{') || token.starts_with('[') {
             collect_component_objectives(token, start, &mut replacements);
         }
     }
@@ -120,6 +123,8 @@ fn collect_command(
             }
         }
     };
+    // A macro placeholder standing for a whole word, such as `$(op)`.
+    let placeholder = |index: usize| word(index).is_some_and(is_placeholder_word);
 
     match word(first) {
         Some("execute") => {
@@ -138,11 +143,18 @@ fn collect_command(
                                 objective(index + 6, out);
                                 index += 7;
                             }
+                            // `matches <range>` or an operator: after a
+                            // range comes the next subcommand, never `temp`.
+                            _ if placeholder(index + 4) => {
+                                objective(index + 6, out);
+                                index += 5;
+                            }
                             _ => index += 4,
                         }
                     }
                     "store"
-                        if matches!(word(index + 1), Some("result" | "success"))
+                        if (matches!(word(index + 1), Some("result" | "success"))
+                            || placeholder(index + 1))
                             && word(index + 2) == Some("score") =>
                     {
                         objective(index + 4, out);
@@ -155,9 +167,22 @@ fn collect_command(
         Some("return") if word(first + 1) == Some("run") => {
             collect_command(command, tokens, first + 2, out);
         }
+        Some("trigger") => objective(first + 1, out),
         Some("scoreboard") => match (word(first + 1), word(first + 2)) {
             (Some("players"), Some("set" | "add" | "remove" | "get" | "reset" | "enable")) => {
                 objective(first + 4, out);
+            }
+            // Every `players` subcommand but `display` has its objective
+            // fourth, and `operation` has its second seventh. `display`
+            // has a holder there, which would not be named `temp`.
+            (Some("players"), Some(_)) if placeholder(first + 2) => {
+                objective(first + 4, out);
+                objective(first + 7, out);
+            }
+            // `objectives add|remove|modify` name the objective third;
+            // `setdisplay` has a slot there, which is never `temp`.
+            (Some("objectives"), Some(_)) if placeholder(first + 2) => {
+                objective(first + 3, out);
             }
             (Some("players"), Some("operation")) => {
                 objective(first + 4, out);
@@ -172,12 +197,39 @@ fn collect_command(
     }
 }
 
-/// Rewrites `temp` keys inside `scores={...}` selector filters.
+/// Whether `word` is a macro placeholder and nothing else, as `$(op)`.
+fn is_placeholder_word(word: &str) -> bool {
+    word.strip_prefix("$(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .is_some_and(|name| !name.is_empty() && !name.contains(['(', ')']))
+}
+
+/// Rewrites `temp` keys inside `scores={...}` selector filters and the
+/// `scores:{...}` map of an `entity_scores` predicate.
 fn collect_scores_filters(token: &str, offset: usize, out: &mut Vec<(usize, usize)>) {
+    for (opener, separator) in [("scores={", b'='), ("scores:{", b':'), ("scores\":{", b':')] {
+        collect_scores_maps(token, offset, opener, separator, out);
+    }
+}
+
+fn collect_scores_maps(
+    token: &str,
+    offset: usize,
+    opener: &str,
+    separator: u8,
+    out: &mut Vec<(usize, usize)>,
+) {
     let bytes = token.as_bytes();
     let mut search = 0;
-    while let Some(found) = token[search..].find("scores={") {
-        let body_start = search + found + "scores={".len();
+    while let Some(found) = token[search..].find(opener) {
+        let key_start = search + found;
+        let body_start = key_start + opener.len();
+        // A key of its own, not the end of a longer name.
+        let before = token[..key_start].chars().next_back();
+        if before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            search = body_start;
+            continue;
+        }
         let mut depth = 1usize;
         let mut index = body_start;
         let mut entry_start = body_start;
@@ -186,11 +238,17 @@ fn collect_scores_filters(token: &str, offset: usize, out: &mut Vec<(usize, usiz
             match bytes[index] {
                 b'{' => depth += 1,
                 b'}' => depth -= 1,
-                b'=' if depth == 1 && !in_value => {
+                byte if byte == separator && depth == 1 && !in_value => {
                     let key = &token[entry_start..index];
                     let trimmed = key.trim();
-                    if trimmed == SOURCE_OBJECTIVE {
-                        let key_start = entry_start + (key.len() - key.trim_start().len());
+                    let unquoted = trimmed
+                        .strip_prefix(['"', '\''])
+                        .and_then(|rest| rest.strip_suffix(['"', '\'']))
+                        .unwrap_or(trimmed);
+                    if unquoted == SOURCE_OBJECTIVE {
+                        let key_start = entry_start
+                            + (key.len() - key.trim_start().len())
+                            + (trimmed.len() - unquoted.len()) / 2;
                         out.push((
                             offset + key_start,
                             offset + key_start + SOURCE_OBJECTIVE.len(),
@@ -207,6 +265,48 @@ fn collect_scores_filters(token: &str, offset: usize, out: &mut Vec<(usize, usiz
             index += 1;
         }
         search = index;
+    }
+}
+
+/// Rewrites `temp` in resource JSON as [`map_command`] does in commands:
+/// the `objective` of a score text component, the `score` of a score number
+/// provider, and the keys of a `scores` map.
+pub fn map_json(value: &mut serde_json::Value, target: &str) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, field) in object.iter_mut() {
+                match (key.as_str(), &mut *field) {
+                    ("objective" | "score", serde_json::Value::String(name))
+                        if name == SOURCE_OBJECTIVE =>
+                    {
+                        *name = target.to_string();
+                    }
+                    ("scores", serde_json::Value::Object(scores))
+                        if scores.contains_key(SOURCE_OBJECTIVE) =>
+                    {
+                        let mapped = std::mem::take(scores)
+                            .into_iter()
+                            .map(|(name, range)| {
+                                if name == SOURCE_OBJECTIVE {
+                                    (target.to_string(), range)
+                                } else {
+                                    (name, range)
+                                }
+                            })
+                            .collect();
+                        *scores = mapped;
+                    }
+                    _ => {}
+                }
+                map_json(field, target);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                map_json(item, target);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -335,6 +435,73 @@ mod tests {
         assert_eq!(
             map("tellraw @a {score:{name:'x',objective:temp}}"),
             "tellraw @a {score:{name:'x',objective:pack.vars}}"
+        );
+    }
+
+    #[test]
+    fn maps_trigger_items_and_predicate_scores() {
+        assert_eq!(map("trigger temp set 1"), "trigger pack.vars set 1");
+        assert_eq!(
+            map(r#"give @s stone[custom_name={"score":{"name":"x","objective":"temp"}}]"#),
+            r#"give @s stone[custom_name={"score":{"name":"x","objective":"pack.vars"}}]"#
+        );
+        assert_eq!(
+            map(
+                r#"execute if predicate {type:"minecraft:entity_scores",entity:"this",scores:{temp:1}} run say a"#
+            ),
+            r#"execute if predicate {type:"minecraft:entity_scores",entity:"this",scores:{pack.vars:1}} run say a"#
+        );
+        assert_eq!(
+            map(
+                r#"execute if predicate {"condition":"minecraft:entity_scores","scores":{"temp":{"min":1}}} run say a"#
+            ),
+            r#"execute if predicate {"condition":"minecraft:entity_scores","scores":{"pack.vars":{"min":1}}} run say a"#
+        );
+    }
+
+    #[test]
+    fn maps_the_objective_after_a_placeholder_word() {
+        assert_eq!(
+            map("$scoreboard players $(op) coins temp 1"),
+            "$scoreboard players $(op) coins pack.vars 1"
+        );
+        assert_eq!(
+            map("$scoreboard players $(op) a temp += b temp"),
+            "$scoreboard players $(op) a pack.vars += b pack.vars"
+        );
+        assert_eq!(
+            map("$scoreboard objectives $(op) temp dummy"),
+            "$scoreboard objectives $(op) pack.vars dummy"
+        );
+        assert_eq!(
+            map("$execute store $(a) score x temp run say hi"),
+            "$execute store $(a) score x pack.vars run say hi"
+        );
+        assert_eq!(
+            map("$execute if score x temp $(o) y temp run say hi"),
+            "$execute if score x pack.vars $(o) y pack.vars run say hi"
+        );
+    }
+
+    #[test]
+    fn maps_resource_json() {
+        let mut json = serde_json::json!({
+            "condition": "minecraft:entity_scores",
+            "scores": {"temp": 1, "other": 2},
+            "value": {"type": "minecraft:score", "score": "temp"},
+            "text": {"score": {"name": "x", "objective": "temp"}},
+            "name": "temp"
+        });
+        super::map_json(&mut json, "pack.vars");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "condition": "minecraft:entity_scores",
+                "scores": {"pack.vars": 1, "other": 2},
+                "value": {"type": "minecraft:score", "score": "pack.vars"},
+                "text": {"score": {"name": "x", "objective": "pack.vars"}},
+                "name": "temp"
+            })
         );
     }
 

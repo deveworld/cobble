@@ -46,7 +46,13 @@ stays until something changes it again.
 Raw commands and execute headers name the variable objective `temp`. Cobble
 rewrites `temp` to `<namespace>.vars` wherever a command expects an objective:
 `scoreboard` arguments, `if score` and `unless score`, `store result score`,
-`scores={...}` selector filters, and score text components.
+`trigger`, `scores={...}` selector filters, the `scores` of an
+`entity_scores` predicate, score text components, also inside an item's
+components, and the `score` of a score number provider. Resource JSON from
+`datapack.*`, such as a predicate, is rewritten the same way. After a
+placeholder that stands for a word, as in `/scoreboard players {op} coins
+temp 1`, `temp` is rewritten where an objective stands for every word the
+placeholder can be.
 
 ```python
 def read_level():
