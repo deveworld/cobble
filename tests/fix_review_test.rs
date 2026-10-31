@@ -429,3 +429,25 @@ fn a_runtime_helper_argument_in_an_expanded_loop_is_reported_at_the_call() {
         );
     }
 }
+
+// --- Per-entity condition flags ---
+
+#[test]
+fn a_per_entity_condition_flag_leaves_a_module_variable_of_the_same_name_alone() {
+    let source = r#"x = 5
+y = 3
+def main():
+    as @a unless x > 3 and y > 2:
+        /say no
+    as @a if x > 3 or y > 9:
+        /say yes
+    /say {x} {y}
+"#;
+    // Players named like the module variables.
+    let mut sim = Sim::load(source, &["x", "y"]);
+    sim.call("main");
+    assert_eq!(chat(&sim), ["x: yes", "y: yes", "5 3"]);
+    assert_eq!((sim.var("x"), sim.var("y")), (5, 3));
+    let main = sim.function_text("main");
+    assert!(!main.contains("@s sim.vars"), "{main}");
+}

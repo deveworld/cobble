@@ -1672,19 +1672,19 @@ def test():
 
     assert!(!content.contains("execute execute"), "{}", content);
     assert!(
-        content.contains("execute as @a run scoreboard players set @s cobble.vars 0"),
+        content.contains("execute as @a run scoreboard players set @s cblc0_0 0"),
         "OR flag should reset per executor: {}",
         content
     );
     assert!(
         content.contains(
-            "execute as @a if entity @s[tag=red] run scoreboard players set @s cobble.vars 1"
+            "execute as @a if entity @s[tag=red] run scoreboard players set @s cblc0_0 1"
         ),
         "OR red branch should set per executor flag: {}",
         content
     );
     assert!(
-        content.contains("execute as @a if score @s cobble.vars matches 1 run say selected"),
+        content.contains("execute as @a if score @s cblc0_0 matches 1 run say selected"),
         "body should be gated by per executor flag: {}",
         content
     );
@@ -4355,12 +4355,12 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(
-        content.contains("execute as @a if score #test.x cobble.vars matches 1 if score #test.y cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"),
+        content.contains("execute as @a if score #test.x cobble.vars matches 1 if score #test.y cobble.vars matches 1 run scoreboard players set @s cblc0_0 1"),
         "{}",
         content
     );
     assert!(
-        content.contains("execute as @a unless score @s cobble.vars matches 1 run say guarded"),
+        content.contains("execute as @a unless score @s cblc0_0 matches 1 run say guarded"),
         "{}",
         content
     );

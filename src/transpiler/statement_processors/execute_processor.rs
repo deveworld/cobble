@@ -767,8 +767,13 @@ impl Transpiler {
         use_dedicated_objectives: bool,
     ) -> (String, String) {
         let unique_id = self.next_temp_id();
+        // Under `as`, the flag is each entity's own score, so it can't be on
+        // the objective of the module variables: an entity named like one
+        // would change it.
         let objective = if use_dedicated_objectives {
             format!("cblx{}", unique_id)
+        } else if has_as_modifier {
+            self.next_condition_scope_objective()
         } else {
             "temp".to_string()
         };

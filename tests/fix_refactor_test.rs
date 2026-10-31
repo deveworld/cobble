@@ -124,10 +124,10 @@ def check():
     );
     assert!(
         free.contains(
-            "if score #check.x cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"
+            "if score #check.x cobble.vars matches 1 run scoreboard players set @s cblc0_0 1"
         ) && free.contains(
-            "if score #check.y cobble.vars matches 2 run scoreboard players set @s cobble.vars 1"
-        ) && free.contains("execute as @a if score @s cobble.vars matches 1 run say either"),
+            "if score #check.y cobble.vars matches 2 run scoreboard players set @s cblc0_0 1"
+        ) && free.contains("execute as @a if score @s cblc0_0 matches 1 run say either"),
         "{free}"
     );
 }

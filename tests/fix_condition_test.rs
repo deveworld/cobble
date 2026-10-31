@@ -275,19 +275,19 @@ def check():
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "check");
     assert!(
-        content.contains("execute as @a run scoreboard players set @s cobble.vars 0"),
+        content.contains("execute as @a run scoreboard players set @s cblc0_0 0"),
         "OR flag should reset per executor: {content}"
     );
     assert!(
         content.contains(
-            "if score #check.x cobble.vars matches 1 run scoreboard players set @s cobble.vars 1"
+            "if score #check.x cobble.vars matches 1 run scoreboard players set @s cblc0_0 1"
         ) && content.contains(
-            "if score #check.x cobble.vars matches 2 run scoreboard players set @s cobble.vars 1"
+            "if score #check.x cobble.vars matches 2 run scoreboard players set @s cblc0_0 1"
         ),
         "{content}"
     );
     assert!(
-        content.contains("execute as @a if score @s cobble.vars matches 1 run say either"),
+        content.contains("execute as @a if score @s cblc0_0 matches 1 run say either"),
         "{content}"
     );
 }
