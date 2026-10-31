@@ -1319,17 +1319,20 @@ impl Transpiler {
         serialize_snbt(&self.symbols, expr)
     }
 
-    pub(in crate::transpiler) fn serialize_snbt_key(key: &str) -> String {
-        if !key.is_empty()
-            && key
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '+')
+    /// A map literal key as SNBT. Minecraft refuses an empty key.
+    pub(in crate::transpiler) fn serialize_snbt_key(key: &str) -> Result<String, TranspileError> {
+        if key.is_empty() {
+            return Err(crate::transpiler::storage_paths::EMPTY_KEY_ERROR.into());
+        }
+        if key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '+')
         {
-            return key.to_string();
+            return Ok(key.to_string());
         }
 
         let escaped = escape_quoted(key);
-        format!("\"{}\"", escaped)
+        Ok(format!("\"{}\"", escaped))
     }
 }
 
@@ -1375,7 +1378,7 @@ pub(in crate::transpiler) fn serialize_snbt(
                 if i > 0 {
                     result.push(',');
                 }
-                result.push_str(&Transpiler::serialize_snbt_key(key));
+                result.push_str(&Transpiler::serialize_snbt_key(key)?);
                 result.push(':');
                 result.push_str(&serialize_snbt(symbols, value)?);
             }

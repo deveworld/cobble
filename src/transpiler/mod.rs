@@ -132,6 +132,28 @@ pub struct Transpiler {
     unwarned_shadows: Vec<String>,
 }
 
+/// The expressions `statement` itself evaluates, without its body.
+fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
+    match statement {
+        Statement::Assignment(assign) => {
+            let mut parts = vec![&assign.value];
+            parts.extend(&assign.target_expr);
+            parts
+        }
+        Statement::MultiAssign(multi) => multi.targets.iter().chain(&multi.values).collect(),
+        Statement::Expression(expr) | Statement::Return(Some(expr)) => vec![expr],
+        Statement::If(if_stmt) => std::iter::once(&if_stmt.condition)
+            .chain(if_stmt.elif_branches.iter().map(|(condition, _)| condition))
+            .collect(),
+        Statement::For(for_loop) => std::iter::once(&for_loop.iter)
+            .chain(&for_loop.step)
+            .collect(),
+        Statement::While(while_loop) => vec![&while_loop.condition],
+        Statement::Match(match_stmt) => vec![&match_stmt.value],
+        _ => Vec::new(),
+    }
+}
+
 fn record_warning(warnings: &RefCell<Vec<TranspileWarning>>, warning: TranspileWarning) {
     // Some expressions are evaluated more than once.
     let mut warnings = warnings.borrow_mut();
@@ -475,6 +497,9 @@ impl Transpiler {
             if read.statement == function_context::statement_address(statement) {
                 return Err(self.unbound_local_error(&read.name.clone()));
             }
+        }
+        for expr in statement_expressions(statement) {
+            storage_paths::StoragePathOps::check_subscript_keys(self, expr)?;
         }
         if let Some(lowered) = self.desugar_statement(statement)? {
             for statement in &lowered {

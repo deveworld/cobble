@@ -184,6 +184,30 @@ pub(in crate::transpiler) trait StoragePathOps {
         }
     }
 
+    /// Refuses the subscripts in `expr` that no command can carry out: an
+    /// empty literal key, which Minecraft refuses in a path, and a text key
+    /// of a value Cobble knows is a list, where Python raises `TypeError`.
+    fn check_subscript_keys(&self, expr: &Expression) -> Result<(), TranspileError> {
+        if let Expression::Subscript(base, index) = expr {
+            if matches!(&**index, Expression::String(key) if key.is_empty()) {
+                return Err(EMPTY_KEY_ERROR.into());
+            }
+            if self.storage_key_type(index) == CobbleType::String
+                && self.storage_expr_type(base) == Some(CobbleType::List)
+            {
+                return Err(format!(
+                    "List indexes must be integers, not text: `{}` is a list, so `[{}]` can't pick a field of it (Python raises TypeError). Use a number index, or store a map there.",
+                    Transpiler::expression_source_key(base),
+                    Transpiler::expression_source_key(index),
+                )
+                .into());
+            }
+        }
+        crate::transpiler::desugar::sub_expressions(expr)
+            .into_iter()
+            .try_for_each(|part| self.check_subscript_keys(part))
+    }
+
     fn resolve_storage_path_plan(&self, expr: &Expression) -> Option<StoragePathPlan> {
         match expr {
             Expression::Identifier(name) => self
@@ -204,7 +228,11 @@ pub(in crate::transpiler) trait StoragePathOps {
                 let base_path = self.resolve_storage_path_plan(obj)?;
                 Some(match self.subscript_kind(obj, index) {
                     SubscriptKind::Key => match &**index {
-                        Expression::String(key) => base_path.append_key(key),
+                        // A quoted path key reads no `\n` escape; a macro
+                        // pastes the line break itself.
+                        Expression::String(key) if !path_key_needs_macro(key) => {
+                            base_path.append_key(key)
+                        }
                         _ => base_path.append_dynamic_key((**index).clone()),
                     },
                     SubscriptKind::Index => match &**index {
@@ -844,7 +872,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
                     if index > 0 {
                         result.push(',');
                     }
-                    result.push_str(&Transpiler::serialize_snbt_key(key));
+                    result.push_str(&Transpiler::serialize_snbt_key(key)?);
                     result.push(':');
                     result.push_str(&self.storage_shell_snbt(value)?);
                 }
@@ -884,10 +912,19 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
             Expression::Map(entries) => {
                 let mut commands = Vec::new();
                 for (key, value) in entries {
-                    commands.extend(self.storage_runtime_patch_commands(
+                    let patch = self.storage_runtime_patch_commands(
                         &storage_child_path(target_path, key),
                         value,
-                    )?);
+                    )?;
+                    if !patch.is_empty() && path_key_needs_macro(key) {
+                        return Err(format!(
+                            "The map key {} has a line break, so a map literal can't hold a value computed when the pack runs under it. Assign the value after the literal, as `m[{}] = value`.",
+                            Transpiler::expression_source_key(&Expression::String(key.clone())),
+                            Transpiler::expression_source_key(&Expression::String(key.clone())),
+                        )
+                        .into());
+                    }
+                    commands.extend(patch);
                 }
                 Ok(commands)
             }
@@ -983,9 +1020,20 @@ fn storage_child_path(base: &str, key: &str) -> String {
     {
         format!("{}.{}", base, key)
     } else {
-        let escaped = escape_quoted(key);
-        format!("{}.\"{}\"", base, escaped)
+        format!("{}.\"{}\"", base, text_escape::escape_path_key(key))
     }
+}
+
+/// The error for an empty literal map key.
+pub(in crate::transpiler) const EMPTY_KEY_ERROR: &str =
+    "A map key can't be empty: Minecraft refuses an empty key in a path and in a map. Use a key with at least one character.";
+
+/// Whether the static map key `key` has a character that a quoted path key
+/// in a function file can't hold: a line break. A quoted path key reads
+/// only the escapes `\\` and `\"`, so such a key goes through a macro,
+/// which pastes the line break itself.
+pub(in crate::transpiler) fn path_key_needs_macro(key: &str) -> bool {
+    key.contains(['\n', '\r'])
 }
 
 impl StorageValueOps for Transpiler {

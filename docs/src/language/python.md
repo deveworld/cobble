@@ -35,16 +35,20 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   `name[i]` of a string is a one-character string. Map keys may be
   attributes, string literals, or runtime strings such as `config[key]` or
   `config[names[0]]`. A key can hold any text, such as spaces, dots, colons,
-  quotes, and backslashes, as in `prices["minecraft:diamond"]`, but it can't
-  be empty: Minecraft refuses an empty key in a path and in a map. An empty
-  runtime key stores nothing, reads as a missing key, and shows
-  `<file>:<line>: a map key can't be empty` in chat; `"" in config` is False.
+  quotes, backslashes, and line breaks, as in `prices["minecraft:diamond"]`,
+  but it can't be empty: Minecraft refuses an empty key in a path and in a
+  map. An empty literal key, as in `config[""]` or `{"": 1}`, is a compile
+  error. An empty runtime key stores nothing, reads as a missing key, and
+  shows `<file>:<line>: a map key can't be empty` in chat; `"" in config` is
+  False.
 - At any depth, as in `grid[r][c]`, the key's type decides: text picks a
   field of a map, and a number an item of a list or a character of text.
   When Cobble can't tell the key's type, as for a parameter, the type of
   what it indexes decides, and when that isn't known either, the pack checks
   when it runs whether the key holds text or a number. A number is never a
-  map key, so `5 in {"5": 1}` is false, as in Python.
+  map key, so `5 in {"5": 1}` is false, as in Python. A text key of a value
+  Cobble knows is a list, as `rows[0]["k"]` after `rows = [[1, 2]]`, is a
+  compile error, where Python raises `TypeError`.
 - A list or map is a value: assigning it to another variable or passing it to
   a function copies it, so a change through one name doesn't show through the
   other.
@@ -69,7 +73,8 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
 - Reading an item or a field that isn't there, and `pop()` on an empty list,
   give 0, or empty text, an empty list, or an empty map when Cobble knows the
   value is one, where Python raises an error. The variable never keeps the
-  value it had before.
+  value it had before. Passed to a function, as in `show(config.nick)`, such
+  a read gives the same empty value, and the function still runs.
 - Text positions count UTF-16 units, so an emoji is two long in a running pack.
 - A bare expression such as `score + 1` produces no command and is rejected.
   Use an assignment, a call, a raw command, or `pass`.

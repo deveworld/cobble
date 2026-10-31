@@ -45,7 +45,7 @@ const LIST_HELPER_METHODS: [&str; 4] = ["insert", "remove", "reverse", "sort"];
 const LIST_VALUE_METHODS: [&str; 3] = ["count", "index", "pop"];
 
 /// Parts of an expression, for walks that treat them alike.
-fn sub_expressions(expr: &Expression) -> Vec<&Expression> {
+pub(in crate::transpiler) fn sub_expressions(expr: &Expression) -> Vec<&Expression> {
     match expr {
         Expression::Array(items) => items.iter().collect(),
         Expression::Map(entries) => entries.iter().map(|(_, value)| value).collect(),
