@@ -275,3 +275,46 @@ pub(in crate::transpiler) fn read_type(
         literal
     }
 }
+
+/// A fractional number the literal `value` can hold at `steps`, as 0.6 for
+/// `y[0]` after `y = [0.6, 2.5]`. An index known only when the pack runs can
+/// pick any item.
+pub(in crate::transpiler) fn fractional_literal_at(
+    value: &Expression,
+    steps: &[Step<'_>],
+) -> Option<f64> {
+    let Some((step, rest)) = steps.split_first() else {
+        return match value {
+            Expression::Number(n) if n.fract() != 0.0 && n.is_finite() => Some(*n),
+            _ => None,
+        };
+    };
+    match (value, step) {
+        (Expression::Array(items), Step::Item(Expression::Number(index)))
+            if index.fract() == 0.0 =>
+        {
+            let at = if *index < 0.0 {
+                items.len() as f64 + index
+            } else {
+                *index
+            };
+            items
+                .get(at as usize)
+                .filter(|_| at >= 0.0)
+                .and_then(|item| fractional_literal_at(item, rest))
+        }
+        (Expression::Array(items), Step::Item(_)) => items
+            .iter()
+            .find_map(|item| fractional_literal_at(item, rest)),
+        (Expression::Map(entries), step) => match step.field() {
+            Some(field) => entries
+                .iter()
+                .find(|(key, _)| *key == field)
+                .and_then(|(_, value)| fractional_literal_at(value, rest)),
+            None => entries
+                .iter()
+                .find_map(|(_, value)| fractional_literal_at(value, rest)),
+        },
+        _ => None,
+    }
+}

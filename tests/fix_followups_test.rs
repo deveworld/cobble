@@ -281,3 +281,51 @@ def main():
         ]
     );
 }
+
+// --- A fractional item read into a score ---
+
+fn cli_build(source: &str) -> (bool, String) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let input = temp_dir.path().join("main.cbl");
+    std::fs::write(&input, source).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_cobble"))
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(temp_dir.path().join("output"))
+        .output()
+        .unwrap();
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn a_fractional_item_read_into_a_score_warns() {
+    let (ok, stderr) = cli_build(
+        r#"y = [0.6, 2.5]
+cfg = {"rate": 1.5, "n": 2}
+
+def show(v):
+    /say show {v}
+
+def main():
+    show(y[0])
+    show(cfg.rate)
+    show(cfg.n)
+    x = y[1]
+    /say {x}
+"#,
+    );
+    assert!(ok, "{stderr}");
+    for expected in [
+        "main.cbl:8:5: warning[fractional-number] Scores hold integers, so y[0], which holds 0.6, is read as 0.",
+        "main.cbl:9:5: warning[fractional-number] Scores hold integers, so cfg.rate, which holds 1.5, is read as 1.",
+        "main.cbl:11:5: warning[fractional-number] Scores hold integers, so y[1], which holds 2.5, is read as 2.",
+    ] {
+        assert!(stderr.contains(expected), "{expected}\n{stderr}");
+    }
+    assert_eq!(stderr.matches("warning[").count(), 3, "{stderr}");
+}
+

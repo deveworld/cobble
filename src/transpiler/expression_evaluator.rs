@@ -829,7 +829,40 @@ impl<'a> ExpressionEvaluator<'a> {
             };
             return Err(message.to_string().into());
         };
+        self.warn_fractional_item(expr);
         self.read_storage_path_to_target(&path_plan, target, target_obj)
+    }
+
+    /// Warns when an item or a field read into a score can hold a fraction
+    /// in its literal, as `y[0]` after `y = [0.6, 2.5]`: the score keeps
+    /// the integer part, as `x = 1.5` does.
+    fn warn_fractional_item(&self, expr: &Expression) {
+        let Some((name, steps)) = crate::transpiler::container_writes::access_path(expr) else {
+            return;
+        };
+        if self.is_storage_current_param(name) {
+            return;
+        }
+        let Some(value) = self.symbols.variables.get(name).and_then(|literal| {
+            crate::transpiler::container_writes::fractional_literal_at(literal, &steps)
+        }) else {
+            return;
+        };
+        let read = Transpiler::expression_source_key(expr);
+        record_warning(
+            self.warnings,
+            TranspileWarning {
+                kind: "fractional-number",
+                message: format!(
+                    "Scores hold integers, so {read}, which holds {value}, is read as {}.",
+                    value as i32
+                ),
+                help: Some(format!(
+                    "Store the number as text, as \"{value}\", to show it as written, or scale it to an integer."
+                )),
+                location: self.source.clone(),
+            },
+        );
     }
 
     fn binary_to_target(
