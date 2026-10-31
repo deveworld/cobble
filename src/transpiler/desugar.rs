@@ -99,6 +99,16 @@ fn is_logical(expr: &Expression) -> bool {
 }
 
 /// Whether `expr` tests something instead of computing a number.
+/// `a list`, `a number`, and so on, for messages.
+fn type_phrase(value_type: &CobbleType) -> &'static str {
+    match value_type {
+        CobbleType::String => "text",
+        CobbleType::List => "a list",
+        CobbleType::Map => "a map",
+        _ => "a number",
+    }
+}
+
 fn is_condition(expr: &Expression) -> bool {
     match expr {
         Expression::Binary(_, op, _) => !is_arithmetic(op),
@@ -281,16 +291,16 @@ impl Transpiler {
             Expression::Binary(left, BinaryOp::Mul, right) => self.repeats(left, right),
             Expression::Call(func, args) => {
                 self.is_python_call(func)
-                    || args.iter().any(|arg| self.is_operand_choice(arg))
+                    || args.iter().any(|arg| self.is_passed_condition(arg))
                     || (args.len() == 1
                         && matches!(&**func, Expression::Identifier(name)
                             if matches!(name.as_str(), "min" | "max")
                                 && self.is_builtin_name(name)))
             }
-            Expression::Array(items) => items.iter().any(|item| self.is_operand_choice(item)),
+            Expression::Array(items) => items.iter().any(|item| self.is_passed_condition(item)),
             Expression::Map(entries) => entries
                 .iter()
-                .any(|(_, value)| self.is_operand_choice(value)),
+                .any(|(_, value)| self.is_passed_condition(value)),
             _ => false,
         };
         lowers
@@ -351,7 +361,12 @@ impl Transpiler {
             matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
         };
         let (left_type, right_type) = (self.value_type(left), self.value_type(right));
-        (self.is_container_or_text(left) || self.is_container_or_text(right))
+        // A slice is a list or text, even of a parameter.
+        let is_slice = |expr: &Expression| matches!(expr, Expression::Slice(..));
+        (self.is_container_or_text(left)
+            || self.is_container_or_text(right)
+            || is_slice(left)
+            || is_slice(right))
             && !is_number(&left_type)
             && !is_number(&right_type)
     }
@@ -596,6 +611,35 @@ impl Transpiler {
             return self.lower_value(expr, out);
         }
         let (left_type, right_type) = (self.value_type(left), self.value_type(right));
+        // A variable holds one type, so it can't take either of two values
+        // that Cobble knows have different types.
+        let holds_values = |value_type: &CobbleType| {
+            matches!(
+                value_type,
+                CobbleType::String | CobbleType::List | CobbleType::Map
+            )
+        };
+        let known = |value_type: &CobbleType| {
+            holds_values(value_type)
+                || matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
+        };
+        if left_type != right_type
+            && known(&left_type)
+            && known(&right_type)
+            && (holds_values(&left_type) || holds_values(&right_type))
+        {
+            let word = if matches!(op, BinaryOp::And) {
+                "and"
+            } else {
+                "or"
+            };
+            return Err(format!(
+                "`{word}` gives one of its operands, and here one is {} and the other {}, which one value can't be. Give both operands the same type, or use `if` and `else` with a variable of each type.",
+                type_phrase(&left_type),
+                type_phrase(&right_type)
+            )
+            .into());
+        }
         let holder_type = if left_type == right_type {
             left_type
         } else {
@@ -866,7 +910,24 @@ impl Transpiler {
         out: &mut Vec<Statement>,
     ) -> Result<Vec<Expression>, TranspileError> {
         let parts: Vec<&Expression> = exprs.iter().collect();
-        self.lower_in_order(&parts, out, &Self::lower_operand)
+        self.lower_in_order(&parts, out, &Self::lower_passed)
+    }
+
+    /// Whether `expr`, passed as an argument, an item, or a field, needs a
+    /// holder: `a or b` gives an operand, and a condition gives its 1 or 0.
+    fn is_passed_condition(&self, expr: &Expression) -> bool {
+        self.is_operand_choice(expr) || is_condition(expr)
+    }
+
+    /// A value passed as an argument, an item, or a field, as in
+    /// `out.append(s in names)`. A condition there is its 1 or 0.
+    fn lower_passed(&mut self, expr: &Expression, out: &mut Vec<Statement>) -> LoweredValue {
+        if !is_condition(expr) || self.is_operand_choice(expr) {
+            return self.lower_operand(expr, out);
+        }
+        let holder = self.hidden_local(CobbleType::Boolean);
+        out.push(assign(&holder, expr.clone()));
+        Ok(Expression::Identifier(holder))
     }
 
     /// Lowers `parts`, which run left to right. The statements of a later
@@ -979,7 +1040,7 @@ impl Transpiler {
             Expression::Map(entries) => Ok(Expression::Map(
                 entries
                     .iter()
-                    .map(|(key, value)| Ok((key.clone(), self.lower_operand(value, out)?)))
+                    .map(|(key, value)| Ok((key.clone(), self.lower_passed(value, out)?)))
                     .collect::<Result<_, TranspileError>>()?,
             )),
             other => Ok(other.clone()),
@@ -1143,9 +1204,14 @@ impl Transpiler {
         right: &Expression,
         out: &mut Vec<Statement>,
     ) -> Result<Expression, TranspileError> {
-        let is_list =
-            self.value_type(left) == CobbleType::List || self.value_type(right) == CobbleType::List;
+        let types = [self.value_type(left), self.value_type(right)];
+        let is_list = types.contains(&CobbleType::List);
+        let is_text = types.contains(&CobbleType::String);
         let (left, right) = two(self.lower_values(&[left.clone(), right.clone()], out)?);
+        // Slices of a parameter: the running pack tells lists from text.
+        if !is_list && !is_text {
+            return self.helper_value("_cobble_join", vec![left, right], CobbleType::Unknown, out);
+        }
         if is_list {
             let holder = self.hidden_local(CobbleType::List);
             out.push(assign(&holder, left));

@@ -63,6 +63,12 @@ pub(in crate::transpiler) trait StoragePathOps {
     /// parameter, a list or map Cobble didn't see a literal for, or an item
     /// written with values of other types gives `Unknown`.
     fn storage_read_type(&self, expr: &Expression) -> CobbleType {
+        self.storage_read_type_within(expr, 8)
+    }
+
+    /// [`Self::storage_read_type`], following at most `depth` copies: the
+    /// literal of `node` in `node = cfg.x` is the one of `cfg.x`.
+    fn storage_read_type_within(&self, expr: &Expression, depth: u8) -> CobbleType {
         if !matches!(expr, Expression::Subscript(..) | Expression::Attribute(..)) {
             return CobbleType::Unknown;
         }
@@ -86,12 +92,19 @@ pub(in crate::transpiler) trait StoragePathOps {
             Expression::Binary(..) | Expression::Unary(..) => CobbleType::Integer,
             _ => CobbleType::Unknown,
         };
-        let literal = symbols
-            .variables
-            .get(name)
-            .map_or(CobbleType::Unknown, |value| {
-                container_writes::literal_type(value, &steps, &value_type)
-            });
+        let literal = match symbols.variables.get(name) {
+            // A copy of another variable, an item, or a field, as the
+            // holders of unpacking and `pop` are, has its literal.
+            Some(
+                source @ (Expression::Identifier(_)
+                | Expression::Subscript(..)
+                | Expression::Attribute(..)),
+            ) if depth > 0 && !matches!(source, Expression::Identifier(other) if other == name) => {
+                self.storage_read_type_within(&container_writes::rebase(expr, source), depth - 1)
+            }
+            Some(value) => container_writes::literal_type(value, &steps, &value_type),
+            None => CobbleType::Unknown,
+        };
         // A string variable gives characters whatever it was assigned.
         let literal = match symbols.variable_types.get(name) {
             Some(CobbleType::String)

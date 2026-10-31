@@ -3081,6 +3081,13 @@ fn infer_expression_type_for_diagnostics(
     if contains_top_level_keyword(expression, "if") {
         return Some(CobbleType::Unknown);
     }
+    // A comparison or `in` gives 1 or 0 whatever it compares, as in
+    // `{"k": 1} == m` or `"k" in m`.
+    if contains_top_level_operator(expression, &["==", "!=", "<=", ">=", "<", ">"])
+        || contains_top_level_keyword(expression, "in")
+    {
+        return Some(CobbleType::Boolean);
+    }
 
     if expression.starts_with('"') || expression.starts_with('\'') {
         return Some(CobbleType::String);

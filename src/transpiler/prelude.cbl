@@ -184,6 +184,13 @@ def _cobble_contains(box, value):
         return _cobble_list_index(box, value) >= 0
     return _cobble_has_key(box, value)
 
+def _cobble_join(left, right):
+    if _cobble_is_list(left):
+        /data modify storage NS:global _cobble_result set from storage NS:global args.left
+        /data modify storage NS:global _cobble_result append from storage NS:global args.right[]
+    else:
+        _cobble_text_join(left, right)
+
 def _cobble_slice(value, start, stop):
     if _cobble_is_text(value):
         _cobble_text_slice(value, start, stop)

@@ -48,6 +48,20 @@ pub(in crate::transpiler) fn access_path(expr: &Expression) -> Option<(&str, Vec
     }
 }
 
+/// `expr` read from `root` instead of from its own variable, as
+/// `cfg.x[1]` for `node[1]` and `cfg.x`.
+pub(in crate::transpiler) fn rebase(expr: &Expression, root: &Expression) -> Expression {
+    match expr {
+        Expression::Attribute(base, field) => {
+            Expression::Attribute(Box::new(rebase(base, root)), field.clone())
+        }
+        Expression::Subscript(base, index) => {
+            Expression::Subscript(Box::new(rebase(base, root)), index.clone())
+        }
+        _ => root.clone(),
+    }
+}
+
 /// A write into a variable: the fields on its path (`None` for an item or a
 /// key known only when the pack runs), and the value written there, or
 /// `None` when the value can be anything.

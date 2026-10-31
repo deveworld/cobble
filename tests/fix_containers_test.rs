@@ -391,3 +391,190 @@ def main():
         ["5", "y", "b"]
     );
 }
+
+// --- Value types ---
+
+#[test]
+fn value_from_a_field_a_deep_item_or_pop_can_be_subscripted() {
+    let mut sim = Sim::load(
+        r#"cfg = {"x": [5, 6, 7]}
+rows = [[{"k": 3}]]
+q = [[8, 9]]
+out = 0
+a = 0
+b = 0
+c = 0
+
+def main():
+    global out, a, b, c
+    node = cfg.x
+    out = node[1]
+    item = rows[0][0]
+    a = item["k"]
+    b = item.k
+    r = q.pop(0)
+    c = r[1]
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("out"), 6);
+    assert_eq!((sim.var("a"), sim.var("b"), sim.var("c")), (3, 3, 9));
+}
+
+#[test]
+fn list_repeat_at_depth_two_repeats_the_list() {
+    let mut sim = Sim::load(
+        r#"grid = [[[5, 6, 7]]]
+size = 0
+got = []
+
+def main():
+    global size, got
+    got = grid[0][0] * 2
+    size = len(got)
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("size"), 6);
+    assert_eq!(storage(&sim, "got"), json!([5, 6, 7, 5, 6, 7]));
+}
+
+#[test]
+fn unpacked_text_keeps_its_type() {
+    let mut sim = Sim::load(
+        r#"names = ["ab", "cd"]
+res = "unset"
+
+def main():
+    global res
+    a, b = names
+    res = b + a
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(storage(&sim, "res"), json!("cdab"));
+}
+
+#[test]
+fn joining_two_slices_of_a_parameter() {
+    assert_eq!(
+        said(
+            r#"def glue(v):
+    r = v[:1] + v[1:]
+    /say {r}
+
+def main():
+    glue([1, 2, 3])
+    glue("abc")
+"#
+        ),
+        ["[1,2,3]", "abc"]
+    );
+}
+
+#[test]
+fn local_copied_from_an_imported_list_is_read_by_attribute() {
+    let mut sim = Sim::load_project(
+        &[
+            ("state.cbl", "items = [{\"value\": 4}]\n"),
+            (
+                "main.cbl",
+                r#"from state import items
+
+def g(i):
+    entry = items[i]
+    left = entry.value
+    right = entry["value"]
+    /say {left} {right}
+
+def main():
+    g(0)
+"#,
+            ),
+        ],
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.log, ["Server: 4 4"]);
+}
+
+#[test]
+fn comparing_maps_or_lists_gives_a_number() {
+    assert_eq!(
+        said(
+            r#"def f(m):
+    flag = {"k": 1} == m
+    /say {flag}
+    flag = [1] == m
+    return flag
+
+def main():
+    r = f([1])
+    /say {r}
+"#
+        ),
+        ["0", "1"]
+    );
+}
+
+#[test]
+fn and_or_across_container_types_names_the_operands() {
+    let error = compile(
+        r#"def f():
+    a = [0]
+    h = {"a": 0}
+    b = a and h
+    /say {b}
+"#,
+    )
+    .expect_err("one variable can't hold a list or a map");
+    assert!(!error.contains("_cobble"), "{error}");
+    assert!(error.contains("`and`"), "{error}");
+    assert!(error.contains("a list and the other a map"), "{error}");
+    assert!(error.contains("main.cbl:4:5"), "{error}");
+    // Operands of one type still give one of them.
+    assert_eq!(
+        said(
+            r#"def main():
+    a = []
+    h = [1, 2]
+    b = a or h
+    /say {b}
+"#
+        ),
+        ["[1,2]"]
+    );
+}
+
+#[test]
+fn a_condition_as_an_argument_gives_its_number() {
+    let mut sim = Sim::load(
+        r#"out = []
+names = ["a"]
+m = {}
+got = 0
+
+def keep(v):
+    global got
+    got = v
+
+def f(s):
+    global m
+    out.append(s in names)
+    out.append(s != "a")
+    m = {"k": s == "a"}
+    keep(s in names)
+
+def main():
+    f("a")
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(storage(&sim, "out"), json!([1, 0]));
+    assert_eq!(storage(&sim, "m"), json!({"k": 1}));
+    assert_eq!(sim.var("got"), 1);
+}
