@@ -436,6 +436,9 @@ pub(super) fn collect_module_variable_defs(
     let nodes = context.spans.map(|tree| tree.statements.as_slice());
     let mut seen = HashSet::new();
     let mut variables = Vec::new();
+    // The variable of a module-level loop exists only when the loop keeps
+    // it in a real variable.
+    let loop_variables = crate::transpiler::module_loop_variables(&context.program.statements);
     for (index, statement) in context.program.statements.iter().enumerate() {
         let node = nodes.and_then(|nodes| nodes.get(index));
         let names: Vec<&str> = match statement {
@@ -451,6 +454,7 @@ pub(super) fn collect_module_variable_defs(
                 })
                 .collect(),
             Statement::For(for_loop) => std::iter::once(for_loop.target.as_str())
+                .filter(|target| loop_variables.contains(*target))
                 .chain(for_loop.index.as_deref())
                 .collect(),
             _ => Vec::new(),

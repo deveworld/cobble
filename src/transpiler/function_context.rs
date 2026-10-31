@@ -570,6 +570,76 @@ fn collect_for_targets(body: &[Statement], targets: &mut BTreeSet<String>) {
     }
 }
 
+/// The targets of the module-level `for` loops of `statements` that are
+/// real module variables. As in a function, a loop expanded at compile time
+/// keeps its variable in a real variable when the body assigns it, when the
+/// file reads it outside every loop over it (in module-level code, or in a
+/// function that doesn't bind the name itself), or when a function declares
+/// it `global`. Otherwise each pass uses the value directly and no variable
+/// exists.
+pub(crate) fn module_loop_variables(statements: &[Statement]) -> BTreeSet<String> {
+    let mut loops = Vec::new();
+    collect_module_loops(statements, &mut loops);
+    let functions: Vec<&crate::ast::FunctionDef> = statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::FunctionDef(function) => Some(function),
+            _ => None,
+        })
+        .collect();
+    let mut variables = BTreeSet::new();
+    for for_loop in loops {
+        let target = &for_loop.target;
+        if variables.contains(target) {
+            continue;
+        }
+        let assigned_in_body = assigns_name(&for_loop.body, target);
+        let mut target_loops = Vec::new();
+        collect_target_loops(statements, target, &mut target_loops);
+        let in_loops: usize = target_loops
+            .into_iter()
+            .map(|target_loop| count_reads(std::slice::from_ref(target_loop), target))
+            .sum();
+        let read_at_module_level = count_reads(statements, target) > in_loops;
+        let used_by_function = functions.iter().any(|function| {
+            let mut assigned = BTreeSet::new();
+            let mut globals = HashSet::new();
+            collect_bindings(&function.body, &mut assigned, &mut globals);
+            globals.contains(target)
+                || (!function.params.iter().any(|param| &param.name == target)
+                    && !assigned.contains(target)
+                    && count_reads(&function.body, target) > 0)
+        });
+        if assigned_in_body || read_at_module_level || used_by_function {
+            variables.insert(target.clone());
+        }
+    }
+    variables
+}
+
+/// The `for` loops of module-level code, nested ones included.
+fn collect_module_loops<'a>(statements: &'a [Statement], loops: &mut Vec<&'a crate::ast::ForLoop>) {
+    for statement in statements {
+        match statement {
+            Statement::For(for_loop) => {
+                loops.push(for_loop);
+                collect_module_loops(&for_loop.body, loops);
+            }
+            Statement::If(if_stmt) => {
+                collect_module_loops(&if_stmt.then_branch, loops);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_module_loops(branch, loops);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_module_loops(branch, loops);
+                }
+            }
+            Statement::While(while_loop) => collect_module_loops(&while_loop.body, loops),
+            _ => {}
+        }
+    }
+}
+
 /// The outermost `for` loops over `target` in `body`. Nested function
 /// definitions are not searched.
 fn collect_target_loops<'a>(body: &'a [Statement], target: &str, loops: &mut Vec<&'a Statement>) {

@@ -283,7 +283,8 @@ length read once at the start.
   last value after the loop, a `global` loop variable changes the module
   variable, and the body may assign it. When the variable is read outside the
   loop, assigned in the body, or declared `global`, it is set at the start of
-  each pass; otherwise each pass uses the value directly.
+  each pass; otherwise each pass uses the value directly. At module level,
+  such a variable is a module variable, and a function can read it.
 - The loop variable of a runtime loop also holds its last value after the
   loop, with the item's type, and keeps its earlier value when the loop runs
   no passes. If it held a value of another type before the loop, reading it

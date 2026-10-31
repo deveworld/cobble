@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::mcsim::{compile, Sim};
+use common::mcsim::{compile, compile_project, Sim};
 
 fn compile_error(source: &str) -> String {
     match compile(source) {
@@ -331,4 +331,58 @@ fn many_functions_beside_many_module_lists_build_in_linear_time() {
         let seconds = dry_build_seconds(&source);
         assert!(seconds < 40.0, "took {seconds:.1} s");
     }
+}
+
+// --- Module-level loops in two files ---
+
+#[test]
+fn an_expanded_module_loop_in_two_files_defines_no_variable() {
+    let mut sim = Sim::load_project(
+        &[
+            (
+                "main.cbl",
+                "from b import count\ntotal = 0\nfor i in range(3):\n    total += i\ndef main():\n    return total + count\n",
+            ),
+            ("b.cbl", "count = 0\nfor i in range(3):\n    count += 1\n"),
+        ],
+        &[],
+    );
+    assert_eq!(sim.call("main"), Some(6));
+}
+
+#[test]
+fn a_module_loop_variable_read_after_the_loop_holds_its_last_value() {
+    // Python: `2 2 3`.
+    let mut sim = Sim::load(
+        r#"def early():
+    /say {i}
+total = 0
+for i in range(3):
+    total += i
+x = i
+def main():
+    early()
+    /say {i} {x} {total}
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(chat(&sim), ["2", "2 2 3"]);
+}
+
+#[test]
+fn a_real_module_loop_variable_in_two_files_is_still_an_error() {
+    let Err(error) = compile_project(&[
+        (
+            "main.cbl",
+            "import b\nfor i in range(3):\n    pass\nlast = i\ndef main():\n    pass\n",
+        ),
+        ("b.cbl", "for i in range(2):\n    pass\nseen = i\n"),
+    ]) else {
+        panic!("expected a duplicate module variable");
+    };
+    assert!(
+        error.contains("Module variable `i` is defined in both"),
+        "{error}"
+    );
 }

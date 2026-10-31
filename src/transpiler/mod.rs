@@ -50,8 +50,8 @@ use symbols::{FunctionTable, Symbols};
 pub(crate) use condition_lowering::{
     mask_minecraft_conditions, merged_execute_in_condition, raw_minecraft_condition_verdict,
 };
-pub(crate) use function_context::function_locals;
 pub use function_context::module_variables_made_local;
+pub(crate) use function_context::{function_locals, module_loop_variables};
 
 pub(in crate::transpiler) use capture::FunctionCapture;
 pub(in crate::transpiler) use const_eval::const_mod;
@@ -121,6 +121,9 @@ pub struct Transpiler {
     /// Whether experimental resource-pack output is enabled for this build.
     experimental_resource_pack: bool,
     unroll: UnrollState,
+    /// Module-level loop variables that are real module variables (see
+    /// `function_context::module_loop_variables`).
+    module_loop_variables: std::collections::BTreeSet<String>,
     /// Stack of per-site condition holder slots for nested `execute` blocks.
     /// One frame per active `process_execute_block`; the frame counts the
     /// condition holders scoped to `@s` so their objectives can be pooled by
@@ -279,6 +282,7 @@ impl Transpiler {
             stdlib: StdlibState::default(),
             experimental_resource_pack: options.experimental_resource_pack,
             unroll: UnrollState::default(),
+            module_loop_variables: Default::default(),
             execute_condition_slots: Vec::new(),
             warnings: RefCell::new(Vec::new()),
             unwarned_shadows: Vec::new(),

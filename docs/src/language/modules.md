@@ -50,7 +50,10 @@ define it in `utils.cbl` and import it into `main.cbl`.
 These are compile errors:
 
 - the same function, selector alias, entity template, or module variable name
-  in two files;
+  in two files. The variable of a module-level `for` loop that Cobble expands
+  at compile time counts only when the loop keeps it as a variable: when the
+  body assigns it, when the file reads it outside the loop, or when a function
+  declares it `global` (see [For Loops](control-flow.md#for-loops));
 - a circular import (the message shows the import chain);
 - a missing file (the message shows the importing file and the expected path).
 

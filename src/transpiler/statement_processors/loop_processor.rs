@@ -225,10 +225,11 @@ impl Transpiler {
         let target = &for_loop.target;
         let assigned_in_body = function_context::assigns_name(&for_loop.body, target);
         let read_outside_loop = self.loop_target_read_outside(for_loop);
-        let real_target = self.current_function.is_some()
-            && (assigned_in_body
-                || read_outside_loop
-                || self.symbols.global_variables.contains(target));
+        let real_target = if self.current_function.is_some() {
+            assigned_in_body || read_outside_loop || self.symbols.global_variables.contains(target)
+        } else {
+            self.module_loop_variables.contains(target)
+        };
 
         let result = (|| {
             self.data_pack.unrolled_loops += 1;
@@ -352,6 +353,16 @@ impl Transpiler {
             ));
         }
         Ok(())
+    }
+
+    /// The last value of a module-level loop expanded at compile time, for
+    /// recording its variable before function bodies are lowered.
+    pub(in crate::transpiler) fn expanded_loop_last_value(
+        &self,
+        for_loop: &ForLoop,
+    ) -> Option<Expression> {
+        let values = self.unroll_values(for_loop).ok()?;
+        values.last().map(UnrollValue::as_expression)
     }
 
     fn is_range_iterable(iter: &Expression) -> bool {

@@ -47,6 +47,20 @@ impl Transpiler {
                         _ => None,
                     })
                     .collect(),
+                // A module-level loop that keeps its variable assigns it.
+                Statement::For(for_loop)
+                    if self.module_loop_variables.contains(&for_loop.target) =>
+                {
+                    self.expanded_loop_last_value(for_loop)
+                        .map(|value| Assignment {
+                            target: for_loop.target.clone(),
+                            target_expr: None,
+                            value,
+                            persist: false,
+                        })
+                        .into_iter()
+                        .collect()
+                }
                 _ => Vec::new(),
             };
             for assign in assignments {

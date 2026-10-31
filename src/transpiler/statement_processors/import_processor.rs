@@ -371,6 +371,11 @@ impl Transpiler {
 
     pub(in crate::transpiler) fn register_program_function_metadata(&mut self, program: &Program) {
         self.register_recursive_functions(program);
+        let loop_variables = crate::transpiler::module_loop_variables(&program.statements);
+        for name in &loop_variables {
+            self.symbols.module_variables.insert(name.clone());
+        }
+        self.module_loop_variables.extend(loop_variables);
         self.register_module_declarations(program);
         for statement in &program.statements {
             if let Statement::Assignment(assign) = statement {
