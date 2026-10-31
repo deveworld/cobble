@@ -593,19 +593,6 @@ impl Sim {
             let (append, source) = match after.split_once(' ') {
                 Some(("set", source)) => (false, source),
                 Some(("append", source)) => (true, source),
-                Some(("merge", source)) => {
-                    // A compound value merged into a compound, one level deep.
-                    let snbt = source.strip_prefix("value ").expect("merge value");
-                    let Some(Value::Object(fields)) = self.read_snbt(snbt.trim()) else {
-                        return None;
-                    };
-                    let Some(Value::Object(mut target)) = self.storage_get(path).cloned() else {
-                        return None;
-                    };
-                    target.extend(fields);
-                    self.storage_set(path, Value::Object(target));
-                    return Some(1);
-                }
                 Some(("insert", source)) => {
                     let (index, source) = source.split_once(' ').expect("insert index");
                     let index: usize = index.parse().expect("insert index");
@@ -1097,6 +1084,10 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Result<Value, Strin
                     break;
                 }
                 let key = match parse_snbt_value(chars, position)? {
+                    // Minecraft 26.3 refuses an empty key.
+                    Value::String(key) if key.is_empty() => {
+                        return Err("SNBT compound key is empty".to_string())
+                    }
                     Value::String(key) => key,
                     other => other.to_string(),
                 };

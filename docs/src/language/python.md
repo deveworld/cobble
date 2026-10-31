@@ -32,10 +32,10 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   `name[i]` of a string is a one-character string. Map keys may be
   attributes, string literals, or runtime strings such as `config[key]`. A
   key can hold any text, such as spaces, dots, colons, quotes, and
-  backslashes, as in `prices["minecraft:diamond"]`, but it can't be empty,
-  because no storage path names an empty key. Storing or reading with an
-  empty runtime key does nothing and shows `<file>:<line>: a map key can't be
-  empty` in chat; `"" in config` works.
+  backslashes, as in `prices["minecraft:diamond"]`, but it can't be empty:
+  Minecraft refuses an empty key in a path and in a map. An empty runtime key
+  stores nothing, reads as a missing key, and shows `<file>:<line>: a map key
+  can't be empty` in chat; `"" in config` is False.
 - A list or map is a value: assigning it to another variable or passing it to
   a function copies it, so a change through one name doesn't show through the
   other.
@@ -53,8 +53,12 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   character, `"` and `\` included.
 - In `items[f()]`, a list that `f` changes in place shows the change, as in
   Python, and so does one that `f` replaces, where Python keeps the old list.
-- `sort()` and `sorted()` order numbers. `index()` gives -1 and `pop()` gives 0
-  when there is nothing to find, where Python raises an error.
+- `sort()` and `sorted()` order numbers. `index()` gives -1 when there is
+  nothing to find, where Python raises an error.
+- Reading an item or a field that isn't there, and `pop()` on an empty list,
+  give 0, or empty text, an empty list, or an empty map when Cobble knows the
+  value is one, where Python raises an error. The variable never keeps the
+  value it had before.
 - Text positions count UTF-16 units, so an emoji is two long in a running pack.
 - A bare expression such as `score + 1` produces no command and is rejected.
   Use an assignment, a call, a raw command, or `pass`.

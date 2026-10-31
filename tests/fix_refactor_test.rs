@@ -259,8 +259,10 @@ def lookup(key):
         "{content}"
     );
     assert!(
-        content.contains("data modify storage cobble:global _cobble_dyn_")
-            && content.contains(".key0 set from storage cobble:global args.key"),
+        // The key is escaped for the quoted path key on its way.
+        content.contains(
+            "data modify storage cobble:global _cobble_esc.key set from storage cobble:global args.key"
+        ) && content.contains(".key0 set from storage cobble:global _cobble_esc.done"),
         "{content}"
     );
     assert!(

@@ -507,26 +507,8 @@ fn functions(ns: &str) -> Vec<(String, Vec<String>)> {
                     "execute store result score #esc_ok temp run {}",
                     call(ESCAPE_KEY)
                 ),
-                format!(
-                    "execute if score #esc_ok temp matches 0 if data {esc}.done run return run {}",
-                    call("_cobble_esc_has_empty")
-                ),
                 "execute if score #esc_ok temp matches 0 run return 0".to_string(),
                 format!("return run {} with {esc}", call("_cobble_esc_has_at")),
-            ],
-        ),
-        // No path names the empty key, but merging one into a copy of the
-        // map adds no field when the map has it already.
-        (
-            "_cobble_esc_has_empty",
-            vec![
-                format!("data remove {esc}.box"),
-                format!("data modify {esc}.box set from {global} args.box"),
-                format!("execute store result score #esc_a temp run data get {esc}.box"),
-                format!("data modify {esc}.box merge value {{\"\":0b}}"),
-                format!("execute store result score #esc_b temp run data get {esc}.box"),
-                "execute if score #esc_a temp = #esc_b temp run return 1".to_string(),
-                "return 0".to_string(),
             ],
         ),
     ];

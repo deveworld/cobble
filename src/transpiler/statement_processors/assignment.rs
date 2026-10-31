@@ -6,6 +6,10 @@ use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{escape_quoted, GeneratedCommandKind, ModuleLevelAssignment};
 use crate::transpiler::{StoragePathPlan, TranspileError, Transpiler};
 
+/// Where a read whose path is known only at run time lands first, so a
+/// missing value can be told apart.
+const READ_SCRATCH: &str = "_cobble_read";
+
 /// How an assignment's *target* routes it. Produced by
 /// `Transpiler::classify_assignment_target`; the variants are checked in
 /// this order.
@@ -452,18 +456,51 @@ impl Transpiler {
         read: StorageRead,
     ) -> Result<(), TranspileError> {
         let target_path = self.variable_storage_path(target);
+        let namespace = self.data_pack.namespace.clone();
+        // A missing item or field gives an empty value of the target's type,
+        // or 0, as `pop()` on an empty list does; the target never keeps a
+        // value from an earlier call.
+        let empty = match self.symbols.variable_types.get(target) {
+            Some(CobbleType::String) => "\"\"",
+            Some(CobbleType::List) => "[]",
+            Some(CobbleType::Map) => "{}",
+            _ => "0",
+        };
         let (mut commands, score) = match read {
-            StorageRead::Path { plan, score } => {
-                (self.copy_storage_commands(&target_path, &plan)?, score)
-            }
+            StorageRead::Path { plan, score } => match plan.as_static() {
+                Some(source) => {
+                    // A whole parameter is there whenever the call ran.
+                    let whole_parameter = source
+                        .strip_prefix("args.")
+                        .is_some_and(|name| !name.contains(['.', '[']));
+                    let mut commands = Vec::new();
+                    if !whole_parameter {
+                        commands.push(format!(
+                            "execute unless data storage {namespace}:global {source} run data modify storage {namespace}:global {target_path} set value {empty}"
+                        ));
+                    }
+                    commands.extend(self.copy_storage_commands(&target_path, &plan)?);
+                    (commands, score)
+                }
+                None => {
+                    let commands = self.copy_storage_commands(READ_SCRATCH, &plan)?;
+                    (
+                        self.read_through_scratch(commands, &target_path, empty),
+                        score,
+                    )
+                }
+            },
             StorageRead::Item {
                 base_path,
                 index,
                 score,
-            } => (
-                self.unknown_item_commands(&target_path, &base_path, &index)?,
-                score,
-            ),
+            } => {
+                let commands = self.unknown_item_commands(READ_SCRATCH, &base_path, &index)?;
+                (
+                    self.read_through_scratch(commands, &target_path, empty),
+                    score,
+                )
+            }
         };
         self.symbols
             .variable_storage_paths
@@ -484,6 +521,30 @@ impl Transpiler {
         }
         self.extend_current_function(commands);
         Ok(())
+    }
+
+    /// `read` copies a value to [`READ_SCRATCH`]; these commands then give
+    /// `target_path` that value, or `empty` when the read found nothing.
+    fn read_through_scratch(
+        &self,
+        read: Vec<String>,
+        target_path: &str,
+        empty: &str,
+    ) -> Vec<String> {
+        let namespace = &self.data_pack.namespace;
+        let mut commands = vec![format!(
+            "data remove storage {namespace}:global {READ_SCRATCH}"
+        )];
+        commands.extend(read);
+        commands.extend([
+            format!(
+                "execute unless data storage {namespace}:global {READ_SCRATCH} run data modify storage {namespace}:global {READ_SCRATCH} set value {empty}"
+            ),
+            format!(
+                "data modify storage {namespace}:global {target_path} set from storage {namespace}:global {READ_SCRATCH}"
+            ),
+        ]);
+        commands
     }
 
     /// Whether `target = source` copies a score: the target holds a number

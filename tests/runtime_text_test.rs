@@ -269,21 +269,96 @@ def go():
 }
 
 #[test]
-fn in_finds_an_empty_key_in_a_literal_map() {
+fn no_map_holds_an_empty_key() {
     let mut sim = Sim::load(
         r#"
-m = {"": 1, "a": 2}
-n = {"a": 2}
+m = {"a": 2}
 
 def go():
     e = ""
     a = e in m
-    b = e in n
-    c = "" in m
-    /say {a} {b} {c}
+    b = "" in m
+    /say {a} {b}
 "#,
         &[],
     );
     sim.call("go");
-    assert_eq!(said(&sim), ["1 0 1"]);
+    assert_eq!(said(&sim), ["0 0"]);
+}
+
+#[test]
+fn pop_on_an_empty_list_gives_0_or_empty_text() {
+    let mut sim = Sim::load(
+        r#"
+q = []
+n = 0
+names = ["a"]
+s = ""
+words = ["x", "y"]
+
+def take():
+    global n
+    n = q.pop(0)
+    /say took {n}
+
+def takes():
+    global s
+    s = names.pop(0)
+    /say took [{s}]
+
+def take_at(i):
+    w = words.pop(i)
+    /say at [{w}]
+
+def go():
+    q.append(8)
+    take()
+    take()
+    takes()
+    takes()
+    z = q.pop(0)
+    /say got [{z}]
+    take_at(1)
+    take_at(1)
+"#,
+        &[],
+    );
+    sim.call("go");
+    assert_eq!(
+        said(&sim),
+        ["took 8", "took 0", "took [a]", "took []", "got [0]", "at [y]", "at []"]
+    );
+}
+
+#[test]
+fn a_missing_field_or_item_never_keeps_an_earlier_value() {
+    let mut sim = Sim::load(
+        r#"
+items = ["p", "q"]
+cfg = {"name": "Steve"}
+
+def show(entry):
+    d = entry.dir
+    /say {d}
+
+def item(i):
+    t = items[i]
+    /say [{t}]
+
+def field(key):
+    v = cfg[key]
+    /say [{v}]
+
+def go():
+    show({"dir": "up"})
+    show({})
+    item(1)
+    item(5)
+    field("name")
+    field("nope")
+"#,
+        &[],
+    );
+    sim.call("go");
+    assert_eq!(said(&sim), ["up", "0", "[q]", "[]", "[Steve]", "[]"]);
 }

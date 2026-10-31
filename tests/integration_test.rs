@@ -229,8 +229,9 @@ def test():
         content.contains("data modify storage cobble:global locals.test.key set value \"chance\"")
     );
     assert!(
-        content.contains("data modify storage cobble:global _cobble_dyn_")
-            && content.contains(".key0 set from storage cobble:global locals.test.key"),
+        // The key is escaped for the quoted path key on its way.
+        content.contains("data modify storage cobble:global _cobble_esc.key set from storage cobble:global locals.test.key")
+            && content.contains(".key0 set from storage cobble:global _cobble_esc.done"),
         "{content}"
     );
     assert!(all_functions.contains(
@@ -262,8 +263,9 @@ def lookup(key):
     let all_functions = read_all_functions(&output_dir);
 
     assert!(
-        content.contains("data modify storage cobble:global _cobble_dyn_")
-            && content.contains(".key0 set from storage cobble:global args.key"),
+        // The key is escaped for the quoted path key on its way.
+        content.contains("data modify storage cobble:global _cobble_esc.key set from storage cobble:global args.key")
+            && content.contains(".key0 set from storage cobble:global _cobble_esc.done"),
         "{content}"
     );
     assert!(all_functions.contains(
@@ -286,7 +288,8 @@ def probe():
     let all_functions = read_all_functions(&output_dir);
 
     assert!(
-        content.contains(".key0 set from storage cobble:global locals.probe.key"),
+        content.contains("_cobble_esc.key set from storage cobble:global locals.probe.key")
+            && content.contains(".key0 set from storage cobble:global _cobble_esc.done"),
         "{content}"
     );
     assert!(
