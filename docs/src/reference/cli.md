@@ -364,19 +364,54 @@ It also reports what Minecraft rejects when it loads a function, which stops
 that function from loading:
 
 - unknown `minecraft:` ids of items, blocks, block states, entity types,
-  effects, particles, attributes, enchantments, damage types, and biomes, and
-  unknown scoreboard criteria and item slots;
-- references to a loot table, a predicate, an item modifier, a dialog, or a
-  slot source that the pack's own namespace doesn't define;
-- JSON text components Minecraft rejects, and the old names `clickEvent` and
-  `hoverEvent`, which it ignores (they are now `click_event` and
-  `hover_event`);
+  effects, particles, attributes, and points of interest, and unknown scoreboard
+  criteria and item slots;
+- ids with a second `:` or with a `:` after a `/`, and whole numbers outside
+  the 32-bit range;
+- references to a loot table, a predicate, an item modifier, a dialog, a
+  feature, a slot source, a number provider, an enchantment, a damage type, a
+  biome, a world clock, or a timeline that neither Minecraft nor the pack
+  defines, where an id without a namespace is a `minecraft:` id;
+- block, item, biome, and point of interest tags that neither the pack nor
+  Minecraft defines;
+- a plain number where a number provider goes (`compute default integer 5`
+  needs `{type:"minecraft:constant",value:5}`);
+- text components Minecraft rejects, in JSON or SNBT, and the old names
+  `clickEvent` and `hoverEvent`, which it ignores (they are now `click_event`
+  and `hover_event`). That covers fields of the wrong type, targets, NBT paths,
+  and block positions that don't read, links without `http` or `https`, and
+  unknown items, entity types, and dialogs in events;
+- SNBT Minecraft can't read, in `nbt` tags, compounds, NBT path filters,
+  selector `nbt=`, block entity data, item component values, particle options,
+  and resources written inline;
+- unknown item components and item tests, components that appear twice, and
+  component values of the wrong shape, such as `custom_model_data=1`;
+- block states that appear twice or have no value, and particles without their
+  required options, such as `dust` without `color` and `scale`;
+- inline predicates, item modifiers, loot tables, and dialogs with the problems
+  listed under [Data Pack Resources](../stdlib/datapack-resources.md);
 - coordinates that mix `^` with other forms, fractional block coordinates,
-  reversed ranges such as `5..1`, invalid NBT paths, and selector arguments
-  that repeat or can't be negated.
+  reversed ranges such as `5..1`, invalid NBT paths, selector arguments
+  that repeat or can't be negated, and a selector that names one `type` and
+  has another `type`;
+- selector arguments whose value doesn't read, such as `tag=a:b`, and an
+  argument without `=`;
+- `@e`, `@n`, or a UUID where only players go, unless the selector has
+  `type=player`, and a selector that can pick several targets where one goes,
+  including the score of `execute if score`;
+- spaces and words the way Brigadier reads them: one space separates two
+  arguments, and a second one starts the next argument, which only some
+  arguments can read. A word without quotes holds letters, digits, `_`, `-`,
+  `.`, and `+`, so `tag @s add my:tag` needs another name;
+- numbers with an exponent or a `+`, such as `1e3`, outside SNBT;
+- `waypoint` hex colors with a `#`, or with a number of digits other than 3 or 6;
+- a function file that ends after a `\`, which continues a line.
 
-Ids of other namespaces, tags, SNBT text components, and values with a
-`$(name)` placeholder aren't checked.
+Ids and tags of other namespaces, references into namespaces the pack doesn't
+have, and values with a `$(name)` placeholder aren't checked, so a mod or
+another pack can define them. An `execute` chain is checked through its first
+800 command nodes, and SNBT through 512 levels of nesting. What lies past those
+limits goes unchecked.
 
 The validator also applies the tree's permission levels: data pack functions run at level 2
 (`gamemasters`, the default `function-permission-level`), so commands that need

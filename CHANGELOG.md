@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A raw command in a `.cbl` file can go on in the next line after a trailing
+  `\`, as in a `.mcfunction` file. See
+  [Long Commands](https://deveworld.github.io/cobble/docs/language/commands.html#long-commands).
+- `datapack.item_modifier` takes a list of modifiers and writes it as one
+  `minecraft:sequence`, since Minecraft 26.3 refuses a list in the file.
+- `--validate` reads SNBT the way Minecraft 26.3 does in text components, `nbt`
+  tags, compounds, NBT path filters, selector `nbt=`, block entity data, item
+  component values, particle options, and inline resources.
+- `--validate` reports unknown item components and item tests, wrongly shaped
+  component values, particles without their required options, block states that
+  repeat or have no value, inline dialogs with missing fields, and a selector
+  that names one `type` and has another `type`.
+- `--validate` looks up loot tables, predicates, item modifiers, dialogs,
+  features, slot sources, number providers, enchantments, damage types, biomes,
+  world clocks, timelines, and block, item, biome, and point of interest tags in
+  the game and the pack. A `minecraft:` id counts if either one defines it, an
+  id without a namespace is a `minecraft:` id, and other namespaces the pack
+  doesn't have go unchecked.
+- `--validate` reads selector arguments the way Minecraft 26.3 does, and reports
+  `@e`, `@n`, and UUIDs where only players go, and a selector that can pick
+  several targets where one goes, such as `execute if score @a obj matches 1`.
+- `--validate` reports text component fields of the wrong type, targets, NBT
+  paths, and block positions that don't read, links without `http` or `https`,
+  and unknown items, entity types, and dialogs in events. A component reads if
+  one of its kinds of content does, and `type` picks the kind.
+- `--validate` reads selectors in `say`, `me`, `msg`, and `teammsg` text the way
+  Minecraft does, so `say hi @a[` and `say @e[limit=0]` are errors.
+- `--validate` reports names of more than 16 characters where a target goes,
+  block coordinates past 32 bits, and criteria with an unknown stat or value.
+- `--validate` reads the `[...]` of items and blocks the way Minecraft 26.3 does,
+  and reports `custom_data` strings that aren't compounds, enchantment levels
+  outside 1 to 255, `dyed_color` lists without 3 items, an `item_model` that
+  isn't an id, and `food` without `nutrition` and `saturation`.
+- `datapack.dialog` reports a missing `type` or required field, and block, item,
+  and entity type tags report an unknown `minecraft:` entry unless it has
+  `"required": False`.
+
+### Changed
+- A plain number as a number provider, such as `compute default integer 5`, is
+  an error, because Minecraft reads it as the id `minecraft:5`.
+
+### Fixed
+- Score holders take everything up to a space, so names such as `#a>b` and `a:b`
+  pass `--validate`.
+- `--validate` reads spaces the way Brigadier does: `give @s stone  1` is an
+  error, and `setblock 1 2  stone` and `tellraw @a  "x"` pass.
+- `--validate` refuses `:`, `/`, `#`, and `*` in words without quotes, such as
+  `tag @s add my:tag`, and numbers with an exponent or a `+` outside SNBT.
+- `--validate` takes `minecraft:` enchantments, damage types, and biomes that
+  the pack defines, and a slot source without a namespace.
+- `waypoint modify @s color hex` takes `ff0000` and `fff`, and refuses a `#`.
+- `--validate` reads a line that ends in `\` together with the next one in
+  function files, and reports a file that ends after a `\`.
+- `template_rotation` takes `180`, the name Minecraft uses for a half turn.
+- An `execute` chain past the checked length no longer fails as a redirect
+  loop, and very deep SNBT can't overflow the validator's stack.
+- `--validate` accepts a macro line where a placeholder stands for a word of the
+  command, as in `$execute run $(command)`, and coordinates such as `~-$(x)`.
+- `--validate` refuses ids with a second `:` or a `:` after a `/`, and whole
+  numbers outside the 32-bit range.
+- The `input` of a `minecraft:brewing` recipe is no longer reported as an old
+  ingredient.
+- `--validate` reads quoted strings the way Brigadier does: `true` can have
+  quotes, a `\` only goes before a quote or another `\`, and an NBT path key
+  can hold `$` but can't be `""`.
+- `--validate` rounds a time to ticks before it compares it to the minimum, and
+  reads a float as 32 bits, so `weather rain 0.5t` passes and a float past the
+  32-bit range is an error.
+- `--validate` takes Java's short form of a UUID, `*` and `?` in `test run`, `#`
+  alone in `function`, and `-0` in `distance` and `level`, and refuses leading
+  zeros in slot numbers and unknown ids that start with `:`.
+- `--validate` trims a line and skips spaces the way Java does, so U+00A0 at the
+  end of a command is an error, and a lone carriage return ends a line.
+- `--validate` takes `@e` with `level`, `gamemode`, or a filled `advancements`
+  where only players go, since only players have those.
+- `--validate` accepts more macro lines: a placeholder can stand for a literal
+  after an argument took it, as in `$return $(how) function a:b`, hold the rest
+  of the command, or close a bracket or a quote that a word before it opened.
+
 ## [0.11.0-rc.1] - 2026-10-31
 
 Release candidate for 0.11.0. See

@@ -9,6 +9,8 @@
 //! - `positioned as` and `rotated as` keep their selector
 //! - two statements on one line are an error
 //! - an `execute` keyword before block modifiers is optional
+//! - a raw command goes on past a trailing `\\`, the way Minecraft reads a
+//!   function file
 
 mod common;
 
@@ -195,5 +197,80 @@ fn execute_keyword_before_modifiers_is_optional() {
     assert_eq!(
         main,
         "execute as @a at @s run say hi\nexecute as @a at @s run say hi"
+    );
+}
+
+#[test]
+fn a_raw_command_continues_after_a_backslash() {
+    let main = main_function(
+        r#"def main():
+    /execute as @a \
+            at @s \
+        run say done # note
+    /tellraw @a [ \
+        {"text":"a"}, \
+        {"text":"b"} \
+    ]
+    if score #a obj matches 1:
+        /say in \
+    a block
+    /say last
+"#,
+    );
+    assert_eq!(
+        main.lines().collect::<Vec<_>>(),
+        [
+            "execute as @a at @s run say done",
+            r#"tellraw @a [ {"text":"a"}, {"text":"b"} ]"#,
+            "execute if score #a obj matches 1 run say in a block",
+            "say last",
+        ]
+    );
+}
+
+#[test]
+fn a_continued_raw_command_takes_placeholders() {
+    let (_temp, output_dir) = compile(
+        r#"def give(item, count):
+    /give @a \
+        {item} \
+        {count}
+
+def main():
+    give("minecraft:stone", 2)
+"#,
+    )
+    .unwrap_or_else(|e| panic!("build failed: {e}"));
+    assert_eq!(
+        load_functions(&output_dir).remove("give").expect("give"),
+        ["$give @a $(item) $(count)"]
+    );
+}
+
+#[test]
+fn a_continued_raw_command_reads_crlf_and_a_missing_final_newline() {
+    let main = main_function("def main():\r\n    /say a \\\r\n      b\r\n    /say c \\\n      d");
+    assert_eq!(main, "say a b\nsay c d");
+}
+
+#[test]
+fn a_backslash_in_a_comment_continues_nothing() {
+    let main = main_function("def main():\n    /say a # see C:\\\n    /say b\n");
+    assert_eq!(main, "say a\nsay b");
+}
+
+#[test]
+fn a_string_keeps_lines_that_look_like_a_continued_command() {
+    let main = main_function(
+        r#"def main():
+    x = """
+/say a \
+b
+"""
+"#,
+    );
+    assert_eq!(
+        main,
+        r#"data modify storage sim:global locals.main.x set value "\n/say a \\\nb\n""#
     );
 }

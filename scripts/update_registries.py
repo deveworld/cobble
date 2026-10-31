@@ -21,11 +21,28 @@ STATIC = {
     "particle_type": "minecraft:particle_type",
     "attribute": "minecraft:attribute",
     "custom_stat": "minecraft:custom_stat",
+    "data_component": "minecraft:data_component_type",
+    "data_component_predicate": "minecraft:data_component_predicate_type",
+    "poi_type": "minecraft:point_of_interest_type",
 }
 DATA_DRIVEN = {
     "enchantment": "data/minecraft/enchantment/",
     "damage_type": "data/minecraft/damage_type/",
     "biome": "data/minecraft/worldgen/biome/",
+    "block_tag": "data/minecraft/tags/block/",
+    "item_tag": "data/minecraft/tags/item/",
+    "biome_tag": "data/minecraft/tags/worldgen/biome/",
+    "poi_tag": "data/minecraft/tags/point_of_interest_type/",
+    "loot_table": "data/minecraft/loot_table/",
+    "predicate": "data/minecraft/predicate/",
+    "item_modifier": "data/minecraft/item_modifier/",
+    "dialog": "data/minecraft/dialog/",
+    "feature": "data/minecraft/worldgen/feature/",
+    "context_int_provider": "data/minecraft/context_int_provider/",
+    "context_float_provider": "data/minecraft/context_float_provider/",
+    "slot_source": "data/minecraft/slot_source/",
+    "world_clock": "data/minecraft/world_clock/",
+    "timeline": "data/minecraft/timeline/",
 }
 
 

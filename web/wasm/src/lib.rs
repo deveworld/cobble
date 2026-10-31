@@ -17,6 +17,7 @@ pub mod parser;
 pub mod stdlib;
 #[path = "../../../src/transpiler/mod.rs"]
 pub mod transpiler;
+pub mod validator;
 
 use pack_format::{SUPPORTED_MINECRAFT_VERSION, SUPPORTED_PACK_FORMAT};
 use transpiler::{

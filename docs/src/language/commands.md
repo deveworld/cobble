@@ -13,6 +13,31 @@ A `#` comment after a command is removed from the output. The `#` needs a
 space before and after it, so `#` inside a name, such as the fake player
 `#count`, stays in the command.
 
+## Long Commands
+
+End a line with `\` to go on in the next one, as in a `.mcfunction` file:
+
+```python
+def reward():
+    /execute as @a[tag=winner] at @s \
+        run give @s minecraft:diamond 3
+    /tellraw @a [ \
+        {"text":"Round over","color":"gold"}, \
+        {"text":" Next round soon"} \
+    ]
+```
+
+```mcfunction
+execute as @a[tag=winner] at @s run give @s minecraft:diamond 3
+tellraw @a [ {"text":"Round over","color":"gold"}, {"text":" Next round soon"} ]
+```
+
+The `\` goes and the next line's indent doesn't count, so keep a space before
+the `\` where the command needs one. A blank line ends the command, and a `\`
+on the last line of a file is dropped. Each line can have its own `#` comment
+after the `\`, and a `\` at the end of a comment continues nothing. Errors point
+to the first line of the command, and later lines keep their numbers.
+
 ## JSON And SNBT Text
 
 `tellraw`, `title`, and other commands with text components work as written,

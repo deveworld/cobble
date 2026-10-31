@@ -1,3 +1,4 @@
+use super::snbt;
 use super::string_reader::StringReader;
 
 /// Parse an argument according to the given Brigadier/Minecraft parser type.
@@ -35,7 +36,7 @@ pub fn parse_argument(
     reader.is_macro_line()
         && !is_multi_token_parser(parser_type)
         && !is_greedy_parser(parser_type, properties)
-        && reader.skip_token_with_macro()
+        && (reader.skip_token_with_macro() || reader.skip_open_word_before_macro())
 }
 
 fn parse_native(
@@ -43,6 +44,9 @@ fn parse_native(
     parser_type: &str,
     properties: Option<&serde_json::Value>,
 ) -> bool {
+    if takes_leading_spaces(parser_type) {
+        reader.skip_whitespace();
+    }
     match parser_type {
         // === Brigadier core types ===
         "brigadier:bool" => parse_bool(reader),
@@ -52,10 +56,8 @@ fn parse_native(
         "brigadier:string" => parse_brigadier_string(reader, properties),
 
         // === Simple word-accepting types ===
-        "minecraft:objective"
-        | "minecraft:team"
-        | "minecraft:dialog"
-        | "minecraft:objective_criteria" => parse_word(reader),
+        "minecraft:objective" | "minecraft:team" => parse_word(reader),
+        "minecraft:objective_criteria" => !reader.read_until_space().is_empty(),
         "minecraft:scoreboard_slot" => parse_scoreboard_slot(reader),
         "minecraft:swizzle" => parse_swizzle(reader),
         "minecraft:item_slot" => parse_item_slot(reader),
@@ -102,12 +104,7 @@ fn parse_native(
         }
         "minecraft:template_rotation" => parse_literal_word(
             reader,
-            &[
-                "none",
-                "clockwise_90",
-                "clockwise_180",
-                "counterclockwise_90",
-            ],
+            &["none", "clockwise_90", "180", "counterclockwise_90"],
         ),
 
         // === Operations ===
@@ -122,41 +119,43 @@ fn parse_native(
 
         // === Entity/player selectors ===
         "minecraft:entity" | "minecraft:score_holder" | "minecraft:game_profile" => {
-            parse_entity(reader, parser_type, properties)
+            parse_entity(reader, parser_type)
         }
 
         // === Resource locations ===
-        "minecraft:resource_location"
-        | "minecraft:dimension"
-        | "minecraft:mob_effect"
-        | "minecraft:resource"
-        | "minecraft:resource_key" => parse_resource_location(reader),
+        // These read an id and look it up later, so an empty one reads.
+        "minecraft:resource_location" | "minecraft:dimension" | "minecraft:resource_key" => {
+            reader.peek() == Some(' ') || parse_resource_location(reader)
+        }
+        "minecraft:mob_effect" | "minecraft:resource" => parse_resource_location(reader),
 
         // `ResourceOrIdArgument`s: a registry ID or an inline SNBT definition.
         "minecraft:loot_modifier"
         | "minecraft:loot_predicate"
         | "minecraft:loot_table"
-        | "minecraft:feature" => parse_resource_or_inline(reader, false),
-        // Number providers also take a plain number as a constant provider.
+        | "minecraft:dialog"
+        | "minecraft:feature" => parse_resource_or_inline(reader),
         "minecraft:context_int_provider" | "minecraft:context_float_provider" => {
-            parse_resource_or_inline(reader, true)
+            parse_number_provider(reader)
         }
         // Slot range string (`container.0`, `container.*`, `weapon`) or a
         // `slot_source` ID / inline definition.
         "minecraft:slot_source" => parse_slot_source(reader),
         "minecraft:swing_animation" => parse_literal_word(reader, &["whack", "stab", "none"]),
 
-        // `FunctionArgument` takes a function ID or a `#` function tag.
-        "minecraft:function"
-        | "minecraft:resource_or_tag"
-        | "minecraft:resource_or_tag_key"
-        | "minecraft:resource_selector" => parse_resource_or_tag(reader),
+        // `FunctionArgument` takes a function ID or a `#` function tag, and
+        // an empty id, which it looks up later.
+        "minecraft:function" => reader.peek() == Some(' ') || parse_resource_or_tag(reader),
+        "minecraft:resource_or_tag" | "minecraft:resource_or_tag_key" => {
+            parse_resource_or_tag(reader)
+        }
+        "minecraft:resource_selector" => parse_resource_selector(reader),
 
         // === Coordinates ===
-        "minecraft:block_pos" => parse_block_pos(reader),
-        "minecraft:column_pos" => parse_column_pos(reader),
-        "minecraft:vec2" | "minecraft:rotation" => parse_vec2(reader),
-        "minecraft:vec3" => parse_vec3(reader),
+        "minecraft:block_pos" | "minecraft:vec3" => parse_coordinates(reader, 3),
+        "minecraft:column_pos" | "minecraft:vec2" | "minecraft:rotation" => {
+            parse_coordinates(reader, 2)
+        }
 
         // === Particle ===
         "minecraft:particle" => parse_particle(reader),
@@ -179,8 +178,30 @@ fn parse_native(
         "minecraft:message" => parse_message(reader),
 
         // Unknown parser — accept any word liberally
-        _ => parse_word(reader),
+        _ => {
+            reader.read_until_space();
+            true
+        }
     }
+}
+
+/// Parsers that read SNBT skip spaces first, and so do item predicates.
+fn takes_leading_spaces(parser_type: &str) -> bool {
+    matches!(
+        parser_type,
+        "minecraft:component"
+            | "minecraft:style"
+            | "minecraft:nbt_tag"
+            | "minecraft:nbt_compound_tag"
+            | "minecraft:loot_table"
+            | "minecraft:loot_modifier"
+            | "minecraft:loot_predicate"
+            | "minecraft:dialog"
+            | "minecraft:feature"
+            | "minecraft:context_int_provider"
+            | "minecraft:context_float_provider"
+            | "minecraft:item_predicate"
+    )
 }
 
 fn is_greedy_parser(parser_type: &str, properties: Option<&serde_json::Value>) -> bool {
@@ -207,13 +228,12 @@ fn is_multi_token_parser(parser_type: &str) -> bool {
 // Brigadier core types
 // ============================================================================
 
+/// Brigadier reads a boolean as a string, so it can have quotes.
 fn parse_bool(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
-    if reader.try_read_literal("true") || reader.try_read_literal("false") {
-        return true;
-    }
-    reader.set_cursor(saved);
-    false
+    let value = reader.read_string();
+    (matches!(value.as_deref(), Some("true" | "false")) && reader.at_token_boundary())
+        || reset(reader, saved)
 }
 
 fn parse_integer(reader: &mut StringReader, properties: Option<&serde_json::Value>) -> bool {
@@ -232,6 +252,9 @@ fn parse_integer(reader: &mut StringReader, properties: Option<&serde_json::Valu
 }
 
 fn integer_in_bounds(value: i64, properties: Option<&serde_json::Value>) -> bool {
+    if i32::try_from(value).is_err() {
+        return false;
+    }
     let min = properties
         .and_then(|p| p.get("min"))
         .and_then(|value| value.as_i64());
@@ -252,43 +275,23 @@ fn integer_in_bounds(value: i64, properties: Option<&serde_json::Value>) -> bool
     true
 }
 
-fn float_in_bounds(value: f64, properties: Option<&serde_json::Value>) -> bool {
-    let min = properties
-        .and_then(|p| p.get("min"))
-        .and_then(|value| value.as_f64());
-    let max = properties
-        .and_then(|p| p.get("max"))
-        .and_then(|value| value.as_f64());
-
-    if let Some(min) = min {
-        if value < min {
-            return false;
-        }
-    }
-    if let Some(max) = max {
-        if value > max {
-            return false;
-        }
-    }
-    true
+fn number_bound(properties: Option<&serde_json::Value>, name: &str) -> Option<f64> {
+    properties?.get(name)?.as_f64()
 }
 
+/// A float reads as 32 bits before it meets its bounds, and too many digits
+/// make it infinite, which is above any maximum.
 fn parse_brigadier_float(
     reader: &mut StringReader,
     properties: Option<&serde_json::Value>,
 ) -> bool {
     let saved = reader.cursor();
-    if let Some(value) = reader.read_float() {
-        if !float_in_bounds(value, properties) {
-            reader.set_cursor(saved);
-            return false;
-        }
-        if reader.at_token_boundary() {
-            return true;
-        }
-    }
-    reader.set_cursor(saved);
-    false
+    let in_bounds = reader.read_f32().is_some_and(|value| {
+        value.is_finite()
+            && number_bound(properties, "min").is_none_or(|min| value >= min as f32)
+            && number_bound(properties, "max").is_none_or(|max| value <= max as f32)
+    });
+    (in_bounds && reader.at_token_boundary()) || reset(reader, saved)
 }
 
 fn parse_brigadier_double(
@@ -296,17 +299,12 @@ fn parse_brigadier_double(
     properties: Option<&serde_json::Value>,
 ) -> bool {
     let saved = reader.cursor();
-    if let Some(value) = reader.read_float() {
-        if !float_in_bounds(value, properties) {
-            reader.set_cursor(saved);
-            return false;
-        }
-        if reader.at_token_boundary() {
-            return true;
-        }
-    }
-    reader.set_cursor(saved);
-    false
+    let in_bounds = reader.read_float().is_some_and(|value| {
+        value.is_finite()
+            && number_bound(properties, "min").is_none_or(|min| value >= min)
+            && number_bound(properties, "max").is_none_or(|max| value <= max)
+    });
+    (in_bounds && reader.at_token_boundary()) || reset(reader, saved)
 }
 
 fn parse_brigadier_string(
@@ -330,24 +328,15 @@ fn parse_brigadier_string(
         "phrase" => {
             // Quotable phrase: quoted string or single word
             let saved = reader.cursor();
-            if reader.read_string() && reader.at_token_boundary() {
+            if reader.read_string().is_some() && reader.at_token_boundary() {
                 true
             } else {
                 reader.set_cursor(saved);
                 false
             }
         }
-        _ => {
-            // "word" — single unquoted word
-            let saved = reader.cursor();
-            let s = reader.read_unquoted_string();
-            if !s.is_empty() && reader.at_token_boundary() {
-                true
-            } else {
-                reader.set_cursor(saved);
-                false
-            }
-        }
+        // "word" — single unquoted word
+        _ => parse_word(reader),
     }
 }
 
@@ -355,10 +344,11 @@ fn parse_brigadier_string(
 // Simple word parser
 // ============================================================================
 
+/// An unquoted word, which can be empty.
 fn parse_word(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
-    let s = reader.read_unquoted_string();
-    if !s.is_empty() && reader.at_token_boundary() {
+    reader.read_unquoted_string();
+    if reader.at_token_boundary() {
         return true;
     }
     reader.set_cursor(saved);
@@ -456,15 +446,14 @@ fn parse_item_slots(reader: &mut StringReader) -> bool {
 
 fn parse_item_slot_value(reader: &mut StringReader, allow_groups: bool) -> bool {
     let saved = reader.cursor();
-    let value = reader.read_unquoted_string();
-    if is_item_slot_value(&value, allow_groups) && reader.at_token_boundary() {
+    if is_item_slot_value(&reader.read_until_space(), allow_groups) {
         return true;
     }
     reader.set_cursor(saved);
     false
 }
 
-fn is_item_slot_value(value: &str, allow_groups: bool) -> bool {
+pub(super) fn is_item_slot_value(value: &str, allow_groups: bool) -> bool {
     if value.is_empty() {
         return false;
     }
@@ -508,9 +497,13 @@ fn is_item_slot_value(value: &str, allow_groups: bool) -> bool {
     let Some((prefix, index)) = value.rsplit_once('.') else {
         return false;
     };
+    // Slots are fixed names, so `hotbar.08` and `hotbar.+8` aren't any.
     let Ok(index) = index.parse::<u32>() else {
         return false;
     };
+    if value != format!("{prefix}.{index}") {
+        return false;
+    }
 
     match prefix {
         "container" => index <= 53,
@@ -524,28 +517,16 @@ fn is_item_slot_value(value: &str, allow_groups: bool) -> bool {
     }
 }
 
+/// Three or six characters, read one or two at a time as hex numbers, which
+/// can have a sign in Java as they can here.
 fn parse_hex_color(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
-    if reader.peek() != Some('#') {
-        return false;
-    }
-    reader.read_char();
-    for _ in 0..6 {
-        match reader.peek() {
-            Some(ch) if ch.is_ascii_hexdigit() => {
-                reader.read_char();
-            }
-            _ => {
-                reader.set_cursor(saved);
-                return false;
-            }
-        }
-    }
-    if reader.at_token_boundary() {
-        return true;
-    }
-    reader.set_cursor(saved);
-    false
+    let color = reader.read_unquoted_string();
+    let valid = matches!(color.len(), 3 | 6)
+        && color.as_bytes().chunks(color.len() / 3).all(|group| {
+            std::str::from_utf8(group).is_ok_and(|group| i32::from_str_radix(group, 16).is_ok())
+        });
+    (valid && reader.at_token_boundary()) || reset(reader, saved)
 }
 
 // ============================================================================
@@ -581,106 +562,69 @@ fn parse_operation(reader: &mut StringReader) -> bool {
 
 fn parse_int_range(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
-
-    // Try: N..N, N.., ..N, or just N
-    let has_left = reader.read_integer().is_some();
-
-    if reader.can_read() && reader.peek() == Some('.') {
-        let dot_pos = reader.cursor();
-        reader.read_char(); // first dot
-        if reader.peek() == Some('.') {
-            reader.read_char(); // second dot
-                                // Try to read right side
-            let has_right = reader.read_integer().is_some();
-            if (has_left || has_right) && reader.at_token_boundary() {
-                return true;
-            }
-        }
-        // Not a range, backtrack to dots
-        reader.set_cursor(dot_pos);
-    }
-
-    if has_left && reader.at_token_boundary() {
-        return true;
-    }
-
-    reader.set_cursor(saved);
-    false
+    (reader.read_int_range() && reader.at_token_boundary()) || reset(reader, saved)
 }
 
 fn parse_float_range(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
-
-    let has_left = reader.read_float().is_some();
-
-    if reader.can_read() && reader.peek() == Some('.') {
-        let dot_pos = reader.cursor();
-        reader.read_char();
-        if reader.peek() == Some('.') {
-            reader.read_char();
-            let has_right = reader.read_float().is_some();
-            if (has_left || has_right) && reader.at_token_boundary() {
-                return true;
-            }
-        }
-        reader.set_cursor(dot_pos);
-    }
-
-    if has_left && reader.at_token_boundary() {
-        return true;
-    }
-
-    reader.set_cursor(saved);
-    false
+    (reader.read_float_range() && reader.at_token_boundary()) || reset(reader, saved)
 }
 
 // ============================================================================
 // Time parser
 // ============================================================================
 
+/// Java's `Math.round`, which takes halves up and stops at the ends of `i32`.
+fn java_round(value: f32) -> i32 {
+    let floor = value.floor();
+    (if value - floor >= 0.5 {
+        floor + 1.0
+    } else {
+        floor
+    }) as i32
+}
+
+/// A float and a unit. The ticks they round to have to reach the minimum.
 fn parse_time(reader: &mut StringReader, properties: Option<&serde_json::Value>) -> bool {
     let saved = reader.cursor();
-    if let Some(value) = reader.read_float() {
-        if !float_in_bounds(value, properties) {
-            reader.set_cursor(saved);
-            return false;
-        }
-        // Optional suffix: d, s, t
-        if reader.can_read() {
-            let ch = reader.peek().unwrap();
-            if ch == 'd' || ch == 's' || ch == 't' {
-                reader.read_char();
-            }
-        }
-        if reader.at_token_boundary() {
-            return true;
-        }
-    }
-    reader.set_cursor(saved);
-    false
+    let Some(value) = reader.read_f32() else {
+        return false;
+    };
+    let ticks_per_unit = match reader.read_unquoted_string().as_str() {
+        "" | "t" => 1.0,
+        "s" => 20.0,
+        "d" => 24000.0,
+        _ => return reset(reader, saved),
+    };
+    let ticks = java_round(value * ticks_per_unit);
+    (number_bound(properties, "min").is_none_or(|min| f64::from(ticks) >= min)
+        && reader.at_token_boundary())
+        || reset(reader, saved)
 }
 
 // ============================================================================
 // Entity/selector parsers
 // ============================================================================
 
-fn parse_entity(
-    reader: &mut StringReader,
-    parser_type: &str,
-    properties: Option<&serde_json::Value>,
-) -> bool {
+fn parse_entity(reader: &mut StringReader, parser_type: &str) -> bool {
     let saved = reader.cursor();
 
-    // Try selector (@a, @s, @p, @e, @r, etc.)
+    // Try selector (@a, @s, @p, @e, @r, etc.). `values` checks what is in it.
     if reader.peek() == Some('@') {
-        let selector_start = reader.cursor();
         if reader.read_selector() && reader.at_token_boundary() {
-            let selector = reader.slice(selector_start, reader.cursor());
-            if selector_allowed(&selector, parser_type, properties) {
-                return true;
-            }
+            return true;
         }
         reader.set_cursor(saved);
+    }
+
+    // `ScoreHolderArgument` takes everything up to the next space as a name,
+    // which is why `$x` and `#a>b` are common fake player names.
+    if parser_type == "minecraft:score_holder" {
+        if reader.peek() == Some('@') {
+            return false;
+        }
+        reader.read_until_space();
+        return true;
     }
 
     if parser_type == "minecraft:entity" {
@@ -697,6 +641,7 @@ fn parse_entity(
         reader.set_cursor(saved);
     }
 
+    // `GameProfileArgument` also takes everything up to the next space.
     if parser_type == "minecraft:game_profile" {
         reader.set_cursor(saved);
         if reader.try_read_macro() {
@@ -709,165 +654,16 @@ fn parse_entity(
             }
         }
         reader.set_cursor(saved);
+        return reader.peek() != Some('@') && !reader.read_until_space().is_empty();
     }
 
-    if parser_type == "minecraft:score_holder" {
-        reader.set_cursor(saved);
-        if reader.try_read_macro() {
-            return true;
-        }
-        reader.set_cursor(saved);
-    }
-
-    // For score_holder, accept *
-    if parser_type == "minecraft:score_holder" && reader.peek() == Some('*') {
-        reader.read_char();
-        if reader.at_token_boundary() {
-            return true;
-        }
-        reader.set_cursor(saved);
-    }
-
-    // Try quoted string (player name can be quoted)
-    if reader.peek() == Some('"') || reader.peek() == Some('\'') {
-        if reader.read_quoted_string() && reader.at_token_boundary() {
-            return true;
-        }
-        reader.set_cursor(saved);
-    }
-
-    // Try UUID format
-    let uuid_saved = reader.cursor();
-    if try_read_uuid(reader) && reader.at_token_boundary() {
-        return true;
-    }
-    reader.set_cursor(uuid_saved);
-
-    // Player name (unquoted word, can include hyphens for UUIDs)
-    let s = reader.read_unquoted_string();
-    if !s.is_empty() && reader.at_token_boundary() {
-        return true;
-    }
-
-    reader.set_cursor(saved);
-    false
+    // A name or a UUID, which can have quotes. `values` checks what it holds.
+    let read = reader.read_string().is_some() && reader.cursor() > saved;
+    (read && reader.at_token_boundary()) || reset(reader, saved)
 }
 
-fn selector_allowed(
-    selector: &str,
-    parser_type: &str,
-    properties: Option<&serde_json::Value>,
-) -> bool {
-    let selector_kind = selector.chars().nth(1);
-    if !matches!(
-        selector_kind,
-        Some('p') | Some('a') | Some('r') | Some('s') | Some('e') | Some('n')
-    ) {
-        return false;
-    }
-
-    if !selector_arguments_allowed(selector) {
-        return false;
-    }
-
-    if parser_type == "minecraft:score_holder" {
-        return true;
-    }
-
-    if parser_type == "minecraft:game_profile" && selector.starts_with("@e") {
-        return false;
-    }
-
-    let entity_type = properties
-        .and_then(|p| p.get("type"))
-        .and_then(|value| value.as_str());
-    let amount = properties
-        .and_then(|p| p.get("amount"))
-        .and_then(|value| value.as_str());
-
-    if entity_type == Some("players") && selector_kind == Some('e') {
-        return false;
-    }
-
-    if amount == Some("single") && matches!(selector_kind, Some('a') | Some('e')) {
-        return selector_contains_limit_one(selector);
-    }
-
-    true
-}
-
-fn selector_arguments_allowed(selector: &str) -> bool {
-    let Some(args_start) = selector.find('[') else {
-        return true;
-    };
-    let args = selector[args_start + 1..].trim_end_matches(']');
-    if args.trim().is_empty() {
-        return true;
-    }
-
-    split_selector_arguments(args)
-        .iter()
-        .all(|part| selector_argument_allowed(part))
-}
-
-fn selector_argument_allowed(part: &str) -> bool {
-    let part = part.trim();
-    let Some((key, value)) = part.split_once('=') else {
-        let key = part.trim_start_matches('!');
-        return selector_key_allowed(key);
-    };
-    let key = key.trim().trim_start_matches('!');
-    let value = value.trim();
-    if !selector_key_allowed(key) {
-        return false;
-    }
-
-    match key {
-        "limit" => value.parse::<i32>().is_ok_and(|limit| limit >= 1),
-        "distance" | "x_rotation" | "y_rotation" => {
-            let mut reader = StringReader::new(value.trim_start_matches('!'));
-            parse_float_range(&mut reader) && !reader.can_read()
-        }
-        "level" => {
-            let mut reader = StringReader::new(value.trim_start_matches('!'));
-            parse_int_range(&mut reader) && !reader.can_read()
-        }
-        "sort" => matches!(value, "nearest" | "furthest" | "random" | "arbitrary"),
-        "gamemode" => matches!(
-            value.trim_start_matches('!'),
-            "survival" | "creative" | "adventure" | "spectator"
-        ),
-        _ => true,
-    }
-}
-
-fn selector_key_allowed(key: &str) -> bool {
-    matches!(
-        key,
-        "x" | "y"
-            | "z"
-            | "dx"
-            | "dy"
-            | "dz"
-            | "distance"
-            | "scores"
-            | "tag"
-            | "team"
-            | "limit"
-            | "sort"
-            | "level"
-            | "gamemode"
-            | "name"
-            | "x_rotation"
-            | "y_rotation"
-            | "type"
-            | "nbt"
-            | "predicate"
-            | "advancements"
-    )
-}
-
-pub(super) fn split_selector_arguments(args: &str) -> Vec<String> {
+/// Splits `args` at each `separator` outside quotes and brackets.
+pub(super) fn split_top_level(args: &str, separator: char) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
@@ -905,7 +701,7 @@ pub(super) fn split_selector_arguments(args: &str) -> Vec<String> {
                 depth = depth.saturating_sub(1);
                 current.push(ch);
             }
-            ',' if depth == 0 => {
+            _ if ch == separator && depth == 0 => {
                 parts.push(current.trim().to_string());
                 current.clear();
             }
@@ -919,27 +715,25 @@ pub(super) fn split_selector_arguments(args: &str) -> Vec<String> {
     parts
 }
 
-fn selector_contains_limit_one(selector: &str) -> bool {
-    let Some(args_start) = selector.find('[') else {
-        return false;
-    };
-    let args = selector[args_start + 1..].trim_end_matches(']');
-    args.split(',').any(|part| {
-        let mut pieces = part.splitn(2, '=');
-        let key = pieces.next().map(str::trim);
-        let value = pieces.next().map(str::trim);
-        key == Some("limit") && value == Some("1")
-    })
-}
-
 // ============================================================================
 // Resource location parsers
 // ============================================================================
+
+/// Whether `text` reads as an id: a path, or `namespace:path`.
+pub(super) fn is_id(text: &str) -> bool {
+    let (namespace, path) = text.split_once(':').unwrap_or(("", text));
+    let is_path_char = |ch: char| {
+        ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '_' | '.' | '-' | '/')
+    };
+    namespace.chars().all(|ch| ch != '/' && is_path_char(ch)) && path.chars().all(is_path_char)
+}
 
 /// Read a resource location without checking for a token boundary.
 /// Returns true if at least one character was consumed.
 fn read_resource_location_chars(reader: &mut StringReader) -> bool {
     let mut has_chars = false;
+    let mut has_colon = false;
+    let mut has_slash = false;
     while reader.can_read() {
         let ch = reader.peek().unwrap();
         if ch == '$' {
@@ -957,8 +751,10 @@ fn read_resource_location_chars(reader: &mut StringReader) -> bool {
             || ch == '.'
             || ch == '-'
             || ch == '/'
-            || ch == ':'
+            || (ch == ':' && !has_colon && !has_slash)
         {
+            has_colon |= ch == ':';
+            has_slash |= ch == '/';
             reader.read_char();
             has_chars = true;
         } else {
@@ -969,23 +765,12 @@ fn read_resource_location_chars(reader: &mut StringReader) -> bool {
 }
 
 /// A registry ID or an inline SNBT value (`{type:"minecraft:uniform",...}`),
-/// as accepted by Minecraft's `ResourceOrIdArgument`. Number providers also
-/// accept a bare number, which decodes as a constant provider.
-fn parse_resource_or_inline(reader: &mut StringReader, allow_number: bool) -> bool {
+/// as accepted by Minecraft's `ResourceOrIdArgument`.
+fn parse_resource_or_inline(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
     match reader.peek() {
         Some('{') | Some('[') => {
             if reader.read_nbt() && reader.at_token_boundary() {
-                return true;
-            }
-        }
-        Some('"') | Some('\'') => {
-            if reader.read_quoted_string() && reader.at_token_boundary() {
-                return true;
-            }
-        }
-        Some(ch) if allow_number && (ch.is_ascii_digit() || matches!(ch, '-' | '+' | '.')) => {
-            if reader.read_float().is_some() && reader.at_token_boundary() {
                 return true;
             }
         }
@@ -999,18 +784,30 @@ fn parse_resource_or_inline(reader: &mut StringReader, allow_number: bool) -> bo
     false
 }
 
+/// An id can't start with `+`, so Minecraft reads `+1` as the number it is. A
+/// number without the sign reads as an id, such as `minecraft:1`.
+fn parse_number_provider(reader: &mut StringReader) -> bool {
+    if reader.peek() != Some('+') {
+        return parse_resource_or_inline(reader);
+    }
+    let saved = reader.cursor();
+    let word = reader.read_until_space();
+    if snbt::parse(&word).is_ok_and(|value| value.is_number()) {
+        return true;
+    }
+    reader.set_cursor(saved);
+    false
+}
+
 /// `minecraft:slot_source` tries a slot range first, like Minecraft's
 /// `SlotSourceArgument`, then falls back to a slot source ID or inline value.
-/// A slot name, a slot source written inline, or the `namespace:path` of one
-/// in a data pack. A word without a `:` can only be a slot name.
+/// Those two can follow extra spaces, and a slot name can't.
 fn parse_slot_source(reader: &mut StringReader) -> bool {
     if parse_item_slots(reader) {
         return true;
     }
-    let token = reader.remaining();
-    let token = token.split(' ').next().unwrap_or_default();
-    (token.contains(':') || token.starts_with(['{', '[']))
-        && parse_resource_or_inline(reader, false)
+    reader.skip_whitespace();
+    parse_resource_or_inline(reader)
 }
 
 fn parse_resource_location(reader: &mut StringReader) -> bool {
@@ -1027,9 +824,12 @@ fn parse_resource_location(reader: &mut StringReader) -> bool {
 fn parse_resource_or_tag(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
 
-    // Optional # prefix for tags
+    // Optional # prefix for tags, which reads with an empty id too.
     if reader.peek() == Some('#') {
         reader.read_char();
+        if reader.at_token_boundary() {
+            return true;
+        }
     }
 
     if parse_resource_location(reader) {
@@ -1040,96 +840,35 @@ fn parse_resource_or_tag(reader: &mut StringReader) -> bool {
     false
 }
 
+/// An id that can hold the wildcards `*` and `?`. What it matches is known
+/// when the function loads, and a pack can add to it.
+fn parse_resource_selector(reader: &mut StringReader) -> bool {
+    let saved = reader.cursor();
+    while reader
+        .peek()
+        .is_some_and(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || "_:/.-*?".contains(ch))
+    {
+        reader.read_char();
+    }
+    (reader.cursor() > saved && reader.at_token_boundary()) || reset(reader, saved)
+}
+
 // ============================================================================
 // Coordinate parsers
 // ============================================================================
 
-fn parse_block_pos(reader: &mut StringReader) -> bool {
+/// `count` coordinates, one space apart, or a placeholder for all of them.
+/// One that ends the line isn't read here: what follows it in the final
+/// command is unknown, and `walk_node` stops checking at such a word.
+fn parse_coordinates(reader: &mut StringReader, count: usize) -> bool {
     let saved = reader.cursor();
-    if reader.read_coordinate() {
-        if !reader.skip_required_whitespace() {
-            reader.set_cursor(saved);
-            return false;
-        }
-        if reader.read_coordinate() {
-            if !reader.skip_required_whitespace() {
-                reader.set_cursor(saved);
-                return false;
-            }
-            if reader.read_coordinate() && reader.at_token_boundary() {
-                return true;
-            }
-        }
-    }
-    reader.set_cursor(saved);
-    if parse_whole_macro(reader) {
+    let read = reader.read_coordinate()
+        && (1..count).all(|_| reader.skip_separator() && reader.read_coordinate());
+    if read && reader.at_token_boundary() {
         return true;
     }
     reader.set_cursor(saved);
-    false
-}
-
-fn parse_column_pos(reader: &mut StringReader) -> bool {
-    let saved = reader.cursor();
-    if reader.read_coordinate() {
-        if !reader.skip_required_whitespace() {
-            reader.set_cursor(saved);
-            return false;
-        }
-        if reader.read_coordinate() && reader.at_token_boundary() {
-            return true;
-        }
-    }
-    reader.set_cursor(saved);
-    if parse_whole_macro(reader) {
-        return true;
-    }
-    reader.set_cursor(saved);
-    false
-}
-
-fn parse_vec2(reader: &mut StringReader) -> bool {
-    let saved = reader.cursor();
-    if reader.read_coordinate() {
-        if !reader.skip_required_whitespace() {
-            reader.set_cursor(saved);
-            return false;
-        }
-        if reader.read_coordinate() && reader.at_token_boundary() {
-            return true;
-        }
-    }
-    reader.set_cursor(saved);
-    if parse_whole_macro(reader) {
-        return true;
-    }
-    reader.set_cursor(saved);
-    false
-}
-
-fn parse_vec3(reader: &mut StringReader) -> bool {
-    let saved = reader.cursor();
-    if reader.read_coordinate() {
-        if !reader.skip_required_whitespace() {
-            reader.set_cursor(saved);
-            return false;
-        }
-        if reader.read_coordinate() {
-            if !reader.skip_required_whitespace() {
-                reader.set_cursor(saved);
-                return false;
-            }
-            if reader.read_coordinate() && reader.at_token_boundary() {
-                return true;
-            }
-        }
-    }
-    reader.set_cursor(saved);
-    if parse_whole_macro(reader) {
-        return true;
-    }
-    reader.set_cursor(saved);
-    false
+    (parse_whole_macro(reader) && reader.can_read()) || reset(reader, saved)
 }
 
 fn parse_whole_macro(reader: &mut StringReader) -> bool {
@@ -1168,36 +907,17 @@ fn parse_particle(reader: &mut StringReader) -> bool {
 // UUID parser
 // ============================================================================
 
-fn try_read_uuid(reader: &mut StringReader) -> bool {
-    // UUID format: 8-4-4-4-12 hex digits with dashes
-    // Or just a hex string. Be liberal.
-    let saved = reader.cursor();
-    let mut count = 0;
-    while reader.can_read() {
-        let ch = reader.peek().unwrap();
-        if ch.is_ascii_hexdigit() || ch == '-' {
-            reader.read_char();
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    // A UUID should be at least 32 hex chars + 4 dashes = 36 chars
-    // But be liberal: accept anything with hex and dashes that's long enough
-    if count >= 32 && reader.at_token_boundary() {
-        return true;
-    }
-    reader.set_cursor(saved);
-    false
-}
-
+/// The hex digits and dashes at the cursor, in Java's short form of a UUID.
 fn parse_uuid(reader: &mut StringReader) -> bool {
     let saved = reader.cursor();
-    if try_read_uuid(reader) {
-        return true;
+    while reader
+        .peek()
+        .is_some_and(|ch| ch.is_ascii_hexdigit() || ch == '-')
+    {
+        reader.read_char();
     }
-    reader.set_cursor(saved);
-    false
+    (snbt::is_uuid(&reader.slice(saved, reader.cursor())) && reader.at_token_boundary())
+        || reset(reader, saved)
 }
 
 // ============================================================================
@@ -1276,31 +996,23 @@ fn parse_nbt_tag(reader: &mut StringReader) -> bool {
         return false;
     }
 
-    // Number (with optional type suffix like 1b, 2s, 3L, 4.0f, 5.0d)
-    if ch == '-' || ch == '+' || ch.is_ascii_digit() {
-        let _ = reader.read_float();
-        // Skip optional NBT type suffix
-        if reader.can_read() {
-            let suffix = reader.peek().unwrap();
-            if "bBsSlLfFdD".contains(suffix) {
-                reader.read_char();
-            }
+    // A number, a word, or an operation such as `bool(1)`, which may hold
+    // spaces before and inside its parentheses. `snbt` reads what this finds.
+    let mut depth = 0usize;
+    while reader.can_read() {
+        if depth == 0
+            && reader.at_token_boundary()
+            && !reader.remaining().trim_start().starts_with('(')
+        {
+            break;
         }
-        if reader.at_token_boundary() {
-            return true;
+        match reader.read_char() {
+            Some('(') => depth += 1,
+            Some(')') => depth = depth.saturating_sub(1),
+            _ => {}
         }
-        reader.set_cursor(saved);
-        return false;
     }
-
-    // Unquoted string
-    let s = reader.read_unquoted_string();
-    if !s.is_empty() && reader.at_token_boundary() {
-        return true;
-    }
-
-    reader.set_cursor(saved);
-    false
+    reader.cursor() > saved
 }
 
 fn parse_nbt_path(reader: &mut StringReader) -> bool {
@@ -1320,17 +1032,15 @@ fn parse_nbt_path(reader: &mut StringReader) -> bool {
             break;
         }
 
-        if ch == '$' {
-            if !reader.try_read_macro() {
-                break;
-            }
+        // Without a placeholder, `$` is a character of a key.
+        if ch == '$' && reader.try_read_macro() {
             has_content = true;
             continue;
         }
 
         if ch == '"' || ch == '\'' {
-            if !reader.read_quoted_string() {
-                break;
+            if reader.read_string().is_none() {
+                return reset(reader, saved);
             }
             has_content = true;
             continue;
@@ -1338,7 +1048,7 @@ fn parse_nbt_path(reader: &mut StringReader) -> bool {
 
         if ch == '{' || ch == '[' {
             if !reader.read_nbt() {
-                break;
+                return reset(reader, saved);
             }
             has_content = true;
             continue;
@@ -1351,7 +1061,8 @@ fn parse_nbt_path(reader: &mut StringReader) -> bool {
         has_content = true;
     }
 
-    if has_content && reader.at_token_boundary() {
+    // An empty path reads, and `nbt_path_problem` checks the rest.
+    if (has_content || reader.peek() == Some(' ')) && reader.at_token_boundary() {
         return true;
     }
 
@@ -1397,27 +1108,22 @@ fn parse_block_state(reader: &mut StringReader) -> bool {
     false
 }
 
-fn parse_item_stack(reader: &mut StringReader) -> bool {
-    let saved = reader.cursor();
-
-    // Optional # for predicates (tags)
+/// An optional `#` and an id, up to its `[...]`.
+fn read_item_id(reader: &mut StringReader) -> bool {
     if reader.peek() == Some('#') {
         reader.read_char();
     }
+    read_resource_location_chars(reader)
+}
 
-    // Resource location (don't require token boundary yet — [...] or {...} may follow)
-    if !read_resource_location_chars(reader) {
-        reader.set_cursor(saved);
-        return false;
-    }
+fn parse_item_stack(reader: &mut StringReader) -> bool {
+    let saved = reader.cursor();
 
     // Optional components [...] (1.20.5+ format)
-    if reader.can_read() && reader.peek() == Some('[') && !reader.read_nbt() {
-        reader.set_cursor(saved);
-        return false;
-    }
-
-    if reader.at_token_boundary() {
+    if read_item_id(reader)
+        && (reader.peek() != Some('[') || reader.read_nbt())
+        && reader.at_token_boundary()
+    {
         return true;
     }
 
@@ -1426,22 +1132,31 @@ fn parse_item_stack(reader: &mut StringReader) -> bool {
 }
 
 /// Item predicates (`ItemPredicateArgument`) also accept the `*` wildcard
-/// before their optional `[...]` tests (`*[minecraft:custom_data~{id:"x"}]`).
+/// before their optional `[...]` tests (`*[minecraft:custom_data~{id:"x"}]`),
+/// and spaces can stand before the tests.
 fn parse_item_predicate(reader: &mut StringReader) -> bool {
-    if reader.peek() != Some('*') {
-        return parse_item_stack(reader);
-    }
-
     let saved = reader.cursor();
-    reader.read_char();
-    if reader.can_read() && reader.peek() == Some('[') && !reader.read_nbt() {
-        reader.set_cursor(saved);
-        return false;
+    let read_item = if reader.peek() == Some('*') {
+        reader.read_char().is_some()
+    } else {
+        read_item_id(reader)
+    };
+    if read_item {
+        let after_item = reader.cursor();
+        reader.skip_whitespace();
+        if reader.peek() != Some('[') {
+            reader.set_cursor(after_item);
+            return reader.at_token_boundary() || reset(reader, saved);
+        }
+        if reader.read_nbt() && reader.at_token_boundary() {
+            return true;
+        }
     }
-    if reader.at_token_boundary() {
-        return true;
-    }
-    reader.set_cursor(saved);
+    reset(reader, saved)
+}
+
+fn reset(reader: &mut StringReader, position: usize) -> bool {
+    reader.set_cursor(position);
     false
 }
 
@@ -1486,6 +1201,30 @@ mod tests {
         let mut r = StringReader::new("true rest");
         assert!(parse_argument(&mut r, "brigadier:bool", None));
         assert_eq!(r.remaining(), " rest");
+    }
+
+    #[test]
+    fn test_parse_bool_reads_a_string() {
+        for value in ["true rest", "false rest", "\"true\" rest", "'false' rest"] {
+            let mut r = StringReader::new(value);
+            assert!(parse_argument(&mut r, "brigadier:bool", None), "{value}");
+            assert_eq!(r.remaining(), " rest", "{value}");
+        }
+        for value in [
+            "\"True\" rest",
+            "True rest",
+            "TRUE rest",
+            "1 rest",
+            "\"\" rest",
+            "\"true rest",
+            "true\" rest",
+            "\"true\"x rest",
+            "\"tr\\ue\" rest",
+        ] {
+            let mut r = StringReader::new(value);
+            assert!(!parse_argument(&mut r, "brigadier:bool", None), "{value}");
+            assert_eq!(r.cursor(), 0, "{value}");
+        }
     }
 
     #[test]
@@ -1545,6 +1284,45 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_float_reads_32_bits() {
+        let parse = |text: &str, properties: Option<&serde_json::Value>| {
+            parse_argument(&mut StringReader::new(text), "brigadier:float", properties)
+        };
+        let range = serde_json::json!({"min": 1.0, "max": 2.0});
+        let small = serde_json::json!({"min": 1e-05});
+        for text in ["1.00000001", "2.00000001", "2.0000001", "0.99999999"] {
+            assert!(parse(text, Some(&range)), "{text}");
+        }
+        for text in ["2.1", "0.9"] {
+            assert!(!parse(text, Some(&range)), "{text}");
+        }
+        assert!(parse("0.00001", Some(&small)));
+        assert!(!parse("0.000009999999", Some(&small)));
+
+        // Too large a float is infinite, and that is past any bound.
+        let positive = serde_json::json!({"min": 0.0});
+        for properties in [None, Some(&positive)] {
+            assert!(parse("340282356779733661637539395458142568447", properties));
+            for text in [
+                "340282356779733661637539395458142568448",
+                "340282366920938463463374607431768211456",
+            ] {
+                assert!(!parse(text, properties), "{text}");
+            }
+        }
+        assert!(!parse("-340282356779733661637539395458142568448", None));
+    }
+
+    #[test]
+    fn test_parse_double_can_not_be_infinite() {
+        let parse =
+            |text: &str| parse_argument(&mut StringReader::new(text), "brigadier:double", None);
+        assert!(parse("340282366920938463463374607431768211456"));
+        assert!(!parse(&format!("1{}", "0".repeat(400))));
+        assert!(!parse(&format!("-1{}", "0".repeat(400))));
+    }
+
+    #[test]
     fn test_parse_greedy_string() {
         let props = serde_json::json!({"type": "greedy"});
         let mut r = StringReader::new("hello world rest");
@@ -1566,6 +1344,183 @@ mod tests {
             Some(&props)
         ));
         assert_eq!(invalid.cursor(), 0);
+    }
+
+    #[test]
+    fn test_parse_words_stop_at_characters_of_ids() {
+        let word = serde_json::json!({"type": "word"});
+        let phrase = serde_json::json!({"type": "phrase"});
+        let (word, phrase) = (Some(&word), Some(&phrase));
+        let parsers = [
+            ("brigadier:string", word),
+            ("brigadier:string", phrase),
+            ("minecraft:objective", None),
+            ("minecraft:team", None),
+            ("minecraft:entity", None),
+        ];
+        for (parser, properties) in parsers {
+            let mut valid = StringReader::new("a.b+c-d_e rest");
+            assert!(parse_argument(&mut valid, parser, properties), "{parser}");
+            assert_eq!(valid.remaining(), " rest", "{parser}");
+
+            for text in ["a:b rest", "a/b rest", "a#b rest", "a*b rest"] {
+                let mut invalid = StringReader::new(text);
+                assert!(
+                    !parse_argument(&mut invalid, parser, properties),
+                    "{parser} {text}"
+                );
+                assert_eq!(invalid.cursor(), 0, "{parser} {text}");
+            }
+        }
+
+        // A quoted word can hold them.
+        let mut quoted = StringReader::new("\"file/mypack\" rest");
+        assert!(parse_argument(&mut quoted, "brigadier:string", phrase));
+        assert_eq!(quoted.remaining(), " rest");
+    }
+
+    #[test]
+    fn test_parse_criteria_and_slots_keep_their_own_characters() {
+        for (parser, value) in [
+            (
+                "minecraft:objective_criteria",
+                "minecraft.killed:minecraft.zombie rest",
+            ),
+            ("minecraft:objective_criteria", "a:b rest"),
+            ("minecraft:item_slots", "container.* rest"),
+            ("minecraft:slot_source", "weapon.* rest"),
+            ("minecraft:slot_source", "ns:hands rest"),
+        ] {
+            let mut valid = StringReader::new(value);
+            assert!(parse_argument(&mut valid, parser, None), "{parser} {value}");
+            assert_eq!(valid.remaining(), " rest", "{parser} {value}");
+        }
+    }
+
+    #[test]
+    fn test_parse_hex_color() {
+        for color in [
+            "ff0000 rest",
+            "fff rest",
+            "FF00aa rest",
+            "+f0000 rest",
+            "ff-000 rest",
+        ] {
+            let mut valid = StringReader::new(color);
+            assert!(
+                parse_argument(&mut valid, "minecraft:hex_color", None),
+                "{color}"
+            );
+            assert_eq!(valid.remaining(), " rest", "{color}");
+        }
+        for color in [
+            "#ff0000 rest",
+            "#fff rest",
+            "ff00 rest",
+            "ff rest",
+            "fffffff rest",
+            "ggg rest",
+            "00000g rest",
+            "00000+ rest",
+            "+ff rest",
+            "\"fff\" rest",
+            " rest",
+        ] {
+            let mut invalid = StringReader::new(color);
+            assert!(
+                !parse_argument(&mut invalid, "minecraft:hex_color", None),
+                "{color}"
+            );
+            assert_eq!(invalid.cursor(), 0, "{color}");
+        }
+    }
+
+    #[test]
+    fn test_parse_numbers_have_no_exponent_and_no_plus() {
+        for (parser, value) in [
+            ("brigadier:integer", "+1"),
+            ("brigadier:integer", "1e3"),
+            ("brigadier:float", "1e3"),
+            ("brigadier:float", "+1"),
+            ("brigadier:double", "1e-3"),
+            ("brigadier:double", "1E3"),
+            ("brigadier:double", "+1"),
+            ("minecraft:int_range", "+1"),
+            ("minecraft:int_range", "1..+2"),
+            ("minecraft:float_range", "1e3"),
+            ("minecraft:float_range", "1..+2"),
+            ("minecraft:time", "1e3"),
+            ("minecraft:time", "1e0t"),
+            ("minecraft:time", "+1"),
+            ("minecraft:vec3", "1e-3 0 0"),
+            ("minecraft:vec3", "~1e1 ~ ~"),
+            ("minecraft:vec3", "~+1 ~ ~"),
+            ("minecraft:block_pos", "+1 2 3"),
+            ("minecraft:vec2", "1e1 2"),
+        ] {
+            let mut invalid = StringReader::new(value);
+            assert!(
+                !parse_argument(&mut invalid, parser, None),
+                "{parser} {value}"
+            );
+            assert_eq!(invalid.cursor(), 0, "{parser} {value}");
+        }
+        for (parser, value) in [
+            ("brigadier:integer", "-1"),
+            ("brigadier:double", "0.001"),
+            ("brigadier:double", ".5"),
+            ("brigadier:float", "5."),
+            ("minecraft:int_range", "-5..-1"),
+            ("minecraft:float_range", ".5...7"),
+            ("minecraft:time", "1.5t"),
+            ("minecraft:vec3", "~1 ^.5 -3"),
+        ] {
+            let mut valid = StringReader::new(value);
+            assert!(parse_argument(&mut valid, parser, None), "{parser} {value}");
+            assert!(!valid.can_read(), "{parser} {value}");
+        }
+    }
+
+    #[test]
+    fn test_is_id() {
+        for id in ["a", "a:b", "a.b-c_d:e/f", "a/b", ":a", "a:", ""] {
+            assert!(is_id(id), "{id}");
+        }
+        for id in ["A", "a:B", "a/b:c", "a:b:c", "{a", "a b"] {
+            assert!(!is_id(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn test_parse_quoted_strings_take_two_escapes() {
+        let phrase = serde_json::json!({"type": "phrase"});
+        for (parser, properties) in [
+            ("brigadier:string", Some(&phrase)),
+            ("minecraft:entity", None),
+            ("minecraft:nbt_path", None),
+        ] {
+            for text in [
+                "'a\\'b' rest",
+                "\"a\\\"b\" rest",
+                "\"a\\\\b\" rest",
+                "\"a b\" rest",
+            ] {
+                let mut valid = StringReader::new(text);
+                assert!(parse_argument(&mut valid, parser, properties), "{text}");
+                assert_eq!(valid.remaining(), " rest", "{parser} {text}");
+            }
+            for text in ["\"a\\nb\"", "\"a\\'b\"", "'a\\\"b'", "\"a\\b\""] {
+                let mut invalid = StringReader::new(text);
+                assert!(!parse_argument(&mut invalid, parser, properties), "{text}");
+                assert_eq!(invalid.cursor(), 0, "{parser} {text}");
+            }
+        }
+        // SNBT and text components have more escapes of their own.
+        for parser in ["minecraft:nbt_tag", "minecraft:component"] {
+            let mut r = StringReader::new("\"a\\nb\" rest");
+            assert!(parse_argument(&mut r, parser, None), "{parser}");
+            assert_eq!(r.remaining(), " rest", "{parser}");
+        }
     }
 
     #[test]
@@ -1665,22 +1620,94 @@ mod tests {
     }
 
     #[test]
+    fn test_slot_names_have_one_spelling() {
+        for slot in ["hotbar.0", "hotbar.8", "container.0", "container.10"] {
+            assert!(is_item_slot_value(slot, false), "{slot}");
+        }
+        for slot in [
+            "hotbar.08",
+            "container.00",
+            "container.01",
+            "container.+1",
+            "hotbar.-0",
+        ] {
+            assert!(!is_item_slot_value(slot, false), "{slot}");
+        }
+    }
+
+    #[test]
+    fn test_parse_resource_selector_takes_wildcards() {
+        let parser = "minecraft:resource_selector";
+        for selector in [
+            "* rest",
+            "?",
+            "a:* rest",
+            "*:* rest",
+            "minecraft:always_* rest",
+            "a?b",
+        ] {
+            let mut valid = StringReader::new(selector);
+            assert!(parse_argument(&mut valid, parser, None), "{selector}");
+            assert!(valid.at_token_boundary(), "{selector}");
+        }
+        for selector in ["#a rest", "\"a\" rest", "A rest", "a*B rest", " rest"] {
+            let mut invalid = StringReader::new(selector);
+            assert!(!parse_argument(&mut invalid, parser, None), "{selector}");
+            assert_eq!(invalid.cursor(), 0, "{selector}");
+        }
+    }
+
+    #[test]
+    fn test_parse_tags_can_have_an_empty_id() {
+        for parser in [
+            "minecraft:function",
+            "minecraft:resource_or_tag",
+            "minecraft:resource_or_tag_key",
+        ] {
+            for tag in ["# rest", "#", "#a rest", "#:a rest", "#a: rest"] {
+                let mut valid = StringReader::new(tag);
+                assert!(parse_argument(&mut valid, parser, None), "{parser} {tag}");
+                assert!(valid.at_token_boundary(), "{parser} {tag}");
+            }
+            for tag in ["#A rest", "##a rest"] {
+                let mut invalid = StringReader::new(tag);
+                assert!(
+                    !parse_argument(&mut invalid, parser, None),
+                    "{parser} {tag}"
+                );
+                assert_eq!(invalid.cursor(), 0, "{parser} {tag}");
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_entity_selector() {
         let mut r = StringReader::new("@a[tag=foo] rest");
         assert!(parse_argument(&mut r, "minecraft:entity", None));
         assert_eq!(r.remaining(), " rest");
+    }
 
-        for selector in [
-            "@e[limit=abc]",
-            "@e[limit=0]",
-            "@e[distance=abc]",
-            "@e[sort=sideways]",
-            "@e[gamemode=flying]",
+    #[test]
+    fn test_parse_game_profile_takes_everything_up_to_a_space() {
+        for name in [
+            "Steve rest",
+            "a:b rest",
+            "a/b rest",
+            "\"a\" rest",
+            "@a rest",
         ] {
-            let mut invalid = StringReader::new(selector);
+            let mut valid = StringReader::new(name);
             assert!(
-                !parse_argument(&mut invalid, "minecraft:entity", None),
-                "selector should be rejected: {selector}"
+                parse_argument(&mut valid, "minecraft:game_profile", None),
+                "{name}"
+            );
+            assert_eq!(valid.remaining(), " rest", "{name}");
+        }
+        for name in [" rest", "@ rest"] {
+            let mut invalid = StringReader::new(name);
+            assert!(
+                !parse_argument(&mut invalid, "minecraft:game_profile", None),
+                "{name}"
             );
         }
     }
@@ -1736,6 +1763,237 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_score_holder_takes_everything_up_to_a_space() {
+        for holder in [
+            "$x rest",
+            "#a>b rest",
+            "a:b rest",
+            "* rest",
+            "a@b rest",
+            "a[b] rest",
+            "\"a rest",
+            "{x} rest",
+            "é rest",
+            "@e[limit=1] rest",
+        ] {
+            let mut valid = StringReader::new(holder);
+            assert!(
+                parse_argument(&mut valid, "minecraft:score_holder", None),
+                "{holder}"
+            );
+            assert_eq!(valid.remaining(), " rest", "{holder}");
+        }
+
+        let mut empty = StringReader::new(" rest");
+        assert!(parse_argument(&mut empty, "minecraft:score_holder", None));
+        assert_eq!(empty.cursor(), 0);
+
+        // Only a word that starts with `@` is a selector, and it has to be one.
+        for holder in ["@ rest", "@bad rest", "@e[ rest"] {
+            let mut invalid = StringReader::new(holder);
+            assert!(
+                !parse_argument(&mut invalid, "minecraft:score_holder", None),
+                "{holder}"
+            );
+            assert_eq!(invalid.cursor(), 0, "{holder}");
+        }
+    }
+
+    #[test]
+    fn test_parse_ids_take_one_colon_and_none_after_a_slash() {
+        for id in ["a:b rest", "a:b/c rest", "b/c rest", "a.b-c_d:e rest"] {
+            let mut valid = StringReader::new(id);
+            assert!(
+                parse_argument(&mut valid, "minecraft:resource_location", None),
+                "{id}"
+            );
+            assert_eq!(valid.remaining(), " rest", "{id}");
+        }
+
+        for (parser, id) in [
+            ("minecraft:resource_location", "a:b:c rest"),
+            ("minecraft:resource_location", "a/b:c rest"),
+            ("minecraft:function", "a:b:c rest"),
+            ("minecraft:function", "#a/b:c rest"),
+            ("minecraft:dimension", "a/b:c rest"),
+            ("minecraft:item_stack", "minecraft:stone:x rest"),
+            ("minecraft:block_state", "minecraft:stone:x rest"),
+            ("minecraft:particle", "a:b:c rest"),
+            ("minecraft:loot_table", "a:b:c rest"),
+        ] {
+            let mut invalid = StringReader::new(id);
+            assert!(!parse_argument(&mut invalid, parser, None), "{parser} {id}");
+            assert_eq!(invalid.cursor(), 0, "{parser} {id}");
+        }
+
+        // A placeholder can fill in either part.
+        for id in ["$(ns):$(name) rest", "a:$(name) rest", "$(ns):b rest"] {
+            let mut valid = StringReader::for_macro_line(id);
+            assert!(
+                parse_argument(&mut valid, "minecraft:function", None),
+                "{id}"
+            );
+            assert_eq!(valid.remaining(), " rest", "{id}");
+        }
+    }
+
+    #[test]
+    fn test_parse_argument_at_a_second_space() {
+        let word = serde_json::json!({"type": "word"});
+        let phrase = serde_json::json!({"type": "phrase"});
+        let (word, phrase) = (Some(&word), Some(&phrase));
+
+        for (parser, properties) in [
+            ("brigadier:string", word),
+            ("brigadier:string", phrase),
+            ("minecraft:objective", None),
+            ("minecraft:team", None),
+            ("minecraft:score_holder", None),
+            ("minecraft:nbt_path", None),
+            ("minecraft:resource_location", None),
+            ("minecraft:function", None),
+            ("minecraft:dimension", None),
+            ("minecraft:resource_key", None),
+        ] {
+            let mut empty = StringReader::new(" rest");
+            assert!(parse_argument(&mut empty, parser, properties), "{parser}");
+            assert_eq!(empty.cursor(), 0, "{parser}");
+        }
+
+        for parser in [
+            "minecraft:nbt_tag",
+            "minecraft:component",
+            "minecraft:style",
+            "minecraft:loot_table",
+            "minecraft:dialog",
+            "minecraft:feature",
+            "minecraft:item_predicate",
+        ] {
+            let mut r = StringReader::new("  a rest");
+            assert!(parse_argument(&mut r, parser, None), "{parser}");
+            assert_eq!(r.remaining(), " rest", "{parser}");
+        }
+        let mut r = StringReader::new("  {} rest");
+        assert!(parse_argument(&mut r, "minecraft:nbt_compound_tag", None));
+        assert_eq!(r.remaining(), " rest");
+
+        for parser in [
+            "brigadier:integer",
+            "brigadier:float",
+            "brigadier:double",
+            "brigadier:bool",
+            "minecraft:time",
+            "minecraft:entity",
+            "minecraft:game_profile",
+            "minecraft:objective_criteria",
+            "minecraft:resource",
+            "minecraft:resource_or_tag",
+            "minecraft:block_state",
+            "minecraft:item_stack",
+            "minecraft:item_slot",
+            "minecraft:gamemode",
+        ] {
+            let mut r = StringReader::new(" 1 rest");
+            assert!(!parse_argument(&mut r, parser, None), "{parser}");
+            assert_eq!(r.cursor(), 0, "{parser}");
+        }
+    }
+
+    #[test]
+    fn test_parse_template_rotation() {
+        for rotation in [
+            "none rest",
+            "clockwise_90 rest",
+            "180 rest",
+            "counterclockwise_90 rest",
+        ] {
+            let mut valid = StringReader::new(rotation);
+            assert!(
+                parse_argument(&mut valid, "minecraft:template_rotation", None),
+                "{rotation}"
+            );
+            assert_eq!(valid.remaining(), " rest", "{rotation}");
+        }
+
+        for rotation in ["clockwise_180 rest", "90 rest", "None rest"] {
+            let mut invalid = StringReader::new(rotation);
+            assert!(
+                !parse_argument(&mut invalid, "minecraft:template_rotation", None),
+                "{rotation}"
+            );
+            assert_eq!(invalid.cursor(), 0, "{rotation}");
+        }
+    }
+
+    #[test]
+    fn test_parse_nbt_tag_finds_the_end_of_a_bare_value() {
+        for value in [
+            "abc rest",
+            "true rest",
+            "a.b rest",
+            "1ub rest",
+            "1_000 rest",
+            "0x10 rest",
+            "1. rest",
+            "bool(1) rest",
+            "bool( 1 ) rest",
+            "bool (1) rest",
+            "uuid(\"0-0-0-0-0\") rest",
+            "\"a b\" rest",
+            "{a:1} rest",
+            "[1, 2] rest",
+        ] {
+            let mut r = StringReader::new(value);
+            assert!(parse_argument(&mut r, "minecraft:nbt_tag", None), "{value}");
+            assert_eq!(r.remaining(), " rest", "{value}");
+        }
+
+        // `snbt` refuses these from what was read here.
+        for (value, read) in [("1abc rest", "1abc"), ("a:b rest", "a:b"), ("- rest", "-")] {
+            let mut r = StringReader::new(value);
+            assert!(parse_argument(&mut r, "minecraft:nbt_tag", None), "{value}");
+            assert_eq!(r.slice(0, r.cursor()), read, "{value}");
+        }
+
+        for value in ["", "{a:1 rest", "[1 rest", "\"a rest"] {
+            let mut invalid = StringReader::new(value);
+            assert!(
+                !parse_argument(&mut invalid, "minecraft:nbt_tag", None),
+                "{value}"
+            );
+            assert_eq!(invalid.cursor(), 0, "{value}");
+        }
+    }
+
+    #[test]
+    fn test_parse_integer_stops_at_32_bits() {
+        for number in ["2147483647 rest", "-2147483648 rest"] {
+            let mut valid = StringReader::new(number);
+            assert!(
+                parse_argument(&mut valid, "brigadier:integer", None),
+                "{number}"
+            );
+            assert_eq!(valid.remaining(), " rest", "{number}");
+        }
+
+        let wide = serde_json::json!({"min": -9_000_000_000_i64, "max": 9_000_000_000_i64});
+        for number in [
+            "2147483648 rest",
+            "-2147483649 rest",
+            "99999999999999999999 rest",
+        ] {
+            for properties in [None, Some(&wide)] {
+                let mut invalid = StringReader::new(number);
+                assert!(
+                    !parse_argument(&mut invalid, "brigadier:integer", properties),
+                    "{number}"
+                );
+                assert_eq!(invalid.cursor(), 0, "{number}");
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_item_stack_rejects_legacy_nbt() {
         let mut invalid = StringReader::new("minecraft:diamond{Enchantments:[]} rest");
         assert!(!parse_argument(&mut invalid, "minecraft:item_stack", None));
@@ -1784,12 +2042,111 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_uuid_rejects_plain_words() {
-        let mut invalid = StringReader::new("not-a-uuid rest");
-        assert!(!parse_argument(&mut invalid, "minecraft:uuid", None));
+    fn test_parse_time_rounds_its_ticks() {
+        let at_least = |min: i32, time: &str| {
+            let properties = serde_json::json!({ "min": min });
+            parse_argument(
+                &mut StringReader::new(time),
+                "minecraft:time",
+                Some(&properties),
+            )
+        };
+        for time in [
+            "1",
+            "0.5",
+            "0.5t",
+            "0.025s",
+            "0.05s",
+            "0.00003d",
+            "1000000000000",
+        ] {
+            assert!(at_least(1, time), "{time}");
+        }
+        for time in ["0", "0.4t", "0.49999997", "0.024s", "0.00002d"] {
+            assert!(!at_least(1, time), "{time}");
+        }
+        for time in ["0", "0t", "0d", "-0.5", "-0.00002d"] {
+            assert!(at_least(0, time), "{time}");
+        }
+        assert!(!at_least(0, "-0.51"));
+        // Past the end of an int, the ticks stay at the end.
+        for time in [
+            "-2147483648",
+            "-2147483649",
+            "2147483648",
+            "99999999999999999",
+        ] {
+            assert!(at_least(i32::MIN, time), "{time}");
+        }
+    }
 
-        let mut valid = StringReader::new("123e4567-e89b-12d3-a456-426614174000 rest");
-        assert!(parse_argument(&mut valid, "minecraft:uuid", None));
-        assert_eq!(valid.remaining(), " rest");
+    #[test]
+    fn test_parse_time_takes_three_units() {
+        for time in ["1x", "1tt", "1t.", "1T", "1D", "1-", "t", ".", ".t", "1\""] {
+            let mut r = StringReader::new(time);
+            assert!(!parse_argument(&mut r, "minecraft:time", None), "{time}");
+            assert_eq!(r.cursor(), 0, "{time}");
+        }
+    }
+
+    #[test]
+    fn test_java_round() {
+        for (value, rounded) in [
+            (0.5, 1),
+            (0.49999997, 0),
+            (-0.5, 0),
+            (-0.51, -1),
+            (1.5, 2),
+            (2.5, 3),
+            (f32::INFINITY, i32::MAX),
+            (f32::NEG_INFINITY, i32::MIN),
+            (1e12, i32::MAX),
+        ] {
+            assert_eq!(java_round(value), rounded, "{value}");
+        }
+    }
+
+    #[test]
+    fn test_parse_uuid_takes_java_forms() {
+        for uuid in [
+            "123e4567-e89b-12d3-a456-426614174000 rest",
+            "0-0-0-0-0 rest",
+            "A-B-C-D-E rest",
+            "7fffffffffffffff-0-0-0-0 rest",
+        ] {
+            let mut valid = StringReader::new(uuid);
+            assert!(parse_argument(&mut valid, "minecraft:uuid", None), "{uuid}");
+            assert_eq!(valid.remaining(), " rest", "{uuid}");
+        }
+        for uuid in [
+            "not-a-uuid rest",
+            "00000000000000000000000000000000 rest",
+            "8000000000000000-0-0-0-0 rest",
+            "0-0-0-0 rest",
+            "0-0-0-0-0-0 rest",
+            "-0-0-0-0 rest",
+            "+0-0-0-0-0 rest",
+            "0-+0-0-0-0 rest",
+            "g-0-0-0-0 rest",
+            "\"0-0-0-0-0\" rest",
+            "0-0-0-0-0x rest",
+            "0-0-0-0-000000000000000000000000000000 rest",
+        ] {
+            let mut invalid = StringReader::new(uuid);
+            assert!(
+                !parse_argument(&mut invalid, "minecraft:uuid", None),
+                "{uuid}"
+            );
+            assert_eq!(invalid.cursor(), 0, "{uuid}");
+        }
+    }
+
+    #[test]
+    fn test_parse_nbt_path_takes_a_dollar() {
+        for path in ["$x rest", "a$b rest", "$ rest", "a.$ rest"] {
+            let mut r = StringReader::new(path);
+            assert!(parse_argument(&mut r, "minecraft:nbt_path", None), "{path}");
+            assert_eq!(r.remaining(), " rest", "{path}");
+        }
     }
 }

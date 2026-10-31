@@ -54,22 +54,48 @@ Typed tag declarations with the same ID are merged, deduplicated, and sorted.
 Tag values may be string resource IDs or object entries with `id` and optional
 `required`. Object entries with `required: true` are equivalent to strings;
 `required: false` entries remain optional Minecraft tag entries.
+An unknown `minecraft:` id in a block, item, or entity type tag is an error,
+because Minecraft doesn't load a tag with an entry it can't find, and a function
+that names that tag doesn't load either. With `"required": False`, the entry is
+skipped when it's missing and the rest of the tag loads, which suits an id from
+another Minecraft version. Ids of other namespaces aren't checked, so a mod's
+ids need `"required": False` when the mod may be missing.
 Pass an optional third literal boolean argument to emit tag `replace`; when
 multiple declarations are merged, `True` wins over `False`.
 Pass-through JSON declarations with identical JSON are accepted once; different
 JSON for the same ID is a compile error.
 Resource names may use nested paths and explicit namespaces, such as
-`other_pack:checks/is_ready`. Predicate, advancement, loot table, recipe, item
-modifier, and dialog declarations require object JSON values.
+`other_pack:checks/is_ready`. Predicate, advancement, loot table, recipe, and
+dialog declarations require object JSON values. An item modifier is an object
+or a list of objects. Minecraft 26.3 refuses a list in the file itself, so a
+list is written as one `minecraft:sequence`, which applies the modifiers in
+order:
 
-JSON resources are written as given, in Minecraft 26.3's formats. Because a
-server whose packs fail to load refuses to start, Cobble reports the common
-pre-26.3 shapes as `datapack-resource-format` errors:
+```python
+datapack.item_modifier("reward", [
+    {"type": "minecraft:set_count", "count": 3},
+    {"type": "minecraft:set_name", "name": "Reward"}
+])
+```
 
-- predicates use `type` (formerly `condition`), including inside `all_of`,
+```json
+{
+  "type": "minecraft:sequence",
+  "functions": [
+    {"type": "minecraft:set_count", "count": 3},
+    {"type": "minecraft:set_name", "name": "Reward"}
+  ]
+}
+```
+
+Other JSON resources are written as given, in Minecraft 26.3's formats. Because
+a server whose packs fail to load refuses to start, Cobble reports the common
+pre-26.3 shapes and missing fields as `datapack-resource-format` errors:
+
+- predicates need a `type` (formerly `condition`), including inside `all_of`,
   `any_of`, and `inverted` terms;
-- item modifiers use `type` (formerly `function`) and a single `condition`
-  (formerly a `conditions` list);
+- item modifiers need a `type` (formerly `function`) and take a single
+  `condition` (formerly a `conditions` list);
 - loot tables use `modifier` (formerly `functions`) and a single `condition`
   (formerly `conditions`) on tables, pools, and entries, and a
   `minecraft:tag` entry names its tag in `items` (`"#minecraft:logs"`);
@@ -81,12 +107,16 @@ pre-26.3 shapes as `datapack-resource-format` errors:
 - an advancement's `display.icon` and a recipe's `result` name the item in `id`
   (formerly `item`);
 - recipe ingredients are an item id, a `#tag`, or a list of item ids (formerly
-  `{"item": ...}` or `{"tag": ...}` objects);
-- cooking recipes set `cookingtime`.
+  `{"item": ...}` or `{"tag": ...}` objects), except the `input` of a
+  `minecraft:brewing` recipe, which is an object that names a potion;
+- cooking recipes set `cookingtime`;
+- every dialog needs a `type` and a `title`. `minecraft:confirmation` also needs
+  `yes` and `no`, `minecraft:multi_action` needs `actions`, and
+  `minecraft:dialog_list` needs `dialogs`.
 
 Types must exist in Minecraft 26.3, because data packs can't add new ones: the
-`type` of a predicate, an item modifier, a loot entry, and a recipe, and the
-`trigger` of an advancement criterion. For example, `minecraft:set_nbt` is
+`type` of a predicate, an item modifier, a loot entry, a recipe, and a dialog,
+and the `trigger` of an advancement criterion. For example, `minecraft:set_nbt` is
 now `minecraft:set_custom_data`, and `minecraft:alternative` is now
 `minecraft:any_of`.
 

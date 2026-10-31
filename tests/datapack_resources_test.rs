@@ -1,7 +1,7 @@
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use cobble::transpiler::DataPack;
 
@@ -39,6 +39,13 @@ fn compile_source_with_options(
     })?;
 
     Ok((temp_dir, output_dir))
+}
+
+/// A generated resource of the `resources` namespace.
+fn read_json(output_dir: &Path, resource: &str) -> serde_json::Value {
+    let path = output_dir.join("data/resources").join(resource);
+    let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    serde_json::from_str(&text).unwrap()
 }
 
 #[test]
@@ -2647,4 +2654,230 @@ datapack.recipe("smelt", {"type": "minecraft:smelting", "ingredient": "minecraft
             "missing {path}"
         );
     }
+}
+
+#[test]
+fn brewing_recipes_take_a_potion_as_input() {
+    let (_temp, output_dir) = compile_source(
+        r#"from stdlib import datapack
+datapack.recipe("swift", {
+    "type": "minecraft:brewing",
+    "input": {"item": "minecraft:potion", "potion_contents": {"potions": "minecraft:awkward"}},
+    "reagent": {"item": "minecraft:sugar"},
+    "output": {
+        "id": "minecraft:potion",
+        "components": {"minecraft:potion_contents": {"potion": "minecraft:swiftness"}}
+    }
+})
+"#,
+    )
+    .unwrap();
+    let recipe = read_json(&output_dir, "recipe/swift.json");
+    assert_eq!(recipe["input"]["item"], "minecraft:potion");
+
+    // Other recipes still take an id or a tag there.
+    let error = resource_format_error(
+        r#"datapack.recipe("cut", {"type": "minecraft:stonecutting", "input": {"item": "minecraft:stone"}, "result": {"id": "minecraft:stone_slab"}})"#,
+    );
+    assert!(
+        error.contains("`input` is now the item id itself"),
+        "{error}"
+    );
+}
+
+#[test]
+fn item_modifier_lists_are_written_as_a_sequence() {
+    let (_temp, output_dir) = compile_source(
+        r#"from stdlib import datapack
+datapack.item_modifier("pair", [
+    {"type": "minecraft:set_count", "count": 2},
+    {"type": "minecraft:set_name", "name": "Reward"}
+])
+datapack.item_modifier("none", [])
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        read_json(&output_dir, "item_modifier/pair.json"),
+        serde_json::json!({
+            "type": "minecraft:sequence",
+            "functions": [
+                {"type": "minecraft:set_count", "count": 2},
+                {"type": "minecraft:set_name", "name": "Reward"}
+            ]
+        })
+    );
+    assert_eq!(
+        read_json(&output_dir, "item_modifier/none.json"),
+        serde_json::json!({"type": "minecraft:sequence", "functions": []})
+    );
+
+    for (declaration, expected) in [
+        (
+            r#"datapack.item_modifier("m", [{"function": "minecraft:set_count", "count": 2}])"#,
+            "`[0].function` is now `type`",
+        ),
+        (
+            r#"datapack.item_modifier("m", [{"type": "minecraft:set_count", "count": 2}, {"count": 2}])"#,
+            "`[1].type` is missing",
+        ),
+        (
+            r#"datapack.item_modifier("m", [{"type": "minecraft:nope"}])"#,
+            "`[0].type`",
+        ),
+        (
+            r#"datapack.item_modifier("m", [[{"type": "minecraft:set_count", "count": 2}]])"#,
+            "`[0]` must be an object",
+        ),
+    ] {
+        let error = resource_format_error(declaration);
+        assert!(error.contains(expected), "{declaration}\n{error}");
+    }
+}
+
+#[test]
+fn only_item_modifiers_can_be_lists_before_compiling() {
+    let check = |declaration: &str| {
+        cobble::diagnostics::analyze_source(&format!(
+            "from stdlib import datapack\n{declaration}\n"
+        ))
+        .into_iter()
+        .filter(|diagnostic| diagnostic.kind == "datapack-resource-argument")
+        .map(|diagnostic| (diagnostic.line, diagnostic.message))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        check(r#"datapack.item_modifier("m", [{"type": "minecraft:set_count", "count": 2}])"#),
+        []
+    );
+    assert_eq!(
+        check(r#"datapack.item_modifier("m", {"type": "minecraft:set_count", "count": 2})"#),
+        []
+    );
+    for (declaration, helper) in [
+        (r#"datapack.predicate("p", [{"type": "x"}])"#, "predicate"),
+        (r#"datapack.recipe("r", [])"#, "recipe"),
+        (r#"datapack.dialog("d", [])"#, "dialog"),
+    ] {
+        assert_eq!(
+            check(declaration),
+            [(
+                2,
+                format!("datapack.{helper}() JSON value must be an object")
+            )],
+            "{declaration}"
+        );
+    }
+    assert_eq!(
+        check(r#"datapack.item_modifier("m", "text")"#),
+        [(
+            2,
+            "datapack.item_modifier() JSON value must be an object".to_string()
+        )]
+    );
+}
+
+#[test]
+fn dialogs_need_their_required_fields() {
+    for (declaration, expected) in [
+        (r#"datapack.dialog("d", {})"#, "`type` is missing"),
+        (
+            r#"datapack.dialog("d", {"title": "x"})"#,
+            "`type` is missing",
+        ),
+        (
+            r#"datapack.dialog("d", {"type": "minecraft:notice"})"#,
+            "`title` is missing",
+        ),
+        (
+            r#"datapack.dialog("d", {"type": "minecraft:nope", "title": "x"})"#,
+            "not a dialog type",
+        ),
+        (
+            r#"datapack.dialog("d", {"type": "minecraft:confirmation", "title": "x", "no": {"label": "n"}})"#,
+            "`yes` is missing",
+        ),
+        (
+            r#"datapack.dialog("d", {"type": "minecraft:confirmation", "title": "x", "yes": {"label": "y"}})"#,
+            "`no` is missing",
+        ),
+        (
+            r#"datapack.dialog("d", {"type": "minecraft:multi_action", "title": "x"})"#,
+            "`actions` is missing",
+        ),
+        (
+            r#"datapack.dialog("d", {"type": "minecraft:dialog_list", "title": "x"})"#,
+            "`dialogs` is missing",
+        ),
+    ] {
+        let error = resource_format_error(declaration);
+        assert!(error.contains(expected), "{declaration}\n{error}");
+    }
+
+    let (_temp, output_dir) = compile_source(
+        r#"from stdlib import datapack
+datapack.dialog("notice", {"type": "minecraft:notice", "title": "x"})
+datapack.dialog("links", {"type": "server_links", "title": "x"})
+datapack.dialog("sure", {"type": "minecraft:confirmation", "title": "x", "yes": {"label": "y"}, "no": {"label": "n"}})
+datapack.dialog("many", {"type": "minecraft:multi_action", "title": "x", "actions": [{"label": "a"}]})
+datapack.dialog("list", {"type": "minecraft:dialog_list", "title": "x", "dialogs": []})
+"#,
+    )
+    .unwrap();
+    for name in ["notice", "links", "sure", "many", "list"] {
+        let path = format!("data/resources/dialog/{name}.json");
+        assert!(output_dir.join(&path).is_file(), "missing {path}");
+    }
+}
+
+#[test]
+fn unknown_tag_entries_stop_a_tag_unless_they_are_optional() {
+    for (helper, kind, id) in [
+        ("block_tag", "block", "minecraft:grass"),
+        ("item_tag", "item", "minecraft:chain"),
+        ("entity_type_tag", "entity type", "minecraft:potion"),
+    ] {
+        for entry in [
+            format!("\"{id}\""),
+            format!("{{\"id\": \"{id}\"}}"),
+            format!("{{\"id\": \"{id}\", \"required\": True}}"),
+        ] {
+            let error = compile_source(&format!(
+                "from stdlib import datapack\ndatapack.{helper}(\"t\", [{entry}])\n"
+            ))
+            .unwrap_err();
+            assert!(error.contains(&format!("Unknown {kind} `{id}`")), "{error}");
+            assert!(error.contains("\"required\": False"), "{error}");
+        }
+    }
+
+    let (_temp, output_dir) = compile_source(
+        r##"from stdlib import datapack
+datapack.block_tag("kept", [
+    "minecraft:stone",
+    "stone",
+    "#minecraft:logs",
+    "#mymod:ores",
+    "mymod:ruby_ore",
+    {"id": "minecraft:grass", "required": False},
+    {"id": "mymod:gone", "required": False}
+])
+datapack.item_tag("kept", [{"id": "minecraft:chain", "required": False}])
+datapack.entity_type_tag("kept", [{"id": "minecraft:potion", "required": False}])
+datapack.function_tag("kept", ["minecraft:nope"])
+"##,
+    )
+    .unwrap();
+    assert_eq!(
+        read_json(&output_dir, "tags/item/kept.json")["values"],
+        serde_json::json!([{"id": "minecraft:chain", "required": false}])
+    );
+    let values = read_json(&output_dir, "tags/block/kept.json")["values"].clone();
+    assert!(
+        values
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!({"id": "minecraft:grass", "required": false})),
+        "{values}"
+    );
 }

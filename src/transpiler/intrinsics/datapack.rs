@@ -40,6 +40,15 @@ impl Transpiler {
         if let Some(values) = values.as_array() {
             for value in values {
                 self.validate_datapack_tag_value(value)?;
+                let id = match value.get("required") {
+                    Some(required) if required == false => None,
+                    _ => value.as_str().or_else(|| value.get("id")?.as_str()),
+                };
+                if let Some(problem) =
+                    id.and_then(|id| crate::validator::registries::tag_entry_problem(tag_type, id))
+                {
+                    return Err(problem.into());
+                }
             }
         }
 
@@ -121,12 +130,19 @@ impl Transpiler {
 
         let (namespace, name) = self.expr_to_resource_id(&args[0], "resource name")?;
         let json = self.expr_to_json_value(&args[1])?;
-        if !json.is_object() {
+        if !json.is_object() && !(resource_type == "item_modifier" && json.is_array()) {
             return Err(
                 format!("datapack.{}() JSON value must be an object", resource_type).into(),
             );
         }
         self.check_datapack_resource_format(resource_type, &json)?;
+        // A file can't hold a list, so a list becomes the sequence it means.
+        let json = match json {
+            serde_json::Value::Array(functions) => {
+                serde_json::json!({"type": "minecraft:sequence", "functions": functions})
+            }
+            json => json,
+        };
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode resource JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
@@ -151,10 +167,20 @@ impl Transpiler {
         let mut problems = Vec::new();
         match resource_type {
             "predicate" => resource_format::check_predicate(json, "", &mut problems),
-            "item_modifier" => resource_format::check_item_modifier(json, "", &mut problems),
+            "item_modifier" => match json.as_array() {
+                Some(items) => items.iter().enumerate().for_each(|(index, item)| {
+                    let path = format!("[{index}]");
+                    if !item.is_object() {
+                        problems.push(format!("`{path}` must be an object; rejected"));
+                    }
+                    resource_format::check_item_modifier(item, &path, &mut problems);
+                }),
+                None => resource_format::check_item_modifier(json, "", &mut problems),
+            },
             "loot_table" => resource_format::check_loot_table(json, &mut problems),
             "advancement" => resource_format::check_advancement(json, &mut problems),
             "recipe" => resource_format::check_recipe(json, &mut problems),
+            "dialog" => resource_format::check_dialog(json, &mut problems),
             _ => {}
         }
         if problems.is_empty() {

@@ -388,3 +388,32 @@ fn watch_follows_the_source_out_of_a_folder_with_rebuilt_output() {
     wait_for(&mut watch, || b.exists());
     stop(watch);
 }
+
+#[test]
+fn a_continued_command_is_validated_as_one_command() {
+    let temp_dir = TempDir::new().unwrap();
+    let project = write_project(temp_dir.path());
+    let tree = write_say_tree(temp_dir.path());
+    let source = project.join("src/main.cbl");
+    fs::write(&source, "def hello():\n    /say a \\\n        b\n").unwrap();
+    let build = |project: &Path| {
+        let mut command = cobble();
+        command
+            .current_dir(project)
+            .args(["build", "-q", "--validate", "--commands-json"])
+            .arg(&tree);
+        command.output().unwrap()
+    };
+
+    let output = build(&project);
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(
+        fs::read_to_string(project.join("output/data/workflow/function/hello.mcfunction")).unwrap(),
+        "say a b\n"
+    );
+
+    fs::write(&source, "def hello():\n    /nope \\\n        b\n").unwrap();
+    let output = build(&project);
+    assert!(!output.status.success());
+    assert!(text(&output).contains("| nope b\n"), "{}", text(&output));
+}

@@ -3875,7 +3875,9 @@ fn check_datapack_calls_in_region(
             let Some(json_arg) = call.arguments.get(1) else {
                 continue;
             };
-            if !json_arg.text.trim_start().starts_with('{') {
+            let json_text = json_arg.text.trim_start();
+            let list_allowed = resource_type == "item_modifier" && json_text.starts_with('[');
+            if !json_text.starts_with('{') && !list_allowed {
                 let (line, column) = region_position(context, span, slice, masked, json_arg.offset);
                 diagnostics.push(
                     SourceDiagnostic::error(

@@ -1,4 +1,5 @@
 use crate::ast::SourceSpan;
+use std::borrow::Cow;
 use std::iter::Peekable;
 use std::str::CharIndices;
 
@@ -225,6 +226,7 @@ pub fn tokenize_spanned(source: &str) -> Result<Vec<SpannedToken>, String> {
 
 /// Like [`tokenize_spanned`], but a failure carries its source position.
 pub fn tokenize_spanned_located(source: &str) -> Result<Vec<SpannedToken>, TokenizeError> {
+    let source = &*join_continued_commands(source);
     let mut tokens = Vec::new();
     let mut indent_stack: Vec<usize> = vec![0];
     let mut paren_depth = 0;
@@ -402,6 +404,76 @@ fn push_token(
     column: usize,
 ) {
     tokens.push(SpannedToken::new(token, start, end, line, column));
+}
+
+/// Joins raw commands continued with a trailing `\`, the way Minecraft reads
+/// a function file: the next line's indent doesn't count. Blank lines and
+/// trailing spaces take the freed room, so every line and offset after a
+/// command stays where it was in the source. With nothing left to join, a
+/// final `\` is dropped.
+pub fn join_continued_commands(source: &str) -> Cow<'_, str> {
+    let is_command = |line: &str| line.trim_start().starts_with('/');
+    if !source
+        .lines()
+        .any(|line| is_command(line) && command_continues(line))
+    {
+        return Cow::Borrowed(source);
+    }
+    let lines: Vec<&str> = source.split_inclusive('\n').collect();
+    let mut output = String::with_capacity(source.len());
+    let mut open_quote = None;
+    let mut index = 0;
+    while index < lines.len() {
+        let first = index;
+        index += 1;
+        if open_quote.is_some() || !is_command(lines[first]) {
+            open_quote = triple_quote_after(lines[first], open_quote);
+            output.push_str(lines[first]);
+            continue;
+        }
+        if !command_continues(lines[first]) {
+            output.push_str(lines[first]);
+            continue;
+        }
+        let mut joined = lines[first].trim_end().to_string();
+        while command_continues(&joined) {
+            joined.truncate(strip_minecraft_inline_comment(&joined).trim_end().len() - 1);
+            let Some(next) = lines.get(index) else {
+                break;
+            };
+            joined.push_str(next.trim());
+            index += 1;
+        }
+        let consumed = &lines[first..index];
+        let size: usize = consumed.iter().map(|line| line.len()).sum();
+        let newlines = consumed.iter().filter(|line| line.ends_with('\n')).count();
+        output.push_str(&joined);
+        output.push_str(&" ".repeat(size - joined.len() - newlines));
+        output.push_str(&"\n".repeat(newlines));
+    }
+    Cow::Owned(output)
+}
+
+/// Whether a raw command goes on in the next line. A `\` in the command's
+/// comment doesn't count.
+fn command_continues(command: &str) -> bool {
+    strip_minecraft_inline_comment(command)
+        .trim_end()
+        .ends_with('\\')
+}
+
+/// The triple quote still open after `line`, given the one open before it.
+/// The text of a triple-quoted string stays as written.
+fn triple_quote_after(line: &str, open: Option<char>) -> Option<char> {
+    if let Some(quote) = open {
+        return (!line.contains(triple_quote_pattern(quote))).then_some(quote);
+    }
+    if line.trim_start().starts_with('#') {
+        return None;
+    }
+    ['"', '\'']
+        .into_iter()
+        .find(|quote| line.matches(triple_quote_pattern(*quote)).count() % 2 == 1)
 }
 
 fn source_lines_with_offsets(source: &str) -> Vec<(usize, &str)> {
@@ -1141,6 +1213,181 @@ mod tests {
             .unwrap();
         assert_eq!(command.token, Token::MinecraftCommand("say hi".to_string()));
         assert_eq!(command.span, SourceSpan::new(16, 23, 2, 5));
+    }
+
+    /// `source` with its continued commands joined, of the same size.
+    fn joined(source: &str) -> String {
+        let joined = join_continued_commands(source);
+        assert_eq!(joined.len(), source.len(), "{source:?}");
+        assert_eq!(
+            joined.matches('\n').count(),
+            source.matches('\n').count(),
+            "{source:?}"
+        );
+        joined.into_owned()
+    }
+
+    #[test]
+    fn continued_commands_leave_other_sources_alone() {
+        for source in [
+            "def main():\n    /say a\n",
+            "x = 1\n",
+            "",
+            // A `\` means nothing outside a raw command.
+            "x = \"a\\\n",
+            "# a \\\n/say b\n",
+        ] {
+            assert!(
+                matches!(join_continued_commands(source), Cow::Borrowed(_)),
+                "{source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn continued_commands_keep_lines_and_offsets() {
+        let source = "def main():\n    /say a \\\n        b \\\n    c\n    /say d\nx = 1\n";
+        assert_eq!(
+            joined(source),
+            format!(
+                "def main():\n    /say a b c{}\n\n\n    /say d\nx = 1\n",
+                " ".repeat(14)
+            )
+        );
+
+        let tokens = tokenize_spanned(source).unwrap();
+        let command = |text: &str| {
+            tokens
+                .iter()
+                .find(|token| token.token == Token::MinecraftCommand(text.to_string()))
+                .unwrap_or_else(|| panic!("no command `{text}`: {tokens:?}"))
+        };
+        let first = command("say a b c");
+        assert_eq!(
+            (first.span.start, first.span.line, first.span.column),
+            (source.find("/say a").unwrap(), 2, 5)
+        );
+        let after = command("say d");
+        assert_eq!(
+            (after.span.start, after.span.line, after.span.column),
+            (source.find("/say d").unwrap(), 5, 5)
+        );
+        let x = tokens
+            .iter()
+            .find(|token| token.token == Token::Ident("x".to_string()))
+            .unwrap();
+        assert_eq!(
+            (x.span.start, x.span.line),
+            (source.rfind("x = 1").unwrap(), 6)
+        );
+    }
+
+    #[test]
+    fn continued_commands_read_crlf() {
+        let source = "/say a \\\r\n    b\r\n/say c\r\n";
+        assert_eq!(
+            joined(source),
+            format!("/say a b{}\n\n/say c\r\n", " ".repeat(7))
+        );
+        let after = tokenize_spanned(source)
+            .unwrap()
+            .into_iter()
+            .find(|token| token.token == Token::MinecraftCommand("say c".to_string()))
+            .unwrap();
+        assert_eq!(after.span.start, source.find("/say c").unwrap());
+        assert_eq!(after.span.line, 3);
+    }
+
+    #[test]
+    fn continued_commands_need_no_final_newline() {
+        assert_eq!(
+            joined("/say a \\\n  b"),
+            format!("/say a b{}\n", " ".repeat(3))
+        );
+        assert_eq!(
+            joined("/say a \\\n  b \\\n"),
+            format!("/say a b {}\n\n", " ".repeat(4))
+        );
+    }
+
+    #[test]
+    fn a_final_backslash_is_dropped() {
+        for (source, command) in [
+            ("/say a\\", "say a"),
+            ("/say a \\", "say a"),
+            ("/say a \\\n", "say a"),
+            ("/say a \\\r\n", "say a"),
+            ("/say a \\   ", "say a"),
+            ("/say a \\ # note", "say a"),
+            ("/say a \\\n  b \\", "say a b"),
+        ] {
+            let joined = joined(source);
+            assert!(!joined.contains('\\'), "{source:?}: {joined:?}");
+            assert_eq!(
+                tokenize_spanned(source).unwrap()[0].token,
+                Token::MinecraftCommand(command.to_string()),
+                "{source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn continued_commands_join_the_way_minecraft_does() {
+        let command = |source: &str| tokenize_spanned(source).unwrap()[0].token.clone();
+        let say = |text: &str| Token::MinecraftCommand(text.to_string());
+        // Only the `\` goes, so a space before it stays.
+        assert_eq!(command("/give @s\\\n stone\n"), say("give @sstone"));
+        assert_eq!(command("/give @s \\\n stone\n"), say("give @s stone"));
+        assert_eq!(command("/say a \\   \nb\n"), say("say a b"));
+        // A blank line ends the command.
+        assert_eq!(command("/say a \\\n\n"), say("say a"));
+        // One `\` goes at each step, so a second one continues again.
+        assert_eq!(command("/say a\\\\\nb\n"), say("say a\\b"));
+        assert_eq!(command("/say a\\\\\n\n/say b\n"), say("say a/say b"));
+    }
+
+    #[test]
+    fn continued_commands_keep_comments_apart() {
+        let source = "/say a # see C:\\\n/say b\n";
+        assert!(matches!(join_continued_commands(source), Cow::Borrowed(_)));
+        let commands: Vec<Token> = tokenize_spanned(source)
+            .unwrap()
+            .into_iter()
+            .map(|token| token.token)
+            .filter(|token| matches!(token, Token::MinecraftCommand(_)))
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                Token::MinecraftCommand("say a".to_string()),
+                Token::MinecraftCommand("say b".to_string()),
+            ]
+        );
+
+        assert_eq!(
+            tokenize_spanned("/say a \\ # first\n  b # second\n").unwrap()[0].token,
+            Token::MinecraftCommand("say a b".to_string())
+        );
+    }
+
+    #[test]
+    fn continued_commands_leave_triple_quoted_text_alone() {
+        for source in [
+            "x = \"\"\"\n/say a \\\nb\n\"\"\"\n/say c \\\n  d\n",
+            "def main():\n    '''\n    /say a \\\n    b\n    '''\n    /say c \\\n      d\n",
+        ] {
+            let joined = joined(source);
+            assert!(joined.contains("/say a \\\n"), "{joined:?}");
+            assert!(joined.contains("/say c d"), "{joined:?}");
+        }
+        assert_eq!(
+            joined("# \"\"\"\n/say a \\\n  b\n"),
+            format!("# \"\"\"\n/say a b{}\n\n", " ".repeat(3))
+        );
+        assert_eq!(
+            joined("x = \"\"\"a\"\"\"\n/say a \\\n  b\n"),
+            format!("x = \"\"\"a\"\"\"\n/say a b{}\n\n", " ".repeat(3))
+        );
     }
 
     #[test]

@@ -11,6 +11,14 @@ use serde_json::Value;
 // --reports`). Data packs can't add entries to them, so Minecraft rejects
 // any other type.
 
+/// Dialog types in Minecraft 26.3.
+const DIALOG_TYPES: &[&str] = &[
+    "confirmation",
+    "dialog_list",
+    "multi_action",
+    "notice",
+    "server_links",
+];
 /// Predicate (loot condition) types in Minecraft 26.3.
 const LOOT_CONDITION_TYPES: &[&str] = &[
     "all_of",
@@ -232,7 +240,7 @@ fn at(path: &str, key: &str) -> String {
 
 /// Predicates: `condition` is now `type`, including the predicates nested in
 /// `all_of`/`any_of` terms and `inverted`.
-pub(super) fn check_predicate(json: &Value, path: &str, problems: &mut Vec<String>) {
+pub(crate) fn check_predicate(json: &Value, path: &str, problems: &mut Vec<String>) {
     if !json.is_object() {
         return;
     }
@@ -241,6 +249,8 @@ pub(super) fn check_predicate(json: &Value, path: &str, problems: &mut Vec<Strin
             "{} is now `type` (\"type\": \"minecraft:random_chance\"); rejected",
             at(path, "condition")
         ));
+    } else if !has(json, "type") {
+        problems.push(format!("{} is missing; rejected", at(path, "type")));
     }
     check_registry_id(
         json.get("type"),
@@ -284,7 +294,7 @@ fn check_conditions_list(json: &Value, path: &str, problems: &mut Vec<String>) {
 
 /// Item modifiers (loot functions): `function` is now `type`, and
 /// `conditions` is a single `condition`.
-pub(super) fn check_item_modifier(json: &Value, path: &str, problems: &mut Vec<String>) {
+pub(crate) fn check_item_modifier(json: &Value, path: &str, problems: &mut Vec<String>) {
     if !json.is_object() {
         return;
     }
@@ -293,6 +303,8 @@ pub(super) fn check_item_modifier(json: &Value, path: &str, problems: &mut Vec<S
             "{} is now `type` (\"type\": \"minecraft:set_components\"); rejected",
             at(path, "function")
         ));
+    } else if !has(json, "type") {
+        problems.push(format!("{} is missing; rejected", at(path, "type")));
     }
     check_registry_id(
         json.get("type"),
@@ -308,7 +320,7 @@ pub(super) fn check_item_modifier(json: &Value, path: &str, problems: &mut Vec<S
 /// Loot tables: `functions` lists are now `modifier`, `conditions` lists are
 /// a single `condition`, and a `minecraft:tag` entry names its tag in
 /// `items` instead of `name`.
-pub(super) fn check_loot_table(json: &Value, problems: &mut Vec<String>) {
+pub(crate) fn check_loot_table(json: &Value, problems: &mut Vec<String>) {
     check_loot_modifiers(json, "", problems);
     let Some(pools) = json.get("pools").and_then(Value::as_array) else {
         return;
@@ -494,6 +506,11 @@ pub(super) fn check_recipe(json: &Value, problems: &mut Vec<String>) {
             check_ingredient(ingredient, &format!("ingredients[{index}]"), problems);
         }
     }
+    // The `input` of a brewing recipe is a potion, not an ingredient.
+    let brewing = json
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|id| id.trim_start_matches("minecraft:") == "brewing");
     for field in [
         "ingredient",
         "template",
@@ -502,6 +519,9 @@ pub(super) fn check_recipe(json: &Value, problems: &mut Vec<String>) {
         "input",
         "material",
     ] {
+        if brewing && field == "input" {
+            continue;
+        }
         if let Some(ingredient) = json.get(field) {
             check_ingredient(ingredient, field, problems);
         }
@@ -522,5 +542,32 @@ pub(super) fn check_recipe(json: &Value, problems: &mut Vec<String>) {
             "`minecraft:{}` recipes must set `cookingtime` (200 was the smelting default); rejected",
             recipe_type
         ));
+    }
+}
+
+/// The fields a dialog can't go without.
+pub(crate) fn check_dialog(json: &Value, problems: &mut Vec<String>) {
+    let Some(kind) = json.get("type").and_then(Value::as_str) else {
+        problems.push("`type` is missing; rejected".to_string());
+        return;
+    };
+    check_registry_id(
+        Some(&Value::from(kind)),
+        "",
+        "type",
+        DIALOG_TYPES,
+        "a dialog type",
+        problems,
+    );
+    let required: &[&str] = match kind.trim_start_matches("minecraft:") {
+        "confirmation" => &["title", "yes", "no"],
+        "multi_action" => &["title", "actions"],
+        "dialog_list" => &["title", "dialogs"],
+        _ => &["title"],
+    };
+    for key in required {
+        if !has(json, key) {
+            problems.push(format!("`{key}` is missing; rejected"));
+        }
     }
 }

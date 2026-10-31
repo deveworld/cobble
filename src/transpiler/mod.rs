@@ -13,7 +13,7 @@ mod expressions;
 mod function_context;
 mod intrinsics;
 mod module_init;
-mod resource_format;
+pub(crate) mod resource_format;
 mod score_holders;
 mod snbt_text;
 mod source_map;

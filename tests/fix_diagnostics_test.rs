@@ -415,3 +415,24 @@ fn compound_assignment_with_non_ascii_operand_does_not_panic() {
     let source = "def main():\n    m = {\"k\": 1}\n    a = 1\n    x = 0\n    x+=m[a한 + 1]\n";
     let _ = analyze_source(source);
 }
+
+#[test]
+fn diagnostics_after_a_continued_command_keep_their_lines() {
+    let source = "def main():\n    /say a \\\n        b \\\n        c\n    t = f(1)\n";
+    let diagnostics = analyze_source(source);
+    let diagnostic = expect_kind(&diagnostics, "undefined-function");
+    assert_eq!((diagnostic.line, diagnostic.column), (5, 9));
+
+    // The same with CRLF, and when the next line starts a new block.
+    let source = "def main():\r\n    /say a \\\r\n        b\r\n\r\ndef g():\r\n    t = f(1)\r\n";
+    let diagnostics = analyze_source(source);
+    let diagnostic = expect_kind(&diagnostics, "undefined-function");
+    assert_eq!((diagnostic.line, diagnostic.column), (6, 9));
+}
+
+#[test]
+fn a_continued_command_takes_no_statement_checks() {
+    // The lines after the `\` are part of the command, not statements.
+    let source = "def main():\n    /say a \\\n  x = (\n    /say b \\\n'\n    /say c\n";
+    assert_eq!(analyze_source(source), []);
+}

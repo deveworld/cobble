@@ -226,12 +226,12 @@ fn test_validate_minecraft_26_commands() {
         r#"
 def test():
     /dialog clear @a
-    /dialog show @a minecraft:notice
+    /dialog show @a minecraft:server_links
     /fetchprofile name Notch
     /fetchprofile id 123e4567-e89b-12d3-a456-426614174000
     /waypoint list
     /waypoint modify @s color red
-    /waypoint modify @s color hex #ff00aa
+    /waypoint modify @s color hex ff00aa
     /waypoint modify @s style set minecraft:default
     /stopwatch create cobble:test
     /stopwatch query cobble:test 20.0
@@ -261,9 +261,9 @@ def test():
     /item modify entity @s weapon {type:"minecraft:set_count",count:2}
     /execute if items entity @s weapon minecraft:diamond run say has diamond
     /execute if slots entity @s container.* run say has slots
-    /compute default integer 5
+    /compute default integer {type:"minecraft:constant",value:5}
     /compute default float {type:"minecraft:uniform",min:0.0,max:1.0} 10
-    /data modify storage cobble:test value set compute default integer 3
+    /data modify storage cobble:test value set compute default integer {type:"minecraft:constant",value:3}
     /team modify red color dark_purple
     /team modify red color reset
     /waypoint modify @s color red

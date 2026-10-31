@@ -103,6 +103,7 @@ fn parse_error_diagnostics(errors: Vec<crate::parser::ParseDiagnostic>) -> Vec<S
 /// parse surfaces its pre-parse diagnostics, or kind `parse` when there are
 /// none (via `parse_source_located`).
 fn analyze_source_stages(source: &str) -> SourceAnalysis {
+    let source = &*crate::parser::tokenizer::join_continued_commands(source);
     let mut diagnostics = Vec::new();
     check_structural_syntax(source, &mut diagnostics);
     if !diagnostics.is_empty() {
