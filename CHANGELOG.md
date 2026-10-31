@@ -94,6 +94,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- `--validate` accepts macro lines where a placeholder stands for several
+  arguments, such as `$fill $(from) $(to) $(block) hollow` and `$data modify
+  storage $(to) set value 1`.
+- `--validate` reports a command that a `\` and an empty line leave ending in a
+  space, such as `kill @s `, which Minecraft refuses to load.
+- `--validate` reports a particle `block_state` written as block NBT, such as
+  `{Name:"stone"}`; Minecraft 26.3 reads only a block id or `{id:...}` with
+  `properties`.
+- `--validate` reports unknown enchantments and enchantment tags in item tests
+  such as `enchantments~[{enchantments:"#minecraft:curse"}]`, and an
+  `enchantments~` value that isn't a list.
+- The hint for a pre-26.3 `function` or `condition` key names the resource's own
+  type, such as `"type": "minecraft:set_count"`, instead of a fixed example.
 - A subscript picks a map field for a text key and a list item for a number at
   any depth, as in `tree[0][0][0][key]` or `grid[0][row][col]`, whatever else
   the program assigns into the container. When neither the key's type nor the
