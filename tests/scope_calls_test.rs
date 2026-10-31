@@ -75,8 +75,7 @@ fn module_variable_defined_in_two_files_is_an_error() {
             "import other\n\nshared = 1\n\ndef test():\n    a = shared\n    b = other_get()\n    /say main {a} other {b}\n",
         ),
     ])
-    .err()
-    .expect("a module variable in two files must not build");
+    .expect_err("a module variable in two files must not build");
     assert!(
         error.contains("Module variable `shared` is defined in both other.cbl and main.cbl"),
         "{error}"
