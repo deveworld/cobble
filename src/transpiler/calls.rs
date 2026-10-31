@@ -170,7 +170,7 @@ impl Transpiler {
             }
             // A value whose type isn't a number keeps its storage value.
             Expression::Subscript(base, index)
-                if !self.is_string_key(index) && self.unknown_value_path(base).is_some() =>
+                if !self.picks_field(base, index) && self.unknown_value_path(base).is_some() =>
             {
                 let base_path = self.unknown_value_path(base).unwrap_or_default();
                 self.unknown_item_commands(target_path, &base_path, index)

@@ -305,16 +305,15 @@ impl<'a> ExpressionEvaluator<'a> {
         let (mut commands, args_path) = self.prepare_dynamic_storage_path(id, plan)?;
         let helper_name = format!("_cobble_storage_read_{}", id);
         let namespace = self.data_pack.namespace.clone();
-        let helper_commands = vec![
-            format!("scoreboard players set {} {} 0", target, target_obj),
-            format!(
-                "$execute store result score {} {} run data get storage {}:global {}",
-                target,
-                target_obj,
-                namespace,
-                plan.template()
-            ),
-        ];
+        let helper_commands = plan.helper_lines(id, |path| {
+            vec![
+                format!("scoreboard players set {} {} 0", target, target_obj),
+                format!(
+                    "$execute store result score {} {} run data get storage {}:global {}",
+                    target, target_obj, namespace, path
+                ),
+            ]
+        });
         self.add_generated_helper_function(
             helper_name.clone(),
             helper_commands,
@@ -460,7 +459,7 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             // A value whose type isn't a number keeps its storage value.
             Expression::Subscript(base, index)
-                if !self.is_string_key(index) && self.unknown_value_path(base).is_some() =>
+                if !self.picks_field(base, index) && self.unknown_value_path(base).is_some() =>
             {
                 let base_path = self.unknown_value_path(base).unwrap_or_default();
                 self.unknown_item_commands(target_path, &base_path, index)

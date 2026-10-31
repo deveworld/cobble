@@ -488,7 +488,10 @@ impl Transpiler {
         // `x += 5` parses to `x = x + 5`, but its source line keys as `x+=5`.
         if let Statement::Assignment(assign) = statement {
             if let Expression::Binary(left, op, right) = &assign.value {
-                if matches!(left.as_ref(), Expression::Identifier(name) if name == &assign.target) {
+                // `box[k] += 1` too, whose target is a subscript.
+                let augments_target = matches!(left.as_ref(), Expression::Identifier(name) if name == &assign.target)
+                    || assign.target_expr.as_ref() == Some(left.as_ref());
+                if augments_target {
                     keys.push(format!(
                         "{}{}={}",
                         assign.target,

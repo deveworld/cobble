@@ -1,21 +1,68 @@
 //! Values a program writes into lists and maps.
 //!
-//! Cobble tells the type of `names[i]` or `config.title` from the literal the
-//! variable holds. A write anywhere in the program can change an item or a
-//! field, in a function that runs first or in a file compiled later, so a
-//! read keeps the literal's type only when every write has that type too.
+//! Cobble tells the type of `names[i]`, `config.title`, or `grid[r][c]` from
+//! the literal the variable holds. A write anywhere in the program can change
+//! an item or a field at any depth, in a function that runs first or in a
+//! file compiled later, so a read keeps the literal's type only when every
+//! write that can reach it gives that type too.
 
 use crate::ast::{Assignment, CobbleType, Expression, MultiAssign, Statement};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-/// The places and types each variable gets written. The place is a field
-/// name, or `None` for an item, a key known only when the pack runs, or the
-/// whole value.
-pub(in crate::transpiler) type ContainerWrites =
-    HashMap<String, HashSet<(Option<String>, CobbleType)>>;
+/// One step of a path into a value: a field, or an item picked by an index
+/// or a key.
+#[derive(Clone, Copy)]
+pub(in crate::transpiler) enum Step<'a> {
+    Field(&'a str),
+    Item(&'a Expression),
+}
+
+impl Step<'_> {
+    /// The field this step names, if it names one. An index, or a key known
+    /// only when the pack runs, can be any field or item.
+    fn field(self) -> Option<String> {
+        match self {
+            Step::Field(field) => Some(field.to_string()),
+            Step::Item(Expression::String(field)) => Some(field.clone()),
+            Step::Item(_) => None,
+        }
+    }
+}
+
+/// The variable `expr` reads from and the steps into it, as `grid` and
+/// `[r], [c]` for `grid[r][c]`.
+pub(in crate::transpiler) fn access_path(expr: &Expression) -> Option<(&str, Vec<Step<'_>>)> {
+    match expr {
+        Expression::Identifier(name) => Some((name, Vec::new())),
+        Expression::Attribute(base, field) => {
+            let (name, mut steps) = access_path(base)?;
+            steps.push(Step::Field(field));
+            Some((name, steps))
+        }
+        Expression::Subscript(base, index) => {
+            let (name, mut steps) = access_path(base)?;
+            steps.push(Step::Item(index));
+            Some((name, steps))
+        }
+        _ => None,
+    }
+}
+
+/// A write into a variable: the fields on its path (`None` for an item or a
+/// key known only when the pack runs), and the value written there, or
+/// `None` when the value can be anything.
+#[derive(Clone)]
+pub(in crate::transpiler) struct Write {
+    path: Vec<Option<String>>,
+    value: Option<Expression>,
+}
+
+/// The writes of the program, by the name of the variable written. A name
+/// means every variable that has it.
+pub(in crate::transpiler) type ContainerWrites = HashMap<String, Vec<Write>>;
 
 /// Records the writes of `statements` and of the statements inside them.
-/// Function bodies count too, and a name means every variable that has it.
+/// Function bodies count too.
 pub(in crate::transpiler) fn collect_container_writes(
     statements: &[Statement],
     writes: &mut ContainerWrites,
@@ -48,21 +95,36 @@ pub(in crate::transpiler) fn collect_container_writes(
     }
 }
 
-/// `a[i], b.x = ...` writes like one assignment per target.
+/// Records that `value` is written at `target`, or at an item of it for
+/// each of `items`.
+fn record(
+    writes: &mut ContainerWrites,
+    target: &Expression,
+    items: usize,
+    value: Option<&Expression>,
+) {
+    let Some((name, steps)) = access_path(target) else {
+        return;
+    };
+    let mut path: Vec<Option<String>> = steps.into_iter().map(Step::field).collect();
+    path.extend(std::iter::repeat_n(None, items));
+    writes.entry(name.to_string()).or_default().push(Write {
+        path,
+        value: value.cloned(),
+    });
+}
+
+/// `a[i], b.x = ...` can write anything to each target.
 fn record_multi_assign(multi: &MultiAssign, writes: &mut ContainerWrites) {
     for target in &multi.targets {
-        if let Expression::Subscript(base, _) | Expression::Attribute(base, _) = target {
-            if let Expression::Identifier(name) = &**base {
-                writes
-                    .entry(name.clone())
-                    .or_default()
-                    .insert((None, CobbleType::Unknown));
-            }
+        if !matches!(target, Expression::Identifier(_)) {
+            record(writes, target, 0, None);
         }
     }
 }
 
-/// `items.append(x)` and the other methods that add items.
+/// `items.append(x)` and the other methods that add items, on a variable or
+/// on a list inside one.
 fn record_list_method(expr: &Expression, writes: &mut ContainerWrites) {
     let Expression::Call(func, args) = expr else {
         return;
@@ -70,68 +132,37 @@ fn record_list_method(expr: &Expression, writes: &mut ContainerWrites) {
     let Expression::Attribute(base, method) = &**func else {
         return;
     };
-    let Expression::Identifier(name) = &**base else {
-        return;
-    };
-    let value_type = match (method.as_str(), args.as_slice()) {
-        ("append", [value]) | ("insert", [_, value]) => written_type(value),
-        ("extend", _) => CobbleType::Unknown,
-        _ => return,
-    };
-    writes
-        .entry(name.clone())
-        .or_default()
-        .insert((None, value_type));
+    match (method.as_str(), args.as_slice()) {
+        ("append", [value]) | ("insert", [_, value]) => record(writes, base, 1, Some(value)),
+        ("extend", _) => record(writes, base, 1, None),
+        _ => {}
+    }
 }
 
 fn record_assignment(assign: &Assignment, writes: &mut ContainerWrites) {
-    let mut record = |name: &str, field: Option<&str>, value_type: CobbleType| {
-        writes
-            .entry(name.to_string())
-            .or_default()
-            .insert((field.map(str::to_string), value_type));
-    };
-    if assign.assigns_name() {
-        match &assign.value {
-            Expression::Array(items) => {
-                for item in items {
-                    record(&assign.target, None, written_type(item));
-                }
-            }
-            Expression::Map(entries) => {
-                for (field, value) in entries {
-                    record(&assign.target, Some(field), written_type(value));
-                }
-            }
-            // A number or a string doesn't hold items.
+    let target = assign
+        .target_expr
+        .clone()
+        .unwrap_or_else(|| Expression::Identifier(assign.target.clone()));
+    // A number or a string doesn't hold items.
+    if assign.assigns_name()
+        && matches!(
+            assign.value,
             Expression::Number(_)
-            | Expression::String(_)
-            | Expression::Boolean(_)
-            | Expression::None => {}
-            // A copy of a variable, or a call: any item can be anything.
-            _ => record(&assign.target, None, CobbleType::Unknown),
-        }
+                | Expression::String(_)
+                | Expression::Boolean(_)
+                | Expression::None
+        )
+    {
         return;
     }
-    // A write deeper inside, such as `config.nested.value = 1`, leaves
-    // `config.nested` a map.
-    match &assign.target_expr {
-        Some(Expression::Subscript(base, index)) => {
-            if let Expression::Identifier(name) = &**base {
-                let field = match &**index {
-                    Expression::String(field) => Some(field.as_str()),
-                    _ => None,
-                };
-                record(name, field, written_type(&assign.value));
-            }
+    // `x += 1`, `s *= 2`, and `items += [4]` keep the type the value had.
+    if let Expression::Binary(left, _, _) = &assign.value {
+        if **left == target {
+            return;
         }
-        Some(Expression::Attribute(base, field)) => {
-            if let Expression::Identifier(name) = &**base {
-                record(name, Some(field), written_type(&assign.value));
-            }
-        }
-        _ => {}
     }
+    record(writes, &target, 0, Some(&assign.value));
 }
 
 /// The type `value` stores. A variable, an item, or a call depends on where
@@ -150,23 +181,79 @@ fn written_type(value: &Expression) -> CobbleType {
     }
 }
 
-/// The type a read of an item or a field of `name` gives, where its literal
-/// gives `literal`: `literal` when every write that can reach the read has
-/// that type, and `Unknown` otherwise. `field` is the field the read names,
-/// or `None` for an index or a key known only when the pack runs.
+/// The type at the end of `steps` in the literal `value`, where `leaf`
+/// gives the type of each value found there. An index can pick any item of
+/// a list and a key known only when the pack runs any field, so they give a
+/// type when all of those share it. A character of a string is a string.
+pub(in crate::transpiler) fn literal_type(
+    value: &Expression,
+    steps: &[Step<'_>],
+    leaf: &dyn Fn(&Expression) -> CobbleType,
+) -> CobbleType {
+    let Some((step, rest)) = steps.split_first() else {
+        return leaf(value);
+    };
+    let shared = |values: &mut dyn Iterator<Item = &Expression>| {
+        let mut types = values.map(|value| literal_type(value, rest, leaf));
+        let first = types.next().unwrap_or(CobbleType::Unknown);
+        if types.all(|other| other == first) {
+            first
+        } else {
+            CobbleType::Unknown
+        }
+    };
+    match (value, step) {
+        (Expression::Array(items), Step::Item(_)) => shared(&mut items.iter()),
+        (Expression::Map(entries), step) => match step.field() {
+            Some(field) => entries
+                .iter()
+                .find(|(key, _)| *key == field)
+                .map_or(CobbleType::Unknown, |(_, value)| {
+                    literal_type(value, rest, leaf)
+                }),
+            None => shared(&mut entries.iter().map(|(_, value)| value)),
+        },
+        // Every further index of a character gives the same character.
+        (Expression::String(_), Step::Item(_))
+            if rest.iter().all(|step| matches!(step, Step::Item(_))) =>
+        {
+            CobbleType::String
+        }
+        _ => CobbleType::Unknown,
+    }
+}
+
+/// The type a read of `steps` into `name` gives, where its literal gives
+/// `literal`: `literal` when every write that can reach the read gives that
+/// type, and `Unknown` otherwise. A write deeper inside the value read
+/// leaves its type as it was.
 pub(in crate::transpiler) fn read_type(
     writes: &ContainerWrites,
     name: &str,
-    field: Option<&str>,
+    steps: &[Step<'_>],
     literal: CobbleType,
 ) -> CobbleType {
     let Some(written) = writes.get(name) else {
         return literal;
     };
-    let differs = written.iter().any(|(written_field, written_type)| {
-        let reaches =
-            field.is_none() || written_field.is_none() || written_field.as_deref() == field;
-        reaches && *written_type != literal
+    let fields: Vec<Option<String>> = steps.iter().map(|step| step.field()).collect();
+    let differs = written.iter().any(|write| {
+        if write.path.len() > fields.len() {
+            return false;
+        }
+        let reaches = write
+            .path
+            .iter()
+            .zip(&fields)
+            .all(|(written, read)| written.is_none() || read.is_none() || written == read);
+        if !reaches {
+            return false;
+        }
+        let written = match &write.value {
+            Some(value) => literal_type(value, &steps[write.path.len()..], &written_type),
+            None => CobbleType::Unknown,
+        };
+        written != literal
     });
     if differs {
         CobbleType::Unknown

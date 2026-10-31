@@ -2166,9 +2166,13 @@ pub(super) fn check_storage_backed_access(
                     constant_env.remove(&assignment.target);
                 }
 
-                if let Some(new_type) =
-                    infer_expression_type_for_diagnostics(&assignment.value, type_env)
-                {
+                // A field, an item, or `pop()` of a container can be a list,
+                // a map, or a string: the compiler checks its use.
+                let new_type = infer_expression_type_for_diagnostics(&assignment.value, type_env)
+                    .or_else(|| {
+                        reads_a_container(&assignment.value).then_some(CobbleType::Unknown)
+                    });
+                if let Some(new_type) = new_type {
                     match type_env.get(&assignment.target) {
                         Some(existing_type) if *existing_type != new_type => {}
                         _ => {
@@ -2388,9 +2392,11 @@ fn unsupported_subscript_access(
                         help: "Assign a list, map, or string literal to the base variable before using storage-backed access.".to_string(),
                     });
                 };
+                // A parameter or a value of unknown type can hold a list
+                // or a map.
                 if !matches!(
                     root_type,
-                    CobbleType::List | CobbleType::Map | CobbleType::String
+                    CobbleType::List | CobbleType::Map | CobbleType::String | CobbleType::Unknown
                 ) {
                     return Some(StorageAccessDiagnostic {
                         offset: base_start,
@@ -2611,6 +2617,21 @@ fn identifier_after(text: &str, after: usize) -> Option<(&str, usize)> {
     Some((&text[start..end], end))
 }
 
+/// Whether `expression` reads a field or an item, or calls a method, as
+/// `cfg.x`, `rows[0][1]`, or `queue.pop(0)`.
+fn reads_a_container(expression: &str) -> bool {
+    let expression = expression.trim();
+    let starts_with_name = expression
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| is_ident_start_byte(*byte));
+    starts_with_name
+        && expression
+            .bytes()
+            .find(|byte| !is_ident_continue_byte(*byte))
+            .is_some_and(|byte| matches!(byte, b'.' | b'['))
+}
+
 fn storage_chain_root_before_subscript(text: &str, base_start: usize) -> Option<(&str, usize)> {
     let bytes = text.as_bytes();
     let mut cursor = base_start;
@@ -2646,10 +2667,15 @@ fn storage_chain_segment_start_before(text: &str, before_dot: usize) -> Option<u
         return None;
     }
 
-    if bytes[end - 1] == b']' {
-        let open = matching_open_bracket(text, end - 1)?;
-        let (_name, start) = identifier_before(text, open)?;
-        return Some(start);
+    // `rows[0][1].s` has several subscripts before the dot.
+    while bytes[end - 1] == b']' {
+        end = matching_open_bracket(text, end - 1)?;
+        while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        if end == 0 {
+            return None;
+        }
     }
 
     let (_name, start) = identifier_before(text, end)?;

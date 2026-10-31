@@ -158,7 +158,13 @@ def _cobble_str(value):
     /data modify storage NS:global _cobble_result set value "{value}"
 
 def _cobble_has_key(box, key):
-    /execute if data storage NS:global args.box."{key}" run return 1
+    # A number is never a key. Its text differs from it, so the second
+    # `set` succeeds; for text it changes nothing and fails.
+    number = 1
+    /data remove storage NS:global _cobble_kind
+    /data modify storage NS:global _cobble_kind set string storage NS:global args.key
+    /execute store success score number temp run data modify storage NS:global _cobble_kind set from storage NS:global args.key
+    /execute if score number temp matches 0 if data storage NS:global args.box."{key}" run return 1
     return 0
 
 def _cobble_is_text(value):

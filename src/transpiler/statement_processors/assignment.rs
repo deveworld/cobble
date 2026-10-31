@@ -120,14 +120,15 @@ impl Transpiler {
             let (prepare_commands, args_path) = self.prepare_dynamic_storage_path(id, path_plan)?;
             commands.extend(prepare_commands);
             let helper_name = format!("_cobble_storage_dyn_read_{}", id);
-            self.add_generated_helper_function(
-                helper_name.clone(),
+            let lines = path_plan.helper_lines(id, |path| {
                 vec![format!(
                     "$execute store result score {} temp run data get storage {}:global {}",
-                    target_score,
-                    namespace,
-                    path_plan.template()
-                )],
+                    target_score, namespace, path
+                )]
+            });
+            self.add_generated_helper_function(
+                helper_name.clone(),
+                lines,
                 GeneratedCommandKind::ControlFlow,
             );
             commands.push(format!(
@@ -162,14 +163,15 @@ impl Transpiler {
             ));
         } else if let Some(args_path) = dynamic_args_path {
             let helper_name = format!("_cobble_storage_dyn_write_{}", id);
-            self.add_generated_helper_function(
-                helper_name.clone(),
+            let lines = path_plan.helper_lines(id, |path| {
                 vec![format!(
                     "$execute store result storage {}:global {} int 1 run scoreboard players get {} temp",
-                    namespace,
-                    path_plan.template(),
-                    target_score
-                )],
+                    namespace, path, target_score
+                )]
+            });
+            self.add_generated_helper_function(
+                helper_name.clone(),
+                lines,
                 GeneratedCommandKind::ControlFlow,
             );
             commands.push(format!(
@@ -382,7 +384,7 @@ impl Transpiler {
                 })
             }
             Expression::Subscript(base, _) if self.is_string_base(base) => None,
-            Expression::Subscript(base, index) if !self.is_string_key(index) => {
+            Expression::Subscript(base, index) if !self.picks_field(base, index) => {
                 match self.unknown_value_path(base) {
                     Some(base_path) => Some(StorageRead::Item {
                         base_path,

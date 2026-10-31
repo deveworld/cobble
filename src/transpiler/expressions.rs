@@ -319,12 +319,12 @@ impl Transpiler {
         build_helper_commands: F,
     ) -> Result<Vec<String>, TranspileError>
     where
-        F: FnOnce(&str) -> Vec<String>,
+        F: Fn(&str) -> Vec<String>,
     {
         let id = self.next_temp_id();
         let (mut commands, args_path) = self.prepare_dynamic_storage_path(id, plan)?;
         let helper_name = format!("_cobble_storage_dyn_{}", id);
-        let helper_commands = build_helper_commands(plan.template());
+        let helper_commands = plan.helper_lines(id, build_helper_commands);
         self.add_generated_helper_function(helper_name.clone(), helper_commands, kind);
         commands.push(format!(
             "function {}:{} with storage {}:global {}",
