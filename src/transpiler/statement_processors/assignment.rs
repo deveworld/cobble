@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::transpiler::expression_evaluator::{min_constant_commands, ExpressionEvaluator};
+use crate::transpiler::function_context::expression_reads;
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::symbols::Symbols;
 use crate::transpiler::{escape_quoted, GeneratedCommandKind, ModuleLevelAssignment};
@@ -193,7 +194,12 @@ impl Transpiler {
         value: &Expression,
     ) -> Result<(), TranspileError> {
         if self.current_function.is_none() {
-            if self.resolve_storage_path_plan(target_expr).is_none() {
+            let mut base_reads = Vec::new();
+            expression_reads(target_expr, &mut base_reads);
+            let base_pending = base_reads
+                .first()
+                .is_some_and(|base| self.symbols.pending_module_declarations.contains(*base));
+            if base_pending || self.resolve_storage_path_plan(target_expr).is_none() {
                 return Err(format!(
                     "Assignment target `{target_expr:?}` must resolve to an already-defined storage-backed value. \
                      Define the base list, map, or string before assigning to one of its fields."
@@ -265,6 +271,10 @@ impl Transpiler {
             }
         }
 
+        if self.current_function.is_none() {
+            self.check_module_level_reads(&assign.value)?;
+        }
+
         if let AssignTargetKind::StorageExpr(target_expr) = target_kind {
             return self.process_storage_target_assignment(target_expr, &assign.value);
         }
@@ -305,6 +315,9 @@ impl Transpiler {
         // If we're not in a function, store as module-level variable
         // These will be automatically initialized in the _cobble_init function
         if matches!(target_kind, AssignTargetKind::ModuleLevel) {
+            self.symbols
+                .pending_module_declarations
+                .remove(&assign.target);
             self.defer_module_level_assignment(assign);
             return Ok(());
         }
@@ -598,6 +611,19 @@ impl Transpiler {
     /// replay (`ModuleLevelAssignment::Variable`), recording the target's
     /// storage or scoreboard backing up front.
     fn defer_module_level_assignment(&mut self, assign: &Assignment) {
+        self.register_module_variable_backing(assign);
+        self.module_level_vars
+            .push(ModuleLevelAssignment::Variable {
+                target: assign.target.clone(),
+                value: assign.value.clone(),
+                source: self.current_statement_source.clone(),
+                persist: assign.persist,
+            });
+    }
+
+    /// Records whether the module variable `assign` binds lives in storage,
+    /// in a score, or in both. Its type must already be recorded.
+    pub(in crate::transpiler) fn register_module_variable_backing(&mut self, assign: &Assignment) {
         // Strings, lists, and maps live in storage: literals, copies of
         // such variables, and characters of strings.
         let storage = matches!(
@@ -631,13 +657,6 @@ impl Transpiler {
                 .scoreboard_variables
                 .insert(assign.target.clone());
         }
-        self.module_level_vars
-            .push(ModuleLevelAssignment::Variable {
-                target: assign.target.clone(),
-                value: assign.value.clone(),
-                source: self.current_statement_source.clone(),
-                persist: assign.persist,
-            });
     }
 
     /// Lower `AssignValueKind::ConstFoldable`: the value folded to a

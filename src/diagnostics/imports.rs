@@ -460,8 +460,7 @@ fn analyze_cross_file_named_symbols(
     let mut variables: HashMap<String, (usize, usize, usize)> = HashMap::new();
     for (file_index, context) in contexts.iter().enumerate() {
         for variable in semantic::collect_module_variable_defs(context) {
-            if let Some(&(first_index, first_line, first_column)) = variables.get(&variable.name)
-            {
+            if let Some(&(first_index, first_line, first_column)) = variables.get(&variable.name) {
                 let first_path = &files[first_index].path;
                 let this_path = &files[file_index].path;
                 duplicate_diagnostics.entry(file_index).or_default().push(
@@ -489,10 +488,7 @@ fn analyze_cross_file_named_symbols(
                     )),
                 );
             } else {
-                variables.insert(
-                    variable.name,
-                    (file_index, variable.line, variable.column),
-                );
+                variables.insert(variable.name, (file_index, variable.line, variable.column));
             }
         }
     }

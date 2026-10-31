@@ -305,6 +305,64 @@ fn collect_bindings(
     }
 }
 
+/// Module variables that `function` declares `global` and assigns a literal
+/// (a number, boolean, string, list, or map), each with its first such
+/// value. Nested function definitions are included, each with its own
+/// `global` names.
+pub(in crate::transpiler) fn global_literal_assignments(
+    function: &FunctionDef,
+) -> Vec<(String, Expression)> {
+    fn walk(body: &[Statement], globals: &HashSet<String>, out: &mut Vec<(String, Expression)>) {
+        for statement in body {
+            match statement {
+                Statement::Assignment(assign)
+                    if assign.assigns_name()
+                        && globals.contains(&assign.target)
+                        && matches!(
+                            assign.value,
+                            Expression::Number(_)
+                                | Expression::Boolean(_)
+                                | Expression::String(_)
+                                | Expression::Array(_)
+                                | Expression::Map(_)
+                        ) =>
+                {
+                    if !out.iter().any(|(name, _)| name == &assign.target) {
+                        out.push((assign.target.clone(), assign.value.clone()));
+                    }
+                }
+                Statement::FunctionDef(nested) => {
+                    out.extend(global_literal_assignments(nested));
+                }
+                Statement::If(if_stmt) => {
+                    walk(&if_stmt.then_branch, globals, out);
+                    for (_, branch) in &if_stmt.elif_branches {
+                        walk(branch, globals, out);
+                    }
+                    if let Some(branch) = &if_stmt.else_branch {
+                        walk(branch, globals, out);
+                    }
+                }
+                Statement::For(for_loop) => walk(&for_loop.body, globals, out),
+                Statement::While(while_loop) => walk(&while_loop.body, globals, out),
+                Statement::Match(match_stmt) => {
+                    for case in &match_stmt.cases {
+                        walk(&case.body, globals, out);
+                    }
+                }
+                Statement::Execute(exec_block) => walk(&exec_block.body, globals, out),
+                _ => {}
+            }
+        }
+    }
+    let mut assigned = Vec::new();
+    let mut globals = HashSet::new();
+    collect_bindings(&function.body, &mut assigned, &mut globals);
+    let mut out = Vec::new();
+    walk(&function.body, &globals, &mut out);
+    out
+}
+
 /// Names whose score a raw command or a `store ... score` header in `body`
 /// writes. Nested function definitions have their own scope.
 fn collect_score_writes(body: &[Statement], writes: &mut HashSet<String>) {
@@ -362,7 +420,7 @@ pub(in crate::transpiler) fn direct_binding(statement: &Statement) -> Option<&st
 
 /// Variable names an expression reads, in source order. Called function
 /// names and attribute names are not reads.
-fn expression_reads<'a>(expr: &'a Expression, reads: &mut Vec<&'a str>) {
+pub(in crate::transpiler) fn expression_reads<'a>(expr: &'a Expression, reads: &mut Vec<&'a str>) {
     match expr {
         Expression::Identifier(name) => reads.push(name),
         Expression::Binary(left, _, right) => {

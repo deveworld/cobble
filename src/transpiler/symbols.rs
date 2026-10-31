@@ -27,6 +27,10 @@ pub(in crate::transpiler) struct Symbols {
     /// Names assigned at module level in any compiled file. A function
     /// assigning one of them without `global` gets a local variable instead.
     pub(in crate::transpiler) module_variables: BTreeSet<String>,
+    /// Module variables recorded ahead of their module-level assignment, so
+    /// function bodies above it can use them. Module-level code that runs
+    /// before the assignment can't.
+    pub(in crate::transpiler) pending_module_declarations: HashSet<String>,
     /// What the program writes into lists and maps, collected before any
     /// statement is lowered (see `container_writes.rs`).
     pub(in crate::transpiler) container_writes: ContainerWrites,

@@ -237,6 +237,7 @@ impl Transpiler {
 
     pub(in crate::transpiler) fn register_program_function_metadata(&mut self, program: &Program) {
         self.register_recursive_functions(program);
+        self.register_module_declarations(program);
         for statement in &program.statements {
             if let Statement::Assignment(assign) = statement {
                 if assign.assigns_name() {

@@ -2145,11 +2145,16 @@ pub(super) fn check_storage_backed_access(
     // (nested definitions included).
     let mut function_scopes: Vec<(HashMap<String, CobbleType>, HashMap<String, f64>)> = Vec::new();
     let imported = Imports::of(context.program);
+    let events = collect_assignment_scan_events(context);
+    // A function body runs after the whole module, so it sees the module
+    // variables declared below it too.
+    let declared_module_types = module_level_assignment_types(context, &events);
 
-    for event in collect_assignment_scan_events(context) {
+    for event in events {
         match event {
             AssignmentScanEvent::EnterFunction { params, locals } => {
-                let mut types = module_types.clone();
+                let mut types = declared_module_types.clone();
+                types.extend(module_types.clone());
                 let mut constants = module_constants.clone();
                 for local in locals {
                     constants.remove(&local);
@@ -2241,6 +2246,45 @@ pub(super) fn check_storage_backed_access(
             }
         }
     }
+}
+
+/// The type of each module variable, from its first module-level
+/// assignment whose type can be inferred.
+fn module_level_assignment_types(
+    context: &SemanticContext<'_>,
+    events: &[AssignmentScanEvent],
+) -> HashMap<String, CobbleType> {
+    let mut types: HashMap<String, CobbleType> = HashMap::new();
+    let mut depth = 0usize;
+    for event in events {
+        match event {
+            AssignmentScanEvent::EnterFunction { .. } => depth += 1,
+            AssignmentScanEvent::LeaveFunction => depth = depth.saturating_sub(1),
+            AssignmentScanEvent::Assignment { line } if depth == 0 => {
+                let line_text = context.line_text(*line);
+                let masked = mask_non_code(line_text);
+                let trimmed = masked.trim_start();
+                if trimmed.is_empty() || trimmed.starts_with('/') {
+                    continue;
+                }
+                let indent = masked.len() - trimmed.len();
+                let Some(assignment) = assignment_span_for_type_check(line_text, trimmed, indent)
+                else {
+                    continue;
+                };
+                if types.contains_key(&assignment.target) {
+                    continue;
+                }
+                if let Some(value_type) =
+                    infer_expression_type_for_diagnostics(&assignment.value, &types)
+                {
+                    types.insert(assignment.target, value_type);
+                }
+            }
+            _ => {}
+        }
+    }
+    types
 }
 
 /// Reports `type-mismatch` when a variable is reassigned to a value of a
@@ -3383,8 +3427,12 @@ pub(super) fn check_raw_command_placeholders(
     context: &SemanticContext<'_>,
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
+    let mut module = collect_interpolation_import_symbols(context);
+    // A function body runs after the whole module, so a module name declared
+    // below it is visible, as in Python.
+    module.extend(collect_module_scope_names(context));
     let mut scopes = PlaceholderScopes {
-        module: collect_interpolation_import_symbols(context),
+        module,
         function_stack: Vec::new(),
         loop_targets: Vec::new(),
     };
@@ -3423,6 +3471,35 @@ fn collect_interpolation_import_symbols(context: &SemanticContext<'_>) -> HashSe
     });
 
     symbols
+}
+
+/// Names bound at module level anywhere in the file, and names a function
+/// declares `global`.
+fn collect_module_scope_names(context: &SemanticContext<'_>) -> HashSet<String> {
+    let mut names: HashSet<String> = collect_module_variable_defs(context)
+        .into_iter()
+        .map(|variable| variable.name)
+        .collect();
+    for statement in &context.program.statements {
+        if let Statement::ConstAssignment(assignment) = statement {
+            if is_simple_module_name(&assignment.target) {
+                names.insert(assignment.target.clone());
+            }
+        }
+    }
+    context.walk(&mut |statement, node| {
+        if let Statement::Global(globals) = statement {
+            if !node.is_some_and(|node| context.in_docstring(node.span.line)) {
+                names.extend(
+                    globals
+                        .iter()
+                        .filter(|name| is_simple_module_name(name))
+                        .cloned(),
+                );
+            }
+        }
+    });
+    names
 }
 
 fn add_interpolation_import_items(import: &Import, symbols: &mut HashSet<String>) {

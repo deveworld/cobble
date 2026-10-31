@@ -1,4 +1,5 @@
-use crate::ast::{CobbleType, Expression};
+use crate::ast::{Assignment, CobbleType, Expression, Program, Statement};
+use crate::transpiler::function_context::{expression_reads, global_literal_assignments};
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
     GeneratedCommand, GeneratedCommandKind, SourceLocation, TranspileError, Transpiler,
@@ -21,6 +22,107 @@ pub(in crate::transpiler) enum ModuleLevelAssignment {
 }
 
 impl Transpiler {
+    /// Records the type and backing of every module variable `program`
+    /// declares, before any function body is lowered. A function body runs
+    /// after the whole module, so, as in Python, it can use a name declared
+    /// below it. Each name is recorded the way its first module-level
+    /// assignment records it.
+    pub(in crate::transpiler) fn register_module_declarations(&mut self, program: &Program) {
+        for statement in &program.statements {
+            let assignments: Vec<Assignment> = match statement {
+                Statement::Assignment(assign) if assign.assigns_name() => vec![assign.clone()],
+                Statement::MultiAssign(multi) if multi.targets.len() == multi.values.len() => multi
+                    .targets
+                    .iter()
+                    .zip(&multi.values)
+                    .filter_map(|(target, value)| match target {
+                        Expression::Identifier(name) => Some(Assignment {
+                            target: name.clone(),
+                            target_expr: None,
+                            value: value.clone(),
+                            persist: false,
+                        }),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for assign in assignments {
+                let name = &assign.target;
+                if self.is_declared_name(name) {
+                    continue;
+                }
+                // The same inference `process_assignment` makes.
+                let value_type = match &assign.value {
+                    Expression::Subscript(base, _) if self.is_string_base(base) => {
+                        CobbleType::String
+                    }
+                    Expression::Subscript(..) | Expression::Attribute(..) => {
+                        self.storage_read_type(&assign.value)
+                    }
+                    value => self.infer_type(value),
+                };
+                self.symbols.variable_types.insert(name.clone(), value_type);
+                self.symbols
+                    .variables
+                    .insert(name.clone(), assign.value.clone());
+                self.symbols
+                    .pending_module_declarations
+                    .insert(name.clone());
+                self.register_module_variable_backing(&assign);
+            }
+        }
+        // A function that declares a name `global` and assigns it a literal
+        // declares a module variable too.
+        for statement in &program.statements {
+            let Statement::FunctionDef(function) = statement else {
+                continue;
+            };
+            for (name, value) in global_literal_assignments(function) {
+                if self.is_declared_name(&name) {
+                    continue;
+                }
+                self.symbols
+                    .variable_types
+                    .insert(name.clone(), self.infer_type(&value));
+                self.register_module_variable_backing(&Assignment {
+                    target: name,
+                    target_expr: None,
+                    value,
+                    persist: false,
+                });
+            }
+        }
+    }
+
+    /// Module-level code runs in order: it can't read a module variable
+    /// before the variable's own module-level assignment.
+    pub(in crate::transpiler) fn check_module_level_reads(
+        &self,
+        value: &Expression,
+    ) -> Result<(), TranspileError> {
+        let mut reads = Vec::new();
+        expression_reads(value, &mut reads);
+        match reads
+            .into_iter()
+            .find(|name| self.symbols.pending_module_declarations.contains(*name))
+        {
+            Some(name) => Err(format!(
+                "Module variable `{name}` is read here before its assignment further down the file. Module-level code runs from top to bottom, so move `{name} = ...` above this line."
+            )
+            .into()),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether `name` already names a variable or a constant.
+    fn is_declared_name(&self, name: &str) -> bool {
+        self.symbols.variable_types.contains_key(name)
+            || self.symbols.variable_storage_paths.contains_key(name)
+            || self.symbols.scoreboard_variables.contains(name)
+            || self.symbols.compile_time_constants.contains_key(name)
+    }
+
     pub(in crate::transpiler) fn build_module_init_commands(
         &mut self,
     ) -> Result<(Vec<String>, HashMap<usize, GeneratedCommand>), TranspileError> {

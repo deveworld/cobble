@@ -3149,7 +3149,11 @@ def main():
             let diagnostic = &diagnostics[0].diagnostics[0];
             assert_eq!(diagnostic.kind, "duplicate-symbol");
             let column = main_line.find("shared").unwrap() + 1;
-            assert_eq!((diagnostic.line, diagnostic.column), (3, column), "{main_line}");
+            assert_eq!(
+                (diagnostic.line, diagnostic.column),
+                (3, column),
+                "{main_line}"
+            );
             assert_eq!(
                 diagnostic.message,
                 "Module variable `shared` is defined in both other.cbl and main.cbl"
@@ -3172,7 +3176,11 @@ def main():
             "from other import shared\nimport other\n\nmine = 1\n\ndef bump():\n    global shared\n    shared += 1\n    x = shared\n",
         )
         .unwrap();
-        std::fs::write(&other, "shared = 2\n\ndef other_get():\n    return shared\n").unwrap();
+        std::fs::write(
+            &other,
+            "shared = 2\n\ndef other_get():\n    return shared\n",
+        )
+        .unwrap();
 
         parse_source_file(&main).expect("an imported module variable is not a definition");
     }
