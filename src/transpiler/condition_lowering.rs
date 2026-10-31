@@ -86,13 +86,10 @@ pub(crate) fn mask_minecraft_conditions(
         if rest.is_empty() {
             break;
         }
-        let Some((operator, after)) = rest
+        let (operator, after) = rest
             .strip_prefix("and ")
             .map(|after| ("and", after))
-            .or_else(|| rest.strip_prefix("or ").map(|after| ("or", after)))
-        else {
-            return None;
-        };
+            .or_else(|| rest.strip_prefix("or ").map(|after| ("or", after)))?;
         masked.push_str(&format!(" {operator} "));
         rest = after.trim_start();
     }
