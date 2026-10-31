@@ -69,11 +69,12 @@ pub fn load_functions(output_dir: &Path) -> HashMap<String, Vec<String>> {
         if path.extension().is_some_and(|ext| ext == "mcfunction") {
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
             // Minecraft trims each line when it loads a function, but not
-            // the command a macro line expands to.
+            // the command a macro line expands to. Java's `trim` removes
+            // ASCII spaces and control characters only.
             let commands = fs::read_to_string(&path)
                 .unwrap()
                 .lines()
-                .map(|line| line.trim().to_string())
+                .map(|line| line.trim_matches(|ch: char| ch <= ' ').to_string())
                 .collect();
             functions.insert(name, commands);
         }

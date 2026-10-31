@@ -285,8 +285,14 @@ pub fn tokenize_spanned_located(source: &str) -> Result<Vec<SpannedToken>, Token
             }
         }
 
-        // Tokenize the line content
-        let line_content = line.trim();
+        // Tokenize the line content. Minecraft keeps the Unicode spaces at
+        // the end of a command, such as U+00A0, and trims only ASCII ones.
+        let line_content = line.trim_start();
+        let line_content = if line_content.starts_with('/') {
+            trim_command_end(line_content)
+        } else {
+            line_content.trim_end()
+        };
         let content_offset = line.find(line_content).unwrap_or(0);
         let mut open_quote = tokenize_line(
             line_content,
@@ -435,13 +441,13 @@ pub fn join_continued_commands(source: &str) -> Cow<'_, str> {
             output.push_str(lines[first]);
             continue;
         }
-        let mut joined = lines[first].trim_end().to_string();
+        let mut joined = trim_command_end(lines[first]).to_string();
         while command_continues(&joined) {
-            joined.truncate(strip_minecraft_inline_comment(&joined).trim_end().len() - 1);
+            joined.truncate(trim_command_end(strip_minecraft_inline_comment(&joined)).len() - 1);
             let Some(next) = lines.get(index) else {
                 break;
             };
-            joined.push_str(next.trim());
+            joined.push_str(trim_command_end(next.trim_start()));
             index += 1;
         }
         let consumed = &lines[first..index];
@@ -457,9 +463,7 @@ pub fn join_continued_commands(source: &str) -> Cow<'_, str> {
 /// Whether a raw command goes on in the next line. A `\` in the command's
 /// comment doesn't count.
 fn command_continues(command: &str) -> bool {
-    strip_minecraft_inline_comment(command)
-        .trim_end()
-        .ends_with('\\')
+    trim_command_end(strip_minecraft_inline_comment(command)).ends_with('\\')
 }
 
 /// The triple quote still open after `line`, given the one open before it.
@@ -736,7 +740,7 @@ impl LineTokenizer<'_> {
             {
                 // Minecraft command - consume rest of line
                 let rest = &self.line[next_index..];
-                let stripped = strip_minecraft_inline_comment(rest).trim_end();
+                let stripped = trim_command_end(strip_minecraft_inline_comment(rest));
                 self.push(
                     Token::MinecraftCommand(stripped.to_string()),
                     start,
@@ -1154,6 +1158,13 @@ fn column_from_byte(line: &str, byte_index: usize, column_offset: usize) -> usiz
     column_offset + line[..byte_index].chars().count() + 1
 }
 
+/// `command` without the spaces Minecraft trims from the end of a function
+/// line: ASCII spaces and control characters, as Java's `String.trim`.
+/// Unicode spaces such as U+00A0 and U+3000 are part of the command.
+pub(crate) fn trim_command_end(command: &str) -> &str {
+    command.trim_end_matches(|ch: char| ch <= ' ')
+}
+
 fn strip_minecraft_inline_comment(command: &str) -> &str {
     let mut quote: Option<char> = None;
     let mut escaped = false;
@@ -1196,7 +1207,7 @@ fn strip_minecraft_inline_comment(command: &str) -> &str {
                 .map(|(_, c)| c.is_whitespace())
                 .unwrap_or(true);
             if prev_is_space && next_is_space_or_end {
-                return command[..*index].trim_end();
+                return trim_command_end(&command[..*index]);
             }
         }
     }

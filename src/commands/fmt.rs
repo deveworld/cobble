@@ -186,9 +186,21 @@ fn format_source(source: &str) -> String {
     let mut previous_code_allows_indent = false;
     let mut active_docstring: Option<ActiveDocstring> = None;
 
+    // Whether the line continues a raw command from the line above.
+    let mut continues_command = false;
+
     for raw_line in source.lines() {
         let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        let trimmed_end = line.trim_end();
+        // Minecraft keeps Unicode spaces such as U+00A0 at the end of a
+        // command, so a command line loses only ASCII spaces.
+        let is_command =
+            active_docstring.is_none() && (continues_command || line.trim_start().starts_with('/'));
+        let trimmed_end = if is_command {
+            crate::parser::tokenizer::trim_command_end(line)
+        } else {
+            line.trim_end()
+        };
+        continues_command = is_command && trimmed_end.ends_with('\\');
 
         if let Some(docstring) = active_docstring {
             let content = strip_indent_width(trimmed_end, docstring.raw_indent);
@@ -440,6 +452,16 @@ mod tests {
             "def main():\n    /tellraw @a {\"text\":\"Hi\",\"color\":\"green\"}\n    # keep me\n";
 
         assert_eq!(format_source(source), source);
+    }
+
+    #[test]
+    fn keeps_trailing_unicode_spaces_of_raw_commands() {
+        let source =
+            "def main():\n    /say hi\u{a0}  \n    /say a \\\n        b\u{3000}\n    x = 1\u{a0}\n";
+        assert_eq!(
+            format_source(source),
+            "def main():\n    /say hi\u{a0}\n    /say a \\\n        b\u{3000}\n    x = 1\n"
+        );
     }
 
     #[test]

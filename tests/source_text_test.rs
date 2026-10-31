@@ -274,3 +274,22 @@ b
         r#"data modify storage sim:global locals.main.x set value "\n/say a \\\nb\n""#
     );
 }
+
+#[test]
+fn a_raw_command_keeps_trailing_unicode_spaces() {
+    // Minecraft trims only ASCII spaces from a function line, so `say`
+    // shows U+00A0 and U+3000 at the end.
+    let main = main_function(
+        "x = 1\ndef main():\n    /say hi\u{a0}\n    /say hi\u{3000}  \n    /say a \\\n        b\u{a0} # note\n",
+    );
+    assert_eq!(main, "say hi\u{a0}\nsay hi\u{3000}\nsay a b\u{a0}");
+    let (_temp, output_dir) = compile("x = 1\ndef main():\n    /say hi {x}\u{a0}\n")
+        .unwrap_or_else(|e| panic!("build failed: {e}"));
+    let functions = load_functions(&output_dir);
+    let helper = functions
+        .iter()
+        .find(|(name, _)| name.starts_with("_cobble_say_"))
+        .map(|(_, lines)| lines.join("\n"))
+        .expect("say helper");
+    assert!(helper.starts_with("$say hi $(x)\u{a0}\n"), "{helper:?}");
+}

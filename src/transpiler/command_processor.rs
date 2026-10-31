@@ -176,7 +176,7 @@ impl<'a> CommandProcessor<'a> {
             });
         }
 
-        let text = text.trim();
+        let text = crate::parser::tokenizer::trim_command_end(text.trim_start());
         let text = text.strip_prefix('$').unwrap_or(text);
         Ok(Some(SayMacro {
             command: format!(
