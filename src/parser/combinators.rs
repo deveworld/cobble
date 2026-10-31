@@ -762,9 +762,9 @@ fn execute_block<'a>(
     execute_keyword.ignore_then(choice((
         // asat @s: -> as @s at @s:
         just(&Token::Asat)
-            .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+            .ignore_then(selector_or_macro())
             .try_map(|s, span| {
-                if s.starts_with('@') {
+                if s.starts_with('@') || s.starts_with('{') {
                     Ok(s)
                 } else {
                     Err(Rich::custom(
@@ -804,15 +804,7 @@ fn execute_modifier<'a>(
     spans: &'a [SpannedToken],
 ) -> impl Parser<'a, &'a [Token], ExecuteModifier, Extra<'a>> + Clone {
     let exec_condition = execute_condition(spans);
-
-    // Helper: parse either an identifier or a macro parameter {name}
-    let selector_or_macro = choice((
-        select_ref! { Token::Ident(s) => s.clone() },
-        just(&Token::LBrace)
-            .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
-            .then_ignore(just(&Token::RBrace))
-            .map(|name| format!("{{{}}}", name)),
-    ));
+    let selector_or_macro = selector_or_macro();
 
     choice((
         just(&Token::As)
@@ -853,11 +845,11 @@ fn execute_modifier<'a>(
             .map(ExecuteModifier::In),
         // anchored <eyes|feet>
         select_ref! { Token::Ident(s) if s == "anchored" => s.clone() }
-            .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+            .ignore_then(selector_or_macro.clone())
             .map(ExecuteModifier::Anchored),
         // align <axes>
         select_ref! { Token::Ident(s) if s == "align" => s.clone() }
-            .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+            .ignore_then(selector_or_macro.clone())
             .map(ExecuteModifier::Align),
         // store result/success ...
         select_ref! { Token::Ident(s) if s == "store" => s.clone() }
@@ -865,7 +857,7 @@ fn execute_modifier<'a>(
             .map(ExecuteModifier::Store),
         // on <relation>, summon <entity>
         select_ref! { Token::Ident(s) if s == "on" || s == "summon" => s.clone() }
-            .then(select_ref! { Token::Ident(s) => s.clone() })
+            .then(selector_or_macro)
             .map(|(word, value)| ExecuteModifier::Other(format!("{word} {value}"))),
         // facing <position>, facing entity <selector> <anchor>
         select_ref! { Token::Ident(s) if s == "facing" => s.clone() }
@@ -874,40 +866,124 @@ fn execute_modifier<'a>(
     ))
 }
 
+/// An identifier, such as a selector, or a macro parameter `{name}`.
+fn selector_or_macro<'a>() -> impl Parser<'a, &'a [Token], String, Extra<'a>> + Clone + Copy {
+    choice((
+        select_ref! { Token::Ident(s) => s.clone() },
+        just(&Token::LBrace)
+            .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
+            .then_ignore(just(&Token::RBrace))
+            .map(|name| format!("{{{}}}", name)),
+    ))
+}
+
+/// Whether the token at input index `index` starts the next execute
+/// modifier: a modifier keyword with a space before it. A keyword glued to
+/// the token before it is a word of the condition, as `in` in the NBT path
+/// `x.in.y`, `facing` in `[facing=north]`, or `on` in `{on:1b}`. A word
+/// such as `on` that is followed by an operator is a variable, as in
+/// `if on == 1`.
+fn is_execute_modifier_boundary(token: &Token, index: usize, spans: &[SpannedToken]) -> bool {
+    let hard_keyword = matches!(
+        token,
+        Token::As | Token::At | Token::If | Token::Unless | Token::In
+    );
+    let soft_keyword = matches!(
+        token,
+        Token::Ident(s)
+            if matches!(
+                s.as_str(),
+                "positioned"
+                    | "rotated"
+                    | "anchored"
+                    | "align"
+                    | "store"
+                    | "on"
+                    | "summon"
+                    | "facing"
+            )
+    );
+    if matches!(token, Token::Colon | Token::Newline) {
+        return true;
+    }
+    if !hard_keyword && !soft_keyword {
+        return false;
+    }
+    let glued_to_previous = index
+        .checked_sub(1)
+        .and_then(|previous| spans.get(previous))
+        .zip(spans.get(index))
+        .is_some_and(|(previous, current)| previous.span.end == current.span.start);
+    if glued_to_previous {
+        return false;
+    }
+    if soft_keyword {
+        // A modifier takes an argument; an operator after the word makes
+        // it a value.
+        let takes_argument = spans.get(index + 1).is_none_or(|next| {
+            !matches!(
+                next.token,
+                Token::Colon
+                    | Token::Newline
+                    | Token::EqEq
+                    | Token::NotEq
+                    | Token::Lt
+                    | Token::LtEq
+                    | Token::Gt
+                    | Token::GtEq
+                    | Token::Equals
+                    | Token::Plus
+                    | Token::Star
+                    | Token::Slash
+                    | Token::Percent
+                    | Token::Caret
+                    | Token::RParen
+                    | Token::RBracket
+                    | Token::Comma
+                    | Token::Dot
+                    | Token::And
+                    | Token::Or
+                    | Token::In
+            )
+        });
+        if !takes_argument {
+            return false;
+        }
+        // `on` takes a relation, so `score on temp` names a holder.
+        if matches!(token, Token::Ident(s) if s == "on") {
+            return spans.get(index + 1).is_none_or(|next| match &next.token {
+                Token::Ident(relation) => matches!(
+                    relation.as_str(),
+                    "attacker"
+                        | "controller"
+                        | "leasher"
+                        | "origin"
+                        | "owner"
+                        | "passengers"
+                        | "target"
+                        | "vehicle"
+                ),
+                token => matches!(token, Token::LBrace),
+            });
+        }
+    }
+    true
+}
+
 /// Raw condition text for the `if`/`unless`, `positioned`, `rotated`, `in`,
 /// and `store` execute modifiers: every token up to the next modifier
 /// keyword, newline, or the `:` that ends the header.
 fn execute_condition<'a>(
     spans: &'a [SpannedToken],
 ) -> impl Parser<'a, &'a [Token], String, Extra<'a>> + Clone {
-    let is_execute_modifier_boundary = |t: &Token| {
-        matches!(
-            t,
-            Token::Colon
-                | Token::Newline
-                | Token::As
-                | Token::At
-                | Token::If
-                | Token::Unless
-                | Token::In
-        ) || matches!(
-            t,
-            Token::Ident(s)
-                if matches!(
-                    s.as_str(),
-                    "positioned"
-                        | "rotated"
-                        | "anchored"
-                        | "align"
-                        | "store"
-                        | "on"
-                        | "summon"
-                        | "facing"
-                )
-        )
-    };
     choice((
-        any().filter(move |t: &Token| !is_execute_modifier_boundary(t)),
+        any()
+            .map_with(|token: Token, extra| {
+                let span: SimpleSpan = extra.span();
+                (token, span.start)
+            })
+            .filter(move |(token, index)| !is_execute_modifier_boundary(token, *index, spans))
+            .map(|(token, _)| token),
         // Only the `:` that ends the header line is a boundary; a `:`
         // inside SNBT (`{flag:"on"}`) belongs to the condition.
         just(&Token::Colon)
@@ -934,13 +1010,13 @@ fn render_execute_condition(
     first_index: usize,
     spans: &[SpannedToken],
 ) -> String {
-    // Whether the token at input index `index` ends exactly where the next
-    // token starts (no whitespace between them in the source).
-    let glued_to_next = move |index: usize| {
+    // Whether the token at input index `index` is followed by whitespace
+    // in the source, when the source positions are known.
+    let space_after = move |index: usize| {
         spans
             .get(index)
             .zip(spans.get(index + 1))
-            .is_some_and(|(token, next)| token.span.end == next.span.start)
+            .map(|(token, next)| token.span.end != next.span.start)
     };
     // Convert tokens to string, but be smart about spacing
     let mut result = String::new();
@@ -978,11 +1054,14 @@ fn render_execute_condition(
                 // condition is still recognized and re-parsed as
                 // a Python expression (`x>1` -> `x > 1`).
                 (prev, token) if is_comparison(prev) || is_comparison(token) => true,
-                // Tokens glued in the source stay glued: local
-                // coordinates (`^1`), block states and NBT paths
-                // (`stone[snowy=false]`, `Items[0].id`), and
-                // resource paths (`ns:util/check`).
-                _ if glued_to_next(first_index + i - 1) => false,
+                // Otherwise the source decides: tokens glued in the source
+                // stay glued, such as local coordinates (`^1`), block
+                // states and NBT paths (`stone[snowy=false]`,
+                // `Items[0].id`), and resource paths (`ns:util/check`), and
+                // a space stays, as before the number `.5`.
+                _ if space_after(first_index + i - 1).is_some() => {
+                    space_after(first_index + i - 1) == Some(true)
+                }
                 // Range operator "..": both dots stay glued ("1..")
                 (Token::Dot, Token::Dot) => false,
                 // Range end hugs the dots ("..10", "1..5")
