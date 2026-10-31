@@ -3539,13 +3539,15 @@ def notify(player, count, message):
     let (_temp, output_dir) = compile_source(source).unwrap();
     let content = read_function(&output_dir, "notify");
 
+    // The text parameters are shown from storage, so a `"` in a value
+    // can't break the component; the target stays a macro argument.
     assert!(
-        content.contains(r#"$title $(player) actionbar {"text":"Kit count: $(count)"}"#),
+        content.contains(r#"$title $(player) actionbar [{"text":"Kit count: "},{"extra":[{"interpret":true,"nbt":"_text.count""#),
         "title macro text should be emitted as a JSON text component: {}",
         content
     );
     assert!(
-        content.contains(r#"$tellraw $(player) {"text":"Notice: $(message)"}"#),
+        content.contains(r#"$tellraw $(player) [{"text":"Notice: "},{"extra":[{"interpret":true,"nbt":"_text.message""#),
         "tellraw macro text should be emitted as a JSON text component: {}",
         content
     );

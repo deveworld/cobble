@@ -92,3 +92,47 @@ fn a_per_entity_minecraft_condition_or_a_call_runs_the_call_only_when_needed() {
         ["Bo: f-called", "Alex: each-ran", "Bo: each-ran"]
     );
 }
+
+// --- A parameter that fills a tellraw or title text ---
+
+#[test]
+fn a_whole_text_parameter_shows_quotes_and_backslashes() {
+    let mut sim = Sim::load(
+        r#"def show(msg):
+    /tellraw @a {msg}
+    /tellraw @a note: {msg}
+def bar(msg):
+    /title @a actionbar {msg}
+def raw(msg):
+    /tellraw @a $(msg)
+def main():
+    show("say \"hi\" a\\b")
+    show("plain sentence")
+    show(7)
+    raw("{\"text\":\"ready\"}")
+"#,
+        &["Alex"],
+    );
+    let show = sim.function_text("show");
+    assert!(!show.contains("$(msg)"), "{show}");
+    let bar = sim.function_text("bar");
+    assert!(
+        bar.contains("\ntitle @a actionbar [{") && bar.contains(r#""nbt":"_text.msg""#),
+        "{bar}"
+    );
+    // An author's `$(msg)` stays the raw macro text.
+    assert_eq!(sim.function_text("raw"), "$tellraw @a $(msg)");
+    sim.call("main");
+    assert_eq!(
+        sim.log,
+        [
+            r#"say "hi" a\b"#,
+            r#"note: say "hi" a\b"#,
+            "plain sentence",
+            "note: plain sentence",
+            "7",
+            "note: 7",
+            "ready",
+        ]
+    );
+}

@@ -110,9 +110,11 @@ Function parameters become macro arguments, so that line compiles to a macro
 line such as `$tp $(player) $(x) $(y) $(z)`. Constants and the values of those
 loops are substituted at compile time.
 
-In `tellraw` and `title`, a placeholder that fills the whole text shows the
-value as plain text, so a sentence with spaces works: `/tellraw @a {msg}`
-compiles to `$tellraw @a {"text":"$(msg)"}`. To pass a ready text component,
+In `tellraw` and `title`, a parameter in text written without a JSON or SNBT
+component, as `/tellraw @a {msg}` or `/tellraw @a Hi {msg}`, shows the value
+as plain text, so a sentence with spaces, a `"`, or a `\` works. Cobble reads
+the value from the function's arguments in a text component, as it does for
+`{"text":"{msg}"}`, so the line is not a macro line. To pass a ready text component,
 such as `{text:"hi",color:"red"}`, write the macro argument yourself:
 
 ```python

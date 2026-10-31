@@ -356,10 +356,14 @@ def main():
          $title @a[tag=x, limit=1] title {\"text\":\"$(m)\"}\n\
          $tellraw @a[name=\"a b\"] {\"text\":\"$(m)\"}"
     );
-    // A placeholder that fills the whole text shows it as plain text.
-    assert_eq!(
-        text("whole"),
-        "$tellraw @a {\"text\":\"$(msg)\"}\n$title @a[tag=x, limit=1] actionbar {\"text\":\"$(msg)\"}"
+    // A placeholder that fills the whole text shows it as plain text, read
+    // from storage so a `"` or `\\` in the value works.
+    let whole = text("whole");
+    assert!(!whole.contains("$(msg)"), "{whole}");
+    assert!(
+        whole.contains("\ntellraw @a [{")
+            && whole.contains("\ntitle @a[tag=x, limit=1] actionbar [{"),
+        "{whole}"
     );
     assert!(
         text("shown").starts_with("tellraw @a[name=\"a b\"] {"),

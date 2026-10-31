@@ -27,7 +27,7 @@ expression: datapack_tree_snapshot(&output_dir)
   "description": "Cobble 26.3 feature matrix fixture",
   "generated": {
     "advancements": 0,
-    "commands": 283,
+    "commands": 287,
     "custom_function_tags": 1,
     "function_tags": 3,
     "functions": 15,
@@ -37,7 +37,7 @@ expression: datapack_tree_snapshot(&output_dir)
     "loot_tables": 0,
     "predicates": 2,
     "recipes": 0,
-    "source_map_entries": 290,
+    "source_map_entries": 294,
     "stdlib_function_tags": 2,
     "total_json_resources": 5
   },
@@ -1495,7 +1495,51 @@ expression: datapack_tree_snapshot(&output_dir)
     {
       "generated_path": "data/cobble_26_feature_matrix/function/give_kit.mcfunction",
       "generated_line": 2,
-      "command": "$title $(player) actionbar {\"text\":\"Kit count: $(count)\"}",
+      "command": "data remove storage cobble_26_feature_matrix:global _text.count",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 21,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/give_kit.mcfunction",
+      "generated_line": 3,
+      "command": "data remove storage cobble_26_feature_matrix:global _text_snbt.count",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 21,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/give_kit.mcfunction",
+      "generated_line": 4,
+      "command": "data modify storage cobble_26_feature_matrix:global _text.count set string storage cobble_26_feature_matrix:global args.count",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 21,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/give_kit.mcfunction",
+      "generated_line": 5,
+      "command": "execute unless data storage cobble_26_feature_matrix:global _text.count run data modify storage cobble_26_feature_matrix:global _text_snbt.count set from storage cobble_26_feature_matrix:global args.count",
+      "source": {
+        "file": "src/systems.cbl",
+        "line": 21,
+        "column": 5
+      },
+      "kind": "UserCommand"
+    },
+    {
+      "generated_path": "data/cobble_26_feature_matrix/function/give_kit.mcfunction",
+      "generated_line": 6,
+      "command": "$title $(player) actionbar [{\"text\":\"Kit count: \"},{\"extra\":[{\"interpret\":true,\"nbt\":\"_text.count\",\"storage\":\"cobble_26_feature_matrix:global\"},{\"nbt\":\"_text_snbt.count\",\"storage\":\"cobble_26_feature_matrix:global\"}],\"text\":\"\"}]",
       "source": {
         "file": "src/systems.cbl",
         "line": 21,
@@ -2826,7 +2870,11 @@ tellraw @a {"color":"light_purple","extra":[{"extra":[{"interpret":true,"nbt":"_
 
 ===== data/cobble_26_feature_matrix/function/give_kit.mcfunction =====
 $give $(player) minecraft:$(item) $(count)
-$title $(player) actionbar {"text":"Kit count: $(count)"}
+data remove storage cobble_26_feature_matrix:global _text.count
+data remove storage cobble_26_feature_matrix:global _text_snbt.count
+data modify storage cobble_26_feature_matrix:global _text.count set string storage cobble_26_feature_matrix:global args.count
+execute unless data storage cobble_26_feature_matrix:global _text.count run data modify storage cobble_26_feature_matrix:global _text_snbt.count set from storage cobble_26_feature_matrix:global args.count
+$title $(player) actionbar [{"text":"Kit count: "},{"extra":[{"interpret":true,"nbt":"_text.count","storage":"cobble_26_feature_matrix:global"},{"nbt":"_text_snbt.count","storage":"cobble_26_feature_matrix:global"}],"text":""}]
 
 ===== data/cobble_26_feature_matrix/function/load.mcfunction =====
 function cobble_26_feature_matrix:setup_scoreboards

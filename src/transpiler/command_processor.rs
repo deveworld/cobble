@@ -214,8 +214,18 @@ impl<'a> CommandProcessor<'a> {
         // The quote state before each placeholder, scanned once along the
         // line instead of from its start for every placeholder.
         let mut quotes = QuoteScan::default();
+        let pieces = placeholders::pieces(cmd);
+        // A parameter in a `tellraw` or `title` message written as plain
+        // text, as `/tellraw @a {msg}`, is shown as text from `args`, so a
+        // value with `"` or `\` works. A line with a hand-written `$(name)`
+        // is the author's macro text and stays as written.
+        let plain_message_start = if vars_as_macros || cmd.contains("$(") {
+            None
+        } else {
+            plain_text_message_start(cmd, &pieces)
+        };
 
-        for piece in placeholders::pieces(cmd) {
+        for piece in pieces {
             let (raw, var_name, start) = match piece {
                 Piece::Text { text, .. } => {
                     result.push_str(&text);
@@ -227,9 +237,10 @@ impl<'a> CommandProcessor<'a> {
             if self.is_param(var_name)
                 && !vars_as_macros
                 && text_command
-                && quotes
+                && (quotes
                     .open
                     .is_some_and(|open| opens_text_string(&cmd[..open]))
+                    || plain_message_start.is_some_and(|message| start >= message))
             {
                 // Shown from `args` like a variable, because a macro value
                 // with a `"` would break the JSON.
@@ -939,6 +950,33 @@ pub(in crate::transpiler) fn unknown_selector(command: &str) -> Option<String> {
 fn is_text_command(command: &str) -> bool {
     let command = command.trim_start();
     command.starts_with("tellraw ") || command.starts_with("title ")
+}
+
+/// The byte offset of a `tellraw` or `title` (`title`, `subtitle`,
+/// `actionbar`) message written as plain text rather than as a text
+/// component: one that doesn't start with `[`, `"`, or `{`, or that starts
+/// with a `{name}` placeholder.
+fn plain_text_message_start(command: &str, pieces: &[Piece<'_>]) -> Option<usize> {
+    let trimmed = command.trim_start();
+    let message = if trimmed.starts_with("tellraw ") {
+        let words = split_command_words(trimmed, 3);
+        (words.len() == 3).then(|| words[2])?
+    } else if trimmed.starts_with("title ") {
+        let words = split_command_words(trimmed, 4);
+        (words.len() == 4 && matches!(words[2], "title" | "subtitle" | "actionbar"))
+            .then(|| words[3])?
+    } else {
+        return None;
+    };
+    let start = message.as_ptr() as usize - command.as_ptr() as usize;
+    let plain = match message.as_bytes().first() {
+        Some(b'[' | b'"') | None => false,
+        Some(b'{') => pieces
+            .iter()
+            .any(|piece| matches!(piece, Piece::Field { start: at, .. } if *at == start)),
+        Some(_) => true,
+    };
+    plain.then_some(start)
 }
 
 /// Whether the text right after `chars` is inside a JSON string that is
