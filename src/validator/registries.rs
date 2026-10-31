@@ -1616,7 +1616,7 @@ mod tests {
             (
                 "minecraft:loot_modifier",
                 "[{function:\"set_count\",count:1}]",
-                "is now `type`",
+                "is now `type` (\"type\": \"set_count\")",
             ),
             ("minecraft:dialog", "{}", "`type` is missing"),
             ("minecraft:dialog", "{title:\"x\"}", "`type` is missing"),

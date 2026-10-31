@@ -492,8 +492,9 @@ pub(crate) fn check_predicate(json: &Value, path: &str, problems: &mut Problems)
     }
     if has(json, "condition") && !has(json, "type") {
         problems.push(format!(
-            "{} is now `type` (\"type\": \"minecraft:random_chance\"); rejected",
-            at(path, "condition")
+            "{} is now `type` ({}); rejected",
+            at(path, "condition"),
+            renamed_to_type(json, "condition", "minecraft:random_chance")
         ));
     } else if !has(json, "type") {
         problems.push(format!("{} is missing; rejected", at(path, "type")));
@@ -539,6 +540,13 @@ pub(crate) fn check_predicate(json: &Value, path: &str, problems: &mut Problems)
         }
         _ => {}
     }
+}
+
+/// The `"type": ...` that replaces the old `key`, with its value when it is
+/// text and `example` otherwise.
+fn renamed_to_type(json: &Value, key: &str, example: &str) -> String {
+    let value = json.get(key).and_then(Value::as_str).unwrap_or(example);
+    format!("\"type\": {}", Value::String(value.to_string()))
 }
 
 /// The fields each predicate type can't go without (`clock` of a time check
@@ -647,8 +655,9 @@ pub(crate) fn check_item_modifier(json: &Value, path: &str, problems: &mut Probl
     }
     if has(json, "function") && !has(json, "type") {
         problems.push(format!(
-            "{} is now `type` (\"type\": \"minecraft:set_components\"); rejected",
-            at(path, "function")
+            "{} is now `type` ({}); rejected",
+            at(path, "function"),
+            renamed_to_type(json, "function", "minecraft:set_components")
         ));
     } else if !has(json, "type") {
         problems.push(format!("{} is missing; rejected", at(path, "type")));

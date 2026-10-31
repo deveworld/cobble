@@ -2614,8 +2614,12 @@ fn pre_26_3_resource_shapes_are_rejected_at_compile_time() {
             "`terms[0].condition` is now `type`",
         ),
         (
+            r#"datapack.predicate("p", {"condition": "minecraft:entity_properties", "entity": "this"})"#,
+            "`condition` is now `type` (\"type\": \"minecraft:entity_properties\")",
+        ),
+        (
             r#"datapack.item_modifier("m", {"function": "minecraft:set_count", "count": 2})"#,
-            "`function` is now `type`",
+            "`function` is now `type` (\"type\": \"minecraft:set_count\")",
         ),
         (
             r#"datapack.item_modifier("m", {"type": "minecraft:set_count", "count": 2, "conditions": [{"type": "minecraft:random_chance", "chance": 1}]})"#,
