@@ -845,11 +845,11 @@ fn execute_modifier<'a>(
             .map(ExecuteModifier::In),
         // anchored <eyes|feet>
         select_ref! { Token::Ident(s) if s == "anchored" => s.clone() }
-            .ignore_then(selector_or_macro.clone())
+            .ignore_then(selector_or_macro)
             .map(ExecuteModifier::Anchored),
         // align <axes>
         select_ref! { Token::Ident(s) if s == "align" => s.clone() }
-            .ignore_then(selector_or_macro.clone())
+            .ignore_then(selector_or_macro)
             .map(ExecuteModifier::Align),
         // store result/success ...
         select_ref! { Token::Ident(s) if s == "store" => s.clone() }
@@ -867,7 +867,7 @@ fn execute_modifier<'a>(
 }
 
 /// An identifier, such as a selector, or a macro parameter `{name}`.
-fn selector_or_macro<'a>() -> impl Parser<'a, &'a [Token], String, Extra<'a>> + Clone + Copy {
+fn selector_or_macro<'a>() -> impl Parser<'a, &'a [Token], String, Extra<'a>> + Copy {
     choice((
         select_ref! { Token::Ident(s) => s.clone() },
         just(&Token::LBrace)
