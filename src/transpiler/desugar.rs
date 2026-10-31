@@ -1000,6 +1000,11 @@ impl Transpiler {
         if !self.needs_lowering(expr) {
             return Ok(expr.clone());
         }
+        // Text known when the pack is built, as `"t" + str(i)` in a loop
+        // expanded at compile time, needs no commands.
+        if let Some(text) = self.compile_time_text(expr) {
+            return Ok(Expression::String(text));
+        }
         match expr {
             Expression::Conditional(condition, value, otherwise) => {
                 if let Some(constant) = self.try_eval_const(condition) {
@@ -1052,6 +1057,38 @@ impl Transpiler {
                     .collect::<Result<_, TranspileError>>()?,
             )),
             other => Ok(other.clone()),
+        }
+    }
+
+    /// The text of `expr` when it is known when the pack is built: a text
+    /// literal, `str()` of a value known then, or a join of such texts.
+    fn compile_time_text(&self, expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::String(text) => Some(text.clone()),
+            Expression::Call(func, args)
+                if matches!(&**func, Expression::Identifier(name)
+                    if name == "str" && self.is_builtin_name(name))
+                    && args.len() == 1 =>
+            {
+                match &args[0] {
+                    Expression::Boolean(value) => {
+                        Some(if *value { "True" } else { "False" }.to_string())
+                    }
+                    other => self.compile_time_text(other).or_else(|| {
+                        // Python writes a whole number without a point and
+                        // other numbers in its own way; fold only the first.
+                        let value = self.try_eval_const(other)?;
+                        (value.fract() == 0.0 && value.abs() <= f64::from(i32::MAX))
+                            .then(|| format!("{}", value as i64))
+                    }),
+                }
+            }
+            Expression::Binary(left, BinaryOp::Add, right) => {
+                let left = self.compile_time_text(left)?;
+                let right = self.compile_time_text(right)?;
+                Some(left + &right)
+            }
+            _ => None,
         }
     }
 

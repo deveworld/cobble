@@ -386,3 +386,46 @@ fn a_real_module_loop_variable_in_two_files_is_still_an_error() {
         "{error}"
     );
 }
+
+// --- Joins known at compile time in stdlib helper arguments ---
+
+#[test]
+fn a_join_known_at_compile_time_reaches_a_stdlib_helper_as_text() {
+    let (_temp, output) = compile(
+        r#"from stdlib import entity
+const N = 4
+def main():
+    for i in range(2):
+        entity.tag_add("@s", "t" + str(i))
+        entity.tag_add("@s", "u" + str(i * 2) + "{i}")
+    entity.tag_add("@s", "n" + str(N) + str(True))
+"#,
+    )
+    .unwrap();
+    let main = common::mcsim::load_functions(&output)["main"].join("\n");
+    assert_eq!(
+        main,
+        "tag @s add t0\ntag @s add u00\ntag @s add t1\ntag @s add u21\ntag @s add n4True"
+    );
+}
+
+#[test]
+fn a_runtime_helper_argument_in_an_expanded_loop_is_reported_at_the_call() {
+    for (source, at) in [
+        (
+            "from stdlib import entity\ndef main():\n    n = 1\n    for i in range(2):\n        if n > 0:\n            entity.tag_add(\"@s\", \"t\" + str(n))\n",
+            "main.cbl:6:13",
+        ),
+        (
+            "from stdlib import entity\ndef main():\n    n = 1\n    for j in range(2):\n        for i in range(2):\n            as @a:\n                pass\n            as @a:\n                entity.tag_add(\"@s\", \"t\" + str(n))\n",
+            "main.cbl:9:17",
+        ),
+    ] {
+        let error = compile_error(source);
+        assert!(error.contains(at), "{at}: {error}");
+        assert!(
+            error.contains("must be a literal, a const, or a parameter"),
+            "{error}"
+        );
+    }
+}

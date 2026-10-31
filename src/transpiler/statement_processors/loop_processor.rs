@@ -233,10 +233,32 @@ impl Transpiler {
 
         let result = (|| {
             self.data_pack.unrolled_loops += 1;
+            // The location of every statement of the body, nested ones
+            // included, in source order. A body inside an outer expanded
+            // loop is a copy whose locations the outer loop recorded.
+            let mut original = Vec::new();
+            statements_in_order(&for_loop.body, &mut original);
+            let nested_sources = original
+                .iter()
+                .map(|statement| {
+                    match self
+                        .unrolled_sources
+                        .get(&function_context::statement_address(statement))
+                    {
+                        Some(source) => source.clone(),
+                        None => self.take_unrolled_body_statement_source(statement),
+                    }
+                })
+                .collect::<Vec<_>>();
             let body_sources = for_loop
                 .body
                 .iter()
-                .map(|statement| self.take_unrolled_body_statement_source(statement))
+                .map(|statement| {
+                    original
+                        .iter()
+                        .position(|other| std::ptr::eq(*other, statement))
+                        .and_then(|index| nested_sources[index].clone())
+                })
                 .collect::<Vec<_>>();
             for value in values {
                 if real_target {
@@ -258,20 +280,45 @@ impl Transpiler {
                 } else {
                     substitute_statements(&for_loop.body, &for_loop.target, &value)?
                 };
-                for (statement, body_source) in substituted.into_iter().zip(body_sources.iter()) {
-                    let saved_statement_source = self.current_statement_source.clone();
-                    if body_source.is_some() {
-                        self.current_statement_source = body_source.clone();
+                // Each nested statement of this pass reports at its own
+                // line, not at the line of the statement around it.
+                let mut copies = Vec::new();
+                statements_in_order(&substituted, &mut copies);
+                let recorded: Vec<usize> = if copies.len() == nested_sources.len() {
+                    copies
+                        .iter()
+                        .zip(&nested_sources)
+                        .map(|(copy, source)| {
+                            let address = function_context::statement_address(copy);
+                            self.unrolled_sources.insert(address, source.clone());
+                            address
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                drop(copies);
+                let pass = (|| {
+                    for (statement, body_source) in substituted.iter().zip(body_sources.iter()) {
+                        let saved_statement_source = self.current_statement_source.clone();
+                        if body_source.is_some() {
+                            self.current_statement_source = body_source.clone();
+                        }
+                        let start_index = self.current_function.as_ref().map(Vec::len);
+                        let process_result = self.process_statement(statement);
+                        if let Some(start_index) = start_index {
+                            self.mark_current_function_commands_as_unrolled(start_index);
+                        }
+                        self.current_statement_source = saved_statement_source;
+                        process_result?;
+                        self.ensure_unroll_command_budget()?;
                     }
-                    let start_index = self.current_function.as_ref().map(Vec::len);
-                    let process_result = self.process_statement(&statement);
-                    if let Some(start_index) = start_index {
-                        self.mark_current_function_commands_as_unrolled(start_index);
-                    }
-                    self.current_statement_source = saved_statement_source;
-                    process_result?;
-                    self.ensure_unroll_command_budget()?;
+                    Ok::<(), TranspileError>(())
+                })();
+                for address in recorded {
+                    self.unrolled_sources.remove(&address);
                 }
+                pass?;
             }
             Ok(())
         })();
@@ -1725,6 +1772,34 @@ fn validate_runtime_loop_statement_target(
             validate_runtime_loop_body_target(&exec_block.body, target)
         }
         _ => Ok(()),
+    }
+}
+
+/// The statements of `body` and of the blocks inside it, in source order.
+/// Function definitions are not entered.
+fn statements_in_order<'a>(body: &'a [Statement], out: &mut Vec<&'a Statement>) {
+    for statement in body {
+        out.push(statement);
+        match statement {
+            Statement::If(if_stmt) => {
+                statements_in_order(&if_stmt.then_branch, out);
+                for (_, branch) in &if_stmt.elif_branches {
+                    statements_in_order(branch, out);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    statements_in_order(branch, out);
+                }
+            }
+            Statement::For(for_loop) => statements_in_order(&for_loop.body, out),
+            Statement::While(while_loop) => statements_in_order(&while_loop.body, out),
+            Statement::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    statements_in_order(&case.body, out);
+                }
+            }
+            Statement::Execute(exec_block) => statements_in_order(&exec_block.body, out),
+            _ => {}
+        }
     }
 }
 

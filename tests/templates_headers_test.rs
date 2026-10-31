@@ -455,7 +455,7 @@ fn a_helper_rejects_a_value_known_only_at_run_time() {
             "not the variable `local`",
         ),
         (
-            "from stdlib import entity\ndef main():\n    for i in range(2):\n        entity.tag_add(\"@s\", \"m\" + str(i))\n",
+            "from stdlib import entity\ndef main():\n    n = 1\n    for i in range(2):\n        entity.tag_add(\"@s\", \"m\" + str(n + i))\n",
             "not a value computed when the function runs",
         ),
         (

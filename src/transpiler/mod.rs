@@ -124,6 +124,9 @@ pub struct Transpiler {
     /// Module-level loop variables that are real module variables (see
     /// `function_context::module_loop_variables`).
     module_loop_variables: std::collections::BTreeSet<String>,
+    /// The source location of each statement of the copies an expanded
+    /// loop lowers, by statement address, while the copy is lowered.
+    unrolled_sources: HashMap<usize, Option<SourceLocation>>,
     /// Stack of per-site condition holder slots for nested `execute` blocks.
     /// One frame per active `process_execute_block`; the frame counts the
     /// condition holders scoped to `@s` so their objectives can be pooled by
@@ -283,6 +286,7 @@ impl Transpiler {
             experimental_resource_pack: options.experimental_resource_pack,
             unroll: UnrollState::default(),
             module_loop_variables: Default::default(),
+            unrolled_sources: HashMap::new(),
             execute_condition_slots: Vec::new(),
             warnings: RefCell::new(Vec::new()),
             unwarned_shadows: Vec::new(),
@@ -441,7 +445,11 @@ impl Transpiler {
         // Substituted text no longer matches its source line and could claim
         // the location of identical text elsewhere in the file.
         let statement_source = if self.unroll.depth > 0 || self.in_prelude {
-            previous_statement_source.clone()
+            self.unrolled_sources
+                .get(&function_context::statement_address(statement))
+                .cloned()
+                .flatten()
+                .or_else(|| previous_statement_source.clone())
         } else {
             self.take_statement_source(statement)
                 .or_else(|| previous_statement_source.clone())

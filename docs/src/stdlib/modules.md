@@ -60,9 +60,11 @@ def mark(who, label):
 $tag $(who) add $(label)
 ```
 
-Any other variable, such as a module variable, a local, or a joined string,
-holds a value that is known only when the function runs, so passing it is a
-compile error. Pass it to a function parameter and call the helper there. A
+A join of texts known when the pack is built, such as `"t" + str(i)` in a
+loop Cobble expands at compile time, or `"n" + str(N)` with a `const`, is
+written as its text. Any other variable, such as a module variable, a local,
+or a string joined from one, holds a value that is known only when the
+function runs, so passing it is a compile error. Pass it to a function parameter and call the helper there. A
 function's own name, as in `schedule.once(tick, "1t")`, names that function.
 The text that `text` helpers show can hold variables, as described below.
 
