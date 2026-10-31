@@ -234,13 +234,13 @@ stdlib.addEventListener(event.LOAD, load)
     .unwrap();
     let values = tag["values"].as_array().unwrap().clone();
 
-    // No runtime setup, so no `_cobble_init`: the event listener comes
-    // first, then the declared entries in declaration order.
+    // No runtime setup, so no `_cobble_init`: the declared entry, then the
+    // event listener added after it, in source order.
     assert_eq!(
         values,
         vec![
-            serde_json::json!("resources:load"),
-            serde_json::json!("resources:extra_load")
+            serde_json::json!("resources:extra_load"),
+            serde_json::json!("resources:load")
         ]
     );
 
@@ -289,7 +289,7 @@ stdlib.addEventListener(event.LOAD, load)
     assert_eq!(tag["replace"], true);
     assert_eq!(
         tag["values"],
-        serde_json::json!(["resources:load", "resources:extra_load"])
+        serde_json::json!(["resources:extra_load", "resources:load"])
     );
 }
 
@@ -426,11 +426,11 @@ stdlib.addEventListener(event.LOAD, load)
                 .unwrap();
         tag["values"].clone()
     };
-    // The event listener's entry comes first, then the declared ones in
-    // order, without repeats.
+    // The declared entries in order, without repeats, then the event
+    // listener added after them.
     assert_eq!(
         tag_values("data/minecraft/tags/function/load.json"),
-        serde_json::json!(["resources:load", "qa:extra", "qa:load", "qa:setup"])
+        serde_json::json!(["qa:extra", "qa:load", "qa:setup", "resources:load"])
     );
     assert_eq!(
         tag_values("data/resources/tags/block/mineable/test.json"),

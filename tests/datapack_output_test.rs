@@ -93,13 +93,14 @@ def m_last():
 }
 
 #[test]
-fn load_tag_keeps_init_first_and_event_handlers_before_declared_entries() {
+fn load_tag_keeps_init_first_then_listeners_and_entries_in_source_order() {
     let (_temp, output) = compile(
         r#"
 from stdlib import datapack, event
 import stdlib
 
 datapack.function_tag("minecraft:load", ["sim:b", "sim:a", "sim:b"])
+datapack.function_tag("minecraft:tick", ["sim:a"])
 
 counter = 1
 
@@ -113,12 +114,25 @@ def on_load():
     /say load
 
 stdlib.addEventListener(event.LOAD, on_load)
+datapack.function_tag("minecraft:load", ["sim:a", "sim:on_load", "sim:c"])
+
+def c():
+    /say c
+
+def on_tick():
+    /say tick
+
+stdlib.addEventListener(event.TICK, on_tick)
 "#,
     )
     .unwrap();
     assert_eq!(
         read_json(&output, "data/minecraft/tags/function/load.json")["values"],
-        serde_json::json!(["sim:_cobble_init", "sim:on_load", "sim:b", "sim:a"])
+        serde_json::json!(["sim:_cobble_init", "sim:b", "sim:a", "sim:on_load", "sim:c"])
+    );
+    assert_eq!(
+        read_json(&output, "data/minecraft/tags/function/tick.json")["values"],
+        serde_json::json!(["sim:a", "sim:on_tick"])
     );
 }
 

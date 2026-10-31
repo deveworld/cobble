@@ -182,6 +182,10 @@ pub struct DataPack {
     /// Set when the pack has a runtime loop (`while`, runtime `for`). Only
     /// then does the init function raise `max_command_sequence_length`.
     pub uses_runtime_loops: bool,
+    /// The values of each `datapack.function_tag("minecraft:load")` and
+    /// `("minecraft:tick")` declaration, with how many event listeners were
+    /// registered before it, so the tag lists both in source order.
+    pub event_tag_declarations: HashMap<String, Vec<(usize, Vec<serde_json::Value>)>>,
     pub source_display_root: Option<PathBuf>,
     pub build_input: Option<BuildManifestInput>,
     pub project_root: Option<String>,
@@ -226,6 +230,7 @@ impl DataPack {
             used_objectives: HashSet::new(),
             uses_boolean_constants: false,
             uses_runtime_loops: false,
+            event_tag_declarations: HashMap::new(),
             source_display_root: None,
             build_input: None,
             project_root: None,

@@ -36,7 +36,7 @@ fn write_project(source: &str) -> (TempDir, PathBuf, PathBuf) {
 /// and normalized `required: true` object entries to strings. Both paths must
 /// now produce identical normalized output, stable across rebuilds.
 #[test]
-fn merged_function_tag_is_sorted_normalized_and_stable_across_rebuilds() {
+fn merged_function_tag_keeps_source_order_normalized_and_stable_across_rebuilds() {
     let source = r#"import stdlib
 from stdlib import event
 
@@ -63,19 +63,19 @@ stdlib.addEventListener(event.LOAD, on_load)
 
     let tag: serde_json::Value = serde_json::from_str(&first).unwrap();
     let values = tag["values"].as_array().unwrap();
-    // Sorted by id; `required: true` object normalized to a plain string;
-    // `required: false` object preserved; stdlib load handler merged in at
-    // its sorted position; no duplicates. (A pack with runtime setup puts
-    // `_cobble_init` first; this one has none.)
+    // In source order: the declared entries, then the listener added after
+    // them; `required: true` object normalized to a plain string;
+    // `required: false` object preserved; no duplicates. (A pack with
+    // runtime setup puts `_cobble_init` first; this one has none.)
     assert_eq!(
         values,
         &vec![
+            serde_json::json!("zzz:setup"),
             serde_json::json!("aaa:setup"),
             serde_json::json!({"id": "bbb:optional", "required": false}),
             serde_json::json!("cobble:on_load"),
-            serde_json::json!("zzz:setup"),
         ],
-        "merged tag values must be normalized and sorted"
+        "merged tag values must be normalized and in source order"
     );
 }
 
@@ -108,8 +108,8 @@ stdlib.addEventListener(event.LOAD, on_load)
     let tag: serde_json::Value = serde_json::from_str(&contents[2]).unwrap();
     assert_eq!(
         tag["values"],
-        serde_json::json!(["cobble:on_load", "other:setup"]),
-        "tag values must stay sorted with no duplicates after repeated rebuilds"
+        serde_json::json!(["other:setup", "cobble:on_load"]),
+        "tag values must keep source order with no duplicates after repeated rebuilds"
     );
 }
 

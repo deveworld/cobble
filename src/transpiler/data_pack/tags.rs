@@ -232,22 +232,24 @@ impl DataPack {
             .then(|| format!("{}:{}", self.namespace, INIT_FUNCTION))
     }
 
-    /// Moves `_cobble_init` to the front of a merged `minecraft:load` tag, so
-    /// no `datapack.function_tag` entry runs before the pack's objectives
-    /// exist. The other entries keep their order. Other tags are returned
-    /// unchanged.
+    /// Orders a merged `minecraft:load` or `minecraft:tick` tag the way the
+    /// source declares it: event listeners and `datapack.function_tag`
+    /// entries in the order their statements run, so a listener added after
+    /// a declaration comes after its entries. `_cobble_init` goes first in
+    /// `minecraft:load`, so no entry runs before the pack's objectives exist.
+    /// Other tags are returned unchanged.
     pub fn order_load_tag_json(
         &self,
         resource_namespace: &str,
         relative_path: &str,
         json: String,
     ) -> Result<String, String> {
-        if resource_namespace != "minecraft" || relative_path != "tags/function/load" {
-            return Ok(json);
-        }
-        let Some(init_id) = self.init_function_id() else {
-            return Ok(json);
+        let event = match (resource_namespace, relative_path) {
+            ("minecraft", "tags/function/load") => EventType::Load,
+            ("minecraft", "tags/function/tick") => EventType::Tick,
+            _ => return Ok(json),
         };
+        let tag_id = format!("minecraft:{}", &relative_path["tags/function/".len()..]);
         let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&json) else {
             return Ok(json);
         };
@@ -257,17 +259,44 @@ impl DataPack {
         else {
             return Ok(json);
         };
-        let Some(index) = values
-            .iter()
-            .position(|entry| Self::tag_value_sort_key(entry).0 == init_id)
-        else {
-            return Ok(json);
+        let init_id = match event {
+            EventType::Load => self.init_function_id(),
+            _ => None,
         };
-        if index == 0 {
+        let listeners: Vec<serde_json::Value> = self
+            .stdlib
+            .get_event_handlers(&event)
+            .iter()
+            .filter(|name| name.as_str() != INIT_FUNCTION)
+            .map(|name| serde_json::Value::String(format!("{}:{}", self.namespace, name)))
+            .collect();
+        let declarations = self
+            .event_tag_declarations
+            .get(&tag_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let mut ordered: Vec<serde_json::Value> = Vec::new();
+        if let Some(init_id) = &init_id {
+            ordered.push(serde_json::Value::String(init_id.clone()));
+        }
+        for position in 0..=listeners.len() {
+            for (before, declared) in declarations {
+                if *before == position {
+                    ordered.extend(Self::normalize_tag_values_lossy(declared));
+                }
+            }
+            if let Some(listener) = listeners.get(position) {
+                ordered.push(listener.clone());
+            }
+        }
+        // Anything else the file holds keeps its place after these.
+        ordered.extend(values.iter().cloned());
+        let mut seen = std::collections::HashSet::new();
+        ordered.retain(|entry| seen.insert(entry.to_string()));
+        if *values == ordered {
             return Ok(json);
         }
-        let entry = values.remove(index);
-        values.insert(0, entry);
+        *values = ordered;
         serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
     }
 

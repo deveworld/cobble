@@ -63,6 +63,27 @@ impl Transpiler {
         let content = serde_json::to_string_pretty(&json)
             .map_err(|e| format!("Failed to encode tag JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
+        if tag_type == "function" && namespace == "minecraft" && (name == "load" || name == "tick")
+        {
+            let event = if name == "load" {
+                crate::stdlib::EventType::Load
+            } else {
+                crate::stdlib::EventType::Tick
+            };
+            let listeners = self
+                .data_pack
+                .stdlib
+                .get_event_handlers(&event)
+                .iter()
+                .filter(|handler| handler.as_str() != crate::transpiler::INIT_FUNCTION)
+                .count();
+            let values = json["values"].as_array().cloned().unwrap_or_default();
+            self.data_pack
+                .event_tag_declarations
+                .entry(format!("minecraft:{name}"))
+                .or_default()
+                .push((listeners, values));
+        }
         self.data_pack
             .add_json_resource_in_namespace_with_source(
                 namespace,
