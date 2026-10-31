@@ -111,6 +111,11 @@ When a function assigns the name of a module variable without `global`,
 Cobble reports a `local-shadows-module-variable` warning: the module variable
 keeps its value.
 
+As in Python, a function body runs after the whole module, so it can use a
+module variable assigned further down the file, or one that another function
+assigns under `global`. Module-level code runs from top to bottom: reading a
+module variable there before its own assignment is a compile error.
+
 A function parameter hides the module variable with the same name inside its
 function (see
 [Functions with Parameters](functions.md#functions-with-parameters)) and
