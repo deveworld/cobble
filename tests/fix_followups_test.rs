@@ -73,6 +73,65 @@ fn an_empty_key_in_a_membership_test_is_still_false() {
     assert_eq!(sim.var("found"), 0);
 }
 
+// --- A missing call argument ---
+
+#[test]
+fn a_missing_argument_reads_as_an_empty_value_and_the_call_runs() {
+    let mut sim = Sim::load(
+        r#"cfg = {}
+names = ["a"]
+rows = [[1]]
+word = "hi"
+ran = 0
+got = 5
+
+def show(v):
+    global ran
+    ran += 1
+    /say got {v}
+
+def keep(v):
+    global got
+    got = v
+
+def main():
+    show(cfg.nick)
+    show(names[3])
+    show(rows[0][4])
+    show(word[7])
+    keep(cfg.nick)
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("ran"), 4);
+    assert_eq!(sim.var("got"), 0);
+    let said: Vec<String> = sim
+        .log
+        .iter()
+        .map(|line| line.strip_prefix("Server: ").unwrap_or(line).to_string())
+        .collect();
+    assert_eq!(said, ["got 0", "got ", "got 0", "got "]);
+}
+
+#[test]
+fn a_present_argument_still_passes_its_value() {
+    assert_eq!(
+        said(
+            r#"cfg = {"nick": "Steve", "tags": ["a", "b"]}
+
+def show(v):
+    /say got {v}
+
+def main():
+    show(cfg.nick)
+    show(cfg.tags[1])
+"#
+        ),
+        ["got Steve", "got b"]
+    );
+}
+
 // --- A line break in a literal key ---
 
 #[test]
@@ -160,5 +219,32 @@ fn a_text_key_of_a_map_inside_a_list_still_works() {
     );
     sim.call("main");
     assert_eq!(sim.var("x"), 5);
+}
+
+// --- A parameter changed in place ---
+
+#[test]
+fn a_parameter_changed_in_place_shows_its_current_value() {
+    let lines = said(
+        r#"def edit(t):
+    /say before {t}
+    t[0] = 9
+    t.append(3)
+    /say after {t}
+
+def rename(cfg):
+    cfg.name = "Alex"
+    /say name {cfg}
+
+def main():
+    edit([1, 2])
+    rename({"name": "Steve"})
+"#,
+    );
+    assert_eq!(lines[..2], ["before [1,2]", "after [9,2,3]"]);
+    assert!(
+        lines[2].contains("Alex") && !lines[2].contains("Steve"),
+        "{lines:?}"
+    );
 }
 

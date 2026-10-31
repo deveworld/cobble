@@ -182,21 +182,37 @@ impl Transpiler {
             Expression::Array(_) | Expression::Map(_) => {
                 self.storage_value_commands(target_path, arg)
             }
+            // A missing item, field, or character gives an empty value, as a
+            // read into a variable does, so the call still runs: a missing
+            // macro argument would skip it.
             Expression::Subscript(base, index) if self.is_string_base(base) => {
-                self.string_char_commands(target_path, base, index)
+                let mut commands = set_value(&"\"\"");
+                commands.extend(self.string_char_commands(target_path, base, index)?);
+                Ok(commands)
             }
             // A value whose type isn't a number keeps its storage value.
             Expression::Subscript(base, index)
                 if !self.picks_field(base, index) && self.is_unknown_base(base) =>
             {
-                self.unknown_base_item_commands(target_path, base, index)
+                let empty = known_parameter_empty(func_name, param_name).unwrap_or("0");
+                let mut commands = set_value(&empty);
+                commands.extend(self.unknown_base_item_commands(target_path, base, index)?);
+                Ok(commands)
             }
             Expression::Subscript(..) | Expression::Attribute(..)
                 if self.storage_read_type(arg) != CobbleType::Integer
                     && self.resolve_storage_path_plan(arg).is_some() =>
             {
+                let empty = match self.storage_read_type(arg) {
+                    CobbleType::String => "\"\"",
+                    CobbleType::List => "[]",
+                    CobbleType::Map => "{}",
+                    _ => known_parameter_empty(func_name, param_name).unwrap_or("0"),
+                };
                 let plan = self.resolve_storage_path_plan(arg).expect("checked above");
-                self.copy_storage_commands(target_path, &plan)
+                let mut commands = set_value(&empty);
+                commands.extend(self.copy_storage_commands(target_path, &plan)?);
+                Ok(commands)
             }
             Expression::Binary(..)
             | Expression::Unary(..)
@@ -410,5 +426,17 @@ impl ArgumentStaging {
             }
         }
         commands
+    }
+}
+
+/// The empty value, as SNBT, of a parameter of a generated helper that
+/// holds text or a list, for an argument that reads nothing: a join with
+/// a missing field joins empty text.
+fn known_parameter_empty(func_name: &str, param_name: &str) -> Option<&'static str> {
+    match (func_name, param_name) {
+        ("_cobble_text_join", _) => Some("\"\""),
+        (func, "text" | "part") if func.starts_with("_cobble_text_") => Some("\"\""),
+        (func, "items") if func.starts_with("_cobble_list_") => Some("[]"),
+        _ => None,
     }
 }

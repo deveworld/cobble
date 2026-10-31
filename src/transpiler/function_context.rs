@@ -48,9 +48,13 @@ impl FunctionContext {
         let mut assigned = BTreeSet::new();
         let mut globals = HashSet::new();
         collect_bindings(body, &mut assigned, &mut globals);
+        // A parameter whose items or fields the body changes holds a new
+        // value too: a later macro line must read it from `args`.
+        let mut changed = BTreeSet::new();
+        collect_changed_containers(body, &mut changed);
         let reassigned_params = params
             .iter()
-            .filter(|param| assigned.contains(*param))
+            .filter(|param| assigned.contains(*param) || changed.contains(*param))
             .cloned()
             .collect();
         let locals = assigned
@@ -315,6 +319,85 @@ fn collect_bindings(
                 }
             }
             Statement::Execute(exec_block) => collect_bindings(&exec_block.body, assigned, globals),
+            _ => {}
+        }
+    }
+}
+
+/// List methods that change the list they are called on.
+const CHANGING_METHODS: [&str; 8] = [
+    "append", "extend", "insert", "pop", "remove", "sort", "reverse", "clear",
+];
+
+/// Names whose items or fields `body` changes: as the target of an
+/// assignment such as `t[0] = 9` or `cfg.x += 1`, or with a list method
+/// such as `t.append(1)`. Nested function definitions are not searched.
+fn collect_changed_containers(body: &[Statement], changed: &mut BTreeSet<String>) {
+    fn root(expr: &Expression) -> Option<&str> {
+        match expr {
+            Expression::Identifier(name) => Some(name),
+            Expression::Subscript(base, _)
+            | Expression::Attribute(base, _)
+            | Expression::Slice(base, ..) => root(base),
+            _ => None,
+        }
+    }
+    fn method_calls(expr: &Expression, changed: &mut BTreeSet<String>) {
+        if let Expression::Call(func, _) = expr {
+            if let Expression::Attribute(base, method) = &**func {
+                if CHANGING_METHODS.contains(&method.as_str()) {
+                    changed.extend(root(base).map(str::to_string));
+                }
+            }
+        }
+        for part in crate::transpiler::desugar::sub_expressions(expr) {
+            method_calls(part, changed);
+        }
+    }
+    for statement in body {
+        match statement {
+            Statement::Assignment(assign) if !assign.assigns_name() => {
+                changed.extend(
+                    assign
+                        .target_expr
+                        .as_ref()
+                        .and_then(root)
+                        .map(str::to_string),
+                );
+            }
+            Statement::MultiAssign(multi) => {
+                changed.extend(
+                    multi
+                        .targets
+                        .iter()
+                        .filter(|target| !matches!(target, Expression::Identifier(_)))
+                        .filter_map(root)
+                        .map(str::to_string),
+                );
+            }
+            _ => {}
+        }
+        for expr in crate::transpiler::statement_expressions(statement) {
+            method_calls(expr, changed);
+        }
+        match statement {
+            Statement::If(if_stmt) => {
+                collect_changed_containers(&if_stmt.then_branch, changed);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_changed_containers(branch, changed);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_changed_containers(branch, changed);
+                }
+            }
+            Statement::For(for_loop) => collect_changed_containers(&for_loop.body, changed),
+            Statement::While(while_loop) => collect_changed_containers(&while_loop.body, changed),
+            Statement::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    collect_changed_containers(&case.body, changed);
+                }
+            }
+            Statement::Execute(exec_block) => collect_changed_containers(&exec_block.body, changed),
             _ => {}
         }
     }
