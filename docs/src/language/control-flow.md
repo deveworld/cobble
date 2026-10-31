@@ -250,6 +250,11 @@ last item.
   evaluates to `0` at runtime, the loop executes zero iterations so the
   generated datapack does not recurse forever.
 - Literal arrays containing only numbers, strings, or booleans are unrolled.
+- The loop variable of an unrolled loop behaves as in Python: it holds the
+  last value after the loop, a `global` loop variable changes the module
+  variable, and the body may assign it. When the variable is read outside the
+  loop, assigned in the body, or declared `global`, it is set at the start of
+  each pass; otherwise each pass uses the value directly.
 - Literal arrays containing runtime expressions are materialized and iterated
   at runtime.
 - Runtime storage-backed list iteration supports list expressions/paths. The
