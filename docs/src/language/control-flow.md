@@ -106,6 +106,24 @@ def check_players():
         /say Special player!
 ```
 
+`and`, `or`, and `not` also combine Minecraft conditions with each other and
+with Cobble conditions. Each Minecraft condition counts as one operand:
+
+```python
+level = 5
+
+def reward():
+    if entity @a[tag=winner] and level > 3:
+        /say joined
+    if not entity @a[tag=winner]:
+        /say nobody won
+```
+
+```mcfunction
+execute if entity @a[tag=winner] if score level mypack.vars matches 4.. run say joined
+execute unless entity @a[tag=winner] run say nobody won
+```
+
 An `if` whose condition is a Minecraft condition, such as
 `if entity @s[tag=special]:`, runs as an execute block, so it can't have
 `elif` or `else`. Store the test in a variable and branch on that:

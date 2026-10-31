@@ -1,6 +1,8 @@
 use crate::ast::*;
 use crate::transpiler::command_processor::expand_selector_aliases;
-use crate::transpiler::condition_lowering::RAW_CONDITION_KEYWORDS;
+use crate::transpiler::condition_lowering::{
+    mask_minecraft_conditions, restore_minecraft_conditions, RAW_CONDITION_KEYWORDS,
+};
 use crate::transpiler::condition_translator::{
     condition_clauses, negate_clause, TranslatedCondition,
 };
@@ -216,6 +218,9 @@ impl Transpiler {
             chain.has_macro_params = true;
         }
 
+        if let Some(translated) = self.capture_mixed_condition(chain, condition)? {
+            return self.push_python_if_condition(chain, translated);
+        }
         if let Some(translated) = self.capture_execute_python_condition(chain, condition)? {
             return self.push_python_if_condition(chain, translated);
         }
@@ -240,6 +245,9 @@ impl Transpiler {
         chain: &mut ExecuteChain,
         condition: &str,
     ) -> Result<(), TranspileError> {
+        if let Some(translated) = self.capture_mixed_condition(chain, condition)? {
+            return self.push_python_unless_condition(chain, translated);
+        }
         if let Some(translated) = self.capture_execute_python_condition(chain, condition)? {
             return self.push_python_unless_condition(chain, translated);
         }
@@ -276,6 +284,32 @@ impl Transpiler {
             "Unsupported condition `{condition}`. A condition compares numbers, tests a value, or starts with a Minecraft condition: {keywords}."
         )
         .into())
+    }
+
+    /// Translate a condition that combines Minecraft conditions with Python
+    /// through `and`, `or`, or `not`, as `entity @a and x > 3`: each
+    /// Minecraft condition takes the place of a value in the Python
+    /// condition. A combination that doesn't translate is an error that
+    /// names the chained form.
+    fn capture_mixed_condition(
+        &mut self,
+        chain: &mut ExecuteChain,
+        condition: &str,
+    ) -> Result<Option<TranslatedCondition>, TranspileError> {
+        let Some((masked, conditions)) = mask_minecraft_conditions(condition) else {
+            return Ok(None);
+        };
+        let Some(mut translated) = self.capture_execute_python_condition(chain, &masked)? else {
+            return Err(format!(
+                "Can't combine the Minecraft conditions in `{}` with `and`, `or`, or `not`. \
+                 Chain them as modifiers instead, as in `if entity @a if x > 3:`, and use \
+                 `unless` for `not`.",
+                condition.trim()
+            )
+            .into());
+        };
+        restore_minecraft_conditions(&mut translated, &conditions);
+        Ok(Some(translated))
     }
 
     /// Translate an `if`/`unless` condition that parses as a Python

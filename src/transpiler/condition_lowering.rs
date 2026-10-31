@@ -38,6 +38,121 @@ pub(crate) fn raw_minecraft_condition_verdict(condition: &str) -> Option<bool> {
     ))
 }
 
+/// A condition that combines Minecraft conditions with Python with `and`,
+/// `or`, or `not`, as `entity @a and x > 3` or `not entity @a`, with each
+/// Minecraft condition replaced by an identifier, so the whole condition
+/// parses as Python. Returns the masked text and (identifier, condition)
+/// pairs for [`restore_minecraft_conditions`]. A condition that is all
+/// Minecraft conditions joined by `and` or `or`, or has none, gives `None`.
+pub(crate) fn mask_minecraft_conditions(
+    condition: &str,
+) -> Option<(String, Vec<(String, String)>)> {
+    let mut masked = String::with_capacity(condition.len());
+    let mut conditions: Vec<(String, String)> = Vec::new();
+    let mut python_operand = false;
+    let mut negated_or_grouped = false;
+    let mut rest = condition.trim();
+    loop {
+        loop {
+            if let Some(after) = rest.strip_prefix("not ") {
+                masked.push_str("not ");
+                negated_or_grouped = true;
+                rest = after.trim_start();
+            } else if let Some(after) = rest.strip_prefix('(') {
+                masked.push('(');
+                negated_or_grouped = true;
+                rest = after.trim_start();
+            } else {
+                break;
+            }
+        }
+        let operand = rest[..operand_end(rest)].trim_end();
+        if operand.is_empty() {
+            return None;
+        }
+        if raw_minecraft_condition_verdict(operand) == Some(true) {
+            let identifier = format!("__cobble_mc_condition_{}__", conditions.len());
+            masked.push_str(&identifier);
+            conditions.push((identifier, operand.to_string()));
+        } else {
+            python_operand = true;
+            masked.push_str(operand);
+        }
+        rest = rest[operand.len()..].trim_start();
+        while let Some(after) = rest.strip_prefix(')') {
+            masked.push(')');
+            rest = after.trim_start();
+        }
+        if rest.is_empty() {
+            break;
+        }
+        let Some((operator, after)) = rest
+            .strip_prefix("and ")
+            .map(|after| ("and", after))
+            .or_else(|| rest.strip_prefix("or ").map(|after| ("or", after)))
+        else {
+            return None;
+        };
+        masked.push_str(&format!(" {operator} "));
+        rest = after.trim_start();
+    }
+    (!conditions.is_empty() && (python_operand || negated_or_grouped))
+        .then_some((masked, conditions))
+}
+
+/// The byte offset where the operand at the start of `text` ends: at the
+/// next ` and ` or ` or `, or a `)` it didn't open, outside brackets and
+/// quotes.
+fn operand_end(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut quote: Option<u8> = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(open) = quote {
+            if byte == b'\\' {
+                index += 1;
+            } else if byte == open {
+                quote = None;
+            }
+        } else {
+            match byte {
+                b'"' | b'\'' => quote = Some(byte),
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' if depth == 0 => return index,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b' ' if depth == 0
+                    && (text[index..].starts_with(" and ")
+                        || text[index..].starts_with(" or ")) =>
+                {
+                    return index;
+                }
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    text.len()
+}
+
+/// Puts the Minecraft conditions [`mask_minecraft_conditions`] replaced back
+/// into the translated condition. Each identifier was read as a value that
+/// is true unless its score is 0.
+pub(in crate::transpiler) fn restore_minecraft_conditions(
+    translated: &mut TranslatedCondition,
+    conditions: &[(String, String)],
+) {
+    for (identifier, condition) in conditions {
+        let holds = format!("unless score {identifier} temp matches 0");
+        let fails = format!("if score {identifier} temp matches 0");
+        translated.map_simple(&|text| {
+            text.replace(&holds, &format!("if {condition}"))
+                .replace(&fails, &format!("unless {condition}"))
+        });
+    }
+}
+
 impl Transpiler {
     pub(in crate::transpiler) fn preprocess_condition(
         &mut self,

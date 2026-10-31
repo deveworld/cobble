@@ -525,6 +525,60 @@ def main():
 }
 
 #[test]
+fn minecraft_conditions_combine_with_and_or_not() {
+    // `data storage sim:a yes` holds and `data storage sim:a no` doesn't.
+    let mut sim = Sim::load(
+        r#"
+x = 5
+
+def main():
+    /data modify storage sim:a yes set value 1
+    if data storage sim:a yes and x > 3:
+        /say and
+    if data storage sim:a no or x > 3:
+        /say or
+    if not data storage sim:a no:
+        /say not
+    if x > 3 and data storage sim:a no:
+        /say wrong
+    if not (data storage sim:a yes and x > 9):
+        /say grouped
+    unless data storage sim:a no or x > 9:
+        /say unless
+    if data storage sim:a yes and not data storage sim:a no:
+        /say both
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(
+        sim.log,
+        [
+            "Server: and",
+            "Server: or",
+            "Server: not",
+            "Server: grouped",
+            "Server: unless",
+            "Server: both"
+        ]
+    );
+    let main = function(
+        r#"
+x = 5
+
+def main():
+    as @a if entity @s[tag=a] and x > 3:
+        /say joined
+"#,
+        "main",
+    );
+    assert_eq!(
+        main,
+        "execute as @a if entity @s[tag=a] if score x sim.vars matches 4.. run say joined"
+    );
+}
+
+#[test]
 fn an_escaped_name_is_text_next_to_a_variable() {
     let mut sim = Sim::load(
         r#"

@@ -1768,6 +1768,29 @@ fn expression_spans_for_undefined_scan(trimmed: &str) -> Vec<ExpressionSpan> {
             {
                 return expressions;
             }
+            // `if entity @a and x > 3:` checks only its Python operands: each
+            // Minecraft condition reads as `True`, padded to keep columns.
+            if keyword == "if" {
+                if let Some((_, conditions)) =
+                    crate::transpiler::mask_minecraft_conditions(expression)
+                {
+                    let mut text = expression.to_string();
+                    let mut from = 0;
+                    for (_, condition) in conditions {
+                        if let Some(found) = text[from..].find(&condition) {
+                            let at = from + found;
+                            let filler = format!("{:<width$}", "True", width = condition.len());
+                            text.replace_range(at..at + condition.len(), &filler);
+                            from = at + condition.len();
+                        }
+                    }
+                    expressions.push(ExpressionSpan {
+                        text,
+                        offset: rest_offset + trim_start,
+                    });
+                    return expressions;
+                }
+            }
             if !expression.is_empty() {
                 expressions.push(ExpressionSpan {
                     text: expression.to_string(),
