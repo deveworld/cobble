@@ -50,6 +50,7 @@ struct Registries {
     timeline: HashSet<String>,
     entity_type_tag: HashSet<String>,
     dialog_tag: HashSet<String>,
+    enchantment_tag: HashSet<String>,
     advancement: HashSet<String>,
     recipe: HashSet<String>,
     block_properties: HashMap<String, HashMap<String, Vec<String>>>,
@@ -454,8 +455,9 @@ fn enchantments_problem(name: &str, enchantments: &Value) -> Option<String> {
         .map(|(id, _)| format!("The level of `{id}` must be a number from 1 to 255"))
 }
 
-/// The ids in the `enchantments=` and `stored_enchantments=` of an item's
-/// `[...]`.
+/// The enchantments that the `enchantments` and `stored_enchantments` of an
+/// item's `[...]` name: the ids of `enchantments={sharpness:1}`, and the ids
+/// and `#tags` of `enchantments~[{enchantments:"#minecraft:curse"}]`.
 fn enchantment_ids(token: &str) -> Vec<String> {
     let Some((inner, _)) = bracket_part(token) else {
         return Vec::new();
@@ -465,17 +467,33 @@ fn enchantment_ids(token: &str) -> Vec<String> {
         .flat_map(|part| split_top_level(&part, '|'));
     let mut ids = Vec::new();
     for test in tests {
-        let Some((name, value)) = test.split_once('=') else {
+        let Some(at) = test.find(['=', '~']) else {
             continue;
         };
-        let name = name.trim();
-        if matches!(
+        let (name, value) = (&test[..at], &test[at + 1..]);
+        let name = name.trim_matches(|ch: char| ch == '!' || is_java_whitespace(ch));
+        if !matches!(
             name.strip_prefix("minecraft:").unwrap_or(name),
             "enchantments" | "stored_enchantments"
         ) {
-            if let Ok(Value::Object(levels)) = snbt::parse(value) {
+            continue;
+        }
+        match snbt::parse(value) {
+            Ok(Value::Object(levels)) if test[at..].starts_with('=') => {
                 ids.extend(levels.into_iter().map(|(id, _)| id));
             }
+            Ok(Value::Array(tests)) if test[at..].starts_with('~') => {
+                for named in tests.iter().filter_map(|test| test.get("enchantments")) {
+                    match named {
+                        Value::String(id) => ids.push(id.clone()),
+                        Value::Array(list) => {
+                            ids.extend(list.iter().filter_map(Value::as_str).map(str::to_string))
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
         }
     }
     ids
@@ -532,6 +550,15 @@ fn read_item_test(reader: &mut StringReader) -> Result<(), String> {
     reader.read_char();
     reader.skip_whitespace();
     let value = snbt::read(reader)?;
+    if vanilla
+        && !exact
+        && matches!(short, "enchantments" | "stored_enchantments")
+        && !value.is_array()
+    {
+        return Err(format!(
+            "`{name}~` takes a list of tests, as in `{name}~[{{enchantments:\"sharpness\",levels:{{min:1}}}}]`"
+        ));
+    }
     // `custom_data~` reads its value like `custom_data=`.
     let reads_as_component = vanilla && is_component && (exact || short == "custom_data");
     reads_as_component
@@ -635,6 +662,38 @@ fn particle_problem(token: &str) -> Option<String> {
         .iter()
         .find(|key| options.get(**key).is_none())
         .map(|key| format!("Particle `{name}` needs `{key}`: `{name}{{{key}:...}}`"))
+        .or_else(|| particle_block_problem(name, options.get("block_state")?))
+}
+
+/// The `block_state` of a particle: a block id, or `{id:...}` with optional
+/// `properties`. The `Name` and `Properties` of a block in NBT don't read.
+fn particle_block_problem(particle: &str, state: &Value) -> Option<String> {
+    let shape = || {
+        format!(
+            "`block_state` of particle `{particle}` is a block id or `{{id:\"minecraft:stone\"}}`, with `properties` for its states"
+        )
+    };
+    let id = match state {
+        Value::String(id) => id,
+        Value::Object(fields) => match fields.get("id") {
+            Some(Value::String(id)) => id,
+            Some(_) => return Some(shape()),
+            None if fields.contains_key("Name") => {
+                return Some(format!(
+                    "`block_state` of particle `{particle}` names its block with `id`, not `Name`, and its states with `properties`; rejected"
+                ))
+            }
+            None => return Some(shape()),
+        },
+        _ => return Some(shape()),
+    };
+    if !is_id(id) {
+        return Some(shape());
+    }
+    match id_parts(id) {
+        ("minecraft", name) if !REGISTRIES.block.contains(name) => unknown("block", id),
+        _ => None,
+    }
 }
 
 /// A resource written in place of its id.
@@ -820,11 +879,16 @@ impl PackResources {
             parser_type,
             "minecraft:item_stack" | "minecraft:item_predicate"
         ) {
-            let ids = enchantment_ids(id);
-            let vanilla = &REGISTRIES.enchantment;
-            return ids
-                .iter()
-                .find_map(|id| self.entry_problem("enchantment", "enchantment", vanilla, id));
+            return enchantment_ids(id).iter().find_map(|id| match id.strip_prefix('#') {
+                Some(tag) => {
+                    let (namespace, path) = id_parts(tag);
+                    let vanilla = &REGISTRIES.enchantment_tag;
+                    (!self.is_known(namespace, path, "tags/enchantment", vanilla)).then(|| {
+                        format!("Unknown enchantment tag `#{tag}`: Minecraft can't load this function")
+                    })
+                }
+                None => self.entry_problem("enchantment", "enchantment", &REGISTRIES.enchantment, id),
+            });
         }
         let (folder, what, vanilla) = pack_registry(parser_type, properties)?;
         // Slot names have to touch the space before them. After more spaces,
@@ -2332,5 +2396,117 @@ mod tests {
             .problem("minecraft:slot_source", None, "mypack:hands")
             .unwrap_or_default();
         assert!(missing.contains("Unknown slot source"), "{missing}");
+    }
+
+    #[test]
+    fn particle_block_states_read_like_minecraft() {
+        // Each of these was checked on a 26.3 server.
+        let check = |token: &str| problem("minecraft:particle", None, token);
+        for token in [
+            "block{block_state:\"stone\"}",
+            "block{block_state:\"minecraft:stone\"}",
+            "block{block_state:{id:\"stone\"}}",
+            "block{block_state:{id:\"minecraft:oak_log\",properties:{axis:\"x\"}}}",
+            "block{block_state:{id:\"stone\",Name:\"stone\"}}",
+            "block{block_state:{id:\"oak_log\",Properties:{axis:\"x\"}}}",
+            "falling_dust{block_state:{id:\"sand\"}}",
+            "block{block_state:\"mymod:thing\"}",
+        ] {
+            assert_eq!(check(token), None, "{token}");
+        }
+        for (token, expected) in [
+            (
+                "block{block_state:{Name:\"stone\"}}",
+                "with `id`, not `Name`",
+            ),
+            (
+                "block{block_state:{Name:\"stone\",Properties:{}}}",
+                "with `id`, not `Name`",
+            ),
+            ("falling_dust{block_state:{Name:\"sand\"}}", "with `id`"),
+            ("block_marker{block_state:{Name:\"barrier\"}}", "with `id`"),
+            ("dust_pillar{block_state:{Name:\"stone\"}}", "with `id`"),
+            ("block_crumble{block_state:{Name:\"stone\"}}", "with `id`"),
+            ("block{block_state:{}}", "is a block id or"),
+            ("block{block_state:1}", "is a block id or"),
+            ("block{block_state:[]}", "is a block id or"),
+            ("block{block_state:{id:1}}", "is a block id or"),
+            ("block{block_state:\"stone[axis=x]\"}", "is a block id or"),
+            ("block{block_state:{id:\"nope\"}}", "Unknown block `nope`"),
+            ("block{block_state:\"minecraft:nope\"}", "Unknown block"),
+        ] {
+            let found = check(token).unwrap_or_default();
+            assert!(found.contains(expected), "{token}: {found}");
+        }
+    }
+
+    #[test]
+    fn enchantment_tests_name_known_enchantments_and_tags() {
+        let pack = tempfile::TempDir::new().unwrap();
+        for file in [
+            "data/mypack/tags/enchantment/sharp.json",
+            "data/minecraft/tags/enchantment/custom.json",
+        ] {
+            let path = pack.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "{\"values\":[]}").unwrap();
+        }
+        let resources = PackResources::new(pack.path());
+        let check = |token: &str| {
+            problem("minecraft:item_predicate", None, token)
+                .or_else(|| resources.problem("minecraft:item_predicate", None, token))
+        };
+        // A 26.3 server loads the first ones, and refuses the rest.
+        for token in [
+            "*[enchantments~[{enchantments:\"#minecraft:exclusive_set/mining\",levels:{min:1}}]]",
+            "*[enchantments~[{enchantments:\"sharpness\"}]]",
+            "*[enchantments~[{levels:1}]]",
+            "stone[enchantments~[{enchantments:\"#curse\"}]]",
+            "*[enchantments~[{enchantments:[\"sharpness\",\"minecraft:smite\"]}]]",
+            "*[enchantments~[{enchantments:\"#mypack:sharp\"}]]",
+            "*[enchantments~[{enchantments:\"#minecraft:custom\"}]]",
+            "*[enchantments~[{enchantments:\"#other:thing\"}]]",
+            "*[enchantments~[{enchantments:\"#$(tag)\"}]]",
+            "*[enchantments~[]]",
+        ] {
+            assert_eq!(check(token), None, "{token}");
+        }
+        for (token, expected) in [
+            (
+                "*[enchantments~[{enchantments:\"#minecraft:mining_exclusive\",levels:{min:1}}]]",
+                "Unknown enchantment tag `#minecraft:mining_exclusive`",
+            ),
+            (
+                "*[stored_enchantments~[{enchantments:\"#nope\"}]]",
+                "Unknown enchantment tag `#nope`",
+            ),
+            (
+                "*[!enchantments~[{enchantments:\"#nope\"}]]",
+                "Unknown enchantment tag `#nope`",
+            ),
+            (
+                "*[minecraft:enchantments~[{enchantments:\"#minecraft:nope\"}]|damage=1]",
+                "Unknown enchantment tag `#minecraft:nope`",
+            ),
+            (
+                "*[enchantments~[{enchantments:\"#mypack:gone\"}]]",
+                "Unknown enchantment tag `#mypack:gone`",
+            ),
+            (
+                "*[enchantments~[{enchantments:\"nope\"}]]",
+                "Unknown enchantment `nope`",
+            ),
+            (
+                "*[enchantments~[{enchantments:[\"sharpness\",\"minecraft:nope\"]}]]",
+                "Unknown enchantment `minecraft:nope`",
+            ),
+            (
+                "*[enchantments~{enchantments:\"#nope\"}]",
+                "`enchantments~` takes a list",
+            ),
+        ] {
+            let found = check(token).unwrap_or_default();
+            assert!(found.contains(expected), "{token}: {found}");
+        }
     }
 }

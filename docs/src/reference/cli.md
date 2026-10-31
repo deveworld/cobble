@@ -373,7 +373,8 @@ that function from loading:
   biome, a world clock, or a timeline that neither Minecraft nor the pack
   defines, where an id without a namespace is a `minecraft:` id;
 - block, item, biome, and point of interest tags that neither the pack nor
-  Minecraft defines;
+  Minecraft defines, and enchantment tags in an item test such as
+  `enchantments~[{enchantments:"#minecraft:curse"}]`;
 - a plain number where a number provider goes (`compute default integer 5`
   needs `{type:"minecraft:constant",value:5}`);
 - text components Minecraft rejects, in JSON or SNBT, and the old names
@@ -387,7 +388,9 @@ that function from loading:
 - unknown item components and item tests, components that appear twice, and
   component values of the wrong shape, such as `custom_model_data=1`;
 - block states that appear twice or have no value, and particles without their
-  required options, such as `dust` without `color` and `scale`;
+  required options, such as `dust` without `color` and `scale`, and a
+  particle `block_state` other than a block id or `{id:...}`, such as the
+  `{Name:"stone"}` of block NBT;
 - inline predicates, item modifiers, loot tables, and dialogs with the problems
   listed under [Data Pack Resources](../stdlib/datapack-resources.md);
 - coordinates that mix `^` with other forms, fractional block coordinates,

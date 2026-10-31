@@ -39,6 +39,7 @@ DATA_DRIVEN = {
     "dialog": "data/minecraft/dialog/",
     "dialog_tag": "data/minecraft/tags/dialog/",
     "entity_type_tag": "data/minecraft/tags/entity_type/",
+    "enchantment_tag": "data/minecraft/tags/enchantment/",
     "advancement": "data/minecraft/advancement/",
     "recipe": "data/minecraft/recipe/",
     "feature": "data/minecraft/worldgen/feature/",
