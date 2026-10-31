@@ -248,3 +248,36 @@ def main():
     );
 }
 
+// --- Undefined names in execute headers ---
+
+#[test]
+fn undefined_names_in_execute_header_conditions_are_reported() {
+    let source = r#"ok = 1
+
+def main():
+    as @a if nope > 3:
+        /say a
+    as @a unless entity @s[tag=x] if missing == ok at @s:
+        /say b
+    as @a if entity @p and lost:
+        /say c
+    if entity @a and gone > 1:
+        /say d
+    as @a if ok > 0 if score @s foo matches 1:
+        /say e
+"#;
+    let found: Vec<(String, usize, usize)> = analyze_source(source)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.kind == "undefined-variable")
+        .map(|diagnostic| (diagnostic.message, diagnostic.line, diagnostic.column))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("Undefined variable `nope`".to_string(), 4, 14),
+            ("Undefined variable `missing`".to_string(), 6, 38),
+            ("Undefined variable `lost`".to_string(), 8, 28),
+            ("Undefined variable `gone`".to_string(), 10, 22),
+        ]
+    );
+}

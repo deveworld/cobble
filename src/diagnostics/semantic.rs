@@ -1479,6 +1479,9 @@ fn add_import_symbols(import: &Import, symbols: &mut DefinedSymbols) {
 struct ReferenceLineScan {
     line: usize,
     params: Rc<HashSet<String>>,
+    /// The Python conditions of an execute header on this line, as in
+    /// `as @a if x > 3:`. The header's other words are Minecraft syntax.
+    conditions: Vec<String>,
 }
 
 /// Reports `undefined-variable` for identifier references that resolve
@@ -1505,8 +1508,16 @@ pub(super) fn check_undefined_variable_references(
     );
     // The walk visits `elif`/`case` headers with their owning statement, so
     // sort to scan (and report) in strict line order.
+    // An execute header keeps its conditions when a statement the parser
+    // split from its line scans the line too.
     scans.sort_by_key(|scan| scan.line);
-    scans.dedup_by_key(|scan| scan.line);
+    scans.dedup_by(|later, kept| {
+        let same = later.line == kept.line;
+        if same && kept.conditions.is_empty() {
+            kept.conditions = std::mem::take(&mut later.conditions);
+        }
+        same
+    });
 
     let mut reported = HashSet::new();
     for scan in scans {
@@ -1518,7 +1529,12 @@ pub(super) fn check_undefined_variable_references(
         }
         let indent = masked.len() - trimmed.len();
 
-        for expression in expression_spans_for_undefined_scan(trimmed) {
+        let expressions = if scan.conditions.is_empty() {
+            expression_spans_for_undefined_scan(trimmed)
+        } else {
+            execute_condition_spans(trimmed, &scan.conditions)
+        };
+        for expression in expressions {
             if expression_has_unsupported_reference_shape(&expression.text) {
                 continue;
             }
@@ -1653,7 +1669,13 @@ fn collect_reference_line_scans(
             }
             Statement::Execute(execute_block) => {
                 if let Some(node) = node {
-                    push_reference_scan_lines(context, node.span, params, scans);
+                    if !context.in_docstring(node.span.line) {
+                        scans.push(ReferenceLineScan {
+                            line: node.span.line,
+                            params: Rc::clone(params),
+                            conditions: execute_python_conditions(execute_block),
+                        });
+                    }
                 }
                 collect_reference_line_scans(
                     context,
@@ -1675,6 +1697,58 @@ fn collect_reference_line_scans(
     }
 }
 
+/// The `if` and `unless` conditions of an execute header that are Python
+/// conditions, as `x > 3` in `as @a if x > 3:`, each with its Minecraft
+/// conditions, as in `entity @a and x > 3`, read as `True`.
+fn execute_python_conditions(block: &crate::ast::ExecuteBlock) -> Vec<String> {
+    use crate::ast::ExecuteModifier;
+    block
+        .modifiers
+        .iter()
+        .filter_map(|modifier| match modifier {
+            ExecuteModifier::IfRaw(condition) | ExecuteModifier::UnlessRaw(condition) => {
+                Some(condition.trim())
+            }
+            _ => None,
+        })
+        .filter(|condition| {
+            !condition.is_empty()
+                && (crate::transpiler::mask_minecraft_conditions(condition).is_some()
+                    || crate::transpiler::raw_minecraft_condition_verdict(condition) != Some(true))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// Where each of `conditions` stands in the execute header `trimmed`, in
+/// order, with its Minecraft conditions padded to `True`. A condition the
+/// masked line doesn't show as it is, as one holding text, is skipped.
+fn execute_condition_spans(trimmed: &str, conditions: &[String]) -> Vec<ExpressionSpan> {
+    let mut spans = Vec::new();
+    let mut from = 0;
+    for condition in conditions {
+        let Some(found) = trimmed[from..].find(condition.as_str()) else {
+            continue;
+        };
+        let offset = from + found;
+        from = offset + condition.len();
+        let mut text = condition.clone();
+        if let Some((_, minecraft)) = crate::transpiler::mask_minecraft_conditions(condition) {
+            let mut at = 0;
+            for (_, part) in minecraft {
+                if let Some(found) = text[at..].find(&part) {
+                    let start = at + found;
+                    let filler = format!("{:<width$}", "True", width = part.len());
+                    text.replace_range(start..start + part.len(), &filler);
+                    at = start + part.len();
+                }
+            }
+        }
+        spans.push(ExpressionSpan { text, offset });
+    }
+    spans
+}
+
 fn push_reference_scan_lines(
     context: &SemanticContext<'_>,
     span: SourceSpan,
@@ -1688,6 +1762,7 @@ fn push_reference_scan_lines(
         scans.push(ReferenceLineScan {
             line,
             params: Rc::clone(params),
+            conditions: Vec::new(),
         });
     }
 }
@@ -1761,13 +1836,6 @@ fn expression_spans_for_undefined_scan(trimmed: &str) -> Vec<ExpressionSpan> {
             let rest = trimmed[rest_offset..].trim_start();
             let trim_start = trimmed[rest_offset..].len() - rest.len();
             let expression = rest.trim_end_matches(':').trim_end();
-            // `if block ~ ~ ~ minecraft:stone:` is an execute block with a
-            // raw condition; its words are Minecraft syntax, not variables.
-            if keyword == "if"
-                && crate::transpiler::raw_minecraft_condition_verdict(expression) == Some(true)
-            {
-                return expressions;
-            }
             // `if entity @a and x > 3:` checks only its Python operands: each
             // Minecraft condition reads as `True`, padded to keep columns.
             if keyword == "if" {
@@ -1790,6 +1858,13 @@ fn expression_spans_for_undefined_scan(trimmed: &str) -> Vec<ExpressionSpan> {
                     });
                     return expressions;
                 }
+            }
+            // `if block ~ ~ ~ minecraft:stone:` is an execute block with a
+            // raw condition; its words are Minecraft syntax, not variables.
+            if keyword == "if"
+                && crate::transpiler::raw_minecraft_condition_verdict(expression) == Some(true)
+            {
+                return expressions;
             }
             if !expression.is_empty() {
                 expressions.push(ExpressionSpan {
