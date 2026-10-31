@@ -6,7 +6,7 @@
 mod common;
 
 use cobble::diagnostics::analyze_source;
-use common::mcsim::{compile, Sim};
+use common::mcsim::{compile, compile_project, Sim};
 use serde_json::{json, Value};
 
 fn storage(sim: &Sim, name: &str) -> Value {
@@ -329,3 +329,46 @@ def main():
     assert_eq!(stderr.matches("warning[").count(), 3, "{stderr}");
 }
 
+// --- A module variable of a file compiled later ---
+
+#[test]
+fn reading_a_list_of_the_importing_file_is_a_compile_error() {
+    // In a folder `lib.cbl` compiles before `main.cbl`, and `zlib.cbl` with
+    // the imports of `main.cbl`: both before the module code of `main.cbl`.
+    for lib in ["lib", "zlib"] {
+        let main = format!(
+            "import {lib}\n\nnames = [\"a\", \"b\"]\ncount = 3\n\ndef main():\n    show()\n"
+        );
+        let file = format!("{lib}.cbl");
+        let error = compile_project(&[
+            ("main.cbl", main.as_str()),
+            (
+                file.as_str(),
+                "def show():\n    global count\n    c = count\n    global names\n    /say {names}\n",
+            ),
+        ])
+        .unwrap_err();
+        assert!(error.contains(&format!("{lib}.cbl:4:5")), "{error}");
+        assert!(
+            error
+                .contains("`names` is a list declared in main.cbl, which this file doesn't import"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_list_of_an_imported_file_and_a_shared_number_still_work() {
+    let mut sim = Sim::load_project(
+        &[
+            ("main.cbl", "import lib\n\ncount = 3\n\ndef main():\n    show()\n"),
+            (
+                "lib.cbl",
+                "names = [\"a\", \"b\"]\n\ndef show():\n    global count\n    c = count\n    n = len(names)\n    /say {c} {n}\n",
+            ),
+        ],
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.log, ["Server: 3 2"]);
+}

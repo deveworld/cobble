@@ -13,6 +13,11 @@ pub(in crate::transpiler) struct ImportState {
     pub(in crate::transpiler) current_file: Option<PathBuf>,
     /// Folder of the current file, for resolving relative imports.
     pub(in crate::transpiler) current_dir: PathBuf,
+    /// Module variables holding a list, a map, or text, with their file and
+    /// kind, declared in a file whose module code is compiled after the
+    /// current one, as the file that imports it. Until then a function of
+    /// another file would read the name as a score.
+    pub(in crate::transpiler) later_variables: HashMap<String, (PathBuf, &'static str)>,
 }
 
 impl Default for ImportState {
@@ -22,7 +27,134 @@ impl Default for ImportState {
             stack: Vec::new(),
             current_file: None,
             current_dir: PathBuf::from("."),
+            later_variables: HashMap::new(),
         }
+    }
+}
+
+/// The module variables of `program` that hold a list, a map, or text,
+/// with that kind.
+fn storage_module_variables(program: &Program) -> Vec<(&str, &'static str)> {
+    program
+        .statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Assignment(assign) if assign.assigns_name() => {
+                let kind = match &assign.value {
+                    Expression::Array(_) => "list",
+                    Expression::Map(_) => "map",
+                    Expression::String(_) => "string",
+                    _ => return None,
+                };
+                Some((assign.target.as_str(), kind))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+impl Transpiler {
+    /// Marks the list, map, and text module variables of `program`, the
+    /// current file, as not yet compiled, for [`Self::check_later_variables`].
+    pub(in crate::transpiler) fn hold_later_variables(&mut self, program: &Program) {
+        let Some(file) = self.imports.current_file.clone() else {
+            return;
+        };
+        for (name, kind) in storage_module_variables(program) {
+            self.imports
+                .later_variables
+                .entry(name.to_string())
+                .or_insert_with(|| (file.clone(), kind));
+        }
+    }
+
+    /// Marks the list, map, and text module variables of the file at `path`
+    /// as not yet compiled. A build of several files marks every file
+    /// first, so a function of a file compiled earlier can't read them as
+    /// scores.
+    pub fn record_module_variables(&mut self, path: &Path, program: &Program) {
+        let file = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        for (name, kind) in storage_module_variables(program) {
+            self.imports
+                .later_variables
+                .entry(name.to_string())
+                .or_insert_with(|| (file.clone(), kind));
+        }
+    }
+
+    /// The module code of `program` is compiled: its variables are known.
+    pub(in crate::transpiler) fn release_later_variables(&mut self, program: &Program) {
+        for (name, _) in storage_module_variables(program) {
+            self.imports.later_variables.remove(name);
+        }
+    }
+
+    /// Refuses a function's read of a list, map, or text module variable
+    /// that another file declares and that isn't compiled yet, as one of the
+    /// file importing this one: Cobble would read it as a score, where
+    /// Python raises `NameError`.
+    pub(in crate::transpiler) fn check_later_variables(
+        &self,
+        statement: &Statement,
+    ) -> Result<(), TranspileError> {
+        if self.imports.later_variables.is_empty() || self.current_function.is_none() {
+            return Ok(());
+        }
+        let mut names: Vec<&str> = Vec::new();
+        if let Statement::Global(globals) = statement {
+            names.extend(globals.iter().map(String::as_str));
+        }
+        fn reads<'a>(expr: &'a Expression, names: &mut Vec<&'a str>) {
+            match expr {
+                Expression::Identifier(name) => names.push(name),
+                // `f(x)` names a function, not a variable.
+                Expression::Call(func, args) => {
+                    if !matches!(&**func, Expression::Identifier(_)) {
+                        reads(func, names);
+                    }
+                    for arg in args {
+                        reads(arg, names);
+                    }
+                }
+                _ => {
+                    for part in crate::transpiler::desugar::sub_expressions(expr) {
+                        reads(part, names);
+                    }
+                }
+            }
+        }
+        for expr in crate::transpiler::statement_expressions(statement) {
+            reads(expr, &mut names);
+        }
+        for name in names {
+            let Some((file, kind)) = self.imports.later_variables.get(name) else {
+                continue;
+            };
+            if self.imports.current_file.as_ref() == Some(file)
+                || self.current_context.is_param(name)
+                || self.current_context.is_local(name)
+            {
+                continue;
+            }
+            let file_name = |path: &Path| {
+                path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                )
+            };
+            let this_file = self
+                .imports
+                .current_file
+                .as_deref()
+                .map(file_name)
+                .unwrap_or_default();
+            return Err(format!(
+                "`{name}` is a {kind} declared in {}, which this file doesn't import, so this function would read it as a number (Python raises NameError). Pass it to the function as a parameter, or declare it in {this_file} or a file it imports.",
+                file_name(file),
+            )
+            .into());
+        }
+        Ok(())
     }
 }
 
@@ -88,6 +220,7 @@ impl Transpiler {
 
         // Nested imports first, then the imported statements.
         self.record_container_writes(&program);
+        self.hold_later_variables(&program);
         self.process_imports(&program)?;
         self.register_program_function_metadata(&program);
         if import.items.is_empty() {
@@ -96,6 +229,7 @@ impl Transpiler {
         for statement in &program.statements {
             self.process_statement(statement)?;
         }
+        self.release_later_variables(&program);
 
         self.imports.current_dir = saved_dir;
         self.imports.current_file = saved_file;

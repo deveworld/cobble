@@ -41,6 +41,12 @@ and changes one value, and `from utils import score` checks that the name
 exists in `utils.cbl`. So define each module variable at module level in one
 file only, and use it from the others.
 
+An imported file is compiled before the module code of the file that imports
+it. So a function of `utils.cbl` can't use a list, map, or string that only
+`main.cbl` defines, as Python raises `NameError` there: it is a compile error
+that names the variable and its file. Pass the value as a parameter, or
+define it in `utils.cbl` and import it into `main.cbl`.
+
 These are compile errors:
 
 - the same function, selector alias, entity template, or module variable name

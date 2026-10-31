@@ -403,6 +403,7 @@ fn compile_project(
     // A file can write the lists and maps of a file compiled before it.
     for parsed in &parsed_files {
         transpiler.record_container_writes(&parsed.program);
+        transpiler.record_module_variables(&parsed.path, &parsed.program);
     }
 
     // Compile all files

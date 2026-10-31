@@ -535,6 +535,7 @@ fn semantic_check(
     // A file can write the lists and maps of a file checked before it.
     for parsed in parsed_files {
         transpiler.record_container_writes(&parsed.program);
+        transpiler.record_module_variables(&parsed.path, &parsed.program);
     }
     for (path, parsed) in files_to_check.iter().zip(parsed_files.iter()) {
         if transpiler.has_compiled(path) {

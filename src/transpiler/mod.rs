@@ -349,6 +349,7 @@ impl Transpiler {
 
         // Before the imports, which read the file's writes too.
         self.record_container_writes(program);
+        self.hold_later_variables(program);
         self.process_imports(program)?;
 
         // PASS 1: Register all function signatures first (to handle forward references)
@@ -358,6 +359,7 @@ impl Transpiler {
         for statement in &program.statements {
             self.process_statement(statement)?;
         }
+        self.release_later_variables(program);
 
         // Direct self-calls error at the call site; this rejects mutual
         // recursion (a -> b -> a) across everything lowered so far.
@@ -501,6 +503,7 @@ impl Transpiler {
         for expr in statement_expressions(statement) {
             storage_paths::StoragePathOps::check_subscript_keys(self, expr)?;
         }
+        self.check_later_variables(statement)?;
         if let Some(lowered) = self.desugar_statement(statement)? {
             for statement in &lowered {
                 self.process_statement_inner(statement)?;
