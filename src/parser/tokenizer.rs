@@ -569,6 +569,7 @@ fn tokenize_line(
         chars: line.char_indices().peekable(),
         tokens,
         paren_depth,
+        last_column: (0, 0),
     };
 
     while let Some(&(start, ch)) = tokenizer.chars.peek() {
@@ -632,11 +633,22 @@ struct LineTokenizer<'a> {
     chars: Peekable<CharIndices<'a>>,
     tokens: &'a mut Vec<SpannedToken>,
     paren_depth: &'a mut i32,
+    /// The byte index and character count of the last pushed token's start.
+    /// Tokens come in order, so each column counts on from the last one
+    /// instead of from the start of a possibly very long line.
+    last_column: (usize, usize),
 }
 
 impl LineTokenizer<'_> {
     fn push(&mut self, token: Token, start: usize, end: usize) {
-        let column = column_from_byte(self.line, start, self.column_offset);
+        let (last_byte, last_chars) = self.last_column;
+        let chars = if start >= last_byte && self.line.is_char_boundary(start) {
+            last_chars + self.line[last_byte..start].chars().count()
+        } else {
+            self.line[..start].chars().count()
+        };
+        self.last_column = (start, chars);
+        let column = self.column_offset + chars + 1;
         push_token(
             self.tokens,
             token,

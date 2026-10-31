@@ -601,6 +601,8 @@ fn validate_source_map(datapack_dir: &Path) -> Vec<String> {
 
     let mut errors = Vec::new();
     let mut mapped_lines = HashSet::new();
+    // Each generated file is read once, however many entries point into it.
+    let mut file_lines: HashMap<PathBuf, Option<Vec<String>>> = HashMap::new();
 
     for entry in source_map.entries {
         let Some(generated_path) = clean_source_map_generated_path(&entry.generated_path) else {
@@ -620,18 +622,21 @@ fn validate_source_map(datapack_dir: &Path) -> Vec<String> {
             ));
             continue;
         }
-        let Ok(file_content) = std::fs::read_to_string(&generated_file) else {
+        let lines = file_lines.entry(generated_file.clone()).or_insert_with(|| {
+            std::fs::read_to_string(&generated_file)
+                .ok()
+                .map(|content| content.lines().map(str::to_string).collect())
+        });
+        let Some(lines) = lines else {
             errors.push(format!(
                 "{}:{} maps to missing file",
                 generated_path_key, entry.generated_line
             ));
             continue;
         };
-        let actual = file_content
-            .lines()
-            .nth(entry.generated_line.saturating_sub(1));
+        let actual = lines.get(entry.generated_line.saturating_sub(1));
         match actual {
-            Some(actual) if actual == entry.command => {}
+            Some(actual) if *actual == entry.command => {}
             Some(actual) => errors.push(format!(
                 "{}:{} command mismatch: map='{}' file='{}'",
                 generated_path_key, entry.generated_line, entry.command, actual
