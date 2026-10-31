@@ -211,6 +211,9 @@ impl<'a> CommandProcessor<'a> {
         let mut has_macro_vars = cmd.contains("$(");
         let mut scoreboard_vars_found = Vec::new();
         let text_command = is_text_command(cmd);
+        // The quote state before each placeholder, scanned once along the
+        // line instead of from its start for every placeholder.
+        let mut quotes = QuoteScan::default();
 
         for piece in placeholders::pieces(cmd) {
             let (raw, var_name, start) = match piece {
@@ -220,8 +223,13 @@ impl<'a> CommandProcessor<'a> {
                 }
                 Piece::Field { raw, name, start } => (raw, name, start),
             };
-            let before: Vec<char> = cmd[..start].chars().collect();
-            if self.is_param(var_name) && !vars_as_macros && text_command && in_text_string(&before)
+            quotes.advance(cmd, start);
+            if self.is_param(var_name)
+                && !vars_as_macros
+                && text_command
+                && quotes
+                    .open
+                    .is_some_and(|open| opens_text_string(&cmd[..open]))
             {
                 // Shown from `args` like a variable, because a macro value
                 // with a `"` would break the JSON.
@@ -279,7 +287,7 @@ impl<'a> CommandProcessor<'a> {
 
                         // Check if we're already inside quotes by counting
                         // unescaped quotes before this position.
-                        let inside_quotes = is_inside_quotes(&before);
+                        let inside_quotes = quotes.open.is_some();
 
                         // Escape quotes, backslashes, and special characters
                         let escaped = escape_quoted(s);
@@ -937,25 +945,39 @@ fn is_text_command(command: &str) -> bool {
 /// shown as text: a `text` value or a string item of an array. Other strings,
 /// such as a `selector`, a `color`, or a click event's `value`, take the
 /// value as it is.
-fn in_text_string(chars: &[char]) -> bool {
-    let mut open: Option<usize> = None;
-    let mut escaped = false;
-    for (index, &ch) in chars.iter().enumerate() {
-        if escaped {
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == '"' {
-            open = match open {
-                Some(_) => None,
-                None => Some(index),
-            };
+/// The double-quote state of a command up to a byte offset. A `"` after a
+/// backslash doesn't count.
+#[derive(Default)]
+struct QuoteScan {
+    scanned: usize,
+    escaped: bool,
+    /// The byte offset of the `"` that opens the string the scan is in.
+    open: Option<usize>,
+}
+
+impl QuoteScan {
+    /// Scans on from the last offset to `to`, which must not be before it.
+    fn advance(&mut self, text: &str, to: usize) {
+        for (index, ch) in text[self.scanned..to].char_indices() {
+            if self.escaped {
+                self.escaped = false;
+            } else if ch == '\\' {
+                self.escaped = true;
+            } else if ch == '"' {
+                self.open = match self.open {
+                    Some(_) => None,
+                    None => Some(self.scanned + index),
+                };
+            }
         }
+        self.scanned = to;
     }
-    let Some(open) = open else {
-        return false;
-    };
-    let before: String = chars[..open].iter().collect();
+}
+
+/// Whether a string whose opening quote follows `before` is shown as text:
+/// a `text` or show_text `value` field, an item of a text list, or the whole
+/// message of `tellraw` or `title`.
+fn opens_text_string(before: &str) -> bool {
     let before = before.trim();
     if before.ends_with('[') || before.ends_with(',') {
         return true;
@@ -1012,6 +1034,7 @@ fn enclosing_object_start(text: &str) -> Option<usize> {
     None
 }
 
+#[cfg(test)]
 fn is_inside_quotes(chars: &[char]) -> bool {
     let mut quote_count = 0;
     let mut prev_was_backslash = false;

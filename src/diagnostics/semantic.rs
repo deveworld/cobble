@@ -3798,6 +3798,10 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
     let mut index = indent;
     let mut quote = None;
     let mut escaped = false;
+    // Both scans would otherwise start over for every brace or placeholder,
+    // which a long line makes quadratic.
+    let mut closes: HashMap<usize, Option<usize>> = HashMap::new();
+    let mut columns = ColumnCounter::new(line);
 
     while index < line.len() {
         let ch = line[index..].chars().next().unwrap();
@@ -3827,7 +3831,7 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
                     if is_potential_command_placeholder(content) {
                         placeholders.push(CommandPlaceholder {
                             name: content.to_string(),
-                            column: column_from_byte(line, index),
+                            column: columns.at(index),
                         });
                         index = close_index + 1;
                         continue;
@@ -3858,10 +3862,10 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
             continue;
         }
 
-        let Some(close_index) = matching_brace_quote_aware(line, index) else {
+        let Some(close_index) = matching_brace_quote_aware(line, index, &mut closes) else {
             placeholders.push(CommandPlaceholder {
                 name: String::new(),
-                column: column_from_byte(line, index),
+                column: columns.at(index),
             });
             index = next_index;
             continue;
@@ -3871,7 +3875,7 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
         if is_potential_command_placeholder(content) {
             placeholders.push(CommandPlaceholder {
                 name: content.to_string(),
-                column: column_from_byte(line, index),
+                column: columns.at(index),
             });
             index = close_index + 1;
         } else {
@@ -3893,43 +3897,105 @@ fn is_potential_command_placeholder(content: &str) -> bool {
         && !content.contains('\'')
 }
 
-fn matching_brace_quote_aware(text: &str, open_index: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    let mut index = open_index;
-    let mut quote = None;
-    let mut escaped = false;
+/// Counts the column of byte offsets that mostly come in order, counting on
+/// from the last one.
+struct ColumnCounter<'a> {
+    line: &'a str,
+    last: (usize, usize),
+}
 
-    while index < text.len() {
-        let ch = text[index..].chars().next().unwrap();
-        let next_index = index + ch.len_utf8();
-
-        if let Some(active_quote) = quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == active_quote {
-                quote = None;
-            }
-            index = next_index;
-            continue;
-        }
-
-        match ch {
-            '"' | '\'' => quote = Some(ch),
-            '{' => depth += 1,
-            '}' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-        index = next_index;
+impl<'a> ColumnCounter<'a> {
+    fn new(line: &'a str) -> Self {
+        Self { line, last: (0, 1) }
     }
 
-    None
+    fn at(&mut self, byte_index: usize) -> usize {
+        let (last_byte, last_column) = self.last;
+        let column = if byte_index >= last_byte && self.line.is_char_boundary(byte_index) {
+            last_column + self.line[last_byte..byte_index].chars().count()
+        } else {
+            column_from_byte(self.line, byte_index)
+        };
+        if self.line.is_char_boundary(byte_index.min(self.line.len())) {
+            self.last = (byte_index.min(self.line.len()), column);
+        }
+        column
+    }
+}
+
+/// The `}` that closes the `{` at `open_index`, skipping braces in quotes
+/// that open after it. Results are kept in `closes`, so a nested brace is
+/// matched once however many braces enclose it.
+fn matching_brace_quote_aware(
+    text: &str,
+    open_index: usize,
+    closes: &mut HashMap<usize, Option<usize>>,
+) -> Option<usize> {
+    struct Frame {
+        open: usize,
+        index: usize,
+        quote: Option<char>,
+        escaped: bool,
+    }
+    if let Some(close) = closes.get(&open_index) {
+        return *close;
+    }
+    let mut stack = vec![Frame {
+        open: open_index,
+        index: open_index + 1,
+        quote: None,
+        escaped: false,
+    }];
+    'frames: while let Some(mut frame) = stack.pop() {
+        while frame.index < text.len() {
+            let ch = text[frame.index..].chars().next().unwrap();
+            let next_index = frame.index + ch.len_utf8();
+            if let Some(active_quote) = frame.quote {
+                if frame.escaped {
+                    frame.escaped = false;
+                } else if ch == '\\' {
+                    frame.escaped = true;
+                } else if ch == active_quote {
+                    frame.quote = None;
+                }
+                frame.index = next_index;
+                continue;
+            }
+            match ch {
+                '"' | '\'' => frame.quote = Some(ch),
+                '{' => match closes.get(&frame.index) {
+                    Some(Some(close)) => {
+                        frame.index = close + 1;
+                        continue;
+                    }
+                    Some(None) => {
+                        closes.insert(frame.open, None);
+                        continue 'frames;
+                    }
+                    None => {
+                        // Match the inner brace first, then come back here.
+                        let inner = frame.index;
+                        stack.push(frame);
+                        stack.push(Frame {
+                            open: inner,
+                            index: inner + 1,
+                            quote: None,
+                            escaped: false,
+                        });
+                        continue 'frames;
+                    }
+                },
+                '}' => {
+                    closes.insert(frame.open, Some(frame.index));
+                    continue 'frames;
+                }
+                _ => {}
+            }
+            frame.index = next_index;
+        }
+        closes.insert(frame.open, None);
+    }
+    closes.get(&open_index).copied().flatten()
 }
 
 fn placeholder_close_before_quote(text: &str, open_index: usize, quote: char) -> Option<usize> {
@@ -4584,5 +4650,85 @@ fn push_array_item_span(text: &str, start: usize, end: usize, result: &mut Vec<A
     let span = argument_span(text, start, end);
     if !span.text.is_empty() {
         result.push(span);
+    }
+}
+
+#[cfg(test)]
+mod brace_matching_tests {
+    use super::*;
+
+    /// The matcher before it kept results: one scan from the brace.
+    fn reference(text: &str, open_index: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut index = open_index;
+        let mut quote = None;
+        let mut escaped = false;
+        while index < text.len() {
+            let ch = text[index..].chars().next().unwrap();
+            let next_index = index + ch.len_utf8();
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active_quote {
+                    quote = None;
+                }
+                index = next_index;
+                continue;
+            }
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(index);
+                    }
+                }
+                _ => {}
+            }
+            index = next_index;
+        }
+        None
+    }
+
+    #[test]
+    fn kept_matches_agree_with_a_scan_from_each_brace() {
+        let alphabet = ['{', '}', '"', '\'', '\\', 'a', ':', 'é'];
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..3000 {
+            let mut text = String::new();
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let len = (seed % 24) as usize;
+            for _ in 0..len {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                text.push(alphabet[(seed % alphabet.len() as u64) as usize]);
+            }
+            let mut closes = HashMap::new();
+            for (index, ch) in text.char_indices() {
+                if ch == '{' {
+                    assert_eq!(
+                        matching_brace_quote_aware(&text, index, &mut closes),
+                        reference(&text, index),
+                        "{text:?} at {index}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn columns_count_characters_from_the_line_start() {
+        let line = "/say é {a} 안녕 {b}";
+        let mut columns = ColumnCounter::new(line);
+        for (index, _) in line.char_indices() {
+            assert_eq!(columns.at(index), column_from_byte(line, index), "{index}");
+        }
+        assert_eq!(columns.at(0), 1);
     }
 }
