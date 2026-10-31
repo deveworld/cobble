@@ -1,5 +1,5 @@
 use crate::ast::{Expression, FunctionDef, Program, Statement};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Context for tracking function parameters and scope
 #[derive(Clone)]
@@ -19,6 +19,10 @@ pub(in crate::transpiler) struct FunctionContext {
     /// Names whose score a raw command or a `store ... score` header in the
     /// function writes. Such a name holds a number.
     pub(in crate::transpiler) score_writes: HashSet<String>,
+    /// How often the whole function body reads each name it uses as a
+    /// `for` target. A compile-time `for` whose target is read outside the
+    /// loop keeps the target in a real variable.
+    pub(in crate::transpiler) for_target_reads: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
@@ -36,6 +40,7 @@ impl FunctionContext {
             globals: Vec::new(),
             unbound_read: None,
             score_writes: HashSet::new(),
+            for_target_reads: HashMap::new(),
         }
     }
 
@@ -61,8 +66,18 @@ impl FunctionContext {
             globals,
             unbound_read: None,
             score_writes: HashSet::new(),
+            for_target_reads: HashMap::new(),
         };
         collect_score_writes(body, &mut context.score_writes);
+        let mut targets = BTreeSet::new();
+        collect_for_targets(body, &mut targets);
+        context.for_target_reads = targets
+            .into_iter()
+            .map(|target| {
+                let reads = count_reads(body, &target);
+                (target, reads)
+            })
+            .collect();
         context.unbound_read =
             context
                 .first_read_before_assignment(body)
@@ -303,6 +318,120 @@ fn collect_bindings(
             _ => {}
         }
     }
+}
+
+/// How often `body` reads `name`: in expressions, and as a `{name}`
+/// placeholder in raw commands and execute headers. Assigning a name, or
+/// using it as a `for` target, is not a read. Nested function definitions
+/// are not searched.
+pub(in crate::transpiler) fn count_reads(body: &[Statement], name: &str) -> usize {
+    let in_expression = |expr: &Expression| {
+        let mut reads = Vec::new();
+        expression_reads(expr, &mut reads);
+        reads.into_iter().filter(|read| *read == name).count()
+    };
+    let placeholder = format!("{{{name}}}");
+    let in_text = |text: &str| text.matches(placeholder.as_str()).count();
+    let mut count = 0;
+    for statement in body {
+        count += match statement {
+            Statement::Assignment(assign) => {
+                let target = assign
+                    .target_expr
+                    .as_ref()
+                    .filter(|_| !assign.assigns_name())
+                    .map_or(0, in_expression);
+                target + in_expression(&assign.value)
+            }
+            Statement::MultiAssign(multi) => {
+                multi.values.iter().map(in_expression).sum::<usize>()
+                    + multi
+                        .targets
+                        .iter()
+                        .filter(|target| !matches!(target, Expression::Identifier(_)))
+                        .map(in_expression)
+                        .sum::<usize>()
+            }
+            Statement::Expression(expr) | Statement::Return(Some(expr)) => in_expression(expr),
+            Statement::MinecraftCommand(command) => in_text(command),
+            Statement::If(if_stmt) => {
+                in_expression(&if_stmt.condition)
+                    + count_reads(&if_stmt.then_branch, name)
+                    + if_stmt
+                        .elif_branches
+                        .iter()
+                        .map(|(condition, branch)| {
+                            in_expression(condition) + count_reads(branch, name)
+                        })
+                        .sum::<usize>()
+                    + if_stmt
+                        .else_branch
+                        .as_ref()
+                        .map_or(0, |branch| count_reads(branch, name))
+            }
+            Statement::For(for_loop) => {
+                in_expression(&for_loop.iter)
+                    + for_loop.step.as_ref().map_or(0, in_expression)
+                    + count_reads(&for_loop.body, name)
+            }
+            Statement::While(while_loop) => {
+                in_expression(&while_loop.condition) + count_reads(&while_loop.body, name)
+            }
+            Statement::Match(match_stmt) => {
+                in_expression(&match_stmt.value)
+                    + match_stmt
+                        .cases
+                        .iter()
+                        .map(|case| count_reads(&case.body, name))
+                        .sum::<usize>()
+            }
+            Statement::Execute(exec_block) => {
+                in_text(&format!("{:?}", exec_block.modifiers))
+                    + count_reads(&exec_block.body, name)
+            }
+            _ => 0,
+        };
+    }
+    count
+}
+
+/// The targets of every `for` loop in `body`. Nested function definitions
+/// are not searched.
+fn collect_for_targets(body: &[Statement], targets: &mut BTreeSet<String>) {
+    for statement in body {
+        match statement {
+            Statement::For(for_loop) => {
+                targets.insert(for_loop.target.clone());
+                targets.extend(for_loop.index.iter().cloned());
+                collect_for_targets(&for_loop.body, targets);
+            }
+            Statement::If(if_stmt) => {
+                collect_for_targets(&if_stmt.then_branch, targets);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_for_targets(branch, targets);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_for_targets(branch, targets);
+                }
+            }
+            Statement::While(while_loop) => collect_for_targets(&while_loop.body, targets),
+            Statement::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    collect_for_targets(&case.body, targets);
+                }
+            }
+            Statement::Execute(exec_block) => collect_for_targets(&exec_block.body, targets),
+            _ => {}
+        }
+    }
+}
+
+/// Whether `body` assigns the name `name`, or uses it as a `for` target.
+/// Nested function definitions are not searched.
+pub(in crate::transpiler) fn assigns_name(body: &[Statement], name: &str) -> bool {
+    let mut assigned = BTreeSet::new();
+    collect_bindings(body, &mut assigned, &mut HashSet::new());
+    assigned.contains(name)
 }
 
 /// Module variables that `function` declares `global` and assigns a literal

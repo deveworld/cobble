@@ -31,6 +31,9 @@ pub(in crate::transpiler) struct Symbols {
     /// function bodies above it can use them. Module-level code that runs
     /// before the assignment can't.
     pub(in crate::transpiler) pending_module_declarations: HashSet<String>,
+    /// Module variables whose type only their module-level assignment can
+    /// decide, before that assignment is lowered.
+    pub(in crate::transpiler) late_module_declarations: HashSet<String>,
     /// What the program writes into lists and maps, collected before any
     /// statement is lowered (see `container_writes.rs`).
     pub(in crate::transpiler) container_writes: ContainerWrites,

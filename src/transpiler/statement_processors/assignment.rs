@@ -318,6 +318,7 @@ impl Transpiler {
             self.symbols
                 .pending_module_declarations
                 .remove(&assign.target);
+            self.symbols.late_module_declarations.remove(&assign.target);
             self.defer_module_level_assignment(assign);
             return Ok(());
         }

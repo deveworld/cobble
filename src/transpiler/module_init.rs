@@ -1,5 +1,7 @@
-use crate::ast::{Assignment, CobbleType, Expression, Program, Statement};
-use crate::transpiler::function_context::{expression_reads, global_literal_assignments};
+use crate::ast::{Assignment, CobbleType, Expression, FunctionDef, Program, Statement};
+use crate::transpiler::function_context::{
+    count_reads, expression_reads, global_literal_assignments, FunctionContext,
+};
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
     GeneratedCommand, GeneratedCommandKind, SourceLocation, TranspileError, Transpiler,
@@ -49,7 +51,41 @@ impl Transpiler {
             };
             for assign in assignments {
                 let name = &assign.target;
-                if self.is_declared_name(name) {
+                if self.is_declared_name(name)
+                    || self.symbols.late_module_declarations.contains(name)
+                {
+                    continue;
+                }
+                self.symbols
+                    .pending_module_declarations
+                    .insert(name.clone());
+                // Lowering can still change what other values are, such as
+                // `[0] * 3`, so their type is known only at the assignment.
+                let known_here = self.try_eval_const(&assign.value).is_some()
+                    || matches!(
+                        &assign.value,
+                        Expression::Number(_)
+                            | Expression::Boolean(_)
+                            | Expression::String(_)
+                            | Expression::Array(_)
+                            | Expression::Map(_)
+                    )
+                    || (matches!(
+                        &assign.value,
+                        Expression::Identifier(_)
+                            | Expression::Subscript(..)
+                            | Expression::Attribute(..)
+                    ) && {
+                        // A copy, item, or field of a variable known here.
+                        let mut reads = Vec::new();
+                        expression_reads(&assign.value, &mut reads);
+                        reads.first().is_some_and(|root| {
+                            self.is_declared_name(root)
+                                && !self.symbols.late_module_declarations.contains(*root)
+                        })
+                    });
+                if !known_here {
+                    self.symbols.late_module_declarations.insert(name.clone());
                     continue;
                 }
                 // The same inference `process_assignment` makes.
@@ -66,9 +102,6 @@ impl Transpiler {
                 self.symbols
                     .variables
                     .insert(name.clone(), assign.value.clone());
-                self.symbols
-                    .pending_module_declarations
-                    .insert(name.clone());
                 self.register_module_variable_backing(&assign);
             }
         }
@@ -79,7 +112,9 @@ impl Transpiler {
                 continue;
             };
             for (name, value) in global_literal_assignments(function) {
-                if self.is_declared_name(&name) {
+                if self.is_declared_name(&name)
+                    || self.symbols.late_module_declarations.contains(&name)
+                {
                     continue;
                 }
                 self.symbols
@@ -109,6 +144,29 @@ impl Transpiler {
         {
             Some(name) => Err(format!(
                 "Module variable `{name}` is read here before its assignment further down the file. Module-level code runs from top to bottom, so move `{name} = ...` above this line."
+            )
+            .into()),
+            None => Ok(()),
+        }
+    }
+
+    /// A function above the module-level assignment of a variable whose
+    /// type only that assignment decides can't use the variable.
+    pub(in crate::transpiler) fn check_late_module_reads(
+        &self,
+        function: &FunctionDef,
+        context: &FunctionContext,
+    ) -> Result<(), TranspileError> {
+        let mut late: Vec<&String> = self.symbols.late_module_declarations.iter().collect();
+        late.sort();
+        match late.into_iter().find(|name| {
+            !context.is_param(name)
+                && !context.is_local(name)
+                && count_reads(&function.body, name) > 0
+        }) {
+            Some(name) => Err(format!(
+                "`{name}` is declared later in the file, and `{}` above it uses it. Move the module-level `{name} = ...` above `def {}`.",
+                function.name, function.name
             )
             .into()),
             None => Ok(()),

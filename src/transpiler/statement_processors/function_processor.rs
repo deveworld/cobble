@@ -79,6 +79,8 @@ impl Transpiler {
         self.functions
             .def_sources
             .insert(func.name.clone(), def_source.clone());
+        self.check_late_module_reads(func, &context)
+            .map_err(|error| error.with_location_if_missing(def_source.clone()))?;
 
         // Save previous function context
         let previous_function = self.current_function.take();
