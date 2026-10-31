@@ -8,7 +8,7 @@ use crate::transpiler::{
     SourceLocation, TranspileError, TranspileErrorKind, Transpiler,
 };
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 /// The extension of a function file.
 const FUNCTION_FILE_SUFFIX: &str = ".mcfunction";
@@ -87,7 +87,7 @@ impl Transpiler {
         let previous_return = self.current_return.clone();
         let previous_function_name = self.current_function_name.take();
         let previous_symbols = self.symbols.clone();
-        let functions_before: HashSet<String> = self.data_pack.functions.keys().cloned().collect();
+        let functions_mark = self.data_pack.created_functions.len();
 
         // Parameters and local variables hide module variables and constants
         // with the same names, like in Python. The tables are restored after
@@ -214,7 +214,8 @@ impl Transpiler {
         self.symbols.selector_aliases = selector_aliases;
         self.symbols.entity_templates = entity_templates;
 
-        self.localize_function(&func.name, &locals, &functions_before);
+        let created = self.data_pack.created_functions[functions_mark..].to_vec();
+        self.localize_function(&func.name, &locals, &created);
         if recursive {
             self.add_recursion_frame(&func.name, &locals, &globals, return_context.as_ref());
         }
@@ -225,7 +226,8 @@ impl Transpiler {
             let location = self.functions.def_sources.get(&name).cloned().flatten();
             return Err(generated_name_collision(&name).with_location_if_missing(location));
         }
-        self.check_function_file_names(&func.name, &functions_before)
+        let created = &self.data_pack.created_functions[functions_mark..];
+        self.check_function_file_names(&func.name, created)
             .map_err(|error| error.with_location_if_missing(def_source))
     }
 
@@ -234,13 +236,12 @@ impl Transpiler {
     fn check_function_file_names(
         &self,
         function: &str,
-        functions_before: &HashSet<String>,
+        created: &[String],
     ) -> Result<(), TranspileError> {
-        let longest = self
-            .data_pack
-            .functions
-            .keys()
-            .filter(|name| *name == function || !functions_before.contains(*name))
+        let longest = created
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(function))
             .filter(|name| name.len() + FUNCTION_FILE_SUFFIX.len() > MAX_FILE_NAME_BYTES)
             .max_by_key(|name| name.len());
         let Some(name) = longest else {
@@ -462,20 +463,11 @@ impl Transpiler {
     /// their source names, and this pass renames them once the generated
     /// commands are final, so raw commands in the function that name a local
     /// on the variable objective reach the same score.
-    fn localize_function(
-        &mut self,
-        function: &str,
-        locals: &[String],
-        functions_before: &HashSet<String>,
-    ) {
-        let mut owned: Vec<String> = self
-            .data_pack
-            .functions
-            .keys()
+    fn localize_function(&mut self, function: &str, locals: &[String], created: &[String]) {
+        let mut owned: Vec<String> = created
+            .iter()
             .filter(|name| {
-                !functions_before.contains(*name)
-                    && !self.functions.owners.contains_key(*name)
-                    && !name.starts_with("_cobble_math_")
+                !self.functions.owners.contains_key(*name) && !name.starts_with("_cobble_math_")
             })
             .cloned()
             .collect();

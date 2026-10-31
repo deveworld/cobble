@@ -83,7 +83,7 @@ impl DataPack {
         let metadata = Self::metadata_for_commands(&commands, kind);
         self.note_overwritten_user_function(&name);
         self.command_metadata.insert(name.clone(), metadata);
-        self.functions.insert(name, commands);
+        self.insert_function(name, commands);
     }
 
     pub fn add_function_with_metadata(
@@ -98,6 +98,13 @@ impl DataPack {
             Self::complete_metadata(&commands, metadata, GeneratedCommandKind::ControlFlow);
         self.note_overwritten_user_function(&name);
         self.command_metadata.insert(name.clone(), metadata);
+        self.insert_function(name, commands);
+    }
+
+    fn insert_function(&mut self, name: String, commands: Vec<String>) {
+        if !self.functions.contains_key(&name) {
+            self.created_functions.push(name.clone());
+        }
         self.functions.insert(name, commands);
     }
 
