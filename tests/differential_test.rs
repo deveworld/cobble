@@ -44,6 +44,8 @@ struct ModuleSpec {
     /// A list of strings.
     strs: &'static str,
     strs_len: usize,
+    /// A map whose fields `s` and `t` hold strings.
+    rec: &'static str,
 }
 
 const MAIN: ModuleSpec = ModuleSpec {
@@ -54,6 +56,7 @@ const MAIN: ModuleSpec = ModuleSpec {
     list_len: 3,
     strs: "gn",
     strs_len: 2,
+    rec: "gr",
 };
 const UTIL: ModuleSpec = ModuleSpec {
     name: "util",
@@ -63,6 +66,7 @@ const UTIL: ModuleSpec = ModuleSpec {
     list_len: 2,
     strs: "hn",
     strs_len: 3,
+    rec: "hr",
 };
 const EXTRA: ModuleSpec = ModuleSpec {
     name: "extra",
@@ -72,6 +76,7 @@ const EXTRA: ModuleSpec = ModuleSpec {
     list_len: 3,
     strs: "zn",
     strs_len: 2,
+    rec: "zr",
 };
 
 // Generated names never collide: locals and parameters are the names
@@ -84,6 +89,8 @@ const LIST_LOCALS: [(&str, usize); 2] = [("xs", 3), ("ys", 2)];
 const STRS_LOCALS: [(&str, usize); 1] = [("ns", 2)];
 /// The strings a program uses. None is empty, so `s[0]` and `s[-1]` exist.
 const STRINGS: [&str; 6] = ["a", "ab", "xyz", "hello", "q r", "Mc"];
+/// The fields of a map of strings.
+const FIELDS: [&str; 2] = ["s", "t"];
 /// The length of a list parameter.
 const PARAM_LIST_LEN: usize = 2;
 
@@ -174,6 +181,8 @@ enum Ty {
     List(usize),
     /// A list of strings.
     Strs(usize),
+    /// A map whose fields `s` and `t` hold strings.
+    Rec,
 }
 
 #[derive(Clone)]
@@ -200,6 +209,8 @@ enum Expr {
     ListExtreme(bool, String),
     /// `name.count(value)`.
     Count(String, Box<Expr>),
+    /// `len(text)` of any string value.
+    StrLen(Box<Str>),
 }
 
 fn bin(op: Op, left: Expr, right: Expr) -> Expr {
@@ -214,6 +225,25 @@ enum Str {
     Char(String, Box<Expr>),
     /// `name[index]` of a list of strings.
     Item(String, Box<Expr>),
+    /// `name[index][at]`: a character of an item of a list of strings.
+    ItemChar(String, Box<Expr>, Box<Expr>),
+    /// `name.field`, or `name["field"]` when the flag is set.
+    Field(String, &'static str, bool),
+    /// `name.field[at]`: a character of a field.
+    FieldChar(String, &'static str, bool, Box<Expr>),
+    /// `(left + right)`.
+    Join(Box<Str>, Box<Str>),
+    /// `(text * count)` with a count of 1 or more.
+    Repeat(Box<Str>, Box<Expr>),
+}
+
+/// Where a string statement writes: a variable, an item of a list of
+/// strings, or a field of a map of strings.
+#[derive(Clone)]
+enum Place {
+    Var(String),
+    Item(String, Expr),
+    Field(String, &'static str, bool),
 }
 
 #[derive(Clone)]
@@ -235,6 +265,8 @@ enum Val {
     Str(Str),
     List(List),
     Strs(Strs),
+    /// `{"s": s, "t": t}`.
+    Rec(Str, Str),
 }
 
 #[derive(Clone)]
@@ -252,6 +284,8 @@ enum Cond {
     Text(&'static str, Str, Str),
     /// `left <op> middle <op> right`.
     Chain(Box<Expr>, &'static str, Box<Expr>, &'static str, Box<Expr>),
+    /// `text`, true when it isn't empty, or `not text` when the flag is set.
+    TextTruth(Str, bool),
 }
 
 #[derive(Clone)]
@@ -291,6 +325,12 @@ enum Stmt {
     Swap(String, String),
     /// `list.append(value)`.
     Append(String, Expr),
+    /// `place = text` on a field.
+    SetField(String, &'static str, bool, Str),
+    /// `place += text`.
+    JoinTo(Place, Str),
+    /// `place *= count`.
+    RepeatAt(Place, Expr),
 }
 
 #[derive(Clone)]
@@ -369,6 +409,9 @@ struct Scope {
     /// The calls left for this function; bounds the work a program does.
     calls_left: usize,
     loops: usize,
+    /// Whether `*=` may repeat text: only in `main` outside loops, so text
+    /// stays short.
+    repeats: bool,
 }
 
 impl Scope {
@@ -557,6 +600,9 @@ impl Generator {
                 _ => {}
             }
         }
+        if depth > 0 && self.rng.chance(4) {
+            return Expr::StrLen(Box::new(self.str_expr(scope, depth - 1)));
+        }
         let names = scope.readable(Ty::Int);
         if !names.is_empty() && self.rng.chance(60) {
             return Expr::Var(self.rng.pick(&names));
@@ -676,9 +722,90 @@ impl Generator {
         bin(op, left, right)
     }
 
+    /// An index into the text `base`: its first or last character, or
+    /// `e % len(base)`.
+    fn char_index(&mut self, scope: &mut Scope, base: Str, depth: usize) -> Expr {
+        match self.rng.below(3) {
+            0 => Expr::Lit(0),
+            1 => Expr::Lit(-1),
+            _ => bin(
+                Op::Mod,
+                self.expr(scope, depth),
+                Expr::StrLen(Box::new(base)),
+            ),
+        }
+    }
+
+    /// A string that stays short: a literal or a character.
+    fn short_str(&mut self, scope: &mut Scope) -> Str {
+        match self.str_expr(scope, 0) {
+            text @ (Str::Lit(_) | Str::Char(..) | Str::ItemChar(..) | Str::FieldChar(..)) => text,
+            _ => Str::Lit(self.rng.pick(&STRINGS)),
+        }
+    }
+
+    /// Text in a container, or text built from others: a field, a
+    /// character of an item or a field, a join, or a repeat. `None` when
+    /// the scope has no container to read.
+    fn container_str(&mut self, scope: &mut Scope, depth: usize) -> Option<Str> {
+        let recs = scope.readable(Ty::Rec);
+        let strs = scope.readable_strs();
+        match self.rng.below(5) {
+            0 if !recs.is_empty() => {
+                let field = self.rng.pick(&FIELDS);
+                Some(Str::Field(self.rng.pick(&recs), field, self.rng.chance(30)))
+            }
+            1 if !recs.is_empty() => {
+                let (name, field, key) = (
+                    self.rng.pick(&recs),
+                    self.rng.pick(&FIELDS),
+                    self.rng.chance(30),
+                );
+                let at = self.char_index(scope, Str::Field(name.clone(), field, key), 0);
+                Some(Str::FieldChar(name, field, key, Box::new(at)))
+            }
+            2 if !strs.is_empty() => {
+                let (name, len) = self.rng.pick(&strs);
+                let index = self.list_index(scope, len, 0);
+                let item = Str::Item(name.clone(), Box::new(index.clone()));
+                let at = self.char_index(scope, item, 0);
+                Some(Str::ItemChar(name, Box::new(index), Box::new(at)))
+            }
+            3 if depth > 0 => {
+                let short = self.short_str(scope);
+                let other = self.str_expr(scope, depth - 1);
+                Some(if self.rng.chance(50) {
+                    Str::Join(Box::new(short), Box::new(other))
+                } else {
+                    Str::Join(Box::new(other), Box::new(short))
+                })
+            }
+            4 if depth > 0 => {
+                let count = match self.rng.below(3) {
+                    0 => bin(
+                        Op::Add,
+                        bin(Op::Mod, self.expr(scope, 0), Expr::Lit(2)),
+                        Expr::Lit(1),
+                    ),
+                    _ => Expr::Lit(self.rng.range(1, 3)),
+                };
+                Some(Str::Repeat(
+                    Box::new(self.short_str(scope)),
+                    Box::new(count),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn str_expr(&mut self, scope: &mut Scope, depth: usize) -> Str {
         let names = scope.readable(Ty::Str);
         let strs = scope.readable_strs();
+        if self.rng.chance(30) {
+            if let Some(text) = self.container_str(scope, depth) {
+                return text;
+            }
+        }
         match self.rng.below(12) {
             4..=6 if !names.is_empty() => Str::Var(self.rng.pick(&names)),
             7..=9 if !names.is_empty() => {
@@ -698,6 +825,7 @@ impl Generator {
     /// A value of type `ty`. An argument may also pass a list variable.
     fn val(&mut self, scope: &mut Scope, ty: Ty, depth: usize, argument: bool) -> Val {
         match ty {
+            Ty::Rec => Val::Rec(self.str_expr(scope, 1), self.str_expr(scope, 1)),
             Ty::Int => Val::Int(self.expr(scope, depth)),
             Ty::Str => Val::Str(self.str_expr(scope, depth)),
             Ty::Strs(len) => {
@@ -741,6 +869,9 @@ impl Generator {
         }
         if self.rng.chance(15) {
             return Cond::Truthy(self.expr(scope, 1));
+        }
+        if self.rng.chance(5) {
+            return Cond::TextTruth(self.str_expr(scope, 1), self.rng.chance(40));
         }
         if self.rng.chance(20) {
             let lists = scope.readable_lists();
@@ -911,8 +1042,54 @@ impl Generator {
                     let name = self.rng.pick(&lists).0;
                     return Stmt::Append(name, self.expr(scope, 2));
                 }
+                97..=99 => {
+                    if let Some(statement) = self.text_statement(scope) {
+                        return statement;
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// A write of text into a field, or `+=` or `*=` on text in a
+    /// variable, an item, or a field.
+    fn text_statement(&mut self, scope: &mut Scope) -> Option<Stmt> {
+        let mut places = Vec::new();
+        for name in scope.writable(Ty::Str) {
+            if !scope.is_unassigned_local(&name) {
+                places.push(Place::Var(name));
+            }
+        }
+        for (name, len) in scope.str_item_targets() {
+            let index = self.list_index(scope, len, 1);
+            places.push(Place::Item(name, index));
+        }
+        for name in scope.readable(Ty::Rec) {
+            let field = self.rng.pick(&FIELDS);
+            places.push(Place::Field(name, field, self.rng.chance(30)));
+        }
+        if places.is_empty() {
+            return None;
+        }
+        let place = self.rng.pick(&places);
+        match self.rng.below(3) {
+            0 => {
+                let Place::Field(name, field, key) = place else {
+                    return None;
+                };
+                let value = self.str_expr(scope, 2);
+                Some(Stmt::SetField(name, field, key, value))
+            }
+            1 => {
+                let value = self.short_str(scope);
+                Some(Stmt::JoinTo(place, value))
+            }
+            _ if scope.repeats && scope.loops == 0 => {
+                let count = Expr::Lit(self.rng.range(1, 2));
+                Some(Stmt::RepeatAt(place, count))
+            }
+            _ => None,
         }
     }
 
@@ -1137,6 +1314,7 @@ impl Generator {
                 Ty::Int if roll <= 3 => globals.push(var.clone()),
                 Ty::Str if roll <= 2 => globals.push(var.clone()),
                 Ty::List(_) | Ty::Strs(_) if roll <= 1 => globals.push(var.clone()),
+                Ty::Rec => {}
                 _ if roll == 4 => local_pool.push((var.clone(), *ty)),
                 _ => {}
             }
@@ -1158,6 +1336,7 @@ impl Generator {
             callees,
             calls_left: 3,
             loops: 0,
+            repeats: name == "main",
         };
         let mut body = Vec::new();
         match recursion {
@@ -1285,6 +1464,13 @@ impl Generator {
             .map(|_| Str::Lit(self.rng.pick(&STRINGS)))
             .collect();
         vars.push((spec.strs.to_string(), Val::Strs(Strs::Lit(strings))));
+        vars.push((
+            spec.rec.to_string(),
+            Val::Rec(
+                Str::Lit(self.rng.pick(&STRINGS)),
+                Str::Lit(self.rng.pick(&STRINGS)),
+            ),
+        ));
 
         // Module-level code that runs at load: a loop over the module's
         // list, or a `while`, changing a number of the module.
@@ -1473,6 +1659,7 @@ fn module_vars(spec: &ModuleSpec) -> Vec<(String, Ty)> {
     vars.push((spec.string.to_string(), Ty::Str));
     vars.push((spec.list.to_string(), Ty::List(spec.list_len)));
     vars.push((spec.strs.to_string(), Ty::Strs(spec.strs_len)));
+    vars.push((spec.rec.to_string(), Ty::Rec));
     vars
 }
 
@@ -1547,6 +1734,7 @@ fn cobble_expr(expr: &Expr) -> String {
             format!("{}({name})", if *max { "max" } else { "min" })
         }
         Expr::Count(name, value) => format!("{name}.count({})", cobble_expr(value)),
+        Expr::StrLen(text) => format!("len({})", str_text(text, Language::Cobble)),
     }
 }
 
@@ -1589,6 +1777,7 @@ fn python_expr(expr: &Expr) -> String {
             format!("{}({name})", if *max { "max" } else { "min" })
         }
         Expr::Count(name, value) => format!("{name}.count({})", python_expr(value)),
+        Expr::StrLen(text) => format!("len({})", str_text(text, Language::Python)),
     }
 }
 
@@ -1599,14 +1788,63 @@ fn expr_text(expr: &Expr, language: Language) -> String {
     }
 }
 
+/// `name.field`, which Python spells `name["field"]`.
+fn field_text(name: &str, field: &str, key: bool, language: Language) -> String {
+    if key || language == Language::Python {
+        format!("{name}[\"{field}\"]")
+    } else {
+        format!("{name}.{field}")
+    }
+}
+
+fn str_text(text: &Str, language: Language) -> String {
+    match text {
+        Str::Lit(text) => format!("\"{text}\""),
+        Str::Var(name) => name.clone(),
+        Str::Char(name, index) | Str::Item(name, index) => {
+            format!("{name}[{}]", expr_text(index, language))
+        }
+        Str::ItemChar(name, index, at) => format!(
+            "{name}[{}][{}]",
+            expr_text(index, language),
+            expr_text(at, language)
+        ),
+        Str::Field(name, field, key) => field_text(name, field, *key, language),
+        Str::FieldChar(name, field, key, at) => format!(
+            "{}[{}]",
+            field_text(name, field, *key, language),
+            expr_text(at, language)
+        ),
+        Str::Join(left, right) => format!(
+            "({} + {})",
+            str_text(left, language),
+            str_text(right, language)
+        ),
+        Str::Repeat(text, count) => format!(
+            "({} * ({}))",
+            str_text(text, language),
+            expr_text(count, language)
+        ),
+    }
+}
+
+fn place_text(place: &Place, language: Language) -> String {
+    match place {
+        Place::Var(name) => name.clone(),
+        Place::Item(name, index) => format!("{name}[{}]", expr_text(index, language)),
+        Place::Field(name, field, key) => field_text(name, field, *key, language),
+    }
+}
+
 fn val_text(val: &Val, language: Language) -> String {
     match val {
         Val::Int(expr) => expr_text(expr, language),
-        Val::Str(Str::Lit(text)) => format!("\"{text}\""),
-        Val::Str(Str::Var(name)) => name.clone(),
-        Val::Str(Str::Char(name, index) | Str::Item(name, index)) => {
-            format!("{name}[{}]", expr_text(index, language))
-        }
+        Val::Str(text) => str_text(text, language),
+        Val::Rec(first, second) => format!(
+            "{{\"s\": {}, \"t\": {}}}",
+            str_text(first, language),
+            str_text(second, language)
+        ),
         Val::List(list) => list_text(list, language),
         Val::Strs(Strs::Lit(items)) => format!(
             "[{}]",
@@ -1691,6 +1929,8 @@ fn cobble_cond(cond: &Cond, level: u8) -> String {
                 cobble_expr(right)
             ),
         ),
+        Cond::TextTruth(text, false) => (3, str_text(text, Language::Cobble)),
+        Cond::TextTruth(text, true) => (2, format!("not {}", str_text(text, Language::Cobble))),
     };
     if own < level {
         format!("({text})")
@@ -1723,6 +1963,11 @@ fn python_cond(cond: &Cond) -> String {
             python_expr(left),
             python_expr(middle),
             python_expr(right)
+        ),
+        Cond::TextTruth(text, negated) => format!(
+            "({}bool({}))",
+            if *negated { "not " } else { "" },
+            str_text(text, Language::Python)
         ),
     }
 }
@@ -1846,6 +2091,27 @@ fn print_block(out: &mut String, body: &[Stmt], indent: usize, language: Languag
                 print_block(out, body, indent + 1, language);
             }
             Stmt::Return(value) => writeln!(out, "{pad}return {}", expr(value)).unwrap(),
+            Stmt::SetField(name, field, key, value) => writeln!(
+                out,
+                "{pad}{} = {}",
+                field_text(name, field, *key, language),
+                str_text(value, language)
+            )
+            .unwrap(),
+            Stmt::JoinTo(place, value) => writeln!(
+                out,
+                "{pad}{} += {}",
+                place_text(place, language),
+                str_text(value, language)
+            )
+            .unwrap(),
+            Stmt::RepeatAt(place, count) => writeln!(
+                out,
+                "{pad}{} *= {}",
+                place_text(place, language),
+                expr(count)
+            )
+            .unwrap(),
         }
     }
 }
@@ -1974,19 +2240,45 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
                 expr(right, bound, visit);
             }
             Expr::Lit(_) | Expr::Var(_) | Expr::Len(_) | Expr::Sum(_) | Expr::ListExtreme(..) => {}
+            Expr::StrLen(text) => string(text, visit),
         }
     }
     fn val(v: &mut Val, visit: &mut dyn FnMut(&mut Expr, bool)) {
         match v {
             Val::Int(e) => expr(e, false, visit),
             Val::Str(s) => string(s, visit),
+            Val::Rec(first, second) => {
+                string(first, visit);
+                string(second, visit);
+            }
             Val::List(l) => list_items(l, visit),
             Val::Strs(Strs::Lit(items)) => items.iter_mut().for_each(|item| string(item, visit)),
             Val::Strs(Strs::Var(_)) => {}
         }
     }
     fn string(s: &mut Str, visit: &mut dyn FnMut(&mut Expr, bool)) {
-        if let Str::Char(_, index) | Str::Item(_, index) = s {
+        match s {
+            Str::Char(_, index) | Str::Item(_, index) | Str::FieldChar(_, _, _, index) => {
+                expr(index, false, visit)
+            }
+            Str::ItemChar(_, index, at) => {
+                expr(index, false, visit);
+                expr(at, false, visit);
+            }
+            Str::Join(left, right) => {
+                string(left, visit);
+                string(right, visit);
+            }
+            // A large count makes long text.
+            Str::Repeat(text, count) => {
+                string(text, visit);
+                expr(count, true, visit);
+            }
+            Str::Lit(_) | Str::Var(_) | Str::Field(..) => {}
+        }
+    }
+    fn place(p: &mut Place, visit: &mut dyn FnMut(&mut Expr, bool)) {
+        if let Place::Item(_, index) = p {
             expr(index, false, visit);
         }
     }
@@ -2016,6 +2308,7 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
                 expr(left, false, visit);
                 expr(right, false, visit);
             }
+            Cond::TextTruth(text, _) => string(text, visit),
         }
     }
     fn block(body: &mut [Stmt], visit: &mut dyn FnMut(&mut Expr, bool)) {
@@ -2061,6 +2354,15 @@ fn for_each_expr(program: &mut Program, visit: &mut dyn FnMut(&mut Expr, bool)) 
                     block(body, visit);
                 }
                 Stmt::Raw(..) | Stmt::Say(_) | Stmt::Swap(..) => {}
+                Stmt::SetField(_, _, _, value) => string(value, visit),
+                Stmt::JoinTo(target, value) => {
+                    place(target, visit);
+                    string(value, visit);
+                }
+                Stmt::RepeatAt(target, count) => {
+                    place(target, visit);
+                    expr(count, true, visit);
+                }
             }
         }
     }
@@ -2084,7 +2386,12 @@ fn for_each_cond(program: &mut Program, visit: &mut dyn FnMut(&mut Cond)) {
                 cond(left, visit);
                 cond(right, visit);
             }
-            Cond::Cmp(..) | Cond::Truthy(_) | Cond::In(..) | Cond::Text(..) | Cond::Chain(..) => {}
+            Cond::Cmp(..)
+            | Cond::Truthy(_)
+            | Cond::In(..)
+            | Cond::Text(..)
+            | Cond::Chain(..)
+            | Cond::TextTruth(..) => {}
         }
     }
     for_each_block(program, &mut |body| {
@@ -2152,16 +2459,39 @@ fn names_resolve(program: &Program) -> bool {
                 reads.push(name.clone());
                 expr_reads(value, reads);
             }
+            Expr::StrLen(text) => str_reads(text, reads),
         }
     }
     fn str_reads(value: &Str, reads: &mut Vec<String>) {
         match value {
-            Str::Var(name) => reads.push(name.clone()),
-            Str::Char(name, index) | Str::Item(name, index) => {
+            Str::Var(name) | Str::Field(name, ..) => reads.push(name.clone()),
+            Str::Char(name, index) | Str::Item(name, index) | Str::FieldChar(name, _, _, index) => {
                 reads.push(name.clone());
                 expr_reads(index, reads);
             }
+            Str::ItemChar(name, index, at) => {
+                reads.push(name.clone());
+                expr_reads(index, reads);
+                expr_reads(at, reads);
+            }
+            Str::Join(left, right) => {
+                str_reads(left, reads);
+                str_reads(right, reads);
+            }
+            Str::Repeat(text, count) => {
+                str_reads(text, reads);
+                expr_reads(count, reads);
+            }
             Str::Lit(_) => {}
+        }
+    }
+    fn place_reads(place: &Place, reads: &mut Vec<String>) {
+        match place {
+            Place::Var(name) | Place::Field(name, ..) => reads.push(name.clone()),
+            Place::Item(name, index) => {
+                reads.push(name.clone());
+                expr_reads(index, reads);
+            }
         }
     }
     fn val_reads(value: &Val, reads: &mut Vec<String>) {
@@ -2171,6 +2501,10 @@ fn names_resolve(program: &Program) -> bool {
             Val::List(List::Lit(items)) => items.iter().for_each(|item| expr_reads(item, reads)),
             Val::Strs(Strs::Lit(items)) => items.iter().for_each(|item| str_reads(item, reads)),
             Val::List(List::Var(name)) | Val::Strs(Strs::Var(name)) => reads.push(name.clone()),
+            Val::Rec(first, second) => {
+                str_reads(first, reads);
+                str_reads(second, reads);
+            }
         }
     }
     fn cond_reads(cond: &Cond, reads: &mut Vec<String>) {
@@ -2198,6 +2532,7 @@ fn names_resolve(program: &Program) -> bool {
                 expr_reads(middle, reads);
                 expr_reads(right, reads);
             }
+            Cond::TextTruth(text, _) => str_reads(text, reads),
         }
     }
     fn walk(body: &[Stmt], reads: &mut Vec<String>, defined: &mut Vec<String>) {
@@ -2222,6 +2557,18 @@ fn names_resolve(program: &Program) -> bool {
                     str_reads(value, reads);
                 }
                 Stmt::Call(_, args) => args.iter().for_each(|arg| val_reads(arg, reads)),
+                Stmt::SetField(target, _, _, value) => {
+                    reads.push(target.clone());
+                    str_reads(value, reads);
+                }
+                Stmt::JoinTo(target, value) => {
+                    place_reads(target, reads);
+                    str_reads(value, reads);
+                }
+                Stmt::RepeatAt(target, count) => {
+                    place_reads(target, reads);
+                    expr_reads(count, reads);
+                }
                 Stmt::Raw(_, target, _) => reads.push(target.clone()),
                 Stmt::Say(names) => reads.extend(names.iter().cloned()),
                 Stmt::If(branches, else_branch) => {
@@ -2594,6 +2941,7 @@ enum Value {
     Int(i64),
     Str(String),
     List(Vec<Value>),
+    Map(BTreeMap<String, Value>),
     Missing,
 }
 
@@ -2606,6 +2954,12 @@ impl Value {
                 items
                     .iter()
                     .map(|item| Value::from_json(Some(item)))
+                    .collect(),
+            ),
+            Some(serde_json::Value::Object(fields)) => Value::Map(
+                fields
+                    .iter()
+                    .map(|(name, value)| (name.clone(), Value::from_json(Some(value))))
                     .collect(),
             ),
             _ => Value::Missing,

@@ -22,10 +22,13 @@ module variables, the return value of `main`, or the `say` output differ. The
 programs use arithmetic, comparisons, `and`, `or`, `not`, `if`/`elif`/`else`,
 `while` and `for` loops, functions with parameters, `global`, raw `scoreboard`
 commands, `say`, recursion, strings with `len` and indexes, and lists of
-numbers with `len`, indexes, item assignment, and `for` over a list. About
+numbers with `len`, indexes, item assignment, and `for` over a list, and
+text inside lists and maps: fields and items that hold text, characters of
+them, `len` and truth of text, joins, repeats, `+=` and `*=` on text in a
+variable, an item, or a field. About
 four programs in ten are split into a `main` file and one or two files it
-imports with `import module` or `from module import ...`. Maps, selectors,
-and execute blocks are not generated.
+imports with `import module` or `from module import ...`. Maps other than
+one map of text per file, selectors, and execute blocks are not generated.
 
 A list is a value in Cobble and an object in Python, so the programs never
 reach one list through two names: they don't copy list variables, pass module
