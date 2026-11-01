@@ -55,12 +55,16 @@ impl Transpiler {
             .clone()
             .or_else(|| self.function_def_source(func));
         if func.name.contains(|ch: char| ch.is_ascii_uppercase()) {
+            // The suggestion mustn't take the prefix Cobble reserves.
+            let mut suggestion = snake_case(&func.name);
+            if let Some(rest) = suggestion.strip_prefix("_cobble") {
+                suggestion = format!("my{rest}");
+            }
             return Err(TranspileError::new(
                 TranspileErrorKind::Semantic,
                 format!(
                     "Function name `{}` has capital letters, which Minecraft function paths can't use. Rename it, for example to `{}`.",
-                    func.name,
-                    snake_case(&func.name)
+                    func.name, suggestion
                 ),
             )
             .with_location_if_missing(def_source));

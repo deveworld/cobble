@@ -811,7 +811,8 @@ impl Transpiler {
         let source = match statement {
             Statement::Assignment(assign) => {
                 format!(
-                    "{}={}",
+                    "{}{}={}",
+                    if assign.persist { "persist" } else { "" },
                     assign.target,
                     Self::expression_source_key(&assign.value)
                 )

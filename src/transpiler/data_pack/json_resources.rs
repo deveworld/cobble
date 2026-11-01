@@ -1,5 +1,8 @@
 use super::{DataPack, SourceLocation};
 
+/// The longest file or folder name most file systems accept, in bytes.
+const MAX_FILE_NAME_BYTES: usize = 255;
+
 impl DataPack {
     pub fn add_json_resource(&mut self, relative_path: String, json: String) -> Result<(), String> {
         self.add_json_resource_in_namespace(self.namespace.clone(), relative_path, json)
@@ -36,6 +39,28 @@ impl DataPack {
         source: Option<SourceLocation>,
     ) -> Result<(), String> {
         let key = Self::json_resource_key(&namespace, &relative_path);
+
+        // A file system can't write a file or folder name past 255 bytes,
+        // and Minecraft couldn't load it either.
+        let segments: Vec<&str> = relative_path.split('/').collect();
+        let longest = segments
+            .iter()
+            .enumerate()
+            .map(|(index, segment)| {
+                // The last one gets the `.json` extension.
+                segment.len() + if index + 1 == segments.len() { 5 } else { 0 }
+            })
+            .max()
+            .unwrap_or(0);
+        if longest > MAX_FILE_NAME_BYTES {
+            let id = relative_path
+                .split_once('/')
+                .map_or(relative_path.as_str(), |(_, rest)| rest);
+            let limit = id.len().saturating_sub(longest - MAX_FILE_NAME_BYTES);
+            return Err(format!(
+                "Resource name `{namespace}:{id}` needs a file or folder name of {longest} bytes, longer than the 255-byte file name limit. Shorten the name to at most {limit} bytes."
+            ));
+        }
 
         // Tags (tags/function/, tags/block/, tags/item/, tags/entity_type/)
         // are Cobble-owned typed resources. Duplicate declarations for the
