@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cobble check --namespace` checks the pack's own namespace as `cobble build
+  --namespace` does.
+- `datapack.*` checks every field Minecraft 26.3 reads, nested anywhere:
+  required fields (`None` counts as missing), value kinds, number providers,
+  ids, and references. It also reports blank shaped patterns, advancement parent
+  cycles, plain ids in the pack's own namespace in block, item, and entity type
+  tags, and a second repair-item recipe. `--validate` checks what inline
+  predicates name.
 - Number literals can have an exponent, as in `1e3`, `1E-3`, and `2.5e+2`, in
   code and in `datapack.*` JSON.
 - `datapack.*` reports what stops a 26.3 server from loading a pack: missing
@@ -64,6 +72,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"required": False`.
 
 ### Changed
+- Module-level code that runs commands, such as a `for` over a list, `while`, a
+  call, `out.append(8)`, or a raw command, runs in the load function in source
+  order, imported files included. It was dropped before.
+- A parameter in `tellraw` or `title` text written without a component is macro
+  text in a `{"text":...}` wrapper again, also after `execute ... run`, so calls
+  with inline arguments show it. For text with `"` or `\`, write
+  `{"text":"{msg}"}`.
+- References into namespaces other than `minecraft` and the pack's own are not
+  checked, so packs that name another pack's tags and functions build again.
+- `elif` and `while` with a Minecraft condition are a compile error that shows
+  how to store the test in a variable first.
+- `unless` is an ordinary name outside execute headers, and a nested `if` inside
+  an `as` or `at` block is checked for each entity in turn.
+- A `const` counts as a module variable for the two-files error unless both
+  files give it the same value, and assigning a `const` name is a compile error.
+- These are compile errors, where Python raises: a list or a map as a key, an
+  item of a number, setting a character of text, setting a field of a list, an
+  undefined name as an index, and `-=`, `/=`, `%=`, or `+=` with a number on
+  text, a list, or a map.
+- `--validate` reports SNBT nested more than 512 levels deep.
 - A text key of a value Cobble knows is a list, as `rows[0]["k"]` after `rows =
   [[1, 2]]`, is a compile error, where Python raises TypeError.
 - A function of an imported file that reads a list, map, or string defined only
@@ -101,6 +129,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- An item added by `+=` or `+` can be read and written by key in any function,
+  whatever its type.
+- A parameter key on a list or map Cobble knows is checked when the pack runs,
+  so `in`, reads, writes, `+=`, and `pop` agree.
+- Slices, `+`, and `*` of parameters, unpacked values, and items join and repeat
+  lists and text, and an empty slice joins as an empty list.
+- A number never equals text, a list, or a map, even through a parameter, and a
+  comparison with a number a score can't hold is decided exactly.
+- Computed keys such as `b[k + "x"].append(3)` no longer crash the compiler, and
+  `pop()` or a call in the key of an augmented assignment runs once.
+- `len`, truth, and indexing of a single character of text work, and a character
+  past the end of text is empty text.
+- A read of a missing item, field, or runtime key no longer keeps the target's
+  old value, also for field and item targets, `append`, empty keys, and module
+  level.
+- Text in fields and items keeps its type through `*`, `*=`, copies, joins, and
+  values first set while the pack runs.
+- A runtime `for` over a list keeps walking the list it started with when the
+  body rebinds it, and no longer hangs the server; changes in place are still
+  seen.
+- A runtime loop variable with an earlier value is no longer refused, and the
+  loop body may assign it.
+- Functions can read a `const`, a selector alias, an entity template, or a name
+  assigned only under `global`, wherever it is declared; `{LATER}` and `{n}` no
+  longer print as text, and a placeholder Cobble can't fill is a compile error.
+- A `store` block stores the last call or command in it.
+- A fractional argument arrives as written from a `const`, a negative number, a
+  passed-on parameter, or `str(0.6)`, and warns at the call when used as a
+  number.
+- `temp` is no longer rewritten inside `custom_data`, storage values, or other
+  data that only looks like a scores map; it is rewritten after a placeholder
+  for `if` or `unless` and in `run_command` click events.
+- Stdlib helpers write a parameter as a macro argument in display names, number
+  slots, bossbar colors and styles, and `score.operation` operators.
+- Brace escapes are read once in selector aliases and loop values, `{{{x}}}` at
+  the start of a message works, and `{{k}:1}` is a compile error.
+- `if score <keyword> temp ...`, `#a temp = #b temp`, and `=` tests joined with
+  `and` compile, and placeholders inside words after `summon`, `align`, `on`,
+  and `anchored` work.
+- A parameter in a quoted selector value works, selector aliases work in score
+  components, and internal markers no longer reach the output.
+- Out-of-range numbers in list and map literals warn, and whole float literals
+  past 2^53 keep their digits in JSON.
+- Source map lines and error locations survive parentheses, trailing commas,
+  `**`, `//`, `persist`, and header and alias errors, and errors no longer show
+  internal or Rust names.
+- An over-long resource name is a compile error that names it.
+- Tag merging, recursion detection, and long lines of words take linear time,
+  and parse errors show invisible characters such as U+FEFF as code points.
 - A Minecraft condition joined by `and` or `or` to a function call, as `if
   entity @a and f():`, tests the Minecraft condition, and the call runs only
   when needed. Before, the call always ran and decided the result alone.
