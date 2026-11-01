@@ -314,7 +314,12 @@ struct Module {
     name: &'static str,
     imports: Vec<Import>,
     vars: Vec<(String, Val)>,
+    /// Module-level code after the variables, such as a loop over the
+    /// module's list, which runs when the module loads.
+    code: Vec<Stmt>,
     functions: Vec<Function>,
+    /// `const` declarations after the functions, which the functions read.
+    consts: Vec<(String, i32)>,
 }
 
 /// The modules in the order Python runs them: each after the modules it
@@ -346,6 +351,9 @@ struct Scope {
     globals: Vec<String>,
     /// The variables of the function's module.
     module_vars: Vec<(String, Ty)>,
+    /// The module's constants, declared below the functions: readable
+    /// numbers, never assigned.
+    consts: Vec<String>,
     /// Names the body may assign as locals, including module variable names
     /// it shadows.
     local_pool: Vec<(String, Ty)>,
@@ -392,6 +400,9 @@ impl Scope {
                 names.push(var.clone());
             }
         }
+        if ty == Ty::Int {
+            names.extend(self.consts.iter().cloned());
+        }
         names.sort();
         names.dedup();
         names
@@ -437,7 +448,16 @@ impl Scope {
                 .filter(|(_, t)| *t == ty)
                 .map(|(name, _)| name.clone()),
         );
-        names.retain(|name| !self.iterated.contains(name));
+        // A loop variable isn't assigned by its loop's body. A body may
+        // rebind a list of its own that a loop walks: Python keeps walking
+        // the old list. A module list is never assigned.
+        names.retain(|name| {
+            !self
+                .loop_names
+                .iter()
+                .any(|(loop_name, _)| loop_name == name)
+                && (!self.iterated.contains(name) || matches!(ty, Ty::List(_) | Ty::Strs(_)))
+        });
         names
     }
 
@@ -499,6 +519,8 @@ struct Generator {
     rng: Rng,
     counter: usize,
     functions: usize,
+    /// The constants of the module being generated.
+    consts: Vec<String>,
 }
 
 impl Generator {
@@ -1049,12 +1071,34 @@ impl Generator {
             Val::List(List::Var(name)) | Val::Strs(Strs::Var(name)) => Some(name.clone()),
             _ => None,
         };
+        // Sometimes the loop variable is a local, which may hold an earlier
+        // value; the list is never empty, so after the loop it holds the
+        // last item.
+        let earlier: Vec<String> = scope
+            .local_pool
+            .iter()
+            .filter(|(name, t)| {
+                *t == ty
+                    && !scope.loop_names.iter().any(|(l, _)| l == name)
+                    && !scope.iterated.contains(name)
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        let local_target = !earlier.is_empty() && self.rng.chance(30);
+        let target = if local_target {
+            self.rng.pick(&earlier)
+        } else {
+            target
+        };
         if let Some(name) = &iterated {
             scope.iterated.push(name.clone());
         }
         let body = self.loop_body(scope, depth, &target, ty);
         if iterated.is_some() {
             scope.iterated.pop();
+        }
+        if local_target {
+            scope.assigned.insert(target.clone());
         }
         Stmt::ForEach { target, list, body }
     }
@@ -1106,6 +1150,7 @@ impl Generator {
             params,
             globals: globals.clone(),
             module_vars,
+            consts: self.consts.clone(),
             local_pool,
             assigned: BTreeSet::new(),
             loop_names: Vec::new(),
@@ -1241,6 +1286,43 @@ impl Generator {
             .collect();
         vars.push((spec.strs.to_string(), Val::Strs(Strs::Lit(strings))));
 
+        // Module-level code that runs at load: a loop over the module's
+        // list, or a `while`, changing a number of the module.
+        let mut code = Vec::new();
+        if self.rng.chance(25) {
+            let target = self.rng.pick(spec.ints).to_string();
+            let op = self.rng.pick(&[Op::Add, Op::Sub, Op::Mul]);
+            if self.rng.chance(60) {
+                let item = self.fresh("v");
+                let value = if self.rng.chance(70) {
+                    Expr::Var(item.clone())
+                } else {
+                    bin(Op::Add, Expr::Var(item.clone()), Expr::Lit(self.literal()))
+                };
+                code.push(Stmt::ForEach {
+                    target: item,
+                    list: Val::List(List::Var(spec.list.to_string())),
+                    body: vec![Stmt::Compound(target, op, value)],
+                });
+            } else {
+                code.push(Stmt::While {
+                    counter: self.fresh("w"),
+                    limit: Expr::Lit(self.rng.range(0, 3)),
+                    extra: None,
+                    body: vec![Stmt::Compound(target, op, Expr::Lit(self.literal()))],
+                });
+            }
+        }
+        // Constants declared below the functions that read them.
+        self.consts.clear();
+        let mut consts = Vec::new();
+        if self.rng.chance(35) {
+            self.counter += 1;
+            let name = format!("K{}", self.counter);
+            consts.push((name.clone(), self.literal()));
+            self.consts.push(name);
+        }
+
         let mut functions = Vec::new();
         let mut own: Vec<Callee> = Vec::new();
         let entry = spec.name == MAIN.name;
@@ -1309,7 +1391,9 @@ impl Generator {
                 name: spec.name,
                 imports,
                 vars,
+                code,
                 functions,
+                consts,
             },
             own,
         )
@@ -1779,6 +1863,7 @@ fn print_module(module: &Module, language: Language) -> String {
     for (name, value) in &module.vars {
         writeln!(out, "{name} = {}", val_text(value, language)).unwrap();
     }
+    print_block(&mut out, &module.code, 0, language);
     for function in &module.functions {
         writeln!(
             out,
@@ -1791,6 +1876,12 @@ fn print_module(module: &Module, language: Language) -> String {
             writeln!(out, "    global {}", function.globals.join(", ")).unwrap();
         }
         print_block(&mut out, &function.body, 1, language);
+    }
+    for (name, value) in &module.consts {
+        match language {
+            Language::Cobble => writeln!(out, "\nconst {name} = {value}").unwrap(),
+            Language::Python => writeln!(out, "\n{name} = {value}").unwrap(),
+        }
     }
     out
 }
@@ -2178,7 +2269,12 @@ fn names_resolve(program: &Program) -> bool {
         }
     }
     program.modules.iter().all(|module| {
-        let module_vars: Vec<&String> = module.vars.iter().map(|(name, _)| name).collect();
+        let module_vars: Vec<&String> = module
+            .vars
+            .iter()
+            .map(|(name, _)| name)
+            .chain(module.consts.iter().map(|(name, _)| name))
+            .collect();
         module.functions.iter().all(|function| {
             let mut reads = Vec::new();
             let mut defined = function.params.clone();
@@ -2710,6 +2806,7 @@ fn random_programs_match_python() {
                 rng: Rng(seed),
                 counter: 0,
                 functions: 0,
+                consts: Vec::new(),
             };
             (seed, generator.program())
         })

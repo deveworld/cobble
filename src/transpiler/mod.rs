@@ -391,11 +391,7 @@ impl Transpiler {
 
         // PASS 2: Process all statements (function bodies, etc.)
         for statement in &program.statements {
-            if self.is_module_code(statement) {
-                self.process_module_code(statement)?;
-            } else {
-                self.process_statement(statement)?;
-            }
+            self.process_top_level_statement(statement)?;
         }
         self.release_later_variables(program);
 
@@ -476,6 +472,16 @@ impl Transpiler {
                     self.signalled_list_roots.insert(name.clone());
                 }
             }
+        }
+    }
+
+    /// Lowers one statement of a file's module level: a declaration, or
+    /// code that runs in `_cobble_init`.
+    fn process_top_level_statement(&mut self, statement: &Statement) -> Result<(), TranspileError> {
+        if self.is_module_code(statement) {
+            self.process_module_code(statement)
+        } else {
+            self.process_statement(statement)
         }
     }
 

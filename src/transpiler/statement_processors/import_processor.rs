@@ -227,7 +227,7 @@ impl Transpiler {
             self.register_qualified_function_aliases(&import.module, &program);
         }
         for statement in &program.statements {
-            self.process_statement(statement)?;
+            self.process_top_level_statement(statement)?;
         }
         self.release_later_variables(&program);
 
