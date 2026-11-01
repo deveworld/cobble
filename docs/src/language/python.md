@@ -74,16 +74,18 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   parameter, the pack checks when it runs: text and lists join and numbers
   add. `*` repeats text and lists the same way, as in `p * 2` for a
   parameter `p`. Two parameters add and multiply as numbers, so write
-  `str(a) + b` to join them.
+  `str(a) + b` to join them, unless the sum is joined with text or assigned
+  to a variable, a field, or an item that holds text, where they join.
 - A number is never equal to text, a list, or a map, as in Python, even when
   the other side is a parameter: `1 == m` is false for `m = [1]`.
 - An item added by `+=`, `+`, or `append` can have another type than the
   items the list started with, as `rows += [{"k": 3}]` after
   `rows = [[1, 2]]`; a read of it, in any function, checks its type when the
   pack runs.
-- Where Cobble can't tell what a value holds, `x *= n` checks it when the
-  pack runs, even for a parameter: text and a list repeat, and a number
-  multiplies. `r = x * n` repeats when `r` holds text or a list.
+- Where Cobble can't tell what a value holds, `x += y`, `x *= n`, and
+  `len(x * n)` check it when the pack runs, even for parameters: text and a
+  list join or repeat, and a number adds or multiplies. `r = x * n` repeats
+  when `r` holds text or a list.
 - `-=`, `/=`, or `+=` with a number on a field or an item that holds text, a
   list, or a map is a compile error, where Python raises `TypeError`.
 - Text joined, repeated, or passed to `str()` while the pack runs keeps every

@@ -497,3 +497,117 @@ def go():
     assert_eq!(var(&sim, "m"), json!({"n": 12, "s": "abc"}));
     assert_eq!(var(&sim, "l"), json!([3]));
 }
+
+// The cases below were found by the differential test's text shapes.
+
+#[test]
+fn text_copied_between_items_and_fields_stays_text() {
+    let sim = run(r#"
+gs = "a"
+gn = ["q r", "ab"]
+gr = {"s": "Mc", "t": "ab"}
+s = ""
+n = 0
+
+def other():
+    gr.s = gr.t
+    gr.t = gr.t
+
+def go():
+    global s, n
+    gn[0] = gs[0]
+    for v in [gn[0]]:
+        gn[0] += v[0]
+    gn[1] = gn[1][0] * 0
+    s = gn[0][0] + gr.s[0]
+    n = len(gr.t[0] * 0)
+"#);
+    assert_eq!(var(&sim, "gn"), json!(["aa", ""]));
+    assert_eq!(var(&sim, "s"), json!("aM"));
+    assert_eq!(sim.var("n"), 0);
+}
+
+#[test]
+fn values_of_unknown_type_join_add_and_repeat_by_what_they_hold() {
+    let sim = run(r#"
+o = {"t": 0, "l": 0, "j": 0}
+gn = ["Mc", "q r"]
+r = 0
+n = 0
+
+def total(a, b):
+    a += b
+    return a
+
+def text(a, b):
+    a += b
+    o.t = a
+
+def items(a, b):
+    a += b
+    o.l = a
+
+def keep(ps):
+    gn[0] = ps
+    gn[0] += gn[0][0]
+    o.j = "Mc" + (ps[0] + ps[0])
+
+def size(ps):
+    global n
+    n = len(ps * 2) + len(ps[0] * 0)
+
+def go():
+    global r
+    r = total(3, 4)
+    text("ab", "c")
+    items([1], [2])
+    keep("q r")
+    size("ab")
+"#);
+    assert_eq!(sim.var("r"), 7);
+    assert_eq!(
+        var(&sim, "o"),
+        json!({"t": "abc", "l": [1, 2], "j": "Mcqq"})
+    );
+    assert_eq!(var(&sim, "gn"), json!(["q rq", "q r"]));
+    assert_eq!(sim.var("n"), 4);
+}
+
+#[test]
+fn a_key_that_calls_a_function_runs_once_in_augmented_assignment() {
+    let sim = run(r#"
+calls = 0
+gn = ["Mc", "hello"]
+q = ["b", "a"]
+d = {"a": 1, "b": 2}
+
+def pick():
+    global calls
+    calls += 1
+    return 0
+
+def go():
+    gn[pick()] += "Mc"
+    d[q.pop(0)] += 5
+"#);
+    assert_eq!(sim.var("calls"), 1);
+    assert_eq!(var(&sim, "gn"), json!(["McMc", "hello"]));
+    assert_eq!(var(&sim, "d"), json!({"a": 1, "b": 7}));
+    assert_eq!(var(&sim, "q"), json!(["a"]));
+}
+
+#[test]
+fn literal_text_has_a_truth() {
+    let sim = run(r#"
+a = 0
+b = 0
+
+def go():
+    global a, b
+    if "hello":
+        a = 1
+    if not "":
+        b = 1
+"#);
+    assert_eq!([sim.var("a"), sim.var("b")], [1, 1]);
+}

@@ -131,9 +131,20 @@ pub(in crate::transpiler) trait StoragePathOps {
             &symbols.container_writes,
             name,
             &steps,
-            literal,
-            lacks,
+            container_writes::Literal {
+                value_type: literal,
+                lacks,
+                root: symbols.variables.get(name),
+            },
             &variable,
+            // A few copies deep only: each one reads every write again.
+            &|value| {
+                if depth >= 4 {
+                    self.storage_read_type_within(value, depth - 4)
+                } else {
+                    CobbleType::Unknown
+                }
+            },
         )
     }
 

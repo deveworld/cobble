@@ -228,6 +228,8 @@ fn record_added_items(writes: &mut ContainerWrites, target: &Expression, added: 
 /// operation on `target` itself, as `x += 1`, `s *= 2`, or `s = 2 * s`.
 fn keeps_type(value: &Expression, target: &Expression) -> bool {
     match value {
+        // `x = x` changes nothing.
+        value if value == target => true,
         Expression::Binary(left, op, right) => {
             **left == *target || (matches!(op, BinaryOp::Add | BinaryOp::Mul) && **right == *target)
         }
@@ -446,17 +448,72 @@ pub(in crate::transpiler) fn literal_type(
 /// `literal`: `literal` when every write that can reach the read gives that
 /// type, and `Unknown` otherwise. A write deeper inside the value read
 /// leaves its type as it was.
+/// What the literal of a variable says about a read of it.
+pub(in crate::transpiler) struct Literal<'a> {
+    /// The type the literal has where the read is.
+    pub(in crate::transpiler) value_type: CobbleType,
+    /// Whether the literal has nothing there, as an item of `[]`.
+    pub(in crate::transpiler) lacks: bool,
+    /// The literal itself.
+    pub(in crate::transpiler) root: Option<&'a Expression>,
+}
+
 pub(in crate::transpiler) fn read_type(
     writes: &ContainerWrites,
     name: &str,
     steps: &[Step<'_>],
-    literal: CobbleType,
-    lacks: bool,
+    literal: Literal<'_>,
     variable: &dyn Fn(&str, &[Step<'_>], &CobbleType) -> CobbleType,
+    read: &dyn Fn(&Expression) -> CobbleType,
 ) -> CobbleType {
+    let Literal {
+        value_type: literal,
+        lacks,
+        root,
+    } = literal;
     let Some(written) = writes.get(name) else {
         return literal;
     };
+    // The type `value` reads as, where it is written at `path`. A read of
+    // the place written, or of a place inside it, has the type of its
+    // literal, as text does in `s = s[0] * 2`: any other type would come
+    // from another write, which the read sees too.
+    let typed = |value: &Expression, path: &[Option<String>]| -> CobbleType {
+        let Some((source, source_steps)) = access_path(value) else {
+            return CobbleType::Unknown;
+        };
+        let into_place = source == name
+            && source_steps.len() >= path.len()
+            && source_steps.iter().zip(path).all(|(step, field)| {
+                field.is_none() || step.field().is_none() || step.field() == *field
+            });
+        if into_place {
+            root.map_or(CobbleType::Unknown, |root| {
+                literal_type(root, &source_steps, &written_type)
+            })
+        } else {
+            read(value)
+        }
+    };
+    // The type of an operand of `+` or `*`; a variable is taken for a
+    // number, as written_type does.
+    fn joined(
+        value: &Expression,
+        path: &[Option<String>],
+        typed: &dyn Fn(&Expression, &[Option<String>]) -> CobbleType,
+    ) -> CobbleType {
+        match value {
+            Expression::Binary(left, BinaryOp::Add | BinaryOp::Mul, right) => {
+                match (joined(left, path, typed), joined(right, path, typed)) {
+                    (CobbleType::String, _) | (_, CobbleType::String) => CobbleType::String,
+                    (CobbleType::List, _) | (_, CobbleType::List) => CobbleType::List,
+                    _ => CobbleType::Integer,
+                }
+            }
+            Expression::Subscript(..) | Expression::Attribute(..) => typed(value, path),
+            value => written_type(value),
+        }
+    }
     let fields: Vec<Option<String>> = steps.iter().map(|step| step.field()).collect();
     let mut types = written.iter().filter_map(|write| {
         if write.path.len() > fields.len() {
@@ -498,6 +555,20 @@ pub(in crate::transpiler) fn read_type(
                     _ => CobbleType::Unknown,
                 }
             }
+            // An item or a field copied there has the type it reads as.
+            Some(value @ (Expression::Subscript(..) | Expression::Attribute(..))) => {
+                typed(&extend(value, rest), &write.path)
+            }
+            // Text joined or repeated with an item or a field.
+            Some(value @ Expression::Binary(_, BinaryOp::Add | BinaryOp::Mul, _)) => {
+                match joined(value, &write.path, &typed) {
+                    whole if rest.is_empty() => whole,
+                    CobbleType::String if rest.iter().all(|step| matches!(step, Step::Item(_))) => {
+                        CobbleType::String
+                    }
+                    _ => CobbleType::Unknown,
+                }
+            }
             Some(value) => literal_type(value, rest, &written_type),
             None => CobbleType::Unknown,
         })
@@ -519,6 +590,14 @@ pub(in crate::transpiler) fn read_type(
     } else {
         literal
     }
+}
+
+/// `value` with `steps` read from it, as `cfg.x[1]` for `cfg.x` and `[1]`.
+fn extend(value: &Expression, steps: &[Step<'_>]) -> Expression {
+    steps.iter().fold(value.clone(), |base, step| match step {
+        Step::Field(field) => Expression::Attribute(Box::new(base), field.to_string()),
+        Step::Item(index) => Expression::Subscript(Box::new(base), Box::new((*index).clone())),
+    })
 }
 
 /// A fractional number the literal `value` can hold at `steps`, as 0.6 for

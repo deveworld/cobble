@@ -216,6 +216,26 @@ impl Transpiler {
                 out.push(self::assign(&holder, assign.value.clone()));
                 out.push(self::assign(&assign.target, Expression::Identifier(holder)));
             }
+            // `items[f()] += 1` calls `f` once: the key is held first.
+            Statement::Assignment(assign) if self.augmented_call_key(assign) => {
+                let Expression::Binary(_, op, right) = &assign.value else {
+                    unreachable!("checked by augmented_call_key");
+                };
+                let target = assign.target_expr.as_ref().expect("checked");
+                let target = self.hold_call_keys(target, &mut out);
+                out.push(Statement::Assignment(Assignment {
+                    target_expr: Some(target.clone()),
+                    value: Expression::Binary(Box::new(target), op.clone(), right.clone()),
+                    ..assign.clone()
+                }));
+            }
+            Statement::Assignment(assign) if self.text_target_join(assign).is_some() => {
+                let value = self.text_target_join(assign).expect("checked");
+                out.push(Statement::Assignment(Assignment {
+                    value,
+                    ..assign.clone()
+                }));
+            }
             Statement::Assignment(assign) if self.unknown_repeat(assign).is_some() => {
                 self.desugar_unknown_repeat(assign, &mut out)?
             }
@@ -321,6 +341,7 @@ impl Transpiler {
             }
             Expression::Call(func, args) => {
                 self.is_python_call(func)
+                    || self.len_of_unknown_value(func, args)
                     || args.iter().any(|arg| self.is_passed_condition(arg))
                     || (args.len() == 1
                         && matches!(&**func, Expression::Identifier(name)
@@ -387,18 +408,25 @@ impl Transpiler {
     /// Whether `left + right` joins text or lists. With a number on one side
     /// it stays arithmetic, which reports text and reads a list's size.
     fn joins(&self, left: &Expression, right: &Expression) -> bool {
-        let is_number = |value_type: &CobbleType| {
-            matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
-        };
-        let (left_type, right_type) = (self.value_type(left), self.value_type(right));
         // A slice is a list or text, even of a parameter.
         let is_slice = |expr: &Expression| matches!(expr, Expression::Slice(..));
         (self.is_container_or_text(left)
             || self.is_container_or_text(right)
             || is_slice(left)
             || is_slice(right))
-            && !is_number(&left_type)
-            && !is_number(&right_type)
+            && !self.is_known_number(left)
+            && !self.is_known_number(right)
+    }
+
+    /// Whether `expr` is a number. A sum is one when a side is; `a + b` of
+    /// two values Cobble can't tell may join text.
+    fn is_known_number(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Binary(left, BinaryOp::Add, right) => {
+                self.is_known_number(left) || self.is_known_number(right)
+            }
+            expr => is_number_type(&self.value_type(expr)),
+        }
     }
 
     /// Whether `left * right` repeats text or a list.
@@ -673,6 +701,102 @@ impl Transpiler {
         Ok(())
     }
 
+    /// `left + right` as a join of text when neither side is known to be a
+    /// number: `"" + left + right`, at every level. Text joined with it, or
+    /// a target that holds text, can only take text, which `+` of two
+    /// values Cobble can't tell would otherwise add as numbers.
+    fn as_text_join(&self, expr: &Expression) -> Expression {
+        match expr {
+            Expression::Binary(left, BinaryOp::Add, right)
+                if !is_number_type(&self.value_type(left))
+                    && !is_number_type(&self.value_type(right))
+                    && self.value_type(expr) != CobbleType::List =>
+            {
+                let (left, right) = (self.as_text_join(left), self.as_text_join(right));
+                if self.value_type(expr) == CobbleType::String {
+                    return compare(left, BinaryOp::Add, right);
+                }
+                let empty = Expression::String(String::new());
+                compare(compare(empty, BinaryOp::Add, left), BinaryOp::Add, right)
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// The value of `target = left + right` joined as text, when the target
+    /// holds text and Cobble can't tell what the sides hold.
+    fn text_target_join(&self, assign: &Assignment) -> Option<Expression> {
+        if !matches!(&assign.value, Expression::Binary(_, BinaryOp::Add, _)) {
+            return None;
+        }
+        let target_type = match assign
+            .target_expr
+            .as_ref()
+            .filter(|_| !assign.assigns_name())
+        {
+            Some(target) => self.value_type(target),
+            None if self.current_context.is_param(&assign.target) => CobbleType::Unknown,
+            None => self
+                .symbols
+                .variable_types
+                .get(&assign.target)
+                .cloned()
+                .unwrap_or(CobbleType::Unknown),
+        };
+        if target_type != CobbleType::String {
+            return None;
+        }
+        let joined = self.as_text_join(&assign.value);
+        (joined != assign.value).then_some(joined)
+    }
+
+    /// Whether `assign` is `target op= value` where a key of `target` calls
+    /// a function, which reading and writing the target would call twice.
+    fn augmented_call_key(&self, assign: &Assignment) -> bool {
+        let Some(target) = assign
+            .target_expr
+            .as_ref()
+            .filter(|_| !assign.assigns_name())
+        else {
+            return false;
+        };
+        if !matches!(&assign.value, Expression::Binary(left, _, _) if **left == *target) {
+            return false;
+        }
+        fn has_call_key(expr: &Expression) -> bool {
+            match expr {
+                Expression::Subscript(base, index) => {
+                    ExpressionEvaluator::calls_user_code(index) || has_call_key(base)
+                }
+                Expression::Attribute(base, _) => has_call_key(base),
+                _ => false,
+            }
+        }
+        has_call_key(target)
+    }
+
+    /// `target` with each key that calls a function held in a hidden local,
+    /// in the order Python runs them.
+    fn hold_call_keys(&mut self, target: &Expression, out: &mut Vec<Statement>) -> Expression {
+        match target {
+            Expression::Subscript(base, index) => {
+                let base = self.hold_call_keys(base, out);
+                let index = if ExpressionEvaluator::calls_user_code(index) {
+                    let holder = self.hidden_local(self.value_type(index));
+                    out.push(assign(&holder, (**index).clone()));
+                    Expression::Identifier(holder)
+                } else {
+                    (**index).clone()
+                };
+                Expression::Subscript(Box::new(base), Box::new(index))
+            }
+            Expression::Attribute(base, name) => {
+                Expression::Attribute(Box::new(self.hold_call_keys(base, out)), name.clone())
+            }
+            other => other.clone(),
+        }
+    }
+
     /// How `target = value * count` repeats or multiplies when Cobble can't
     /// tell what `value` holds, as for a parameter or a field written with
     /// values of several types, and `count` is a number: the helper and the
@@ -680,6 +804,9 @@ impl Transpiler {
     /// it can't hold a number; `x *= n` on such a value checks it when the
     /// pack runs. `None` when the types decide it without this.
     fn unknown_repeat(&self, assign: &Assignment) -> Option<(&'static str, CobbleType)> {
+        if let Expression::Binary(left, BinaryOp::Add, right) = &assign.value {
+            return self.unknown_add(assign, left, right);
+        }
         let Expression::Binary(left, BinaryOp::Mul, right) = &assign.value else {
             return None;
         };
@@ -728,6 +855,67 @@ impl Transpiler {
         }
     }
 
+    /// `x += y` where Cobble can't tell what `x` or `y` holds, as for two
+    /// parameters: the pack checks `x` when it runs, so a list or text
+    /// joins and a number adds.
+    fn unknown_add(
+        &self,
+        assign: &Assignment,
+        left: &Expression,
+        right: &Expression,
+    ) -> Option<(&'static str, CobbleType)> {
+        let target = assign
+            .target_expr
+            .clone()
+            .unwrap_or_else(|| Expression::Identifier(assign.target.clone()));
+        if *left != target
+            || self.value_type(left) != CobbleType::Unknown
+            || self.value_type(right) != CobbleType::Unknown
+            || self.is_known_number(right)
+        {
+            return None;
+        }
+        let stored = match left {
+            Expression::Identifier(name) => {
+                self.current_context.is_param(name)
+                    || self.symbols.variable_storage_paths.contains_key(name)
+            }
+            Expression::Subscript(..) | Expression::Attribute(..) => true,
+            _ => false,
+        };
+        stored.then_some(("_cobble_add", CobbleType::Unknown))
+    }
+
+    /// Whether `func(args)` is `len(x * n)` or `len(x + y)` of values Cobble
+    /// can't tell, read from storage, which can only be text or a list.
+    fn len_of_unknown_value(&self, func: &Expression, args: &[Expression]) -> bool {
+        if !matches!(func, Expression::Identifier(name) if name == "len" && !self.functions.params.contains_key(name))
+        {
+            return false;
+        }
+        let [Expression::Binary(left, op, right)] = args else {
+            return false;
+        };
+        let stored = |expr: &Expression| match expr {
+            Expression::Identifier(name) => {
+                self.current_context.is_param(name)
+                    || self.symbols.variable_storage_paths.contains_key(name)
+            }
+            Expression::Subscript(..) | Expression::Attribute(..) => true,
+            _ => false,
+        };
+        let unknown =
+            |expr: &Expression| self.value_type(expr) == CobbleType::Unknown && stored(expr);
+        match op {
+            BinaryOp::Mul => {
+                (unknown(left) && is_number_type(&self.value_type(right)))
+                    || (unknown(right) && is_number_type(&self.value_type(left)))
+            }
+            BinaryOp::Add => unknown(left) && unknown(right),
+            _ => false,
+        }
+    }
+
     /// Lowers an assignment [`Self::unknown_repeat`] accepts.
     fn desugar_unknown_repeat(
         &mut self,
@@ -740,7 +928,7 @@ impl Transpiler {
         let Expression::Binary(left, _, right) = &assign.value else {
             unreachable!("checked by unknown_repeat");
         };
-        let (value, count) = if is_number_type(&self.value_type(right)) {
+        let (value, count) = if helper == "_cobble_add" || is_number_type(&self.value_type(right)) {
             (left, right)
         } else {
             (right, left)
@@ -1513,6 +1701,12 @@ impl Transpiler {
         let types = [self.value_type(left), self.value_type(right)];
         let is_list = types.contains(&CobbleType::List);
         let is_text = types.contains(&CobbleType::String);
+        // A side joined with text is text too, as `a + b` in `"x" + (a + b)`.
+        let (left, right) = if is_text && !is_list {
+            (&self.as_text_join(left), &self.as_text_join(right))
+        } else {
+            (left, right)
+        };
         let (left, right) = two(self.lower_values(&[left.clone(), right.clone()], out)?);
         // Slices of a parameter: the running pack tells lists from text.
         if !is_list && !is_text {
@@ -1596,6 +1790,22 @@ impl Transpiler {
                     return Ok(value);
                 }
             }
+        }
+        // `len(x * 2)` of a value only the pack knows: the pack repeats it.
+        if self.len_of_unknown_value(func, args) {
+            let Expression::Binary(left, op, right) = &args[0] else {
+                unreachable!("checked by len_of_unknown_value");
+            };
+            let (helper, parts) = match op {
+                BinaryOp::Mul if is_number_type(&self.value_type(right)) => {
+                    ("_cobble_mul", [(**left).clone(), (**right).clone()])
+                }
+                BinaryOp::Mul => ("_cobble_mul", [(**right).clone(), (**left).clone()]),
+                _ => ("_cobble_add", [(**left).clone(), (**right).clone()]),
+            };
+            let parts = self.lower_values(&parts, out)?;
+            let held = self.helper_value(helper, parts, CobbleType::Unknown, out)?;
+            return Ok(Expression::Call(Box::new(func.clone()), vec![held]));
         }
         let lowered_args = self.lower_values(args, out)?;
         if let Expression::Identifier(name) = func {

@@ -279,6 +279,11 @@ impl Transpiler {
                 );
                 self.lower_condition_value_to_temp(&size)
             }
+            // Literal text is true when it isn't empty.
+            Expression::String(text) => {
+                self.data_pack.track_boolean_constants();
+                Ok(Expression::Boolean(!text.is_empty()))
+            }
             // A character of text is true when it isn't empty, and so is an
             // item that may be text; `len` reads a number as itself.
             Expression::Subscript(..) if self.picks_computed_value(condition) => {

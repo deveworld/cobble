@@ -3418,6 +3418,15 @@ fn infer_expression_type_for_diagnostics(
     if expression.is_empty() {
         return None;
     }
+    // `(a + b)` has the type of `a + b`.
+    if expression.starts_with('(')
+        && matching_close_paren(&mask_non_code(expression), 0) == Some(expression.len() - 1)
+    {
+        return infer_expression_type_for_diagnostics(
+            &expression[1..expression.len() - 1],
+            type_env,
+        );
+    }
 
     // A conditional expression can give either type.
     if contains_top_level_keyword(expression, "if") {
