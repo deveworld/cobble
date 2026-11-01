@@ -658,3 +658,26 @@ fn a_resource_name_past_the_file_name_limit_is_named() {
         assert!(error.contains("main.cbl:2"), "{call}: {error}");
     }
 }
+
+// --- Runtime loop variable in another branch (differential seed 5759) ---
+
+#[test]
+fn a_runtime_loop_in_an_else_branch_keeps_assignment_from_other_branch() {
+    // If one branch assigns c and another has a runtime loop `for c in gl:`,
+    // c after the if/else must retain the assigned value if that branch was taken.
+    let lines = said(
+        r#"gl = [0, -3, -8]
+def main():
+    c = 1
+    if 0 == 1:
+        c = 2
+    elif 1 == 1:
+        c = 25
+    else:
+        for c in gl:
+            pass
+    /say {c}
+"#,
+    );
+    assert_eq!(lines, ["25"]);
+}

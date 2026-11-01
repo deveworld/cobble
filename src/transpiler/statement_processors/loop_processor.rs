@@ -612,6 +612,13 @@ impl Transpiler {
             || before.value_type == loop_type
             || (number(&before.value_type) && number(&loop_type))
         {
+            if number(&before.value_type) && number(&loop_type) {
+                restore_optional(
+                    &mut self.symbols.variable_storage_paths,
+                    target,
+                    before.storage_path,
+                );
+            }
             return Ok(());
         }
         // A value whose type only the running pack knows on one side: the
@@ -1872,9 +1879,13 @@ impl Transpiler {
             .variable_objectives
             .insert(name.to_string(), "temp".to_string());
         self.symbols.scoreboard_variables.insert(name.to_string());
-        self.symbols
-            .variable_storage_paths
-            .insert(name.to_string(), self.variable_storage_path(name));
+        if matches!(element_type, CobbleType::Integer | CobbleType::Boolean) {
+            self.symbols.variable_storage_paths.remove(name);
+        } else {
+            self.symbols
+                .variable_storage_paths
+                .insert(name.to_string(), self.variable_storage_path(name));
+        }
         self.symbols.compile_time_constants.remove(name);
         self.symbols
             .variable_types
@@ -1895,12 +1906,16 @@ impl Transpiler {
             },
             _ => return CobbleType::Unknown,
         };
+        let is_number = |item: &Expression| match item {
+            Expression::Number(_) => true,
+            Expression::Unary(UnaryOp::Neg, inner) => {
+                matches!(**inner, Expression::Number(_))
+            }
+            _ => false,
+        };
         if items.is_empty() {
             CobbleType::Unknown
-        } else if items
-            .iter()
-            .all(|item| matches!(item, Expression::Number(_)))
-        {
+        } else if items.iter().all(is_number) {
             CobbleType::Integer
         } else if items
             .iter()
