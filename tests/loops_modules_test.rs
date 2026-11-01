@@ -302,6 +302,26 @@ fn assigning_a_const_name_is_refused() {
 // --- A name assigned only under `global` (bugs 35, 47) ---
 
 #[test]
+fn a_container_assigned_only_under_global_reads_in_either_order() {
+    let setup = "def setup():\n    global cfg, m, lst\n    cfg = [1, 2]\n    m = {\"a\": 5}\n    a = [4, 5, 6]\n    lst = a\n";
+    let reader = "def main():\n    setup()\n    x = cfg[0]\n    y = m[\"a\"]\n    cfg[0] = 9\n    z = cfg[0]\n    n = len(lst)\n    /say {x} {y} {z} {n}\n";
+    // Expected values come from Python 3.
+    for source in [format!("{setup}\n{reader}"), format!("{reader}\n{setup}")] {
+        assert_eq!(said(&source), vec!["1 5 9 3"], "{source}");
+    }
+}
+
+#[test]
+fn an_alias_or_a_template_declared_below_a_function_works_there() {
+    let sim_source = "def main():\n    /tag @Later add x\n    as @Later:\n        /say hi\n    create @Pig\n\n@Later = @a[limit=1]\ndefine @Pig = @e[type=pig]\ncreate {\"Silent\": True}\nend\n";
+    let (_temp, output) = compile(sim_source).unwrap_or_else(|error| panic!("{error}"));
+    let functions = common::mcsim::load_functions(&output);
+    let main = functions["main"].join("\n");
+    assert!(main.contains("tag @a[limit=1] add x"), "{main}");
+    assert!(main.contains("summon minecraft:pig"), "{main}");
+}
+
+#[test]
 fn a_name_assigned_only_under_global_has_its_value_in_either_order() {
     let setup = "def calc():\n    return 5\n\ndef setup(v):\n    global n, note, lst, word, joined, copy\n    n = calc()\n    note = v\n    lst = sorted([3, 1])\n    a = \"x\"\n    word = a + \"y\"\n    joined = [1] + [2]\n    s = \"hello\"\n    copy = s\n";
     let reader = "def main():\n    setup(\"hi\")\n    y = note\n    m = n + 1\n    k = lst[0]\n    w = word\n    j = len(joined)\n    c = copy\n    /say {n} {m} {y} {note} {k} {w} {j} {c}\n";
@@ -424,4 +444,217 @@ fn a_runtime_loop_body_may_assign_its_variable() {
         said("def main():\n    items = [1, 2]\n    for k, x in enumerate(items):\n        x = x * 10\n        /say {k} {x}\n"),
         vec!["0 10", "1 20"]
     );
+}
+
+/// Builds `source` as `main.cbl` with the `cobble` binary. Returns whether
+/// the build succeeded and what it printed to stderr.
+fn cli_build(source: &str) -> (bool, String) {
+    cli_build_with(source, &[])
+}
+
+fn cli_build_with(source: &str, args: &[&str]) -> (bool, String) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let input = temp_dir.path().join("main.cbl");
+    std::fs::write(&input, source).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_cobble"))
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(temp_dir.path().join("output"))
+        .args(args)
+        .output()
+        .unwrap();
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+// --- SNBT nested past what Minecraft reads (bug 65) ---
+
+#[test]
+fn snbt_nested_past_what_minecraft_reads_is_reported() {
+    if !std::path::Path::new("data/commands.json").exists() {
+        eprintln!("skipping: data/commands.json is missing");
+        return;
+    }
+    let nested = |levels: usize| format!("{}1{}", "{a:".repeat(levels), "}".repeat(levels));
+    let source = |levels: usize| {
+        format!(
+            "def go():\n    /data modify storage a:b c set value {}\n",
+            nested(levels)
+        )
+    };
+    let (ok, stderr) = cli_build_with(&source(400), &["-q", "--validate"]);
+    assert!(ok, "{stderr}");
+    for levels in [513, 50_000] {
+        let (ok, stderr) = cli_build_with(&source(levels), &["-q", "--validate"]);
+        assert!(!ok, "{levels} levels built");
+        assert!(stderr.contains("levels deep"), "{levels} levels: {stderr}");
+    }
+}
+
+// --- A warning at the line of its value (bug 66) ---
+
+#[test]
+fn a_warning_for_a_module_value_points_at_its_line() {
+    for (source, expected) in [
+        (
+            "x = 1\npersist huge = 9999999999\n",
+            "main.cbl:2:1: warning[number-out-of-range]",
+        ),
+        (
+            "x = 1\npersist low = -9999999999\n",
+            "main.cbl:2:1: warning[number-out-of-range]",
+        ),
+        (
+            "x = 1\nhuge = (9999999999)\n",
+            "main.cbl:2:1: warning[number-out-of-range]",
+        ),
+        (
+            "x = 1\nhuge = (\n    9999999999\n)\n",
+            "main.cbl:2:1: warning[number-out-of-range]",
+        ),
+        (
+            "x = 1\n\ndef f():\n    y = (9999999999)\n",
+            "main.cbl:4:5: warning[number-out-of-range]",
+        ),
+        (
+            "x = 1\npersist b = 2.5\n",
+            "main.cbl:2:1: warning[fractional-number]",
+        ),
+        (
+            "x = 1\n\ndef f():\n    z = (2.5)\n",
+            "main.cbl:4:5: warning[fractional-number]",
+        ),
+    ] {
+        let (ok, stderr) = cli_build(source);
+        assert!(ok, "{stderr}");
+        assert!(stderr.contains(expected), "{source}\n{stderr}");
+    }
+}
+
+// --- A fractional argument (bug 32) ---
+
+#[test]
+fn a_fractional_argument_used_as_a_number_warns_at_the_call() {
+    for (source, expected) in [
+        (
+            "def v(a):\n    return a * 2\n\ndef main():\n    out = v(0.6)\n",
+            "main.cbl:5:5: warning[fractional-number]",
+        ),
+        (
+            "def v(a):\n    x = a + 1\n    return x\n\ndef main():\n    out = v(1.5)\n",
+            "main.cbl:6:5: warning[fractional-number]",
+        ),
+        (
+            "const P = 0.6\n\ndef add(a):\n    x = a + 1\n\ndef main():\n    add(P)\n",
+            "main.cbl:7:5: warning[fractional-number]",
+        ),
+        (
+            "def add(a):\n    x = a + 1\n\ndef main():\n    add(-(-0.6))\n",
+            "main.cbl:5:5: warning[fractional-number]",
+        ),
+        (
+            "y = [-0.6]\n\ndef show(a):\n    /say show {a}\n\ndef main():\n    show(y[0])\n",
+            "is read as -1",
+        ),
+        (
+            "const I = 1\ny = [0.6, 2.5]\n\ndef show(a):\n    /say show {a}\n\ndef main():\n    show(y[I])\n",
+            "which holds 2.5, is read as 2",
+        ),
+    ] {
+        let (ok, stderr) = cli_build(source);
+        assert!(ok, "{stderr}");
+        assert!(stderr.contains(expected), "{source}\n{stderr}");
+    }
+}
+
+#[test]
+fn a_fractional_argument_used_only_as_text_arrives_as_written() {
+    let show = "def show(a):\n    /say show {a}\n\n";
+    for (main, expected) in [
+        ("show(0.6)", "show 0.6"),
+        ("outer(0.6)", "show 0.6"),
+        ("show(P)", "show 0.6"),
+        ("show(-0.25)", "show -0.25"),
+        ("show(str(0.6))", "show 0.6"),
+        ("s = str(2.5)\n    show(s)", "show 2.5"),
+    ] {
+        let source = format!(
+            "const P = 0.6\n\n{show}def outer(p):\n    show(p)\n\ndef main():\n    {main}\n"
+        );
+        assert_eq!(said(&source), vec![expected.to_string()], "{main}");
+    }
+}
+
+// --- Comparisons with numbers a score can't hold (Modules) ---
+
+#[test]
+fn a_comparison_with_a_number_a_score_cant_hold_is_exact() {
+    // Expected values come from Python 3, with x = 2147483647.
+    for (condition, expected) in [
+        ("x == 9999999999", "no"),
+        ("x != 9999999999", "yes"),
+        ("x < 9999999999", "yes"),
+        ("x > -9999999999", "yes"),
+        ("x >= 9999999999", "no"),
+        ("x == 2147483647.5", "no"),
+        ("x >= 2147483646.5", "yes"),
+        ("x <= 2147483646.5", "no"),
+        ("9999999999 > x", "yes"),
+    ] {
+        let source = format!(
+            "x = 2147483647\n\ndef main():\n    if {condition}:\n        /say yes\n    else:\n        /say no\n"
+        );
+        assert_eq!(said(&source), vec![expected.to_string()], "{condition}");
+    }
+}
+
+#[test]
+fn a_number_a_list_item_cant_hold_warns() {
+    for source in [
+        "l = [9999999999]\n\ndef main():\n    x = l[0]\n",
+        "m = {\"a\": 9999999999}\n",
+        "def main():\n    l = [1, -9999999999]\n",
+    ] {
+        let (ok, stderr) = cli_build(source);
+        assert!(ok, "{stderr}");
+        assert!(
+            stderr.contains("warning[number-out-of-range]"),
+            "{source}\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_capitalised_reserved_name_suggests_a_name_that_builds() {
+    let error = compile_error("def _Cobble_Init():\n    /say hi\n");
+    assert!(error.contains("for example to `my_init`"), "{error}");
+    compile("def my_init():\n    /say hi\n").unwrap();
+}
+
+// --- Resource names past the file name limit (bug 64) ---
+
+#[test]
+fn a_resource_name_past_the_file_name_limit_is_named() {
+    for call in [
+        "datapack.loot_table(\"NAME\", {\"pools\": []})",
+        "datapack.predicate(\"NAME\", {\"type\": \"minecraft:random_chance\", \"chance\": 0.5})",
+        "datapack.function_tag(\"NAME\", [\"t:a\"])",
+        "datapack.item_tag(\"NAME\", [\"minecraft:stone\"])",
+    ] {
+        let fits = call.replace("NAME", &"n".repeat(200));
+        let source = format!("from stdlib import datapack\n{fits}\n\ndef a():\n    /say a\n");
+        compile(&source).unwrap_or_else(|error| panic!("{call}: {error}"));
+        let long = call.replace("NAME", &"n".repeat(251));
+        let error = compile_error(&format!(
+            "from stdlib import datapack\n{long}\n\ndef a():\n    /say a\n"
+        ));
+        assert!(
+            error.contains("255-byte file name limit"),
+            "{call}: {error}"
+        );
+        assert!(error.contains("main.cbl:2"), "{call}: {error}");
+    }
 }

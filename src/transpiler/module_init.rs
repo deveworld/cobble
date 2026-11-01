@@ -203,6 +203,24 @@ impl Transpiler {
                 self.register_module_variable_backing(&assign);
             }
         }
+        // A selector alias or an entity template declared below a function
+        // is known there too. A name declared twice keeps its first value
+        // until the second declaration's own line.
+        for statement in &program.statements {
+            match statement {
+                Statement::SelectorDef(def)
+                    if !self.symbols.selector_aliases.contains_key(&def.name) =>
+                {
+                    let _ = self.process_selector_def(def);
+                }
+                Statement::EntityDef(def)
+                    if !self.symbols.entity_templates.contains_key(&def.name) =>
+                {
+                    let _ = self.process_entity_def(def);
+                }
+                _ => {}
+            }
+        }
         // A function that declares a name `global` and assigns it a literal
         // declares a module variable too.
         for statement in &program.statements {

@@ -316,7 +316,8 @@ before each pass, so such a loop over a long list costs more commands.
   text before a loop over numbers, reading it after the loop is a compile
   error, since its type would depend on whether the loop ran. When the items'
   type is known only when the pack runs, as for a parameter, the variable
-  holds either value.
+  holds either value. The body may assign the variable, as `i = i * 10`; the
+  next pass sets it again from the next item, as in Python.
 - Literal arrays containing runtime expressions are materialized and iterated
   at runtime.
 - Runtime storage-backed list iteration supports list expressions/paths. The
