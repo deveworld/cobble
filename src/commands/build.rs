@@ -6,7 +6,8 @@ use crate::commands::output_safety::{
 use crate::commands::validate::{print_validation_report, resolve_commands_json, run_validation};
 use crate::config::CobbleConfig;
 use crate::diagnostics::{
-    format_file_diagnostics, parse_source_files, warning_diagnostics, ParsedSourceFile,
+    clean_transpiler_error_message, format_file_diagnostics, parse_source_files,
+    warning_diagnostics, ParsedSourceFile,
 };
 use crate::fs_safety::{
     copy_file_atomic, create_temp_output_file, replace_with_temp_file, write_file_atomic,
@@ -430,30 +431,36 @@ fn compile_project(
             project,
             &parsed_files,
         );
-        result.map_err(|e| match &e.location {
-            Some(location) => format!(
-                "Transpilation failed at {}:{}:{}: {}",
-                path_display_relative(&location.file, source_display_root),
-                location.line,
-                location.column,
-                e
-            ),
-            None => format!("Transpilation failed for {:?}: {}", file_path, e),
+        result.map_err(|e| {
+            let message = clean_transpiler_error_message(&e.message, e.kind.slug());
+            match &e.location {
+                Some(location) => format!(
+                    "Transpilation failed at {}:{}:{}: {}",
+                    path_display_relative(&location.file, source_display_root),
+                    location.line,
+                    location.column,
+                    message
+                ),
+                None => format!("Transpilation failed for {:?}: {}", file_path, message),
+            }
         })?;
     }
 
     // The resources a declaration names may be declared in a later file.
     transpiler
         .check_resource_references()
-        .map_err(|e| match &e.location {
-            Some(location) => format!(
-                "Transpilation failed at {}:{}:{}: {}",
-                path_display_relative(&location.file, source_display_root),
-                location.line,
-                location.column,
-                e
-            ),
-            None => format!("Transpilation failed: {}", e),
+        .map_err(|e| {
+            let message = clean_transpiler_error_message(&e.message, e.kind.slug());
+            match &e.location {
+                Some(location) => format!(
+                    "Transpilation failed at {}:{}:{}: {}",
+                    path_display_relative(&location.file, source_display_root),
+                    location.line,
+                    location.column,
+                    message
+                ),
+                None => format!("Transpilation failed: {}", message),
+            }
         })?;
 
     Ok(transpiler)

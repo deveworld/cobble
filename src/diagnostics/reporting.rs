@@ -232,20 +232,29 @@ impl SourceDiagnostic {
             error.kind.slug(),
             line,
             column,
-            clean_transpiler_error_message(&error.message),
+            clean_transpiler_error_message(&error.message, error.kind.slug()),
         )
     }
 }
 
-fn clean_transpiler_error_message(error: &str) -> String {
-    error
+pub(crate) fn clean_transpiler_error_message(error: &str, kind: &str) -> String {
+    let mut cleaned = error
         .lines()
         .filter(|line| {
             let line = line.trim_start();
             !line.starts_with("source-key:") && !line.starts_with("location:")
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    // The message names its kind, and the diagnostic prints the kind too;
+    // `error[kind]: kind: ...` says it twice.
+    if let Some(rest) = cleaned
+        .strip_prefix(kind)
+        .and_then(|rest| rest.strip_prefix(": "))
+    {
+        cleaned = rest.to_string();
+    }
+    cleaned
 }
 
 fn unroll_error_target(error: &str) -> Option<&str> {
@@ -475,7 +484,7 @@ mod tests {
         assert_eq!((diagnostic.line, diagnostic.column), (2, 5));
         assert_eq!(
             diagnostic.message,
-            "unroll-limit-exceeded: range expands past 1024 iterations.\n  loop: for i"
+            "range expands past 1024 iterations.\n  loop: for i"
         );
     }
 

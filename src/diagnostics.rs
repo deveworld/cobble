@@ -25,6 +25,7 @@ pub use reporting::{
     warning_diagnostics, DiagnosticSeverity, FileSourceDiagnostics, ParsedSourceFile,
     SourceDiagnostic,
 };
+pub(crate) use reporting::clean_transpiler_error_message;
 pub use text::{byte_offset_for_line_column, read_source_file};
 
 pub(crate) use text::mask_non_code;
