@@ -890,7 +890,10 @@ impl PackResources {
                 .iter()
                 .find_map(|id| self.entry_problem("dialog", "dialog", vanilla, id));
         }
-        if id.starts_with(['{', '[', '+']) {
+        if id.starts_with(['{', '[']) {
+            return self.inline_reference_problem(parser_type, id);
+        }
+        if id.starts_with('+') {
             return None;
         }
         if let Some(tag) = id.strip_prefix('#') {
@@ -918,6 +921,61 @@ impl PackResources {
             return None;
         }
         self.entry_problem(folder, what, vanilla, id)
+    }
+
+    /// A tag or a resource that a predicate, an item modifier, a loot table,
+    /// or a dialog written in place names, which Minecraft looks up when it
+    /// loads the function.
+    fn inline_reference_problem(&self, parser_type: &str, token: &str) -> Option<String> {
+        if !matches!(
+            parser_type,
+            "minecraft:loot_predicate"
+                | "minecraft:loot_modifier"
+                | "minecraft:loot_table"
+                | "minecraft:dialog"
+        ) {
+            return None;
+        }
+        let value = snbt::parse(token).ok()?;
+        let mut problems = resource_format::Problems {
+            nbt: true,
+            ..Default::default()
+        };
+        match parser_type {
+            "minecraft:loot_predicate" => {
+                resource_format::check_predicate(&value, "", &mut problems)
+            }
+            "minecraft:loot_modifier" => match value.as_array() {
+                Some(items) => items.iter().for_each(|item| {
+                    resource_format::check_item_modifier(item, "", &mut problems);
+                }),
+                None => resource_format::check_item_modifier(&value, "", &mut problems),
+            },
+            "minecraft:loot_table" => resource_format::check_loot_table(&value, &mut problems),
+            _ => resource_format::check_dialog(&value, &mut problems),
+        }
+        problems.references.iter().find_map(|reference| {
+            let vanilla = vanilla_ids(reference.kind.registry())?;
+            let (namespace, path) = id_parts(&reference.id);
+            if self.is_known(namespace, path, reference.kind.folder(), vanilla) {
+                return None;
+            }
+            let shown = if reference.kind.is_tag() {
+                format!("#{namespace}:{path}")
+            } else {
+                format!("{namespace}:{path}")
+            };
+            let who = if namespace == "minecraft" {
+                "neither Minecraft nor the pack defines it"
+            } else {
+                "the pack doesn't define it"
+            };
+            Some(format!(
+                "Unknown {} `{shown}` at `{}`: {who}, so Minecraft can't load this function",
+                reference.kind.what(),
+                reference.path
+            ))
+        })
     }
 
     fn entry_problem(

@@ -392,7 +392,9 @@ that function from loading:
   particle `block_state` other than a block id or `{id:...}`, such as the
   `{Name:"stone"}` of block NBT;
 - inline predicates, item modifiers, loot tables, and dialogs with the problems
-  listed under [Data Pack Resources](../stdlib/datapack-resources.md);
+  listed under [Data Pack Resources](../stdlib/datapack-resources.md), or that
+  name a tag, a predicate, an item modifier, or a loot table that neither
+  Minecraft nor the pack defines, such as `items:"#minecraft:nope"`;
 - coordinates that mix `^` with other forms, fractional block coordinates,
   reversed ranges such as `5..1`, invalid NBT paths, selector arguments
   that repeat or can't be negated, and a selector that names one `type` and

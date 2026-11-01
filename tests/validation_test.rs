@@ -387,3 +387,35 @@ stdlib.addEventListener(event.TICK, game_tick)
         format_errors(&errors)
     );
 }
+
+#[test]
+fn test_validate_references_of_an_inline_predicate() {
+    // Refuted 14: Minecraft looks these up when it loads the function, and
+    // a missing one stops the function from loading.
+    let errors = compile_and_validate(
+        r##"from stdlib import datapack
+datapack.item_tag("mine", ["minecraft:stone"])
+datapack.predicate("chance", {"type": "minecraft:random_chance", "chance": 0.5})
+
+def go():
+    /execute if predicate {type:"minecraft:match_tool",predicate:{items:"#minecraft:nope"}} run say a
+    /execute if predicate {type:"minecraft:all_of",terms:["cobble:nope"]} run say b
+    /execute if predicate {type:"minecraft:match_tool",predicate:{items:"#cobble:mine"}} run say c
+    /execute if predicate {type:"minecraft:match_tool",predicate:{items:"#minecraft:logs"}} run say d
+    /execute if predicate {type:"minecraft:all_of",terms:["cobble:chance", "othermod:any"]} run say e
+"##,
+    );
+    let messages: Vec<&str> = errors
+        .iter()
+        .map(|(_, error)| error.message.as_str())
+        .collect();
+    assert_eq!(messages.len(), 2, "{}", format_errors(&errors));
+    assert!(
+        messages[0].contains("Unknown item tag `#minecraft:nope` at `predicate.items`"),
+        "{messages:?}"
+    );
+    assert!(
+        messages[1].contains("Unknown predicate `cobble:nope` at `terms[0]`"),
+        "{messages:?}"
+    );
+}
