@@ -555,6 +555,28 @@ fn an_explicit_hover_macro_keeps_the_authors_text() {
 }
 
 #[test]
+fn a_quoted_execute_selector_parameter_precedes_the_hover_component() {
+    let source = r#"def hover(target, note):
+    /execute as @a[name="{target}"] run tellraw @s {"text":"h","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,0,0,1],"name":"{note}"}}
+def main():
+    hover("Steve", "say \"hi\"")
+"#;
+    let (_temp, output) = compile(source).unwrap();
+    let functions = load_functions(&output);
+    let helper = functions
+        .iter()
+        .find(|(name, _)| name.starts_with("_cobble_hover_"))
+        .unwrap()
+        .1
+        .join("\n");
+    assert!(
+        helper.contains(r#"$return run execute as @a[name="$(target)"] run tellraw @s"#),
+        "{helper}"
+    );
+    assert!(!helper.contains("$(note)"), "{helper}");
+}
+
+#[test]
 fn a_selector_alias_names_a_score_component_holder() {
     let main = function(
         r#"from stdlib import text

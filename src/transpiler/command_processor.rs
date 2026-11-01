@@ -120,6 +120,11 @@ pub(in crate::transpiler) fn quoted_hover_macro(command: &str) -> Option<QuotedH
     for (at, _) in command.match_indices("$(") {
         quotes.advance(command, at);
         let Some(open) = quotes.open else { continue };
+        // A quoted selector parameter in an outer `execute` precedes the
+        // text command and has no component path to inspect.
+        if open < start {
+            continue;
+        }
         let path = key_path(&command[start..open]);
         let Some(hover) = path.iter().rposition(|key| key == "hover_event") else {
             continue;
