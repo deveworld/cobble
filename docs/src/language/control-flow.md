@@ -107,7 +107,10 @@ def check_players():
 ```
 
 `and`, `or`, and `not` also combine Minecraft conditions with each other and
-with Cobble conditions. Each Minecraft condition counts as one operand:
+with Cobble conditions, in `if` and in execute-block modifiers. Each
+Minecraft condition counts as one operand. `elif` and `while` can't test a
+Minecraft condition; store the test in a variable first, as the compile
+error shows, and test the variable:
 
 ```python
 level = 5
@@ -168,11 +171,23 @@ its own is short for `as <selector> at @s:`. A leading `execute`, as in
 A body that compiles to a single command is inlined
 (`execute as @a if ... run tellraw ...`). A longer body is compiled into a
 helper function called once per execution context
-(`execute as @a if ... run function ns:execute_temp_N`), so the modifiers and
-conditions are evaluated once per entity and the whole body runs for that
-entity before the next one starts. Updating the condition's own score inside
-the body, loops, `if`/`else`, and multi-step assignments therefore behave per
-entity. Blocks with a `store` modifier keep one `execute store ...` command per
+(`execute as @a if ... run function ns:execute_temp_N`), so the whole body
+runs for one entity before the next one starts, and loops, `if`/`else`, and
+multi-step assignments behave per entity. Minecraft checks the header's
+modifiers and conditions for every entity before the body runs for the
+first one, so a body that changes what the condition reads doesn't change
+which entities run it: with `x = 5`, `as @a if x > 3:` runs its body for
+every player even when the body sets `x = 0`. To test each entity when its
+turn comes, as a Python loop does, put the test in the body:
+
+```python
+def first_only():
+    global x
+    as @a:
+        if x > 3:
+            x = 0
+            /scoreboard players add @s picked 1
+``` Blocks with a `store` modifier keep one `execute store ...` command per
 body command, because storing a helper call would capture only the helper's
 return value; bodies containing a raw `/return` also keep that form so the
 return still leaves the enclosing function.

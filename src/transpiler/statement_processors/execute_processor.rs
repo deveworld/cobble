@@ -882,14 +882,31 @@ impl Transpiler {
                 cmd
             };
 
-            let final_cmd = if let Some(inner_parts) = inner_cmd.strip_prefix("execute ") {
-                format!("{} {}", execute_prefix, inner_parts)
-            } else {
-                format!("{} run {}", execute_prefix, inner_cmd)
+            let final_cmd = match inner_cmd.strip_prefix("execute ") {
+                // Minecraft checks a modifier's conditions for every entity
+                // before the first runs, so a condition of the body, as
+                // a nested `if`, stays behind `run`: it is checked for each
+                // entity when its turn comes, after the earlier ones ran.
+                Some(inner_parts)
+                    if !(Self::forks_contexts(execute_prefix)
+                        && (inner_parts.starts_with("if ")
+                            || inner_parts.starts_with("unless "))) =>
+                {
+                    format!("{} {}", execute_prefix, inner_parts)
+                }
+                _ => format!("{} run {}", execute_prefix, inner_cmd),
             };
 
             Self::mark_macro_line(final_cmd, has_macro_params)
         })
+    }
+
+    /// Whether an execute prefix can run what follows for several entities,
+    /// as `as @a`, `at @e`, `on passengers`, or `summon` do.
+    fn forks_contexts(prefix: &str) -> bool {
+        prefix
+            .split(' ')
+            .any(|word| matches!(word, "as" | "at" | "on" | "summon"))
     }
 
     /// `as @a:` runs the helper once per entity. A `return` from one entity

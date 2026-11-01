@@ -2038,6 +2038,77 @@ fn substitute_statement(
     Ok(substituted)
 }
 
+/// An execute header condition with the loop variable `target` replaced in
+/// its Python parts, as `i` in `entity @a and x > i`, the way a Python `if`
+/// replaces it. Minecraft conditions take the value through `{i}` only.
+fn substitute_raw_condition(condition: &str, target: &str, value: &UnrollValue) -> String {
+    let python_value = match value {
+        UnrollValue::Number(number) => format_unroll_number(*number),
+        UnrollValue::String(text) => format!("\"{}\"", crate::transpiler::escape_quoted(text)),
+        UnrollValue::Boolean(true) => "True".to_string(),
+        UnrollValue::Boolean(false) => "False".to_string(),
+    };
+    if let Some((masked, minecraft)) = crate::transpiler::mask_minecraft_conditions(condition) {
+        let mut text = replace_python_name(&masked, target, &python_value);
+        for (identifier, original) in minecraft {
+            text = text.replacen(&identifier, &original, 1);
+        }
+        return text;
+    }
+    if crate::transpiler::raw_minecraft_condition_verdict(condition.trim_start()) == Some(true) {
+        return condition.to_string();
+    }
+    replace_python_name(condition, target, &python_value)
+}
+
+/// `text` with each Python name `name` outside strings, and not after a
+/// `.`, replaced by `value`.
+fn replace_python_name(text: &str, name: &str, value: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            result.push(ch);
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            result.push(ch);
+            continue;
+        }
+        if ch.is_alphabetic() || ch == '_' {
+            let mut end = index + ch.len_utf8();
+            while let Some(&(next, next_ch)) = chars.peek() {
+                if next_ch.is_alphanumeric() || next_ch == '_' {
+                    end = next + next_ch.len_utf8();
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let word = &text[index..end];
+            let after_dot = text[..index].trim_end().ends_with('.');
+            if word == name && !after_dot {
+                result.push_str(value);
+            } else {
+                result.push_str(word);
+            }
+            continue;
+        }
+        result.push(ch);
+    }
+    result
+}
+
 fn substitute_execute_modifier(
     modifier: &ExecuteModifier,
     target: &str,
@@ -2051,12 +2122,16 @@ fn substitute_execute_modifier(
         ExecuteModifier::At(raw) => {
             ExecuteModifier::At(replace_unroll_placeholder(raw, target, &command_value))
         }
-        ExecuteModifier::IfRaw(raw) => {
-            ExecuteModifier::IfRaw(replace_unroll_placeholder(raw, target, &command_value))
-        }
-        ExecuteModifier::UnlessRaw(raw) => {
-            ExecuteModifier::UnlessRaw(replace_unroll_placeholder(raw, target, &command_value))
-        }
+        ExecuteModifier::IfRaw(raw) => ExecuteModifier::IfRaw(substitute_raw_condition(
+            &replace_unroll_placeholder(raw, target, &command_value),
+            target,
+            value,
+        )),
+        ExecuteModifier::UnlessRaw(raw) => ExecuteModifier::UnlessRaw(substitute_raw_condition(
+            &replace_unroll_placeholder(raw, target, &command_value),
+            target,
+            value,
+        )),
         ExecuteModifier::Positioned(raw) => {
             ExecuteModifier::Positioned(replace_unroll_placeholder(raw, target, &command_value))
         }
