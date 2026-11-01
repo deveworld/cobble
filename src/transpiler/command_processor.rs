@@ -43,6 +43,19 @@ struct Substituted {
     vars: Vec<String>,
     /// Whether the text uses macro arguments (`$(name)`).
     has_macro_vars: bool,
+    /// Whether a `tellraw` or `title` message written as plain text needs
+    /// a `{"text":...}` wrapper: it holds a parameter, or it starts with an
+    /// escaped brace.
+    plain_message: bool,
+}
+
+/// The error for a placeholder Cobble has no value for.
+fn undefined_placeholder(raw: &str, name: &str) -> String {
+    format!(
+        "Undefined placeholder `{raw}`: `{name}` is not a function parameter, a const, or the \
+         variable of a loop Cobble expands, and a variable shows only in `say`, `tellraw`, and \
+         `title` text. Write `{{{{{name}}}}}` for literal braces."
+    )
 }
 
 /// Where a Cobble variable shown in a text command sits in the text until it
@@ -92,17 +105,17 @@ impl<'a> CommandProcessor<'a> {
             text: mut result,
             vars: scoreboard_vars_found,
             has_macro_vars,
+            plain_message,
         } = self.substitute_placeholders(cmd, false)?;
 
         // Handle scoreboard variables - special processing for tellraw/title/say
         if !scoreboard_vars_found.is_empty() {
             result = self.handle_scoreboard_vars_in_command(&result, &scoreboard_vars_found)?;
+        } else if plain_message {
+            result = wrap_plain_message(&result);
         }
-
-        // A line written with `$(name)` is the author's own macro text and
-        // stays as written.
-        if has_macro_vars && scoreboard_vars_found.is_empty() && !cmd.contains("$(") {
-            result = self.normalize_macro_text_component_command(&result)?;
+        if result.contains(['\u{E000}', '\u{E001}']) {
+            return Err(UNREACHED_VARIABLE.into());
         }
 
         // If the command has macro variables, prefix with $ for Minecraft 1.21.8+ macro system
@@ -210,20 +223,19 @@ impl<'a> CommandProcessor<'a> {
         // A hand-written `$(name)` makes the line a macro line.
         let mut has_macro_vars = cmd.contains("$(");
         let mut scoreboard_vars_found = Vec::new();
-        let text_command = is_text_command(cmd);
         // The quote state before each placeholder, scanned once along the
         // line instead of from its start for every placeholder.
         let mut quotes = QuoteScan::default();
-        let pieces = placeholders::pieces(cmd);
-        // A parameter in a `tellraw` or `title` message written as plain
-        // text, as `/tellraw @a {msg}`, is shown as text from `args`, so a
-        // value with `"` or `\` works. A line with a hand-written `$(name)`
-        // is the author's macro text and stays as written.
-        let plain_message_start = if vars_as_macros || cmd.contains("$(") {
+        let pieces = placeholders::checked_pieces(cmd)?;
+        // The message of a `tellraw` or `title`, also after `execute ...
+        // run`. A line with a hand-written `$(name)` is the author's macro
+        // text and stays as written.
+        let message = if vars_as_macros {
             None
         } else {
-            plain_text_message_start(cmd, &pieces)
+            text_message(cmd, &pieces, |name| self.is_param(name))
         };
+        let mut plain_message = false;
 
         for piece in pieces {
             let (raw, var_name, start) = match piece {
@@ -234,13 +246,25 @@ impl<'a> CommandProcessor<'a> {
                 Piece::Field { raw, name, start } => (raw, name, start),
             };
             quotes.advance(cmd, start);
+            let in_message = message.as_ref().filter(|message| start >= message.start);
             if self.is_param(var_name)
-                && !vars_as_macros
-                && text_command
-                && (quotes
-                    .open
-                    .is_some_and(|open| opens_text_string(&cmd[..open]))
-                    || plain_message_start.is_some_and(|message| start >= message))
+                && in_message.is_some_and(|message| message.plain)
+                && !cmd.contains("$(")
+            {
+                // A parameter in a message written as plain text, as
+                // `/tellraw @a {msg}`, is macro text, so a direct call with
+                // inline arguments shows it too; the message gets a
+                // `{"text":...}` wrapper.
+                plain_message = true;
+                result.push_str(&format!("$({})", var_name));
+                has_macro_vars = true;
+            } else if self.is_param(var_name)
+                && !cmd.contains("$(")
+                && in_message.is_some_and(|message| {
+                    quotes
+                        .open
+                        .is_some_and(|open| message.opens_text_string(cmd, open))
+                })
             {
                 // Shown from `args` like a variable, because a macro value
                 // with a `"` would break the JSON.
@@ -311,58 +335,24 @@ impl<'a> CommandProcessor<'a> {
                         }
                     }
                     Expression::Boolean(b) => b.to_string(),
-                    _ => raw.to_string(),
+                    _ => return Err(undefined_placeholder(raw, var_name).into()),
                 };
                 result.push_str(&replacement);
             } else {
-                // Not a placeholder Cobble knows; the language check reports
-                // names that are.
-                result.push_str(raw);
+                // Printing `{name}` as text would be a silent wrong result.
+                return Err(undefined_placeholder(raw, var_name).into());
             }
         }
 
+        let escaped_message = message
+            .as_ref()
+            .is_some_and(|message| message.plain && cmd[message.start..].starts_with("{{"));
         Ok(Substituted {
             text: result,
             vars: scoreboard_vars_found,
             has_macro_vars,
+            plain_message: plain_message || escaped_message,
         })
-    }
-
-    /// A macro `tellraw` or `title` whose whole text is a placeholder, as
-    /// `/tellraw @a {msg}`, shows the value as plain text: it gets a
-    /// `{"text":...}` wrapper, so a sentence with spaces still works. `title
-    /// ... times` takes numbers, and `clear` and `reset` take nothing, so
-    /// they stay as they are.
-    fn normalize_macro_text_component_command(&self, cmd: &str) -> Result<String, TranspileError> {
-        let trimmed = cmd.trim();
-        let (head, message) = if trimmed.starts_with("title ") {
-            let parts = split_command_words(trimmed, 4);
-            if parts.len() < 4 || !matches!(parts[2], "title" | "subtitle" | "actionbar") {
-                return Ok(cmd.to_string());
-            }
-            (parts[..3].join(" "), parts[3])
-        } else if trimmed.starts_with("tellraw ") {
-            let parts = split_command_words(trimmed, 3);
-            if parts.len() < 3 {
-                return Ok(cmd.to_string());
-            }
-            (parts[..2].join(" "), parts[2])
-        } else {
-            return Ok(cmd.to_string());
-        };
-        let message = message.trim();
-        if Self::looks_like_text_component(message) {
-            return Ok(cmd.to_string());
-        }
-        Ok(format!("{} {}", head, Self::plain_text_component(message)))
-    }
-
-    fn looks_like_text_component(message: &str) -> bool {
-        message.starts_with('{') || message.starts_with('[') || message.starts_with('"')
-    }
-
-    fn plain_text_component(message: &str) -> String {
-        serde_json::json!({ "text": message }).to_string()
     }
 
     fn variable_text_component(&self, var_name: &str) -> serde_json::Value {
@@ -550,9 +540,20 @@ impl<'a> CommandProcessor<'a> {
     ) -> Result<String, TranspileError> {
         let trimmed = cmd.trim();
 
-        // Check if it's a tellraw, title, or say command - we can auto-convert these
-        if trimmed.starts_with("tellraw ") || trimmed.starts_with("title ") {
-            return self.convert_to_tellraw_json(cmd, vars);
+        // A `tellraw` or `title`, also after `execute ... run`, shows the
+        // variables as text components.
+        if let Some(start) = text_command_start(cmd) {
+            let text_command = &cmd[start..];
+            let words = split_command_words(text_command.trim(), 4);
+            let text_action = text_command.starts_with("tellraw ")
+                || words.get(2).is_some_and(|action| {
+                    matches!(*action, "title" | "subtitle" | "actionbar")
+                        || is_placeholder_word(action)
+                });
+            if text_action {
+                let converted = self.convert_to_tellraw_json(text_command, vars)?;
+                return Ok(format!("{}{converted}", &cmd[..start]));
+            }
         }
 
         if let Some(say_message) = trimmed.strip_prefix("say ") {
@@ -945,38 +946,116 @@ pub(in crate::transpiler) fn unknown_selector(command: &str) -> Option<String> {
 /// Operates on a char slice so callers holding a char index never have to
 /// byte-slice the underlying `String` (which panics mid-character on
 /// non-ASCII text).
-/// Whether `command` is a `tellraw` or `title` command, whose JSON text can
-/// show values as text components.
-fn is_text_command(command: &str) -> bool {
-    let command = command.trim_start();
-    command.starts_with("tellraw ") || command.starts_with("title ")
+/// Whether `word` is one macro argument and nothing else, as `$(kind)`.
+fn is_placeholder_word(word: &str) -> bool {
+    word.strip_prefix("$(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .is_some_and(|name| !name.is_empty() && !name.contains(['(', ')']))
 }
 
-/// The byte offset of a `tellraw` or `title` (`title`, `subtitle`,
-/// `actionbar`) message written as plain text rather than as a text
-/// component: one that doesn't start with `[`, `"`, or `{`, or that starts
-/// with a `{name}` placeholder.
-fn plain_text_message_start(command: &str, pieces: &[Piece<'_>]) -> Option<usize> {
-    let trimmed = command.trim_start();
-    let message = if trimmed.starts_with("tellraw ") {
-        let words = split_command_words(trimmed, 3);
-        (words.len() == 3).then(|| words[2])?
-    } else if trimmed.starts_with("title ") {
-        let words = split_command_words(trimmed, 4);
-        (words.len() == 4 && matches!(words[2], "title" | "subtitle" | "actionbar"))
-            .then(|| words[3])?
-    } else {
-        return None;
+/// The byte offset of the `tellraw` or `title` command in `command`, at its
+/// start or after `execute ... run`.
+fn text_command_start(command: &str) -> Option<usize> {
+    let mut start = command.len() - command.trim_start().len();
+    loop {
+        let rest = &command[start..];
+        if rest.starts_with("tellraw ") || rest.starts_with("title ") {
+            return Some(start);
+        }
+        if !rest.starts_with("execute ") {
+            return None;
+        }
+        let words = split_command_words(rest, usize::MAX);
+        let run = words.iter().position(|word| *word == "run")?;
+        let next = words.get(run + 1)?;
+        start = next.as_ptr() as usize - command.as_ptr() as usize;
+    }
+}
+
+/// The message of a `tellraw` or `title` command.
+struct TextMessage {
+    /// Where the `tellraw` or `title` command starts.
+    command_start: usize,
+    /// Where its message starts.
+    start: usize,
+    /// Whether the message is plain text rather than a text component: it
+    /// doesn't start with `[` or `"`, and a `{` there starts a placeholder
+    /// or an escaped brace.
+    plain: bool,
+}
+
+impl TextMessage {
+    /// Whether the string opened by the quote at `open` is shown as text.
+    fn opens_text_string(&self, command: &str, open: usize) -> bool {
+        open == self.start
+            || open > self.start && opens_text_string(&command[self.command_start..open])
+    }
+}
+
+/// The message of the `tellraw` or `title` (`title`, `subtitle`,
+/// `actionbar`, or a parameter standing for one) in `command`.
+fn text_message(
+    command: &str,
+    pieces: &[Piece<'_>],
+    is_param: impl Fn(&str) -> bool,
+) -> Option<TextMessage> {
+    let command_start = text_command_start(command)?;
+    let text_command = &command[command_start..];
+    let field_at = |offset: usize| {
+        pieces.iter().find_map(|piece| match piece {
+            Piece::Field { start, name, .. } if *start == offset => Some(*name),
+            _ => None,
+        })
     };
-    let start = message.as_ptr() as usize - command.as_ptr() as usize;
+    let offset_of = |word: &str| word.as_ptr() as usize - command.as_ptr() as usize;
+    let message = if text_command.starts_with("tellraw ") {
+        let words = split_command_words(text_command, 3);
+        (words.len() == 3).then(|| words[2])?
+    } else {
+        let words = split_command_words(text_command, 4);
+        let action = *words.get(2)?;
+        let text_action = matches!(action, "title" | "subtitle" | "actionbar")
+            || field_at(offset_of(action)).is_some_and(&is_param)
+                && action.starts_with('{')
+                && action.ends_with('}');
+        (words.len() == 4 && text_action).then(|| words[3])?
+    };
+    let start = offset_of(message);
     let plain = match message.as_bytes().first() {
-        Some(b'[' | b'"') | None => false,
-        Some(b'{') => pieces
-            .iter()
-            .any(|piece| matches!(piece, Piece::Field { start: at, .. } if *at == start)),
+        Some(b'[' | b'"' | b'\'') | None => false,
+        Some(b'{') => message.starts_with("{{") || field_at(start).is_some(),
         Some(_) => true,
     };
-    plain.then_some(start)
+    Some(TextMessage {
+        command_start,
+        start,
+        plain,
+    })
+}
+
+/// `command` with the plain-text message of its `tellraw` or `title` in a
+/// `{"text":...}` wrapper, so a sentence with spaces works.
+fn wrap_plain_message(command: &str) -> String {
+    let Some(command_start) = text_command_start(command) else {
+        return command.to_string();
+    };
+    let text_command = &command[command_start..];
+    let limit = if text_command.starts_with("tellraw ") {
+        3
+    } else {
+        4
+    };
+    let words = split_command_words(text_command, limit);
+    if words.len() < limit {
+        return command.to_string();
+    }
+    let message = words[limit - 1];
+    let start = message.as_ptr() as usize - command.as_ptr() as usize;
+    format!(
+        "{}{}",
+        &command[..start],
+        serde_json::json!({ "text": message.trim_end() })
+    )
 }
 
 /// Whether the text right after `chars` is inside a JSON string that is
@@ -1012,17 +1091,13 @@ impl QuoteScan {
     }
 }
 
-/// Whether a string whose opening quote follows `before` is shown as text:
-/// a `text` or show_text `value` field, an item of a text list, or the whole
-/// message of `tellraw` or `title`.
+/// Whether a string in a text component whose opening quote follows
+/// `before` is shown as text: a `text` or show_text `value` field, or an
+/// item of a text list. [`TextMessage::opens_text_string`] covers the whole
+/// message.
 fn opens_text_string(before: &str) -> bool {
     let before = before.trim();
     if before.ends_with('[') || before.ends_with(',') {
-        return true;
-    }
-    // The whole message: `tellraw @a "text"`, `title @a title "text"`.
-    let words = before.split(' ').count();
-    if before.starts_with("tellraw ") && words == 2 || before.starts_with("title ") && words == 3 {
         return true;
     }
     let Some(key) = before.strip_suffix(':') else {

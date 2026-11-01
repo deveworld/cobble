@@ -110,12 +110,32 @@ Function parameters become macro arguments, so that line compiles to a macro
 line such as `$tp $(player) $(x) $(y) $(z)`. Constants and the values of those
 loops are substituted at compile time.
 
-In `tellraw` and `title`, a parameter in text written without a JSON or SNBT
-component, as `/tellraw @a {msg}` or `/tellraw @a Hi {msg}`, shows the value
-as plain text, so a sentence with spaces, a `"`, or a `\` works. Cobble reads
-the value from the function's arguments in a text component, as it does for
-`{"text":"{msg}"}`, so the line is not a macro line. To pass a ready text component,
-such as `{text:"hi",color:"red"}`, write the macro argument yourself:
+In `tellraw` and `title`, also after `execute ... run`, a parameter in text
+written without a JSON or SNBT component, as `/tellraw @a {msg}` or
+`/tellraw @a Hi {msg}`, is macro text in a `{"text":...}` wrapper, so a
+sentence with spaces works, and so does a direct call with inline arguments,
+such as `/function mypack:show {msg:"hello world"}`:
+
+```python
+def show(msg):
+    /tellraw @a Hi {msg}
+```
+
+```mcfunction
+$tellraw @a {"text":"Hi $(msg)"}
+```
+
+A macro argument is pasted into the line as it is, so a value with a `"` or
+a `\` breaks the wrapper, and Minecraft refuses the whole call. For such text,
+write the component yourself, as `/tellraw @a {"text":"{msg}"}`: Cobble then
+reads the value from the function's arguments in a text component, so any
+text works, but only when Cobble code calls the function (see
+[Arguments](../reference/calling-convention.md#arguments)). The same holds for
+hover text. A parameter that stands for the action, as in `/title @a {kind}
+{text}`, is taken for `title`, `subtitle`, or `actionbar`.
+
+To pass a ready text component, such as `{text:"hi",color:"red"}`, write the
+macro argument yourself:
 
 ```python
 def show(msg):
@@ -124,7 +144,7 @@ def show(msg):
 
 A line written with `$(name)` is kept exactly as written, apart from the
 leading `$` Cobble adds. `title ... times` takes numbers and is never
-wrapped.
+wrapped, and a variable there is a compile error.
 
 A Cobble variable, including the variable of a runtime loop, works as a
 placeholder only in `say`, `tellraw`, and `title` text, as described under
@@ -142,10 +162,12 @@ def reward():
     give_diamonds(count)
 ```
 
-Unknown, invalid, and unclosed placeholders are errors. Write `{{` and `}}` for
-literal braces. They work as in a Python format string: they nest, and a
-placeholder between them is still filled in, so `{{{x}}}` is `{`, the
-placeholder `x`, and `}`:
+Unknown, invalid, and unclosed placeholders are errors, and so is a
+placeholder for a name Cobble has no value for where the command runs.
+Write `{{` and `}}` for literal braces. They work as in a Python format
+string: they nest, a placeholder between them is still filled in, so
+`{{{x}}}` is `{`, the placeholder `x`, and `}`, and a single `}` that closes
+a `{{`, as in `{{k}:1}`, is an error:
 
 ```python
 def help(x):
@@ -161,7 +183,8 @@ $say {$(x)}
 ```
 
 A single brace that holds no name, as in the SNBT `{Tags:["a"]}`, stays as
-it is.
+it is. The value of a constant or a loop variable is placed as it is, so its
+own braces are not read again: `for n in ["{{a}}"]: /say {n}` says `{{a}}`.
 
 ## The `temp` Objective
 

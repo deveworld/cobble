@@ -103,29 +103,40 @@ fn a_per_entity_minecraft_condition_or_a_call_runs_the_call_only_when_needed() {
 // --- A parameter that fills a tellraw or title text ---
 
 #[test]
-fn a_whole_text_parameter_shows_quotes_and_backslashes() {
+fn a_whole_text_parameter_is_macro_text_in_a_wrapper() {
     let mut sim = Sim::load(
         r#"def show(msg):
     /tellraw @a {msg}
     /tellraw @a note: {msg}
+def quoted(msg):
+    /tellraw @a {"text":"{msg}"}
 def bar(msg):
     /title @a actionbar {msg}
 def raw(msg):
     /tellraw @a $(msg)
 def main():
-    show("say \"hi\" a\\b")
     show("plain sentence")
     show(7)
+    quoted("say \"hi\" a\\b")
     raw("{\"text\":\"ready\"}")
 "#,
         &["Alex"],
     );
-    let show = sim.function_text("show");
-    assert!(!show.contains("$(msg)"), "{show}");
-    let bar = sim.function_text("bar");
+    // Plain text is macro text, so a direct call with inline arguments
+    // shows it too.
+    assert_eq!(
+        sim.function_text("show"),
+        "$tellraw @a {\"text\":\"$(msg)\"}\n$tellraw @a {\"text\":\"note: $(msg)\"}"
+    );
+    assert_eq!(
+        sim.function_text("bar"),
+        "$title @a actionbar {\"text\":\"$(msg)\"}"
+    );
+    // A component's text reads the value from `args`, so a `"` or `\` works.
     assert!(
-        bar.contains("\ntitle @a actionbar [{") && bar.contains(r#""nbt":"_text.msg""#),
-        "{bar}"
+        sim.function_text("quoted").contains(r#""nbt":"_text.msg""#),
+        "{}",
+        sim.function_text("quoted")
     );
     // An author's `$(msg)` stays the raw macro text.
     assert_eq!(sim.function_text("raw"), "$tellraw @a $(msg)");
@@ -133,15 +144,17 @@ def main():
     assert_eq!(
         sim.log,
         [
-            r#"say "hi" a\b"#,
-            r#"note: say "hi" a\b"#,
             "plain sentence",
             "note: plain sentence",
             "7",
             "note: 7",
+            r#"say "hi" a\b"#,
             "ready",
         ]
     );
+    sim.log.clear();
+    sim.call_with("show", serde_json::json!({"msg": "hello world"}));
+    assert_eq!(sim.log, ["hello world", "note: hello world"]);
 }
 
 // --- A runtime loop's variable after the loop ---
