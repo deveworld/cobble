@@ -139,6 +139,13 @@ pub struct Transpiler {
     /// variable and haven't warned yet. The first assignment warns. Block
     /// helpers restore `current_context`, so this lives outside it.
     unwarned_shadows: Vec<String>,
+    /// The runtime list loops being lowered whose body may rebind their
+    /// list, innermost last.
+    list_loops: Vec<statement_processors::ActiveListLoop>,
+    /// Module variables a runtime loop walks while its body calls a
+    /// function, which may rebind the variable. Every rebind of such a
+    /// variable tells a running loop over it.
+    signalled_list_roots: std::collections::BTreeSet<String>,
 }
 
 /// The expressions `statement` itself evaluates, without its body.
@@ -290,6 +297,8 @@ impl Transpiler {
             execute_condition_slots: Vec::new(),
             warnings: RefCell::new(Vec::new()),
             unwarned_shadows: Vec::new(),
+            list_loops: Vec::new(),
+            signalled_list_roots: Default::default(),
         };
         if let Some(version) = options.stdlib_version {
             transpiler.set_stdlib_version(version);
@@ -436,6 +445,27 @@ impl Transpiler {
             &program.statements,
             &mut self.symbols.container_writes,
         );
+        // A loop over a list that calls a function, which may rebind the
+        // list, needs every rebind of it to tell the loop.
+        let modules: Vec<&str> = program
+            .imports
+            .iter()
+            .map(|import| import.module.as_str())
+            .collect();
+        let is_module = |name: &str| modules.contains(&name);
+        let mut loops = Vec::new();
+        function_context::collect_all_for_loops(&program.statements, &mut loops);
+        for for_loop in loops {
+            let mut root = &for_loop.iter;
+            while let Expression::Attribute(base, _) | Expression::Subscript(base, _) = root {
+                root = base;
+            }
+            if let Expression::Identifier(name) = root {
+                if statement_processors::calls_user_function(&for_loop.body, &is_module) {
+                    self.signalled_list_roots.insert(name.clone());
+                }
+            }
+        }
     }
 
     fn strip_command_prefix(cmd: &str) -> String {
@@ -542,6 +572,7 @@ impl Transpiler {
             }
             return Ok(());
         }
+        self.rebind_signal_commands(statement)?;
         match statement {
             Statement::Import(import) => {
                 self.process_import(import)?;

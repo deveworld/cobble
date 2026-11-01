@@ -1622,7 +1622,7 @@ impl Transpiler {
     }
 
     /// A new local variable that holds a value for one statement.
-    fn hidden_local(&mut self, value_type: CobbleType) -> String {
+    pub(in crate::transpiler) fn hidden_local(&mut self, value_type: CobbleType) -> String {
         let name = format!("_cobble_hold_{}", self.next_temp_id());
         if self.current_function.is_some() {
             self.current_context.locals.push(name.clone());

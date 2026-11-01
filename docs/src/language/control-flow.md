@@ -278,9 +278,19 @@ over storage-backed list expressions such as `for value in values:` or
 `for value in groups[row]:` compile to an index loop that copies each element
 into the loop variable before running the body. As in Python, a forward loop
 reads the list's length again before each pass, so items the body appends are
-visited and the loop stops early when the body removes items. `by` steps also
-work for runtime list loops; negative steps start at the last item, with the
-length read once at the start.
+visited and the loop stops early when the body removes items. A positive
+dynamic step reads the length again too. `by` steps also work for runtime list
+loops; negative steps start at the last item, with the length read once at the
+start.
+
+As in Python, the loop walks the list it started with. Changes in place, such
+as `append`, `pop`, or `a += [9]`, are seen. Rebinding the variable, as
+`a = a + [9]` or `a = []`, is not, also when a function the body calls
+rebinds a module list, and neither is replacing or moving the list inside its
+container, as `g[0] = []` or `g.pop(0)` while walking `g[0]`. The path to the
+list is worked out once: in `for v in g[i]:`, a body that changes `i` still
+walks the same list. A loop whose body may rebind its list copies the list
+before each pass, so such a loop over a long list costs more commands.
 
 **Unrolling Support:**
 - `range(n)` iterates `0..n`.
@@ -302,9 +312,11 @@ length read once at the start.
   such a variable is a module variable, and a function can read it.
 - The loop variable of a runtime loop also holds its last value after the
   loop, with the item's type, and keeps its earlier value when the loop runs
-  no passes. If it held a value of another type before the loop, reading it
-  after the loop is a compile error, since its type would depend on whether
-  the loop ran.
+  no passes. If it held a value of another known type before the loop, such as
+  text before a loop over numbers, reading it after the loop is a compile
+  error, since its type would depend on whether the loop ran. When the items'
+  type is known only when the pack runs, as for a parameter, the variable
+  holds either value.
 - Literal arrays containing runtime expressions are materialized and iterated
   at runtime.
 - Runtime storage-backed list iteration supports list expressions/paths. The

@@ -617,6 +617,40 @@ pub(crate) fn module_loop_variables(statements: &[Statement]) -> BTreeSet<String
     variables
 }
 
+/// Every `for` loop of `statements`, in function bodies and nested blocks
+/// too.
+pub(in crate::transpiler) fn collect_all_for_loops<'a>(
+    statements: &'a [Statement],
+    loops: &mut Vec<&'a crate::ast::ForLoop>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::For(for_loop) => {
+                loops.push(for_loop);
+                collect_all_for_loops(&for_loop.body, loops);
+            }
+            Statement::FunctionDef(function) => collect_all_for_loops(&function.body, loops),
+            Statement::If(if_stmt) => {
+                collect_all_for_loops(&if_stmt.then_branch, loops);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_all_for_loops(branch, loops);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_all_for_loops(branch, loops);
+                }
+            }
+            Statement::While(while_loop) => collect_all_for_loops(&while_loop.body, loops),
+            Statement::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    collect_all_for_loops(&case.body, loops);
+                }
+            }
+            Statement::Execute(exec_block) => collect_all_for_loops(&exec_block.body, loops),
+            _ => {}
+        }
+    }
+}
+
 /// The `for` loops of module-level code, nested ones included.
 fn collect_module_loops<'a>(statements: &'a [Statement], loops: &mut Vec<&'a crate::ast::ForLoop>) {
     for statement in statements {

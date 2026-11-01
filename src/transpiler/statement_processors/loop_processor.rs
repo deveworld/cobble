@@ -96,6 +96,219 @@ struct RuntimeLoopDriver<'a> {
     cleanup_commands: Vec<String>,
 }
 
+/// A runtime `for` over a list whose body is being lowered and may rebind
+/// the list. As in Python, the loop keeps iterating the list it started
+/// with: a statement that rebinds the list, or moves it, first saves the
+/// list's root variable for the loop (see [`Transpiler::rebind_signal_commands`]).
+#[derive(Debug, Clone)]
+pub(in crate::transpiler) struct ActiveListLoop {
+    /// The storage path of the iterable's root variable.
+    root_path: String,
+    /// The iterable, with the indexes the loop fixed at its start.
+    iter: Expression,
+}
+
+/// How a runtime `for` keeps walking the list it started with when its
+/// body may rebind the list. The loop walks `copy`, which takes the list at
+/// `list_plan` before each pass, so changes in place are seen. A statement
+/// that rebinds the list first saves the root variable in its rebind slot
+/// and sets its rebind holder to 2; the next pass then takes the old list
+/// from `prev_plan`, inside that slot, and stops following the variable.
+#[derive(Debug, Clone)]
+struct ListLoopWatch {
+    root_path: String,
+    list_plan: StoragePathPlan,
+    prev_plan: StoragePathPlan,
+    copy: String,
+    /// Where the loop keeps an outer loop's saved list while it runs.
+    saved_slot: String,
+    /// 1 while the copy follows the variable.
+    live: String,
+    /// The rebind holder's value when the loop started.
+    saved: String,
+}
+
+/// `commands`, each run only under the `execute` subcommands `condition`.
+fn guard_commands(commands: &[String], condition: &str) -> Vec<String> {
+    commands
+        .iter()
+        .map(|command| match command.strip_prefix('$') {
+            Some(rest) => format!("$execute {condition} run {rest}"),
+            None => format!("execute {condition} run {command}"),
+        })
+        .collect()
+}
+
+/// Methods that move the items of a list, so an item list inside it is no
+/// longer at the same index.
+const MOVING_METHODS: [&str; 6] = ["pop", "insert", "remove", "clear", "sort", "reverse"];
+
+/// The score that tells a loop over the list at `root_path` that a
+/// statement rebound it: 1 while a loop watches it, 2 once a rebind saved
+/// the old value in [`rebind_slot`].
+fn rebind_holder(root_path: &str) -> String {
+    format!("#cobble_rebind.{root_path}")
+}
+
+fn rebind_slot(root_path: &str) -> String {
+    format!("_cobble_rebind.{root_path}")
+}
+
+/// The variable at the root of an iterable such as `g[i].rows`.
+fn iterable_root(expr: &Expression) -> Option<&str> {
+    match expr {
+        Expression::Identifier(name) => Some(name),
+        Expression::Attribute(base, _) | Expression::Subscript(base, _) => iterable_root(base),
+        _ => None,
+    }
+}
+
+/// Whether `prefix` names `expr` or a container `expr` lies in.
+fn is_path_prefix(prefix: &Expression, expr: &Expression) -> bool {
+    prefix == expr
+        || match expr {
+            Expression::Attribute(base, _) | Expression::Subscript(base, _) => {
+                is_path_prefix(prefix, base)
+            }
+            _ => false,
+        }
+}
+
+/// Whether `prefix` names a container `expr` lies in, not `expr` itself.
+fn is_strict_path_prefix(prefix: &Expression, expr: &Expression) -> bool {
+    prefix != expr && is_path_prefix(prefix, expr)
+}
+
+/// Calls of moving methods in `expr`, as `(base, method)`.
+fn moving_calls<'a>(expr: &'a Expression, out: &mut Vec<&'a Expression>) {
+    match expr {
+        Expression::Call(func, args) => {
+            if let Expression::Attribute(base, method) = &**func {
+                if MOVING_METHODS.contains(&method.as_str()) {
+                    out.push(base);
+                }
+                moving_calls(base, out);
+            } else {
+                moving_calls(func, out);
+            }
+            for arg in args {
+                moving_calls(arg, out);
+            }
+        }
+        Expression::Binary(left, _, right) => {
+            moving_calls(left, out);
+            moving_calls(right, out);
+        }
+        Expression::Unary(_, inner) | Expression::Attribute(inner, _) => moving_calls(inner, out),
+        Expression::Subscript(base, index) => {
+            moving_calls(base, out);
+            moving_calls(index, out);
+        }
+        Expression::Slice(base, start, stop) => {
+            moving_calls(base, out);
+            for bound in [start, stop].into_iter().flatten() {
+                moving_calls(bound, out);
+            }
+        }
+        Expression::Conditional(condition, value, otherwise) => {
+            moving_calls(condition, out);
+            moving_calls(value, out);
+            moving_calls(otherwise, out);
+        }
+        Expression::Array(items) => items.iter().for_each(|item| moving_calls(item, out)),
+        Expression::Map(entries) => entries
+            .iter()
+            .for_each(|(_, value)| moving_calls(value, out)),
+        _ => {}
+    }
+}
+
+/// The expressions `statement` evaluates itself, without its body.
+fn own_expressions(statement: &Statement) -> Vec<&Expression> {
+    match statement {
+        Statement::Assignment(assign) => {
+            let mut out = vec![&assign.value];
+            out.extend(assign.target_expr.as_ref());
+            out
+        }
+        Statement::MultiAssign(multi) => multi.targets.iter().chain(&multi.values).collect(),
+        Statement::Expression(expr) | Statement::Return(Some(expr)) => vec![expr],
+        Statement::If(if_stmt) => std::iter::once(&if_stmt.condition)
+            .chain(if_stmt.elif_branches.iter().map(|(condition, _)| condition))
+            .collect(),
+        Statement::For(for_loop) => std::iter::once(&for_loop.iter)
+            .chain(for_loop.step.as_ref())
+            .collect(),
+        Statement::While(while_loop) => vec![&while_loop.condition],
+        Statement::Match(match_stmt) => vec![&match_stmt.value],
+        _ => Vec::new(),
+    }
+}
+
+/// Whether `body` calls a function the pack defines, which may rebind a
+/// module list. Builtins and methods of variables don't count; a function
+/// of a module, a name `modules` accepts, does.
+pub(in crate::transpiler) fn calls_user_function(
+    body: &[Statement],
+    modules: &dyn Fn(&str) -> bool,
+) -> bool {
+    let mut statements = Vec::new();
+    statements_in_order(body, &mut statements);
+    statements.into_iter().any(|statement| {
+        own_expressions(statement)
+            .into_iter()
+            .any(|expr| expression_calls_user_function(expr, modules))
+    })
+}
+
+fn expression_calls_user_function(expr: &Expression, modules: &dyn Fn(&str) -> bool) -> bool {
+    const BUILTINS: [&str; 12] = [
+        "abs",
+        "enumerate",
+        "max",
+        "min",
+        "sorted",
+        "str",
+        "sum",
+        "len",
+        "range",
+        "int",
+        "list",
+        "bool",
+    ];
+    let calls = |expr: &Expression| expression_calls_user_function(expr, modules);
+    match expr {
+        Expression::Call(func, args) => {
+            let direct = match &**func {
+                Expression::Identifier(name) => !BUILTINS.contains(&name.as_str()),
+                // `module.f()`; a method such as `a.append(1)` is not one.
+                Expression::Attribute(base, _) => match &**base {
+                    Expression::Identifier(name) => modules(name),
+                    base => calls(base),
+                },
+                func => calls(func),
+            };
+            direct || args.iter().any(calls)
+        }
+        Expression::Binary(left, _, right) => calls(left) || calls(right),
+        Expression::Unary(_, inner) | Expression::Attribute(inner, _) => calls(inner),
+        Expression::Subscript(base, index) => calls(base) || calls(index),
+        Expression::Slice(base, start, stop) => {
+            calls(base)
+                || [start, stop]
+                    .into_iter()
+                    .flatten()
+                    .any(|bound| calls(bound))
+        }
+        Expression::Conditional(condition, value, otherwise) => {
+            calls(condition) || calls(value) || calls(otherwise)
+        }
+        Expression::Array(items) => items.iter().any(calls),
+        Expression::Map(entries) => entries.iter().any(|(_, value)| calls(value)),
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct VariableBindingSnapshot {
     value: Option<Expression>,
@@ -375,6 +588,7 @@ impl Transpiler {
         &mut self,
         target: &str,
         before: VariableBindingSnapshot,
+        mirrored: bool,
     ) -> Result<(), TranspileError> {
         let had_binding = before.is_scoreboard
             || before.storage_path.is_some()
@@ -386,27 +600,80 @@ impl Transpiler {
                 .as_ref()
                 .is_some_and(|value_type| *value_type != CobbleType::Unknown)
         };
-        if had_binding
-            && (known(&before.value_type) || known(&loop_type))
-            && before.value_type != loop_type
+        let number = |value_type: &Option<CobbleType>| {
+            matches!(value_type, Some(CobbleType::Integer | CobbleType::Boolean))
+        };
+        if !had_binding
+            || before.value_type == loop_type
+            || (number(&before.value_type) && number(&loop_type))
         {
-            let kind = |value_type: &Option<CobbleType>| match value_type {
-                Some(CobbleType::Integer | CobbleType::Boolean) => "a number",
-                Some(CobbleType::String) => "text",
-                Some(CobbleType::List) => "a list",
-                Some(CobbleType::Map) => "a map",
-                _ => "a value of unknown type",
-            };
-            return Err(TranspileError::new(
-                TranspileErrorKind::RuntimeForUnsupported,
-                format!(
-                    "`{target}` holds {} before this loop and {} in it, so after the loop its type depends on whether the loop ran. Use another name for the loop variable, or assign `{target}` before the loop a value of the same type.",
-                    kind(&before.value_type),
-                    kind(&loop_type)
-                ),
-            ));
+            return Ok(());
         }
-        Ok(())
+        // A value whose type only the running pack knows on one side: the
+        // variable holds either value in storage and as a score, mirrored
+        // before the loop (see `mirror_loop_target_before`).
+        if mirrored && (!known(&before.value_type) || !known(&loop_type)) {
+            self.symbols
+                .variable_types
+                .insert(target.to_string(), CobbleType::Unknown);
+            return Ok(());
+        }
+        let kind = |value_type: &Option<CobbleType>| match value_type {
+            Some(CobbleType::Integer | CobbleType::Boolean) => "a number",
+            Some(CobbleType::String) => "text",
+            Some(CobbleType::List) => "a list",
+            Some(CobbleType::Map) => "a map",
+            _ => "a value of unknown type",
+        };
+        Err(TranspileError::new(
+            TranspileErrorKind::RuntimeForUnsupported,
+            format!(
+                "`{target}` holds {} before this loop and {} in it, so after the loop its type depends on whether the loop ran. Use another name for the loop variable, or assign `{target}` before the loop a value of the same type.",
+                kind(&before.value_type),
+                kind(&loop_type)
+            ),
+        ))
+    }
+
+    /// Commands that copy the value `target` holds before a runtime list
+    /// loop into the loop's binding, in storage and as a score, so after a
+    /// loop that runs no passes the variable still holds it.
+    fn mirror_loop_target_before(
+        &mut self,
+        target: &str,
+        before: &VariableBindingSnapshot,
+    ) -> Result<Vec<String>, TranspileError> {
+        let had_binding = before.is_scoreboard
+            || before.storage_path.is_some()
+            || before.value.is_some()
+            || before.compile_time_constant.is_some();
+        if !had_binding {
+            return Ok(Vec::new());
+        }
+        let ns = self.data_pack.namespace.clone();
+        let loop_path = self.variable_storage_path(target);
+        let number = matches!(
+            before.value_type,
+            Some(CobbleType::Integer | CobbleType::Boolean)
+        ) || (before.storage_path.is_none() && before.value_type.is_none());
+        let value = Expression::Identifier(target.to_string());
+        let mut commands = Vec::new();
+        if number {
+            if !before.is_scoreboard {
+                commands.extend(self.evaluate_expression_to_target(&value, target)?);
+            }
+            commands.push(format!(
+                "execute store result storage {ns}:global {loop_path} int 1 run scoreboard players get {target} temp"
+            ));
+            return Ok(commands);
+        }
+        if before.storage_path.as_deref() != Some(loop_path.as_str()) {
+            commands.extend(self.storage_value_commands(&loop_path, &value)?);
+        }
+        commands.push(format!(
+            "execute store result score {target} temp run data get storage {ns}:global {loop_path}"
+        ));
+        Ok(commands)
     }
 
     /// The last value of a module-level loop expanded at compile time, for
@@ -525,7 +792,7 @@ impl Transpiler {
         });
 
         let kept = if keep_target && result.is_ok() {
-            self.keep_runtime_loop_target(&for_loop.target, target_snapshot)
+            self.keep_runtime_loop_target(&for_loop.target, target_snapshot, false)
         } else {
             self.restore_variable_binding(&for_loop.target, target_snapshot);
             Ok(())
@@ -544,13 +811,7 @@ impl Transpiler {
         &mut self,
         for_loop: &ForLoop,
     ) -> Result<(), TranspileError> {
-        let RuntimeStorageListPlan {
-            path: list_plan,
-            setup_commands,
-            cleanup_commands,
-        } = self.runtime_storage_list_plan(&for_loop.iter)?;
         validate_runtime_loop_body_target(&for_loop.body, &for_loop.target)?;
-
         if self.current_context.is_param(&for_loop.target) {
             return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
                 "runtime-for-unsupported: dynamic list loop target '{}' cannot shadow a function parameter.",
@@ -569,6 +830,22 @@ impl Transpiler {
             ));
         }
 
+        // As in Python, the path to the list is worked out once.
+        let iter = self.fix_loop_iterable(for_loop)?;
+        let RuntimeStorageListPlan {
+            path: list_plan,
+            setup_commands,
+            cleanup_commands,
+        } = self.runtime_storage_list_plan(&iter)?;
+        let watch = self.list_loop_watch(for_loop, &iter, &list_plan);
+        let mut cleanup_commands = cleanup_commands;
+        // A loop that may see its list rebound walks a copy, kept equal to
+        // the list until a rebind (see `ListLoopWatch`).
+        let walked_plan = match &watch {
+            Some(watch) => StoragePathPlan::static_path(watch.copy.clone()),
+            None => list_plan.clone(),
+        };
+
         let index_var = format!("#for_list_index_{}", self.next_temp_id());
         let len_var = format!("#for_list_len_{}", self.next_temp_id());
         let step_var = if matches!(step, RuntimeRangeStep::Dynamic(_)) {
@@ -585,7 +862,14 @@ impl Transpiler {
             .as_ref()
             .map(|step_var| (step_var.clone(), self.save_variable_binding(step_var)));
 
-        let element_type = self.runtime_list_element_type(&for_loop.iter);
+        let element_type = self.runtime_list_element_type(&iter);
+        let keep_target = self.runtime_loop_target_read_after(&for_loop.target);
+        let before_loop =
+            if keep_target && target_snapshot.value_type.as_ref() != Some(&element_type) {
+                self.mirror_loop_target_before(&for_loop.target, &target_snapshot)?
+            } else {
+                Vec::new()
+            };
         self.bind_runtime_storage_loop_value(&for_loop.target, element_type);
         self.bind_runtime_integer_variable(&index_var);
         self.bind_runtime_integer_variable(&len_var);
@@ -593,14 +877,32 @@ impl Transpiler {
             self.bind_runtime_integer_variable(step_var);
         }
 
+        let (watch_start, watch_sync) = match &watch {
+            Some(watch) => {
+                let (start, end) = self.list_loop_watch_bounds(watch);
+                cleanup_commands.extend(end);
+                (start, self.list_loop_watch_sync(watch)?)
+            }
+            None => (Vec::new(), Vec::new()),
+        };
+        if let Some(watch) = &watch {
+            self.list_loops.push(ActiveListLoop {
+                root_path: watch.root_path.clone(),
+                iter: iter.clone(),
+            });
+        }
+
         let result = self.emit_runtime_loop(RuntimeLoopDriver {
             helper_prefix: "for_list",
             loop_helper_id_before_condition: false,
             init_commands: Box::new(|transpiler| {
-                let mut init_commands = setup_commands.clone();
+                let mut init_commands = before_loop.clone();
+                init_commands.extend(setup_commands.clone());
+                init_commands.extend(watch_start.clone());
+                init_commands.extend(watch_sync.clone());
                 init_commands.push(format!("scoreboard players set {} temp 0", index_var));
                 init_commands
-                    .extend(transpiler.runtime_storage_list_len_commands(&list_plan, &len_var)?);
+                    .extend(transpiler.runtime_storage_list_len_commands(&walked_plan, &len_var)?);
                 match (&step, &step_var) {
                     (RuntimeRangeStep::Static(step), _) if *step < 0 => {
                         init_commands.push(format!(
@@ -632,47 +934,43 @@ impl Transpiler {
                 Ok(init_commands)
             }),
             condition: Box::new(|transpiler| {
-                let (args, mut capture) =
+                let (args, capture) =
                     transpiler.runtime_range_condition(&index_var, &len_var, &step, &step_var)?;
                 // Walking forward, each pass reads the length again, as
                 // Python does, so the body can grow or shrink the list.
-                if matches!(step, RuntimeRangeStep::Static(step) if step > 0) {
-                    let length = transpiler.runtime_storage_list_len_commands(&list_plan, &len_var)?;
-                    let source = transpiler.current_statement_source.clone();
-                    let shift = length.len();
-                    capture.metadata = capture
-                        .metadata
-                        .into_iter()
-                        .map(|(index, command)| (index + shift, command))
-                        .chain(length.iter().enumerate().map(|(index, command)| {
-                            (
-                                index,
-                                GeneratedCommand::new(
-                                    command.clone(),
-                                    source.clone(),
-                                    GeneratedCommandKind::ControlFlow,
-                                ),
-                            )
-                        }))
-                        .collect();
-                    capture.commands.splice(0..0, length);
+                let mut before = watch_sync.clone();
+                match (&step, &step_var) {
+                    (RuntimeRangeStep::Static(step), _) if *step > 0 => {
+                        before.extend(
+                            transpiler.runtime_storage_list_len_commands(&walked_plan, &len_var)?,
+                        );
+                    }
+                    (RuntimeRangeStep::Dynamic(_), Some(step_var)) => {
+                        let length =
+                            transpiler.runtime_storage_list_len_commands(&walked_plan, &len_var)?;
+                        before.extend(guard_commands(
+                            &length,
+                            &format!("if score {step_var} temp matches 1.."),
+                        ));
+                    }
+                    _ => {}
                 }
-                Ok((args, capture))
+                Ok((args, transpiler.prepend_control_commands(capture, before)))
             }),
             body: Box::new(|transpiler| {
-                let binding_commands = match transpiler
-                    .unknown_iterable_path(&for_loop.iter)
-                    .or_else(|| transpiler.unknown_item_iterable_path(&for_loop.iter, &list_plan))
-                {
+                let unknown_base = transpiler
+                    .unknown_iterable_path(&iter)
+                    .or_else(|| transpiler.unknown_item_iterable_path(&iter, &list_plan));
+                let binding_commands = match unknown_base {
                     // A parameter can hold a string, whose items are its
                     // characters, so the item is read as `p[i]` reads it.
                     Some(base_path) => transpiler.runtime_unknown_item_commands(
-                        &base_path,
+                        walked_plan.as_static().unwrap_or(&base_path),
                         &index_var,
                         &for_loop.target,
                     )?,
                     None => {
-                        let item_plan = list_plan
+                        let item_plan = walked_plan
                             .clone()
                             .append_dynamic_index(Expression::Identifier(index_var.clone()));
                         transpiler.runtime_storage_list_item_commands(&item_plan, &for_loop.target)?
@@ -697,9 +995,12 @@ impl Transpiler {
             }),
             cleanup_commands,
         });
+        if watch.is_some() {
+            self.list_loops.pop();
+        }
 
-        let kept = if self.runtime_loop_target_read_after(&for_loop.target) && result.is_ok() {
-            self.keep_runtime_loop_target(&for_loop.target, target_snapshot)
+        let kept = if keep_target && result.is_ok() {
+            self.keep_runtime_loop_target(&for_loop.target, target_snapshot, true)
         } else {
             self.restore_variable_binding(&for_loop.target, target_snapshot);
             Ok(())
@@ -710,6 +1011,336 @@ impl Transpiler {
             self.restore_variable_binding(&step_var, snapshot);
         }
         result.and(kept)
+    }
+
+    /// `capture` with `commands` run first.
+    fn prepend_control_commands(
+        &self,
+        mut capture: FunctionCapture,
+        commands: Vec<String>,
+    ) -> FunctionCapture {
+        if commands.is_empty() {
+            return capture;
+        }
+        let source = self.current_statement_source.clone();
+        let shift = commands.len();
+        capture.metadata = capture
+            .metadata
+            .into_iter()
+            .map(|(index, command)| (index + shift, command))
+            .chain(commands.iter().enumerate().map(|(index, command)| {
+                (
+                    index,
+                    GeneratedCommand::new(
+                        command.clone(),
+                        source.clone(),
+                        GeneratedCommandKind::ControlFlow,
+                    ),
+                )
+            }))
+            .collect();
+        capture.commands.splice(0..0, commands);
+        capture
+    }
+
+    /// The iterable of `for_loop` with each index the body may change
+    /// replaced by a hidden variable set here, so the loop keeps the list
+    /// it started with, as in Python, where `for v in g[i]:` with `i = 1`
+    /// in the body still walks `g[0]`.
+    fn fix_loop_iterable(&mut self, for_loop: &ForLoop) -> Result<Expression, TranspileError> {
+        fn fix(
+            transpiler: &mut Transpiler,
+            expr: &Expression,
+            body: &[Statement],
+        ) -> Result<Expression, TranspileError> {
+            match expr {
+                Expression::Attribute(base, name) => Ok(Expression::Attribute(
+                    Box::new(fix(transpiler, base, body)?),
+                    name.clone(),
+                )),
+                Expression::Subscript(base, index) => {
+                    let base = fix(transpiler, base, body)?;
+                    let mut reads = Vec::new();
+                    function_context::expression_reads(index, &mut reads);
+                    let changes = reads
+                        .iter()
+                        .any(|name| function_context::assigns_name(body, name));
+                    if !changes {
+                        return Ok(Expression::Subscript(Box::new(base), index.clone()));
+                    }
+                    let value_type = transpiler.value_type(index);
+                    let hidden = transpiler.hidden_local(value_type);
+                    transpiler.process_statement(&Statement::Assignment(Assignment {
+                        target: hidden.clone(),
+                        target_expr: None,
+                        value: (**index).clone(),
+                        persist: false,
+                    }))?;
+                    Ok(Expression::Subscript(
+                        Box::new(base),
+                        Box::new(Expression::Identifier(hidden)),
+                    ))
+                }
+                other => Ok(other.clone()),
+            }
+        }
+        fix(self, &for_loop.iter, &for_loop.body)
+    }
+
+    /// How a runtime loop over `iter` follows a rebind of its list, when
+    /// its body may rebind the list or move it: `None` when it can't.
+    fn list_loop_watch(
+        &mut self,
+        for_loop: &ForLoop,
+        iter: &Expression,
+        list_plan: &StoragePathPlan,
+    ) -> Option<ListLoopWatch> {
+        let root = iterable_root(iter)?;
+        let root_path = self.root_storage_path(root)?;
+        let (template, args) = match list_plan {
+            StoragePathPlan::Static(path) => (path.clone(), None),
+            StoragePathPlan::Dynamic { template, args } => (template.clone(), Some(args.clone())),
+        };
+        let rest = template.strip_prefix(&root_path)?;
+        if !(rest.is_empty() || rest.starts_with('.') || rest.starts_with('[')) {
+            return None;
+        }
+        if !self.loop_body_may_rebind(for_loop, iter, root, &root_path) {
+            return None;
+        }
+        let prev_template = format!("{}{rest}", rebind_slot(&root_path));
+        let prev_plan = match args {
+            None => StoragePathPlan::static_path(prev_template),
+            Some(args) => StoragePathPlan::Dynamic {
+                template: prev_template,
+                args,
+            },
+        };
+        let id = self.next_temp_id();
+        Some(ListLoopWatch {
+            root_path,
+            list_plan: list_plan.clone(),
+            prev_plan,
+            copy: format!("_cobble_for_iter_{id}"),
+            saved_slot: format!("_cobble_for_prev_{id}"),
+            live: format!("#for_list_live_{id}"),
+            saved: format!("#for_list_watch_{id}"),
+        })
+    }
+
+    /// The storage path of the variable `name`, a parameter included.
+    fn root_storage_path(&self, name: &str) -> Option<String> {
+        self.symbols
+            .variable_storage_paths
+            .get(name)
+            .cloned()
+            .or_else(|| {
+                self.current_context
+                    .is_param(name)
+                    .then(|| format!("args.{name}"))
+            })
+    }
+
+    /// Whether the body of `for_loop` may rebind the list `iter` names, or
+    /// move it: an assignment to its root or to a container it lies in, a
+    /// moving method on such a container, or, for a module list, a call of
+    /// a function that may assign it.
+    fn loop_body_may_rebind(
+        &self,
+        for_loop: &ForLoop,
+        iter: &Expression,
+        root: &str,
+        root_path: &str,
+    ) -> bool {
+        let mut statements = Vec::new();
+        statements_in_order(&for_loop.body, &mut statements);
+        let rebinds =
+            |target: &Expression| is_identifier(target, root) || is_path_prefix(target, iter);
+        for statement in statements {
+            let direct = match statement {
+                Statement::Assignment(assign) => {
+                    (assign.assigns_name() && assign.target == root)
+                        || assign.target_expr.as_ref().is_some_and(rebinds)
+                }
+                Statement::MultiAssign(multi) => multi.targets.iter().any(rebinds),
+                Statement::For(inner) => inner.target == root,
+                _ => false,
+            };
+            if direct {
+                return true;
+            }
+            let mut moved = Vec::new();
+            for expr in own_expressions(statement) {
+                moving_calls(expr, &mut moved);
+            }
+            if moved
+                .into_iter()
+                .any(|base| is_strict_path_prefix(base, iter))
+            {
+                return true;
+            }
+        }
+        root_path.starts_with("vars.")
+            && self.signalled_list_roots.contains(root)
+            && calls_user_function(&for_loop.body, &|name| self.is_module_name(name))
+    }
+
+    /// Whether `name` names an imported module rather than a variable.
+    fn is_module_name(&self, name: &str) -> bool {
+        !self.symbols.variable_storage_paths.contains_key(name)
+            && !self.symbols.scoreboard_variables.contains(name)
+            && !self.current_context.is_param(name)
+    }
+
+    /// The commands that start and end watching for a rebind. A loop
+    /// inside another loop over the same list keeps the outer loop's
+    /// saved value.
+    fn list_loop_watch_bounds(&mut self, watch: &ListLoopWatch) -> (Vec<String>, Vec<String>) {
+        self.data_pack.track_objective("temp");
+        let ns = self.data_pack.namespace.clone();
+        let holder = rebind_holder(&watch.root_path);
+        let slot = rebind_slot(&watch.root_path);
+        let ListLoopWatch {
+            copy,
+            saved_slot,
+            live,
+            saved,
+            ..
+        } = watch;
+        let start = vec![
+            format!("execute store result score {saved} temp run scoreboard players get {holder} temp"),
+            format!("execute if score {saved} temp matches 2 run data modify storage {ns}:global {saved_slot} set from storage {ns}:global {slot}"),
+            format!("scoreboard players set {holder} temp 1"),
+            format!("scoreboard players set {live} temp 1"),
+            format!("data remove storage {ns}:global {copy}"),
+        ];
+        let end = vec![
+            format!("execute if score {saved} temp matches 0 run data remove storage {ns}:global {slot}"),
+            format!("execute if score {saved} temp matches 0 run scoreboard players set {holder} temp 0"),
+            format!("execute if score {saved} temp matches 2 run scoreboard players set {holder} temp 2"),
+            format!("execute if score {saved} temp matches 2 run data modify storage {ns}:global {slot} set from storage {ns}:global {saved_slot}"),
+            format!("data remove storage {ns}:global {copy}"),
+            format!("data remove storage {ns}:global {saved_slot}"),
+        ];
+        (start, end)
+    }
+
+    /// The commands run before each pass of a watched loop: after a rebind,
+    /// the copy takes the list as it was then, and the loop stops following
+    /// the variable; until then the copy takes the list as it is now.
+    fn list_loop_watch_sync(
+        &mut self,
+        watch: &ListLoopWatch,
+    ) -> Result<Vec<String>, TranspileError> {
+        let holder = rebind_holder(&watch.root_path);
+        let live = &watch.live;
+        let rebound = format!("if score {live} temp matches 1 if score {holder} temp matches 2");
+        let mut commands = guard_commands(
+            &self.copy_storage_commands(&watch.copy, &watch.prev_plan)?,
+            &rebound,
+        );
+        commands.push(format!(
+            "execute {rebound} run scoreboard players set {live} temp 0"
+        ));
+        commands.extend(guard_commands(
+            &self.copy_storage_commands(&watch.copy, &watch.list_plan)?,
+            &format!("if score {live} temp matches 1"),
+        ));
+        Ok(commands)
+    }
+
+    /// Before `statement` rebinds a list a running loop walks, or moves it,
+    /// saves the list's root variable for the loop (see `ListLoopWatch`).
+    pub(in crate::transpiler) fn rebind_signal_commands(
+        &mut self,
+        statement: &Statement,
+    ) -> Result<(), TranspileError> {
+        if self.current_function.is_none()
+            || (self.list_loops.is_empty() && self.signalled_list_roots.is_empty())
+        {
+            return Ok(());
+        }
+        let mut paths: Vec<String> = Vec::new();
+        if let Statement::Assignment(assign) = statement {
+            if assign.assigns_name() {
+                if let Some(path) = self.root_storage_path(&assign.target) {
+                    let watched = self.list_loops.iter().any(|watch| watch.root_path == path)
+                        || (path.starts_with("vars.")
+                            && self.signalled_list_roots.contains(&assign.target));
+                    if watched && !self.extends_in_place(assign) {
+                        paths.push(path);
+                    }
+                }
+            } else if let Some(target) = &assign.target_expr {
+                let root = iterable_root(target).and_then(|root| self.root_storage_path(root));
+                for watch in &self.list_loops {
+                    if root.as_deref() == Some(watch.root_path.as_str())
+                        && is_path_prefix(target, &watch.iter)
+                    {
+                        paths.push(watch.root_path.clone());
+                    }
+                }
+            }
+        }
+        let mut moved = Vec::new();
+        for expr in own_expressions(statement) {
+            moving_calls(expr, &mut moved);
+        }
+        for base in moved {
+            let root = iterable_root(base).and_then(|root| self.root_storage_path(root));
+            for watch in &self.list_loops {
+                if root.as_deref() == Some(watch.root_path.as_str())
+                    && is_strict_path_prefix(base, &watch.iter)
+                {
+                    paths.push(watch.root_path.clone());
+                }
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        if paths.is_empty() {
+            return Ok(());
+        }
+        self.data_pack.track_objective("temp");
+        let ns = self.data_pack.namespace.clone();
+        let mut commands = Vec::new();
+        for path in paths {
+            let holder = rebind_holder(&path);
+            let slot = rebind_slot(&path);
+            commands.push(format!("execute if score {holder} temp matches 1 run data modify storage {ns}:global {slot} set from storage {ns}:global {path}"));
+            commands.push(format!(
+                "execute if score {holder} temp matches 1 run scoreboard players set {holder} temp 2"
+            ));
+        }
+        self.push_current_commands(commands)
+    }
+
+    /// Whether `assign` comes from `a += [...]` or `a *= n` on a list, which
+    /// changes the list in place, as in Python, rather than rebinding it.
+    /// The parser reads both as `a = a + ...`, so the source line tells.
+    fn extends_in_place(&self, assign: &Assignment) -> bool {
+        if self.symbols.variable_types.get(&assign.target) == Some(&CobbleType::String) {
+            return false;
+        }
+        let Some(location) = &self.current_statement_source else {
+            return false;
+        };
+        let Some(line) = self
+            .source_locations
+            .sources
+            .get(&location.file)
+            .and_then(|source| source.lines().nth(location.line.saturating_sub(1)))
+        else {
+            return false;
+        };
+        let rest: String = line
+            .chars()
+            .skip(location.column.saturating_sub(1))
+            .collect();
+        rest.trim_start()
+            .strip_prefix(assign.target.as_str())
+            .map(str::trim_start)
+            .is_some_and(|rest| rest.starts_with("+=") || rest.starts_with("*="))
     }
 
     fn runtime_storage_list_candidate(&self, iter: &Expression) -> bool {

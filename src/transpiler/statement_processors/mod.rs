@@ -15,4 +15,4 @@ mod selector_processor;
 
 pub(in crate::transpiler) use assignment::{out_of_range_numbers, serialize_snbt};
 pub(in crate::transpiler) use import_processor::ImportState;
-pub(in crate::transpiler) use loop_processor::UnrollState;
+pub(in crate::transpiler) use loop_processor::{calls_user_function, ActiveListLoop, UnrollState};
