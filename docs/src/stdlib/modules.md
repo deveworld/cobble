@@ -65,8 +65,22 @@ loop Cobble expands at compile time, or `"n" + str(N)` with a `const`, is
 written as its text. Any other variable, such as a module variable, a local,
 or a string joined from one, holds a value that is known only when the
 function runs, so passing it is a compile error. Pass it to a function parameter and call the helper there. A
-function's own name, as in `schedule.once(tick, "1t")`, names that function.
-The text that `text` helpers show can hold variables, as described below.
+function's own name, as in `schedule.once(tick, "1t")`, names that function
+in `schedule.once()` and `schedule.clear()`; in any other helper it is a
+compile error. The text that `text` helpers show can hold variables, as
+described below.
+
+A parameter in a display name, as in `team.add("t", d)`, `bossbar.add()`,
+`bossbar.set_name()`, or `score.objective.add()`, becomes macro text in the
+component, as `$team add t {"text":"$(d)"}`. Numbers, such as the value of
+`score.set()`, and words, such as a bossbar color or a `score.operation()`
+operator, take a parameter too, and Minecraft checks the value when the
+function runs. A few slots take only a literal or a `const`: the `True` or
+`False` of `bossbar.set_visible()` and of `entity.effect_give()`'s hide
+particles, and the index of `storage.insert()` on a path with runtime keys.
+A resource file is written when the pack is built, so a parameter or a
+variable in its text, as `text.plain(p)` in a dialog title, is a compile
+error.
 
 ## Text
 

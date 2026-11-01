@@ -14,7 +14,8 @@ impl Transpiler {
                 }
                 let name = self.expr_to_plain_arg(&args[0], "team name")?;
                 if args.len() == 2 {
-                    let display = self.expr_to_text_component(&args[1])?;
+                    let display =
+                        self.expr_to_helper_text_component(&args[1], "team display name")?;
                     format!("team add {} {}", name, display)
                 } else {
                     format!("team add {}", name)
@@ -53,7 +54,9 @@ impl Transpiler {
                 let name = self.expr_to_plain_arg(&args[0], "team name")?;
                 let option = self.expr_to_plain_arg(&args[1], "team option")?;
                 let value = match option.as_str() {
-                    "prefix" | "suffix" | "displayName" => self.expr_to_text_component(&args[2])?,
+                    "prefix" | "suffix" | "displayName" => {
+                        self.expr_to_helper_text_component(&args[2], "team option value")?
+                    }
                     _ => self.expr_to_plain_arg(&args[2], "team option value")?,
                 };
                 format!("team modify {} {} {}", name, option, value)

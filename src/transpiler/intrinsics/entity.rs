@@ -32,7 +32,7 @@ impl Transpiler {
                 }
                 if args.len() >= 4 {
                     command.push(' ');
-                    command.push_str(&self.expr_to_i32(&args[3], "effect amplifier")?.to_string());
+                    command.push_str(&self.expr_to_int_arg(&args[3], "effect amplifier")?);
                 }
                 if args.len() == 5 {
                     command.push(' ');

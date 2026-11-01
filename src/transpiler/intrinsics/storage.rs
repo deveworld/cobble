@@ -136,7 +136,12 @@ impl Transpiler {
             "insert" => {
                 check_storage_arg_count(method, args, 3)?;
                 let path = self.expr_to_storage_path_plan(&args[0], "storage path")?;
-                let index = self.expr_to_i32(&args[1], "storage insert index")?;
+                let index = self.expr_to_int_arg(&args[1], "storage insert index")?;
+                if super::is_macro_arg(&index) && path.as_static().is_none() {
+                    return Err("storage.insert() takes a parameter as the index only with a \
+                                fixed path. Write the path without runtime keys, or use a literal index."
+                        .into());
+                }
                 self.modify_storage_with_value(&path, &format!("insert {}", index), &args[2])?
             }
             "remove" | "get" => {

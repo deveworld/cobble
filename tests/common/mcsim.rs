@@ -184,6 +184,12 @@ impl Sim {
         self.run_function(name, &Context { executor: None }, None)
     }
 
+    /// Run a function by name with inline macro arguments, as
+    /// `/function ns:name {...}` does, and return its result.
+    pub fn call_with(&mut self, name: &str, args: Value) -> Option<i32> {
+        self.run_function(name, &Context { executor: None }, Some(&args))
+    }
+
     /// Run a function by name as `executor` and return its result.
     pub fn call_as(&mut self, name: &str, executor: &str) -> Option<i32> {
         self.run_function(

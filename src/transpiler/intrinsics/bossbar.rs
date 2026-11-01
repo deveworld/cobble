@@ -13,7 +13,7 @@ impl Transpiler {
                     return Err("bossbar.add() takes 2 arguments".into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
-                let name = self.expr_to_text_component(&args[1])?;
+                let name = self.expr_to_helper_text_component(&args[1], "bossbar name")?;
                 format!("bossbar add {} {}", self.qualify_namespaced_id(&id), name)
             }
             "remove" => {
@@ -28,7 +28,7 @@ impl Transpiler {
                     return Err(format!("bossbar.{}() takes 2 arguments", method).into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
-                let value = self.expr_to_i32(&args[1], "bossbar value")?;
+                let value = self.expr_to_int_arg(&args[1], "bossbar value")?;
                 let property = method.strip_prefix("set_").unwrap();
                 format!(
                     "bossbar set {} {} {}",
@@ -42,7 +42,7 @@ impl Transpiler {
                     return Err("bossbar.set_name() takes 2 arguments".into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
-                let name = self.expr_to_text_component(&args[1])?;
+                let name = self.expr_to_helper_text_component(&args[1], "bossbar name")?;
                 format!(
                     "bossbar set {} name {}",
                     self.qualify_namespaced_id(&id),
@@ -57,10 +57,16 @@ impl Transpiler {
                 let value = self.expr_to_plain_arg(&args[1], "bossbar property value")?;
                 let property = method.strip_prefix("set_").unwrap();
                 match method {
-                    "set_color" if !Self::is_valid_bossbar_color(&value) => {
+                    "set_color"
+                        if !super::is_macro_arg(&value)
+                            && !Self::is_valid_bossbar_color(&value) =>
+                    {
                         return Err(format!("Invalid bossbar color: {}", value).into());
                     }
-                    "set_style" if !Self::is_valid_bossbar_style(&value) => {
+                    "set_style"
+                        if !super::is_macro_arg(&value)
+                            && !Self::is_valid_bossbar_style(&value) =>
+                    {
                         return Err(format!("Invalid bossbar style: {}", value).into());
                     }
                     _ => {}

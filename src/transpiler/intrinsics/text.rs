@@ -102,8 +102,18 @@ impl Transpiler {
                     return Err("text.colored() takes 2 arguments".into());
                 }
                 let text = self.expr_to_shown_text(&args[0], "text.colored text")?;
-                let color = self.expr_to_plain_arg(&args[1], "text color")?;
-                validate_text_color(&color)?;
+                // A parameter stays a placeholder, which the command that
+                // shows the component fills in as a macro argument.
+                let color = match &args[1] {
+                    Expression::Identifier(name) if self.current_context.is_param(name) => {
+                        format!("{{{name}}}")
+                    }
+                    color => {
+                        let color = self.expr_to_plain_arg(color, "text color")?;
+                        validate_text_color(&color)?;
+                        color
+                    }
+                };
                 serde_json::json!({ "text": text, "color": color })
             }
             "score" => {
@@ -141,7 +151,11 @@ impl Transpiler {
             return Err(format!("text.{}() takes 2 arguments", method).into());
         }
 
-        let target = self.expr_to_selector_arg(&args[0], "text target")?;
+        // The target is filled in already; the command processor reads the
+        // placeholders of the text, so the target's braces are escaped again.
+        let target = crate::transpiler::placeholders::escape_braces(
+            &self.expr_to_selector_arg(&args[0], "text target")?,
+        );
         let component = self.expr_to_text_component(&args[1])?;
         let command = match method {
             "tellraw" => format!("tellraw {} {}", target, component),

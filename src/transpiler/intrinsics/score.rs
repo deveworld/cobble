@@ -14,7 +14,7 @@ impl Transpiler {
                     return Err("score.set() takes 2 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "score name")?;
-                let value = self.expr_to_i32(&args[1], "score value")?;
+                let value = self.expr_to_int_arg(&args[1], "score value")?;
                 format!("scoreboard players set {} temp {}", name, value)
             }
             "add" | "remove" => {
@@ -22,7 +22,7 @@ impl Transpiler {
                     return Err(format!("score.{}() takes 2 arguments", method).into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "score name")?;
-                let value = self.expr_to_i32(&args[1], "score value")?;
+                let value = self.expr_to_int_arg(&args[1], "score value")?;
                 format!("scoreboard players {} {} temp {}", method, name, value)
             }
             "reset" => {
@@ -48,7 +48,7 @@ impl Transpiler {
                 let op = self.expr_to_plain_arg(&args[1], "score operation")?;
                 let src = self.expr_to_plain_arg(&args[2], "source score")?;
                 const ALLOWED_OPS: &[&str] = &["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"];
-                if !ALLOWED_OPS.contains(&op.as_str()) {
+                if !super::is_macro_arg(&op) && !ALLOWED_OPS.contains(&op.as_str()) {
                     return Err(format!("Unsupported scoreboard operation '{}'", op).into());
                 }
                 format!(
@@ -76,7 +76,8 @@ impl Transpiler {
                 let name = self.expr_to_plain_arg(&args[0], "objective name")?;
                 let criteria = self.expr_to_plain_arg(&args[1], "objective criteria")?;
                 if args.len() == 3 {
-                    let display = self.expr_to_text_component(&args[2])?;
+                    let display =
+                        self.expr_to_helper_text_component(&args[2], "objective display name")?;
                     format!(
                         "scoreboard objectives add {} {} {}",
                         name, criteria, display
@@ -131,20 +132,22 @@ impl Transpiler {
                     return Err("random.int() takes 3 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "random target score")?;
-                let min = self.expr_to_i32(&args[1], "random min")?;
-                let max = self.expr_to_i32(&args[2], "random max")?;
-                if min > max {
-                    return Err("random.int() min cannot be greater than max"
-                        .to_string()
-                        .into());
-                }
-                if min == max {
-                    format!("scoreboard players set {} temp {}", name, min)
-                } else {
+                let min = self.expr_to_int_arg(&args[1], "random min")?;
+                let max = self.expr_to_int_arg(&args[2], "random max")?;
+                if super::is_macro_arg(&min) || super::is_macro_arg(&max) {
+                    // `random value` refuses a range of one value, which a
+                    // parameter can give only when the function runs.
+                    self.push_current_command(format!(
+                        "scoreboard players set {} temp {}",
+                        name, min
+                    ))?;
                     format!(
-                        "execute store result score {} temp run random value {}..{}",
-                        name, min, max
+                        "execute unless score {name} temp matches {max} store result score {name} temp run random value {min}..{max}"
                     )
+                } else {
+                    let (min, max): (i32, i32) =
+                        (min.parse().unwrap_or(0), max.parse().unwrap_or(0));
+                    Self::random_int_command(&name, min, max)?
                 }
             }
             "bool" => {
@@ -162,6 +165,22 @@ impl Transpiler {
         self.push_current_command(command)
     }
 
+    fn random_int_command(name: &str, min: i32, max: i32) -> Result<String, TranspileError> {
+        if min > max {
+            return Err("random.int() min cannot be greater than max"
+                .to_string()
+                .into());
+        }
+        Ok(if min == max {
+            format!("scoreboard players set {} temp {}", name, min)
+        } else {
+            format!(
+                "execute store result score {} temp run random value {}..{}",
+                name, min, max
+            )
+        })
+    }
+
     pub(in crate::transpiler) fn process_timer_intrinsic(
         &mut self,
         method: &str,
@@ -174,7 +193,7 @@ impl Transpiler {
                     return Err("timer.set() takes 2 arguments".into());
                 }
                 let name = self.expr_to_plain_arg(&args[0], "timer name")?;
-                let ticks = self.expr_to_i32(&args[1], "timer ticks")?;
+                let ticks = self.expr_to_int_arg(&args[1], "timer ticks")?;
                 format!("scoreboard players set {} temp {}", name, ticks)
             }
             "tick" => {
