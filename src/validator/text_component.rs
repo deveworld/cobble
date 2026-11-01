@@ -900,16 +900,18 @@ mod tests {
     }
 
     #[test]
-    fn components_too_deep_to_read_go_unchecked() {
+    fn components_nested_past_what_minecraft_reads_are_reported() {
         let levels = 600;
         let list = format!("{}\"a\"{}", "[".repeat(levels), "]".repeat(levels));
-        assert_eq!(problem(&list), None);
+        assert!(problem(&list).is_some_and(|problem| problem.contains("levels deep")));
         let extra = format!(
             "{}\"a\"{}",
             "{text:\"a\",extra:[".repeat(levels),
             "]}".repeat(levels)
         );
-        assert_eq!(problem(&extra), None);
+        assert!(problem(&extra).is_some_and(|problem| problem.contains("levels deep")));
+        let fits = format!("{}\"a\"{}", "[".repeat(200), "]".repeat(200));
+        assert_eq!(problem(&fits), None);
     }
 
     #[test]

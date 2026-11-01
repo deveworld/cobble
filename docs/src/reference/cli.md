@@ -417,8 +417,11 @@ that function from loading:
 Ids and tags of other namespaces, references into namespaces the pack doesn't
 have, and values with a `$(name)` placeholder aren't checked, so a mod or
 another pack can define them. An `execute` chain is checked through its first
-800 command nodes, and SNBT through 512 levels of nesting. What lies past those
-limits goes unchecked.
+800 command nodes; what lies past that limit goes unchecked. SNBT that nests
+compounds and lists more than 512 levels deep is reported, since Minecraft
+refuses it. A compound nested less deeply can still be refused: on a 26.3
+server, compounds nested from about 450 to 500 levels deep run out of stack,
+at a depth that changes between runs.
 
 The validator also applies the tree's permission levels: data pack functions run at level 2
 (`gamemasters`, the default `function-permission-level`), so commands that need

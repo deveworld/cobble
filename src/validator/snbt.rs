@@ -9,9 +9,9 @@
 use super::string_reader::{is_java_whitespace, StringReader};
 use serde_json::{Map, Number, Value};
 
-/// How many levels of a value are read. Minecraft runs out of stack from about
-/// here, at a depth that changes between runs, so a compound or a list below
-/// this level goes unchecked and its JSON form is `null`.
+/// How many levels of compounds and lists a value may nest. Minecraft refuses
+/// a list nested 513 levels deep, and a compound runs out of its stack before
+/// that, from about 450 to 500 levels at a depth that changes between runs.
 const MAX_NESTING: usize = 512;
 
 /// The JSON form of `text`, or what stops Minecraft from reading it.
@@ -158,16 +158,13 @@ impl Parser {
         }
     }
 
-    /// Reads what holds other values with `read`, or skips it past the limit.
+    /// Reads what holds other values with `read`, or refuses it past the
+    /// limit.
     fn nested(&mut self, read: fn(&mut Self) -> Result<Value, String>) -> Result<Value, String> {
         if self.depth == MAX_NESTING {
-            let rest: String = self.chars[self.position..].iter().collect();
-            let mut reader = StringReader::new(&rest);
-            if !reader.read_nbt() {
-                return Err(self.expected("the end of the value"));
-            }
-            self.position += reader.cursor();
-            return Ok(Value::Null);
+            return Err(format!(
+                "Invalid SNBT: a value nests compounds and lists more than {MAX_NESTING} levels deep, which Minecraft can't read"
+            ));
         }
         self.depth += 1;
         let value = read(self);
@@ -969,23 +966,30 @@ mod tests {
     }
 
     #[test]
-    fn stops_reading_where_minecraft_runs_out_of_stack() {
+    fn refuses_values_nested_past_what_minecraft_reads() {
         let nested = |open: &str, inner: &str, close: &str, levels: usize| {
             format!("{}{inner}{}", open.repeat(levels), close.repeat(levels))
         };
         let run = move || {
-            for levels in [MAX_NESTING, MAX_NESTING + 1, 100_000] {
+            // A 26.3 server reads a list nested 512 levels deep and
+            // refuses one nested 513 levels deep.
+            for text in [
+                nested("[", "", "]", MAX_NESTING),
+                nested("{a:", "1", "}", MAX_NESTING),
+                nested("[{a:", "1", "}]", MAX_NESTING / 2),
+            ] {
+                assert!(parse(&text).is_ok(), "{text}");
+            }
+            for levels in [MAX_NESTING + 1, 100_000] {
                 for text in [
                     nested("[", "", "]", levels),
                     nested("{a:", "1", "}", levels),
-                    nested("[{a:", "1", "}]", levels / 2),
+                    nested("[{a:", "1", "}]", levels.div_ceil(2)),
                 ] {
-                    assert!(parse(&text).is_ok(), "{levels} levels");
+                    let error = parse(&text).unwrap_err();
+                    assert!(error.contains("levels deep"), "{levels} levels: {error}");
                 }
             }
-            // What was read keeps its form, and what wasn't counts as balanced.
-            let deep = nested("[", "1abc", "]", MAX_NESTING);
-            assert_eq!(parse(&format!("[1,{deep}]")).unwrap()[0], json!(1));
             assert!(parse(&format!("{}1", nested("[", "", "]", 100_000))).is_err());
             assert!(parse(&"[".repeat(100_000)).is_err());
             assert!(parse(&nested("[", "1abc", "]", MAX_NESTING - 1)).is_err());
