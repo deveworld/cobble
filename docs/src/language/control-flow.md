@@ -107,10 +107,8 @@ def check_players():
 ```
 
 `and`, `or`, and `not` also combine Minecraft conditions with each other and
-with Cobble conditions, in `if` and in execute-block modifiers. Each
-Minecraft condition counts as one operand. `elif` and `while` can't test a
-Minecraft condition; store the test in a variable first, as the compile
-error shows, and test the variable:
+with Cobble conditions, in `if`, `elif`, `while`, and execute-block modifiers.
+Each Minecraft condition counts as one operand:
 
 ```python
 level = 5
@@ -136,19 +134,24 @@ compile error there; test it with an `if` inside the block. A word after `in`
 that names a dimension, as `minecraft:the_nether` or `the_end`, is still the
 `in` modifier.
 
-An `if` whose condition is a Minecraft condition, such as
-`if entity @s[tag=special]:`, runs as an execute block, so it can't have
-`elif` or `else`. Store the test in a variable and branch on that:
+Minecraft conditions support the same branch and loop behavior as Cobble
+conditions. An `elif` runs its test only when no earlier branch ran. A `while`
+checks the complete condition again before every pass:
 
 ```python
 def greet():
-    special = 0
-    store result score special temp:
-        /execute if entity @s[tag=special]
-    if special == 1:
+    if entity @s[tag=special]:
         /say Special player!
+    elif entity @s[tag=visitor]:
+        /say Visitor
     else:
         /say Regular player
+
+def drain_queue():
+    count = 0
+    while entity @e[tag=queued] and count < 10:
+        /tag @e[tag=queued,limit=1] remove queued
+        count += 1
 ```
 
 ## Execute Blocks

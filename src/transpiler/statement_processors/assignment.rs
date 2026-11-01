@@ -312,8 +312,8 @@ impl Transpiler {
     ///    module-level assignments still error at their own statement.
     /// 3. Module-level assignments defer to the `_cobble_init` replay before
     ///    any value classification or codegen.
-    /// 4. A non-storage value clears the target's stale storage-path binding
-    ///    before the value is classified.
+    /// 4. A non-storage value keeps any existing storage copy current, since
+    ///    code lowered earlier can still read it on a later loop pass.
     /// 5. Const folding runs before condition-flag lowering: a constant
     ///    comparison (`f = 2 > 1`) folds to 0/1 instead of emitting
     ///    `execute`-based flag commands.
@@ -452,7 +452,10 @@ impl Transpiler {
         let replaced_copy = if storage_value {
             None
         } else {
-            self.symbols.variable_storage_paths.remove(&assign.target)
+            self.symbols
+                .variable_storage_paths
+                .get(&assign.target)
+                .cloned()
         };
 
         match self.classify_assignment_value(&assign.target, &assign.value) {

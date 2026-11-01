@@ -160,6 +160,9 @@ impl Symbols {
 /// User functions seen so far.
 #[derive(Default)]
 pub(in crate::transpiler) struct FunctionTable {
+    /// Safe entries for calls from Cobble; public entries retain raw inline
+    /// macro compatibility for messages written without a component.
+    pub(in crate::transpiler) safe_text_variants: HashMap<String, String>,
     /// Parameter names of each function.
     pub(in crate::transpiler) params: HashMap<String, Vec<String>>,
     /// Whether each function can be used as a value.
@@ -183,6 +186,12 @@ pub(in crate::transpiler) struct FunctionTable {
 }
 
 impl FunctionTable {
+    pub(in crate::transpiler) fn call_target<'a>(&'a self, function: &'a str) -> &'a str {
+        self.safe_text_variants
+            .get(function)
+            .map(String::as_str)
+            .unwrap_or(function)
+    }
     /// Normalize numeric NBT arguments before a raw integer macro sees
     /// them. A string such as `"15"` stays text, rather than becoming its
     /// length. The caller tracks the `temp` objective when this is nonempty.

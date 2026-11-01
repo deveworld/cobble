@@ -341,6 +341,20 @@ impl Sim {
         if let Some(rest) = command.strip_prefix("data ") {
             return self.exec_data(rest);
         }
+        if let Some(rest) = command.strip_prefix("tag ") {
+            let (selector, rest) = split_selector(rest);
+            let (operation, tag) = rest.trim().split_once(' ').expect("tag operation and name");
+            let mut changed = 0;
+            for target in self.resolve_selector(selector, context) {
+                let tags = self.tags.entry(target).or_default();
+                changed += match operation {
+                    "add" => i32::from(tags.insert(tag.to_string())),
+                    "remove" => i32::from(tags.remove(tag)),
+                    _ => panic!("unsupported tag operation {operation}"),
+                };
+            }
+            return (changed > 0).then_some(changed);
+        }
         if let Some(message) = command.strip_prefix("say ") {
             let who = context
                 .executor
@@ -404,6 +418,18 @@ impl Sim {
                 "if" | "unless" => {
                     let negate = keyword == "unless";
                     let (kind, after) = after.split_once(' ').expect("condition kind");
+                    if kind == "function" {
+                        let (function, after_function) =
+                            after.split_once(' ').expect("function condition");
+                        let name = function.split_once(':').expect("qualified function").1;
+                        contexts.retain(|ctx| {
+                            self.run_function(name, ctx, None)
+                                .is_some_and(|value| value != 0)
+                                != negate
+                        });
+                        rest = after_function;
+                        continue;
+                    }
                     if kind == "entity" {
                         // `entity <selector>`: passes when it selects anyone.
                         let (selector, after_selector) = split_selector(after);

@@ -2171,15 +2171,9 @@ impl Transpiler {
             condition: Box::new(|transpiler| {
                 let (condition_cmd, condition_capture) =
                     transpiler.capture_commands_with_result(|transpiler| {
-                        let processed_condition =
-                            transpiler.preprocess_condition(&while_loop.condition)?;
-                        let translated = transpiler.translate_condition(&processed_condition)?;
-                        transpiler.lower_translated_condition(translated)
+                        transpiler.lower_condition_to_execute_args(&while_loop.condition)
                     })?;
-                Ok((
-                    Transpiler::condition_execute_args(&condition_cmd),
-                    condition_capture,
-                ))
+                Ok((condition_cmd, condition_capture))
             }),
             body: Box::new(|_| {
                 Ok(RuntimeLoopBody {
@@ -2816,6 +2810,13 @@ fn substitute_expression(
     value: &UnrollValue,
 ) -> Result<Expression, TranspileError> {
     let substituted = match expression {
+        Expression::MinecraftCondition(raw) => {
+            Expression::MinecraftCondition(substitute_raw_condition(
+                &replace_unroll_placeholder(raw, target, &value.as_command_text()),
+                target,
+                value,
+            ))
+        }
         Expression::Identifier(name) if name == target => value.as_expression(),
         Expression::Identifier(_) => expression.clone(),
         Expression::String(text) => Expression::String(replace_unroll_placeholder(

@@ -521,20 +521,18 @@ def main():
 }
 
 #[test]
-fn and_or_across_container_types_names_the_operands() {
-    let error = compile(
-        r#"def f():
+fn and_or_across_container_types_keep_the_selected_operand() {
+    let mut sim = Sim::load(
+        r#"def main():
     a = [0]
     h = {"a": 0}
     b = a and h
     /say {b}
 "#,
-    )
-    .expect_err("one variable can't hold a list or a map");
-    assert!(!error.contains("_cobble"), "{error}");
-    assert!(error.contains("`and`"), "{error}");
-    assert!(error.contains("a list and the other a map"), "{error}");
-    assert!(error.contains("main.cbl:4:5"), "{error}");
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.storage["locals"]["main"]["b"], json!({"a":0}));
     // Operands of one type still give one of them.
     assert_eq!(
         said(

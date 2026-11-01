@@ -374,7 +374,7 @@ def main():
 }
 
 #[test]
-fn else_after_a_minecraft_condition_explains_the_rewrite() {
+fn else_after_a_minecraft_condition_has_no_diagnostic() {
     let diagnostics = cobble::diagnostics::analyze_source(
         r#"
 def main():
@@ -390,14 +390,7 @@ def main():
         .iter()
         .map(|diagnostic| (diagnostic.line, diagnostic.message.clone()))
         .collect();
-    assert_eq!(
-        messages,
-        [(
-            5,
-            "`elif` can't follow an `if` with a Minecraft condition, which runs as an execute block"
-                .to_string()
-        )]
-    );
+    assert!(messages.is_empty(), "{messages:?}");
 }
 
 #[test]

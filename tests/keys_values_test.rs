@@ -774,10 +774,6 @@ fn key_errors_name_their_line() {
             "pairs = [[\"a\", 1]]\nm = {}\n\ndef main():\n    for k, v in pairs:\n        m[k] = v\n",
             "main.cbl:5:",
         ),
-        (
-            "a = [1]\nh = {\"k\": 1}\n\ndef main():\n    b = (a and h) == h\n",
-            "main.cbl:5:",
-        ),
     ];
     for (source, location) in cases {
         let error = Sim::try_load(source, &[]).err().unwrap_or_default();
@@ -786,18 +782,13 @@ fn key_errors_name_their_line() {
 }
 
 #[test]
-fn a_choice_between_a_list_and_a_map_names_no_internal_variable() {
-    let error = Sim::try_load(
-        "a = [1]\nh = {\"k\": 1}\nc = 1\n\ndef g(x):\n    pass\n\ndef main():\n    g(a if c else h)\n",
+fn a_choice_between_a_list_and_a_map_keeps_its_value() {
+    let mut sim = Sim::load(
+        "a = [1]\nh = {\"k\": 1}\nseen = []\n\ndef g(x):\n    seen.append(x)\n\ndef choose(c):\n    g(a if c else h)\n\ndef main():\n    choose(1)\n    choose(0)\n    seen.append((a and h) == h)\n",
         &[],
-    )
-    .err()
-    .unwrap_or_default();
-    assert!(
-        error.contains("main.cbl:9:") && error.contains("gives a list or a map"),
-        "{error}"
     );
-    assert!(!error.contains("_cobble_hold"), "{error}");
+    sim.call("main");
+    assert_eq!(storage(&sim, "seen"), json!([[1],{"k":1},1]));
 }
 
 #[test]

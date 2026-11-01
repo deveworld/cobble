@@ -7,6 +7,14 @@ impl Transpiler {
         &mut self,
         if_stmt: &IfStatement,
     ) -> Result<(), TranspileError> {
+        if if_stmt.elif_branches.is_empty() && if_stmt.else_branch.is_none() {
+            if let Expression::MinecraftCondition(raw) = &if_stmt.condition {
+                return self.process_execute_block(&ExecuteBlock {
+                    modifiers: vec![ExecuteModifier::IfRaw(raw.clone())],
+                    body: if_stmt.then_branch.clone(),
+                });
+            }
+        }
         let condition_args = self.lower_condition_to_execute_args(&if_stmt.condition)?;
 
         // With `elif` or `else`, a flag records that a branch ran, so the

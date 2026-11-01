@@ -339,7 +339,7 @@ def main():
     assert_eq!(
         kinds(&function.children),
         vec![
-            StatementSpanKind::Execute,
+            StatementSpanKind::If,
             StatementSpanKind::If,
             StatementSpanKind::Execute,
             StatementSpanKind::Execute,

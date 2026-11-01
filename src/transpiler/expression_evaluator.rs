@@ -80,6 +80,8 @@ impl<'a> ExpressionEvaluator<'a> {
     /// Whether `target` is read anywhere inside `expr` (as a bare identifier).
     pub(in crate::transpiler) fn expression_reads_target(expr: &Expression, target: &str) -> bool {
         match expr {
+            Expression::MinecraftCondition(raw) => super::minecraft_condition_expression(raw)
+                .is_some_and(|expr| Self::expression_reads_target(&expr, target)),
             Expression::Identifier(name) => name == target,
             Expression::Attribute(obj, _) => Self::expression_reads_target(obj, target),
             Expression::Subscript(obj, index) => {
@@ -127,6 +129,9 @@ impl<'a> ExpressionEvaluator<'a> {
     /// count.
     pub(in crate::transpiler) fn calls_user_code(expr: &Expression) -> bool {
         match expr {
+            // Header lowering emits setup even without a call; an `elif`
+            // must keep all of it behind its predecessor's branch flag.
+            Expression::MinecraftCondition(_) => true,
             Expression::Call(func, args) => {
                 let builtin = matches!(&**func, Expression::Identifier(name)
                     if matches!(name.as_str(), "len" | "abs" | "min" | "max"))
@@ -357,9 +362,10 @@ impl<'a> ExpressionEvaluator<'a> {
         }
 
         let namespace = self.data_pack.namespace.clone();
+        let call_target = self.functions.call_target(func_name).to_string();
         let plain_call = format!(
             "execute store result score {} {} run function {}:{}",
-            target, target_obj, namespace, func_name
+            target, target_obj, namespace, call_target
         );
         if param_names.is_empty() && self.current_params.is_empty() {
             return Ok(vec![plain_call]);
@@ -402,7 +408,7 @@ impl<'a> ExpressionEvaluator<'a> {
             argument_commands,
             format!(
                 "execute store result score {} {} run function {}:{} with storage {}:global args",
-                target, target_obj, namespace, func_name, namespace
+                target, target_obj, namespace, call_target, namespace
             ),
         ))
     }

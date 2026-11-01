@@ -276,9 +276,9 @@ fn statement<'a>(
         // Compound statement (has block)
         let compound_stmt = choice((
             function_def(block.clone()),
-            if_statement(expr.clone(), block.clone()),
+            if_statement(expr.clone(), block.clone(), spans),
             for_loop(expr.clone(), block.clone()),
-            while_loop(expr.clone(), block.clone()),
+            while_loop(expr.clone(), block.clone(), spans),
             match_statement(expr.clone(), block.clone()),
             // An execute block can also start with `if`. Once `if <expr>:`
             // parses as a Python condition the statement is an `if`
@@ -286,8 +286,7 @@ fn statement<'a>(
             // through the whole body again as an execute block, which would
             // double the work at every nesting level.
             just(&Token::If)
-                .ignore_then(expr.clone())
-                .then_ignore(just(&Token::Colon))
+                .ignore_then(header_condition(expr.clone(), spans))
                 .not()
                 .ignore_then(execute_block(spans, block)),
         ));
@@ -628,16 +627,16 @@ fn function_def<'a>(
 fn if_statement<'a>(
     expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
     block: impl Parser<'a, &'a [Token], Vec<Statement>, Extra<'a>> + Clone,
+    spans: &'a [SpannedToken],
 ) -> impl Parser<'a, &'a [Token], Statement, Extra<'a>> + Clone {
+    let condition = header_condition(expr, spans);
     just(&Token::If)
-        .ignore_then(expr.clone())
-        .then_ignore(just(&Token::Colon))
+        .ignore_then(condition.clone())
         .then_ignore(just(&Token::Newline).or_not())
         .then(block.clone())
         .then(
             just(&Token::Elif)
-                .ignore_then(expr.clone())
-                .then_ignore(just(&Token::Colon))
+                .ignore_then(condition)
                 .then_ignore(just(&Token::Newline).or_not())
                 .then(block.clone())
                 .repeated()
@@ -693,13 +692,45 @@ fn for_loop<'a>(
 fn while_loop<'a>(
     expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
     block: impl Parser<'a, &'a [Token], Vec<Statement>, Extra<'a>> + Clone,
+    spans: &'a [SpannedToken],
 ) -> impl Parser<'a, &'a [Token], Statement, Extra<'a>> + Clone {
     just(&Token::While)
-        .ignore_then(expr.clone())
-        .then_ignore(just(&Token::Colon))
+        .ignore_then(header_condition(expr, spans))
         .then_ignore(just(&Token::Newline).or_not())
         .then(block.clone())
         .map(|(condition, body)| Statement::While(WhileLoop { condition, body }))
+}
+
+fn header_condition<'a>(
+    expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
+    spans: &'a [SpannedToken],
+) -> impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone {
+    expr.then_ignore(just(&Token::Colon))
+        .or(execute_condition(spans)
+            .then(
+                just(&Token::In)
+                    .ignore_then(execute_condition(spans))
+                    .repeated()
+                    .collect::<Vec<_>>(),
+            )
+            .try_map(|(raw, containers), span| {
+                containers.into_iter().try_fold(raw, |raw, container| {
+                    crate::transpiler::merged_execute_in_condition(&raw, &container).ok_or_else(
+                        || {
+                            Rich::custom(
+                                span,
+                                "A control-flow condition cannot change its execute dimension",
+                            )
+                        },
+                    )
+                })
+            })
+            .then_ignore(just(&Token::Colon))
+            .filter(|raw: &String| {
+                crate::transpiler::raw_minecraft_condition_verdict(raw) == Some(true)
+                    || crate::transpiler::mask_minecraft_conditions(raw).is_some()
+            })
+            .map(Expression::MinecraftCondition))
 }
 
 fn match_pattern<'a>() -> impl Parser<'a, &'a [Token], MatchPattern, Extra<'a>> + Clone {

@@ -448,6 +448,16 @@ impl Transpiler {
             }
             if let Statement::FunctionDef(func) = statement {
                 let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
+                let mut body = Vec::new();
+                crate::transpiler::function_context::collect_statements(&func.body, &mut body);
+                let safe_text = body.iter().any(|statement| matches!(statement,
+                    Statement::MinecraftCommand(command) if crate::transpiler::command_processor::CommandProcessor::has_plain_parameter_message(command, &param_names)));
+                if safe_text && !self.functions.safe_text_variants.contains_key(&func.name) {
+                    let variant = format!("_cobble_text_entry_{}", self.next_temp_id());
+                    self.functions
+                        .safe_text_variants
+                        .insert(func.name.clone(), variant);
+                }
                 self.functions.params.insert(func.name.clone(), param_names);
                 let (used, passed) =
                     crate::transpiler::function_context::params_read_or_passed(func);

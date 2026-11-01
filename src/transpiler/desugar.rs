@@ -70,6 +70,7 @@ pub(in crate::transpiler) fn sub_expressions(expr: &Expression) -> Vec<&Expressi
         | Expression::String(_)
         | Expression::Boolean(_)
         | Expression::None
+        | Expression::MinecraftCondition(_)
         | Expression::Identifier(_) => Vec::new(),
     }
 }
@@ -108,17 +109,6 @@ fn is_logical(expr: &Expression) -> bool {
         expr,
         Expression::Binary(_, BinaryOp::And | BinaryOp::Or, _) | Expression::Unary(UnaryOp::Not, _)
     )
-}
-
-/// Whether `expr` tests something instead of computing a number.
-/// `a list`, `a number`, and so on, for messages.
-fn type_phrase(value_type: &CobbleType) -> &'static str {
-    match value_type {
-        CobbleType::String => "text",
-        CobbleType::List => "a list",
-        CobbleType::Map => "a map",
-        _ => "a number",
-    }
 }
 
 fn is_condition(expr: &Expression) -> bool {
@@ -541,39 +531,6 @@ impl Transpiler {
         }
     }
 
-    /// Refuses `a if c else h` when Cobble knows the two values have types
-    /// one variable can't both hold, as a list and a map.
-    fn check_choice_types(
-        &self,
-        value: &Expression,
-        otherwise: &Expression,
-    ) -> Result<(), TranspileError> {
-        let (left, right) = (self.value_type(value), self.value_type(otherwise));
-        let holds_values = |value_type: &CobbleType| {
-            matches!(
-                value_type,
-                CobbleType::String | CobbleType::List | CobbleType::Map
-            )
-        };
-        let known = |value_type: &CobbleType| {
-            holds_values(value_type)
-                || matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
-        };
-        if left != right
-            && known(&left)
-            && known(&right)
-            && (holds_values(&left) || holds_values(&right))
-        {
-            return Err(format!(
-                "`... if ... else ...` gives {} or {} here, which one value can't be. Give both values the same type, or use an `if` statement with a variable of each type.",
-                type_phrase(&left),
-                type_phrase(&right),
-            )
-            .into());
-        }
-        Ok(())
-    }
-
     /// The type of a value that is either `left` or `right`.
     fn common_type(&self, left: &Expression, right: &Expression) -> CobbleType {
         match (self.value_type(left), self.value_type(right)) {
@@ -621,6 +578,24 @@ impl Transpiler {
             out.push(assign_to(target, value));
         }
         Ok(())
+    }
+
+    fn check_choice_assignment_types(
+        &self,
+        target: &str,
+        value: &Expression,
+    ) -> Result<(), TranspileError> {
+        match value {
+            Expression::Conditional(_, left, right) => {
+                self.check_choice_assignment_types(target, left)?;
+                self.check_choice_assignment_types(target, right)
+            }
+            Expression::Binary(left, _, right) if self.is_operand_choice(value) => {
+                self.check_choice_assignment_types(target, left)?;
+                self.check_choice_assignment_types(target, right)
+            }
+            value => self.check_type_assignment(target, &self.value_type(value)),
+        }
     }
 
     fn desugar_assignment(
@@ -672,6 +647,17 @@ impl Transpiler {
                 }));
                 return Ok(());
             }
+            if self.common_type(value, otherwise) == CobbleType::Unknown {
+                if assignment.assigns_name() {
+                    self.check_choice_assignment_types(&assignment.target, &assignment.value)?;
+                }
+                let value = self.lower_value(&assignment.value, out)?;
+                out.push(Statement::Assignment(Assignment {
+                    value,
+                    ..assignment.clone()
+                }));
+                return Ok(());
+            }
             let branch = |value: &Expression| {
                 vec![Statement::Assignment(Assignment {
                     value: value.clone(),
@@ -685,6 +671,12 @@ impl Transpiler {
                 else_branch: Some(branch(otherwise)),
             }));
             return Ok(());
+        }
+        if assignment.assigns_name()
+            && self.is_operand_choice(&assignment.value)
+            && self.value_type(&assignment.value) == CobbleType::Unknown
+        {
+            self.check_choice_assignment_types(&assignment.target, &assignment.value)?;
         }
         let mut value = self.lower_operand(&assignment.value, out)?;
         // An item or a field takes a condition's 1 or 0 from a flag, as in
@@ -1041,34 +1033,31 @@ impl Transpiler {
             return self.lower_value(expr, out);
         }
         let (left_type, right_type) = (self.value_type(left), self.value_type(right));
-        // A variable holds one type, so it can't take either of two values
-        // that Cobble knows have different types.
-        let holds_values = |value_type: &CobbleType| {
-            matches!(
-                value_type,
-                CobbleType::String | CobbleType::List | CobbleType::Map
-            )
-        };
-        let known = |value_type: &CobbleType| {
-            holds_values(value_type)
-                || matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
-        };
-        if left_type != right_type
-            && known(&left_type)
-            && known(&right_type)
-            && (holds_values(&left_type) || holds_values(&right_type))
-        {
-            let word = if matches!(op, BinaryOp::And) {
-                "and"
-            } else {
-                "or"
-            };
-            return Err(format!(
-                "`{word}` gives one of its operands, and here one is {} and the other {}, which one value can't be. Give both operands the same type, or use `if` and `else` with a variable of each type.",
-                type_phrase(&left_type),
-                type_phrase(&right_type)
-            )
-            .into());
+        if self.common_type(left, right) == CobbleType::Unknown {
+            let holder = self.hidden_local(CobbleType::List);
+            let held = Expression::Subscript(
+                Box::new(Expression::Identifier(holder.clone())),
+                Box::new(Expression::Number(0.0)),
+            );
+            let statements = vec![
+                assign(&holder, Expression::Array(vec![(**left).clone()])),
+                Statement::If(IfStatement {
+                    condition: if matches!(op, BinaryOp::And) {
+                        held.clone()
+                    } else {
+                        Expression::Unary(UnaryOp::Not, Box::new(held.clone()))
+                    },
+                    then_branch: vec![assign(&holder, Expression::Array(vec![(**right).clone()]))],
+                    elif_branches: Vec::new(),
+                    else_branch: None,
+                }),
+            ];
+            crate::transpiler::container_writes::collect_container_writes(
+                &statements,
+                &mut self.symbols.container_writes,
+            );
+            out.extend(statements);
+            return Ok(held);
         }
         let holder_type = if left_type == right_type {
             left_type
@@ -1447,7 +1436,32 @@ impl Transpiler {
                     let chosen = if constant != 0.0 { value } else { otherwise };
                     return self.lower_value(chosen, out);
                 }
-                self.check_choice_types(value, otherwise)?;
+                if self.common_type(value, otherwise) == CobbleType::Unknown {
+                    // A list slot can keep any NBT type. Record both writes
+                    // so later reads choose their representation at runtime.
+                    let holder = self.hidden_local(CobbleType::List);
+                    let statements = vec![Statement::If(IfStatement {
+                        condition: (**condition).clone(),
+                        then_branch: vec![assign(
+                            &holder,
+                            Expression::Array(vec![(**value).clone()]),
+                        )],
+                        elif_branches: Vec::new(),
+                        else_branch: Some(vec![assign(
+                            &holder,
+                            Expression::Array(vec![(**otherwise).clone()]),
+                        )]),
+                    })];
+                    crate::transpiler::container_writes::collect_container_writes(
+                        &statements,
+                        &mut self.symbols.container_writes,
+                    );
+                    out.extend(statements);
+                    return Ok(Expression::Subscript(
+                        Box::new(Expression::Identifier(holder)),
+                        Box::new(Expression::Number(0.0)),
+                    ));
+                }
                 let holder = self.hidden_local(self.value_type(expr));
                 out.push(Statement::If(IfStatement {
                     condition: (**condition).clone(),

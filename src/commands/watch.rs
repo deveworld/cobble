@@ -836,6 +836,7 @@ mod tests {
 
     #[test]
     fn a_file_is_watched_through_its_folder() {
+        let _guard = crate::test_support::cwd_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let file = temp_dir.path().join("main.cbl");
         fs::write(&file, "").unwrap();

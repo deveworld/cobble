@@ -10,7 +10,8 @@ impl Transpiler {
         args: &[Expression],
     ) -> Result<(), TranspileError> {
         let namespace = self.data_pack.namespace.clone();
-        let plain_call = format!("function {}:{}", namespace, func_name);
+        let call_target = self.functions.call_target(func_name).to_string();
+        let plain_call = format!("function {}:{}", namespace, call_target);
 
         let Some(param_names) = self.functions.params.get(func_name).cloned() else {
             let commands = self.preserving_args(plain_call);
@@ -74,7 +75,7 @@ impl Transpiler {
             argument_commands,
             format!(
                 "function {}:{} with storage {}:global args",
-                namespace, func_name, namespace
+                namespace, call_target, namespace
             ),
         );
         self.extend_current_function(commands);

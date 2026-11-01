@@ -91,6 +91,13 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   items the list started with, as `rows += [{"k": 3}]` after
   `rows = [[1, 2]]`; a read of it, in any function, checks its type when the
   pack runs.
+- Conditional expressions and operand choices keep the selected value's
+  type, even when the alternatives differ: `x = "ready" if flag else [1, 2]`,
+  `value = given or {"k": 3}`, and `out.append([] and work())` are supported.
+  Only the selected branch or needed operand runs. These values can be
+  copied, indexed, put in containers, or passed to another function. A variable
+  already declared with a known type still requires assignments of that type;
+  use a new name for a choice whose alternatives have different types.
 - Where Cobble can't tell what a value holds, `x += y`, `x *= n`, and
   `len(x * n)` check it when the pack runs, even for parameters: text and a
   list join or repeat, and a number adds or multiplies. `r = x * n` repeats

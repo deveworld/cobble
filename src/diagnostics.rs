@@ -211,25 +211,6 @@ fn analyze_source_stages(source: &str) -> SourceAnalysis {
         if trimmed.ends_with(':') && is_raw_condition_header(trimmed) {
             active_raw_if_blocks.push(indent);
         }
-        if let Some(keyword) = minecraft_condition_loop_or_elif(trimmed).filter(|_| !is_raw_if_else)
-        {
-            diagnostics.push(
-                SourceDiagnostic::error(
-                    "unsupported-control-flow",
-                    line_number,
-                    trimmed_column,
-                    format!(
-                        "`{keyword}` can't test a Minecraft condition; only `if` and execute-block \
-                         `if`/`unless` modifiers can"
-                    ),
-                )
-                .with_help(if keyword == "while" {
-                    "Store the test in a variable before the loop and at the end of each pass:\n    found = 0\n    store result score found temp:\n        /execute if entity @a\n    while found == 1 and n < 3:\n        ...\n        store result score found temp:\n            /execute if entity @a"
-                } else {
-                    "Store the test in a variable before the `if`, then branch on it:\n    found = 0\n    store result score found temp:\n        /execute if entity @a\n    if x > 9:\n        ...\n    elif found == 1 and x > 3:\n        ..."
-                }),
-            );
-        }
 
         if is_for_else {
             diagnostics.push(
@@ -1289,25 +1270,11 @@ fn top_level_compound_assignment(trimmed: &str) -> Option<(usize, &'static str, 
     None
 }
 
-/// `elif` or `while` when `header` is one of these with a Minecraft
-/// condition, alone or joined to others, as `while entity @a and n < 3:`.
-fn minecraft_condition_loop_or_elif(header: &str) -> Option<&'static str> {
-    let keyword = ["elif", "while"]
-        .into_iter()
-        .find(|keyword| starts_with_keyword(header, keyword))?;
-    let condition = header[keyword.len()..].strip_suffix(':')?.trim();
-    let minecraft = crate::transpiler::raw_minecraft_condition_verdict(condition) == Some(true)
-        || crate::transpiler::mask_minecraft_conditions(condition).is_some();
-    minecraft.then_some(keyword)
-}
-
-/// Whether `header` is an `if` or `unless` block with a Minecraft condition,
-/// such as `if score #round game matches 3:`.
+/// An `unless` header stays an execute block, so it cannot have `elif` or
+/// `else` branches. Minecraft `if` headers are ordinary control flow now.
 fn is_raw_condition_header(header: &str) -> bool {
-    ["if ", "unless "].iter().any(|keyword| {
-        header.strip_prefix(keyword).is_some_and(|condition| {
-            crate::transpiler::raw_minecraft_condition_verdict(condition.trim_start()) == Some(true)
-        })
+    header.strip_prefix("unless ").is_some_and(|condition| {
+        crate::transpiler::raw_minecraft_condition_verdict(condition.trim_start()) == Some(true)
     })
 }
 

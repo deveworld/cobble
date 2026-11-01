@@ -238,6 +238,8 @@ pub enum Expression {
 
     /// `then_value if condition else else_value`, as (condition, then, else).
     Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
+    /// A Minecraft condition in an `if`, `elif`, or `while` header.
+    MinecraftCondition(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -138,6 +138,7 @@ from stdlib import event
 
 counter = 0
 smoke_loop_flag = 0
+choice_results = []
 
 # Data pack resources in the target version's shapes: a server whose packs
 # fail to load refuses to start, so any format drift fails this test.
@@ -198,6 +199,32 @@ def integer_macro(value):
 
 def integer_forward(values):
     integer_macro(values[0])
+
+def plain_message(value):
+    /tellraw @a {value}
+    /scoreboard players add plain_hits temp 1
+
+def mixed_values(flag):
+    choice_results.append("text" if flag else [1])
+    choice_results.append({"k": 2} if flag else 7)
+
+def number_mirror(given):
+    a = given or 1
+    n = 0
+    while n < 2:
+        if a > 0:
+            a = 1
+            a /= -1
+            /scoreboard players add mirror_hits temp 1
+        n += 1
+
+def minecraft_header_return():
+    if score header_n temp matches 99:
+        return 1
+    elif predicate cobble_server_smoke:checks/always:
+        return 8
+    else:
+        return 0
 
 def probe():
     global counter
@@ -336,6 +363,28 @@ def probe():
     /execute if score fraction_integer temp matches -1 run say raw integer negative fraction ok
     integer_forward(["15"])
     /execute if score fraction_integer temp matches 15 run say raw integer text ok
+
+    plain_message("say \"hi\" \\ end")
+    plain_message("한글 \\")
+    /execute if score plain_hits temp matches 2 run say plain message escaping ok
+    mixed_values(1)
+    mixed_values(0)
+    /execute if data storage cobble_server_smoke:global {vars:{choice_results:["text",{k:2},[1],7]}} run say mixed value choice ok
+    selected = "abc" if ready_value(1) else [4, 5]
+    if selected == "abc" and len(selected) == 3:
+        /say selected value operations ok
+    number_mirror(3)
+    number_mirror(0)
+    /execute if score mirror_hits temp matches 2 run say numeric storage mirror ok
+
+    header_n = 0
+    while predicate cobble_server_smoke:checks/always and header_n in [0, 1]:
+        header_n += 1
+    while score header_n temp matches ..3:
+        header_n += 1
+    header_result = minecraft_header_return()
+    if header_n == 4 and header_result == 8:
+        /say minecraft elif while ok
 
     # `say` with a variable keeps say's own output: the sender prefix and
     # selectors shown as names.
@@ -612,6 +661,11 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         "raw integer fraction ok",
         "raw integer negative fraction ok",
         "raw integer text ok",
+        "plain message escaping ok",
+        "mixed value choice ok",
+        "selected value operations ok",
+        "numeric storage mirror ok",
+        "minecraft elif while ok",
     ] {
         wait_for_log(child, &log_path, message, COMMAND_TIMEOUT)?;
     }

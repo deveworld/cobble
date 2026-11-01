@@ -168,6 +168,7 @@ impl Transpiler {
         let processor = CommandProcessor {
             namespace: self.data_pack.namespace.clone(),
             current_params: &self.current_context.params,
+            safe_plain_text: self.current_context.safe_plain_text,
             symbols: &self.symbols,
         };
         let mut commands = processor.text_copy_commands(&command)?;

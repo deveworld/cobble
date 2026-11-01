@@ -672,10 +672,20 @@ impl Generator {
             1 => Expr::Lit(-1),
             _ => bin(
                 Op::Mod,
-                self.expr(scope, depth),
+                self.call_free_index_value(scope, depth),
                 Expr::Len(name.to_string()),
             ),
         }
+    }
+
+    /// Python captures the string before evaluating the index. A call in
+    /// the index could replace it, so a bound using its new length would
+    /// no longer keep the index inside the captured string.
+    fn call_free_index_value(&mut self, scope: &mut Scope, depth: usize) -> Expr {
+        let calls_left = std::mem::replace(&mut scope.calls_left, 0);
+        let value = self.expr(scope, depth);
+        scope.calls_left = calls_left;
+        value
     }
 
     fn expr(&mut self, scope: &mut Scope, depth: usize) -> Expr {
@@ -730,7 +740,7 @@ impl Generator {
             1 => Expr::Lit(-1),
             _ => bin(
                 Op::Mod,
-                self.expr(scope, depth),
+                self.call_free_index_value(scope, depth),
                 Expr::StrLen(Box::new(base)),
             ),
         }
@@ -3140,6 +3150,33 @@ fn env_number(name: &str, default: u64) -> u64 {
     }
 }
 
+fn generated_program(seed: u64) -> Program {
+    Generator {
+        rng: Rng(seed),
+        counter: 0,
+        functions: 0,
+        consts: Vec::new(),
+    }
+    .program()
+}
+
+#[test]
+fn regressions_from_expanded_seed_ranges_match_python() {
+    let Some(mut python) = Python::start() else {
+        assert!(std::env::var("COBBLE_DIFF_REQUIRE_PYTHON").as_deref() != Ok("1"));
+        return;
+    };
+    for seed in [124635, 142687] {
+        let program = generated_program(seed);
+        let expected = python
+            .run(std::slice::from_ref(&program))
+            .remove(0)
+            .unwrap_or_else(|error| panic!("seed {seed}: Python raised {error}"));
+        let actual = run_cobble(&program).unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+        assert_eq!(actual, expected, "seed {seed}");
+    }
+}
+
 #[test]
 fn random_programs_match_python() {
     let Some(mut python) = Python::start() else {
@@ -3156,13 +3193,7 @@ fn random_programs_match_python() {
     let (seeds, programs): (Vec<u64>, Vec<Program>) = (0..cases)
         .map(|index| {
             let seed = first_seed + index;
-            let mut generator = Generator {
-                rng: Rng(seed),
-                counter: 0,
-                functions: 0,
-                consts: Vec::new(),
-            };
-            (seed, generator.program())
+            (seed, generated_program(seed))
         })
         .unzip();
     let expected: Vec<Outcome> = python
@@ -3181,12 +3212,11 @@ fn random_programs_match_python() {
 
     // The simulator panics on commands Minecraft would refuse; those
     // panics are failures, reported below.
-    let default_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
     let mut failures = Vec::new();
     for ((seed, program), expected) in seeds.iter().zip(&programs).zip(&expected) {
         let actual = run_cobble(program);
         if let Some(kind) = failure_kind(&actual, expected) {
+            eprintln!("differential failure at seed {seed}: {kind}");
             failures.push((*seed, program, kind));
         }
     }
@@ -3207,8 +3237,6 @@ fn random_programs_match_python() {
             print_program(&small, Language::Python)
         )
     });
-    panic::set_hook(default_hook);
-
     let summaries: Vec<String> = failures
         .iter()
         .map(|(seed, _, kind)| format!("seed {seed}: {kind}"))
@@ -3228,7 +3256,8 @@ fn random_programs_match_python() {
 // Small programs of the shapes the generator above doesn't make: an item of
 // another kind added to a list by `+=` or `+` and read by a key in another
 // function, slices of a parameter joined, and a number compared with a
-// value that may be a list, a map, or text. Each program is the same text
+// value that may be a list, a map, or text, and choices between unlike
+// values. Each program is the same text
 // in Cobble and in Python and appends its results to the list `out`.
 
 /// A literal of `kind` 0 (a list of numbers) or 1 (a map of numbers), with
@@ -3349,6 +3378,29 @@ fn compared_program(rng: &mut Rng) -> String {
     )
 }
 
+/// A choice keeps the selected operand's type through named locals,
+/// containers, calls, and truth tests. Empty values exercise short circuiting.
+fn choice_program(rng: &mut Rng) -> String {
+    let values = [
+        "0",
+        "7",
+        "-2",
+        "\"\"",
+        "\"a\\\"b\\\\c\"",
+        "[]",
+        "[3, 4]",
+        "{}",
+        "{\"k\": 5}",
+    ];
+    let a = rng.pick(&values);
+    let b = rng.pick(&values);
+    let flag = rng.range(0, 1);
+    format!(
+        "out = []\n\ndef record(v):\n    out.append(v)\n\ndef choose(a, b, flag):\n    x = a if flag else b\n    record(x)\n    out.append([x, a and b, a or b])\n    out.append({{\"v\": b if flag else a}})\n    out.append(1 if x else 0)\n    out.append(1 if x == a else 0)\n    record(\"text\" if flag else [9])\n    record([] or {{\"k\": 8}})\n\ndef main():\n    choose({a}, {b}, {flag})\n    choose({b}, {a}, {other})\n",
+        other = 1 - flag,
+    )
+}
+
 const SHAPE_RUNNER: &str = r#"
 import json, sys
 for line in sys.stdin:
@@ -3387,10 +3439,11 @@ fn container_shapes_match_python() {
         .map(|index| {
             let seed = first_seed + index;
             let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-            let source = match index % 3 {
+            let source = match index % 4 {
                 0 => added_item_program(&mut rng),
                 1 => sliced_program(&mut rng),
-                _ => compared_program(&mut rng),
+                2 => compared_program(&mut rng),
+                _ => choice_program(&mut rng),
             };
             (seed, source)
         })
@@ -3406,8 +3459,6 @@ fn container_shapes_match_python() {
     let _ = child.kill();
     let expected: Vec<serde_json::Value> = serde_json::from_str(&line).unwrap();
 
-    let default_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
     let mut failures = Vec::new();
     let mut checked = 0;
     for ((seed, source), expected) in programs.iter().zip(&expected) {
@@ -3430,7 +3481,6 @@ fn container_shapes_match_python() {
             ));
         }
     }
-    panic::set_hook(default_hook);
     assert!(
         checked * 4 >= cases * 3,
         "Python raised for {} of {cases} container programs",

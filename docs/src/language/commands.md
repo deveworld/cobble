@@ -112,26 +112,27 @@ loops are substituted at compile time.
 
 In `tellraw` and `title`, also after `execute ... run`, a parameter in text
 written without a JSON or SNBT component, as `/tellraw @a {msg}` or
-`/tellraw @a Hi {msg}`, is macro text in a `{"text":...}` wrapper, so a
-sentence with spaces works, and so does a direct call with inline arguments,
-such as `/function mypack:show {msg:"hello world"}`:
+`/tellraw @a Hi {msg}`, accepts any text when Cobble calls the function,
+including quotes, backslashes, and line breaks:
 
 ```python
 def show(msg):
     /tellraw @a Hi {msg}
+
+def greet():
+    show("say \"hello\" \\ goodbye")
 ```
 
-```mcfunction
-$tellraw @a {"text":"Hi $(msg)"}
-```
+The public Minecraft function also accepts simple inline arguments, such as
+`/function mypack:show {msg:"hello world"}`. That entry uses Minecraft's raw
+macro substitution inside a text wrapper, so quotes and backslashes in an
+inline value need JSON escaping as well as SNBT escaping. Cobble calls handle
+this automatically by reading the argument from storage.
 
-A macro argument is pasted into the line as it is, so a value with a `"` or
-a `\` breaks the wrapper, and Minecraft refuses the whole call. For such text,
-write the component yourself, as `/tellraw @a {"text":"{msg}"}`: Cobble then
-reads the value from the function's arguments in a text component, so any
-text works, but only when Cobble code calls the function (see
-[Arguments](../reference/calling-convention.md#arguments)). The same holds for
-hover text. In `show_entity` names and quoted `show_item` component values,
+Writing a component yourself, as `/tellraw @a {"text":"{msg}"}`, also reads
+the value from storage and accepts any text when Cobble calls the function
+(see [Arguments](../reference/calling-convention.md#arguments)). The same holds
+for hover text. In `show_entity` names and quoted `show_item` component values,
 Cobble escapes the parameter before the command runs, so quotes and
 backslashes survive there too. A parameter that stands for the action, as in `/title @a {kind}
 {text}`, is taken for `title`, `subtitle`, or `actionbar`.

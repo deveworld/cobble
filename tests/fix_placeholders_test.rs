@@ -431,8 +431,8 @@ fn header_and_alias_errors_name_their_line() {
 }
 
 #[test]
-fn elif_and_while_with_a_minecraft_condition_name_the_rewrite() {
-    for (source, keyword) in [
+fn elif_and_while_with_a_minecraft_condition_compile() {
+    for (source, _) in [
         (
             "x = 1\ndef go():\n    if x > 9:\n        pass\n    elif entity @a and x > 3:\n        pass\n",
             "elif",
@@ -442,16 +442,11 @@ fn elif_and_while_with_a_minecraft_condition_name_the_rewrite() {
             "elif",
         ),
         (
-            "x = 1\ndef go():\n    while entity @a and x < 3:\n        x += 1\n",
+            "x = 1\ndef go():\n    global x\n    while entity @a and x < 3:\n        x += 1\n",
             "while",
         ),
     ] {
-        let error = compile_error(source);
-        assert!(
-            error.contains(&format!("`{keyword}` can't test a Minecraft condition")),
-            "{error}"
-        );
-        assert!(error.contains("store result score found temp:"), "{error}");
+        compile(source).unwrap();
     }
 }
 

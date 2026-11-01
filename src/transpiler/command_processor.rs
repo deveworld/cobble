@@ -207,10 +207,30 @@ pub(in crate::transpiler) fn integer_parameters(command: &str) -> Vec<String> {
 pub struct CommandProcessor<'a> {
     pub(in crate::transpiler) namespace: String,
     pub(in crate::transpiler) current_params: &'a [String],
+    pub(in crate::transpiler) safe_plain_text: bool,
     pub(in crate::transpiler) symbols: &'a Symbols,
 }
 
 impl<'a> CommandProcessor<'a> {
+    pub(in crate::transpiler) fn has_plain_parameter_message(
+        command: &str,
+        params: &[String],
+    ) -> bool {
+        if params.is_empty() || command.contains("$(") {
+            return false;
+        }
+        let command = command.strip_prefix('/').unwrap_or(command);
+        let Ok(pieces) = placeholders::checked_pieces(command) else {
+            return false;
+        };
+        let Some(message) = text_message(command, &pieces, |name| {
+            params.iter().any(|param| param == name)
+        }) else {
+            return false;
+        };
+        message.plain && pieces.iter().any(|piece| matches!(piece,
+            Piece::Field { name, start, .. } if *start >= message.start && params.iter().any(|param| param == name)))
+    }
     fn is_param(&self, name: &str) -> bool {
         self.current_params.contains(&name.to_string())
     }
@@ -373,9 +393,14 @@ impl<'a> CommandProcessor<'a> {
                 // `/tellraw @a {msg}`, is macro text, so a direct call with
                 // inline arguments shows it too; the message gets a
                 // `{"text":...}` wrapper.
-                plain_message = true;
-                result.push_str(&format!("$({})", var_name));
-                has_macro_vars = true;
+                if self.safe_plain_text {
+                    scoreboard_vars_found.push(var_name.to_string());
+                    result.push_str(&var_marker(var_name));
+                } else {
+                    plain_message = true;
+                    result.push_str(&format!("$({})", var_name));
+                    has_macro_vars = true;
+                }
             } else if self.is_param(var_name)
                 && !cmd.contains("$(")
                 && in_message.is_some_and(|message| {
@@ -536,10 +561,7 @@ impl<'a> CommandProcessor<'a> {
     /// in `_text_snbt.<name>` (see [`Self::storage_text_component`]).
     pub fn text_copy_commands(&self, cmd: &str) -> Result<Vec<String>, TranspileError> {
         let trimmed = cmd.trim();
-        if !["tellraw ", "title ", "say "]
-            .iter()
-            .any(|command| trimmed.starts_with(command))
-        {
+        if text_command_start(trimmed).is_none() && !trimmed.starts_with("say ") {
             return Ok(Vec::new());
         }
         let Substituted { vars, .. } = self.substitute_placeholders(cmd, false)?;
@@ -1494,6 +1516,7 @@ mod tests {
         let processor = CommandProcessor {
             namespace: "test".to_string(),
             current_params: &[],
+            safe_plain_text: false,
             symbols: &symbols,
         };
 

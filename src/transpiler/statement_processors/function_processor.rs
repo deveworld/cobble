@@ -41,12 +41,66 @@ impl Transpiler {
         &mut self,
         func: &FunctionDef,
     ) -> Result<(), TranspileError> {
+        let Some(variant) = self.functions.safe_text_variants.get(&func.name).cloned() else {
+            return self.process_function_variant(func, &func.name, false);
+        };
+        let mut statements = Vec::new();
+        crate::transpiler::function_context::collect_statements(&func.body, &mut statements);
+        let previous_replay = self.replay_sources.replace(
+            statements
+                .into_iter()
+                .map(|statement| {
+                    (
+                        crate::transpiler::function_context::statement_address(statement),
+                        None,
+                    )
+                })
+                .collect(),
+        );
+        let source = self.current_statement_source.clone();
+        let result = self.process_function_variant(func, &func.name, false);
+        let replay = self.replay_sources.take().unwrap_or_default();
+        self.replay_sources = previous_replay;
+        result?;
+        let previous: Vec<_> = replay
+            .into_iter()
+            .map(|(key, source)| (key, self.unrolled_sources.insert(key, source)))
+            .collect();
+        if self.functions.recursive.contains(&func.name) {
+            self.functions.recursive.insert(variant.clone());
+        }
+        self.current_statement_source = source;
+        let result = self.process_function_variant(func, &variant, true);
+        for (key, source) in previous {
+            match source {
+                Some(source) => {
+                    self.unrolled_sources.insert(key, source);
+                }
+                None => {
+                    self.unrolled_sources.remove(&key);
+                }
+            }
+        }
+        result
+    }
+
+    fn process_function_variant(
+        &mut self,
+        func: &FunctionDef,
+        function_name: &str,
+        safe_plain_text: bool,
+    ) -> Result<(), TranspileError> {
         let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
-        let context = FunctionContext::with_params(param_names.clone(), &func.body);
+        let mut context = FunctionContext::with_params(param_names.clone(), &func.body);
+        context.safe_plain_text = safe_plain_text;
         let shadows: Vec<String> = context
             .locals
             .iter()
-            .filter(|local| !self.in_prelude && self.symbols.module_variables.contains(*local))
+            .filter(|local| {
+                !safe_plain_text
+                    && !self.in_prelude
+                    && self.symbols.module_variables.contains(*local)
+            })
             .cloned()
             .collect();
         let previous_shadows = std::mem::replace(&mut self.unwarned_shadows, shadows);
@@ -54,9 +108,9 @@ impl Transpiler {
             .current_statement_source
             .clone()
             .or_else(|| self.function_def_source(func));
-        if func.name.contains(|ch: char| ch.is_ascii_uppercase()) {
+        if function_name.contains(|ch: char| ch.is_ascii_uppercase()) {
             // The suggestion mustn't take the prefix Cobble reserves.
-            let mut suggestion = snake_case(&func.name);
+            let mut suggestion = snake_case(function_name);
             if let Some(rest) = suggestion.strip_prefix("_cobble") {
                 suggestion = format!("my{rest}");
             }
@@ -64,24 +118,24 @@ impl Transpiler {
                 TranspileErrorKind::Semantic,
                 format!(
                     "Function name `{}` has capital letters, which Minecraft function paths can't use. Rename it, for example to `{}`.",
-                    func.name, suggestion
+                    function_name, suggestion
                 ),
             )
             .with_location_if_missing(def_source));
         }
-        if !self.in_prelude && func.name.starts_with("_cobble") {
+        if !self.in_prelude && !safe_plain_text && function_name.starts_with("_cobble") {
             return Err(TranspileError::new(
                 TranspileErrorKind::Semantic,
                 format!(
                     "Function name `{}` starts with `_cobble`, which Cobble reserves for the functions it generates. Rename it.",
-                    func.name
+                    function_name
                 ),
             )
             .with_location_if_missing(def_source));
         }
         self.functions
             .def_sources
-            .insert(func.name.clone(), def_source.clone());
+            .insert(function_name.to_string(), def_source.clone());
         self.check_late_module_reads(func, &context)
             .map_err(|error| error.with_location_if_missing(def_source.clone()))?;
 
@@ -111,7 +165,7 @@ impl Transpiler {
 
         // Set up new function context
         let globals = context.globals.clone();
-        let recursive = self.functions.recursive.contains(&func.name);
+        let recursive = self.functions.recursive.contains(function_name);
         if recursive {
             // A recursive function runs many commands, like a loop.
             self.data_pack.track_runtime_loop();
@@ -119,7 +173,7 @@ impl Transpiler {
         self.current_context = context;
         self.current_function = Some(Vec::new());
         self.current_function_metadata = Some(HashMap::new());
-        self.current_function_name = Some(func.name.clone());
+        self.current_function_name = Some(function_name.to_string());
         let return_kind = Self::analyze_function_return_kind(&func.body);
         // Only functions that actually contain a `return` statement need the
         // return-flag protocol. Everything else skips the prologue and the
@@ -145,10 +199,12 @@ impl Transpiler {
         self.symbols.global_variables.clear();
 
         // Store function parameters
-        self.functions.params.insert(func.name.clone(), param_names);
+        self.functions
+            .params
+            .insert(function_name.to_string(), param_names);
         self.functions
             .returns
-            .insert(func.name.clone(), return_kind);
+            .insert(function_name.to_string(), return_kind);
 
         // Process function body
         for statement in &func.body {
@@ -160,7 +216,7 @@ impl Transpiler {
         // A read inside an unrolled loop is lowered from a copy of its
         // statement, so it is reported here.
         if let Some(read) = &self.current_context.unbound_read {
-            let error = unbound_local_message(&read.name, &func.name).into();
+            let error = unbound_local_message(&read.name, function_name).into();
             self.symbols.keep_scope(symbols_mark);
             return Err(error);
         }
@@ -176,7 +232,7 @@ impl Transpiler {
             let mut metadata = self.current_function_metadata.take().unwrap_or_default();
             if recursive {
                 self.route_returns_through_exit(
-                    &func.name,
+                    function_name,
                     return_context.as_ref(),
                     &mut commands,
                     &mut metadata,
@@ -191,18 +247,23 @@ impl Transpiler {
             }
             // A helper generated earlier, maybe for this very body, has the
             // name already.
-            if self.data_pack.functions.contains_key(&func.name)
-                && !self.data_pack.user_functions.contains(&func.name)
+            if self.data_pack.functions.contains_key(function_name)
+                && !self.data_pack.user_functions.contains(function_name)
             {
                 self.symbols.keep_scope(symbols_mark);
                 return Err(
-                    generated_name_collision(&func.name).with_location_if_missing(def_source)
+                    generated_name_collision(function_name).with_location_if_missing(def_source)
                 );
             }
-            self.data_pack.user_functions.remove(&func.name);
+            self.data_pack.user_functions.remove(function_name);
+            self.data_pack.add_function_with_metadata(
+                function_name.to_string(),
+                commands,
+                metadata,
+            );
             self.data_pack
-                .add_function_with_metadata(func.name.clone(), commands, metadata);
-            self.data_pack.user_functions.insert(func.name.clone());
+                .user_functions
+                .insert(function_name.to_string());
         }
 
         // Restore previous context. Lowering the body can add hidden locals.
@@ -220,9 +281,9 @@ impl Transpiler {
             .extend(shadowed_constants);
 
         let created = self.data_pack.created_functions[functions_mark..].to_vec();
-        self.localize_function(&func.name, &locals, &created);
+        self.localize_function(function_name, &locals, &created);
         if recursive {
-            self.add_recursion_frame(&func.name, &locals, &globals, return_context.as_ref());
+            self.add_recursion_frame(function_name, &locals, &globals, return_context.as_ref());
         }
 
         // A helper generated for this body took the name of a function
@@ -232,7 +293,7 @@ impl Transpiler {
             return Err(generated_name_collision(&name).with_location_if_missing(location));
         }
         let created = &self.data_pack.created_functions[functions_mark..];
-        self.check_function_file_names(&func.name, created)
+        self.check_function_file_names(function_name, created)
             .map_err(|error| error.with_location_if_missing(def_source))
     }
 

@@ -75,14 +75,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Module-level code that runs commands, such as a `for` over a list, `while`, a
   call, `out.append(8)`, or a raw command, runs in the load function in source
   order, imported files included. It was dropped before.
-- A parameter in `tellraw` or `title` text written without a component is macro
-  text in a `{"text":...}` wrapper again, also after `execute ... run`, so calls
-  with inline arguments show it. For text with `"` or `\`, write
-  `{"text":"{msg}"}`.
+- Cobble calls preserve quotes and backslashes in `tellraw` and `title`
+  parameter text written without a component, including after `execute ...
+  run`. The public Minecraft function still accepts simple inline arguments.
 - References into namespaces other than `minecraft` and the pack's own are not
   checked, so packs that name another pack's tags and functions build again.
-- `elif` and `while` with a Minecraft condition are a compile error that shows
-  how to store the test in a variable first.
+- `if`/`elif`/`else` and `while` accept Minecraft conditions, including mixes
+  with Cobble conditions. Branches stay exclusive, `elif` tests stay lazy,
+  and a loop reevaluates its complete condition before every pass.
+- Conditional expressions and value-producing `and`/`or` accept unlike
+  alternatives and preserve the selected value's type through storage and calls.
 - `unless` is an ordinary name outside execute headers, and a nested `if` inside
   an `as` or `at` block is checked for each entity in turn.
 - A `const` counts as a module variable for the two-files error unless both
@@ -129,6 +131,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- A numeric assignment keeps an earlier storage copy current through every
+  later write, so a condition compiled before those writes sees the current
+  value on subsequent loop passes.
 - Fractional literals in runtime lists and maps use double precision, so
   forwarding `0.6` no longer exposes a float32 approximation. Parameters in
   raw integer command arguments are recognized through forwarding calls:
@@ -495,9 +500,6 @@ for the upgrade steps.
   to `execute if 2 in items`, which Minecraft can't load; the error now
   says Cobble has no `in` operator. The `slots` and `stopwatch` conditions
   of 26.3 pass through as Minecraft conditions.
-- `elif` or `else` after an `if` with a Minecraft condition, such as
-  `if entity @s[tag=a]:`, reports `unsupported-control-flow` with a rewrite
-  that stores the test in a variable. It used to be a bare parse error.
 - Reading another file's variable through its module name, as in
   `economy.balance`, says to import it with `from economy import balance`.
   The message used to ask for a map literal.

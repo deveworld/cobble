@@ -5,6 +5,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 #[derive(Clone)]
 pub(in crate::transpiler) struct FunctionContext {
     pub(in crate::transpiler) params: Vec<String>,
+    /// This entry is called by Cobble with the original values in `args`.
+    pub(in crate::transpiler) safe_plain_text: bool,
     /// Parameters the function assigns somewhere in its body.
     pub(in crate::transpiler) reassigned_params: Vec<String>,
     /// The function's local variables: names it assigns, or uses as a `for`
@@ -39,6 +41,7 @@ impl FunctionContext {
     pub(in crate::transpiler) fn new() -> Self {
         Self {
             params: Vec::new(),
+            safe_plain_text: false,
             reassigned_params: Vec::new(),
             locals: Vec::new(),
             globals: Vec::new(),
@@ -70,6 +73,7 @@ impl FunctionContext {
         globals.sort();
         let mut context = Self {
             params,
+            safe_plain_text: false,
             reassigned_params,
             locals,
             globals,
@@ -751,7 +755,10 @@ pub(in crate::transpiler) fn first_assigned_value<'a>(
 
 /// The statements of `body` and of the blocks inside it, in source order.
 /// Function definitions are not entered.
-fn collect_statements<'a>(body: &'a [Statement], out: &mut Vec<&'a Statement>) {
+pub(in crate::transpiler) fn collect_statements<'a>(
+    body: &'a [Statement],
+    out: &mut Vec<&'a Statement>,
+) {
     for statement in body {
         out.push(statement);
         match statement {
@@ -894,6 +901,22 @@ pub(in crate::transpiler) fn direct_binding(statement: &Statement) -> Option<&st
 /// names and attribute names are not reads.
 pub(in crate::transpiler) fn expression_reads<'a>(expr: &'a Expression, reads: &mut Vec<&'a str>) {
     match expr {
+        Expression::MinecraftCondition(raw) => {
+            if let Some(expr) = super::minecraft_condition_expression(raw) {
+                let mut names = Vec::new();
+                expression_reads(&expr, &mut names);
+                for name in names {
+                    if let Some(start) = raw.find(name) {
+                        reads.push(&raw[start..start + name.len()]);
+                    }
+                }
+            }
+            for piece in super::placeholders::pieces(raw) {
+                if let super::placeholders::Piece::Field { name, .. } = piece {
+                    reads.push(name);
+                }
+            }
+        }
         Expression::Identifier(name) => reads.push(name),
         Expression::Binary(left, _, right) => {
             expression_reads(left, reads);
@@ -1082,6 +1105,11 @@ fn collect_statement_expressions<'a>(body: &'a [Statement], out: &mut Vec<&'a Ex
 
 fn expression_calls(expr: &Expression, calls: &mut BTreeSet<String>) {
     match expr {
+        Expression::MinecraftCondition(raw) => {
+            if let Some(expr) = super::minecraft_condition_expression(raw) {
+                expression_calls(&expr, calls);
+            }
+        }
         Expression::Call(func, args) => {
             if let Expression::Identifier(name) = &**func {
                 calls.insert(name.clone());

@@ -686,6 +686,11 @@ struct AstCall {
 
 fn collect_expression_calls(expression: &Expression, is_root: bool, out: &mut Vec<AstCall>) {
     match expression {
+        Expression::MinecraftCondition(raw) => {
+            if let Some(expr) = crate::transpiler::minecraft_condition_expression(raw) {
+                collect_expression_calls(&expr, is_root, out);
+            }
+        }
         Expression::Call(callee, arguments) => {
             if let Some(name) = dotted_call_name(callee) {
                 out.push(AstCall {
@@ -1359,6 +1364,11 @@ fn collect_expression_none_diagnostics(
     diagnostics: &mut Vec<SourceDiagnostic>,
 ) {
     match expression {
+        Expression::MinecraftCondition(raw) => {
+            if let Some(expr) = crate::transpiler::minecraft_condition_expression(raw) {
+                collect_expression_none_diagnostics(&expr, false, diagnostics);
+            }
+        }
         Expression::None => {
             if !none_allowed {
                 diagnostics.push(unsupported_none_diagnostic(1, 1));
@@ -1658,9 +1668,23 @@ fn collect_reference_line_scans(
             Statement::MinecraftCommand(_) => {}
             Statement::If(if_statement) => {
                 if let Some(node) = node {
-                    push_reference_scan_lines(context, node.span, params, scans);
-                    for branch in &node.elif_branches {
-                        push_reference_scan_lines(context, branch.header, params, scans);
+                    push_condition_reference_scans(
+                        context,
+                        node.span,
+                        &if_statement.condition,
+                        params,
+                        scans,
+                    );
+                    for (branch, (condition, _)) in
+                        node.elif_branches.iter().zip(&if_statement.elif_branches)
+                    {
+                        push_condition_reference_scans(
+                            context,
+                            branch.header,
+                            condition,
+                            params,
+                            scans,
+                        );
                     }
                     if let Some(branch) = &node.else_branch {
                         push_reference_scan_lines(context, branch.header, params, scans);
@@ -1714,7 +1738,13 @@ fn collect_reference_line_scans(
             }
             Statement::While(while_loop) => {
                 if let Some(node) = node {
-                    push_reference_scan_lines(context, node.span, params, scans);
+                    push_condition_reference_scans(
+                        context,
+                        node.span,
+                        &while_loop.condition,
+                        params,
+                        scans,
+                    );
                 }
                 collect_reference_line_scans(
                     context,
@@ -1750,6 +1780,27 @@ fn collect_reference_line_scans(
                     push_reference_scan_lines(context, node.span, params, scans);
                 }
             }
+        }
+    }
+}
+
+fn push_condition_reference_scans(
+    context: &SemanticContext<'_>,
+    span: SourceSpan,
+    condition: &Expression,
+    params: &Rc<HashSet<String>>,
+    scans: &mut Vec<ReferenceLineScan>,
+) {
+    let start = scans.len();
+    push_reference_scan_lines(context, span, params, scans);
+    if let Expression::MinecraftCondition(raw) = condition {
+        let conditions = if crate::transpiler::mask_minecraft_conditions(raw).is_some() {
+            vec![raw.clone()]
+        } else {
+            Vec::new()
+        };
+        for scan in &mut scans[start..] {
+            scan.conditions = Some(conditions.clone());
         }
     }
 }
@@ -1905,7 +1956,7 @@ fn expression_spans_for_undefined_scan(trimmed: &str) -> Vec<ExpressionSpan> {
             let expression = rest.trim_end_matches(':').trim_end();
             // `if entity @a and x > 3:` checks only its Python operands: each
             // Minecraft condition reads as `True`, padded to keep columns.
-            if keyword == "if" {
+            if matches!(keyword, "if" | "elif" | "while") {
                 if let Some((_, conditions)) =
                     crate::transpiler::mask_minecraft_conditions(expression)
                 {
@@ -1928,7 +1979,7 @@ fn expression_spans_for_undefined_scan(trimmed: &str) -> Vec<ExpressionSpan> {
             }
             // `if block ~ ~ ~ minecraft:stone:` is an execute block with a
             // raw condition; its words are Minecraft syntax, not variables.
-            if keyword == "if"
+            if matches!(keyword, "if" | "elif" | "while")
                 && crate::transpiler::raw_minecraft_condition_verdict(expression) == Some(true)
             {
                 return expressions;

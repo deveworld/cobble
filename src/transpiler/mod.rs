@@ -48,7 +48,8 @@ use stdlib_modules::StdlibState;
 use symbols::{FunctionTable, Symbols};
 
 pub(crate) use condition_lowering::{
-    mask_minecraft_conditions, merged_execute_in_condition, raw_minecraft_condition_verdict,
+    mask_minecraft_conditions, merged_execute_in_condition, minecraft_condition_expression,
+    raw_minecraft_condition_verdict,
 };
 pub use function_context::module_variables_made_local;
 pub(crate) use function_context::{function_locals, global_assignments, module_loop_variables};
@@ -127,6 +128,9 @@ pub struct Transpiler {
     /// The source location of each statement of the copies an expanded
     /// loop lowers, by statement address, while the copy is lowered.
     unrolled_sources: HashMap<usize, Option<SourceLocation>>,
+    /// Sources recorded while lowering a public entry, then reused by its
+    /// safe text entry without consuming another function's source queues.
+    replay_sources: Option<HashMap<usize, Option<SourceLocation>>>,
     /// Stack of per-site condition holder slots for nested `execute` blocks.
     /// One frame per active `process_execute_block`; the frame counts the
     /// condition holders scoped to `@s` so their objectives can be pooled by
@@ -299,6 +303,7 @@ impl Transpiler {
             unroll: UnrollState::default(),
             module_loop_variables: Default::default(),
             unrolled_sources: HashMap::new(),
+            replay_sources: None,
             execute_condition_slots: Vec::new(),
             warnings: RefCell::new(Vec::new()),
             unwarned_shadows: Vec::new(),
@@ -500,6 +505,7 @@ impl Transpiler {
         // Substituted text no longer matches its source line and could claim
         // the location of identical text elsewhere in the file.
         let statement_source = if self.unroll.depth > 0
+            || self.current_context.safe_plain_text
             || self.in_prelude
             || self
                 .unrolled_sources
@@ -515,6 +521,13 @@ impl Transpiler {
                 .or_else(|| previous_statement_source.clone())
         };
         self.current_statement_source = statement_source.clone();
+        if let Some(source) = self
+            .replay_sources
+            .as_mut()
+            .and_then(|sources| sources.get_mut(&function_context::statement_address(statement)))
+        {
+            *source = statement_source.clone();
+        }
         if let Some(name) = function_context::direct_binding(statement) {
             if let Some(index) = self.unwarned_shadows.iter().position(|local| local == name) {
                 let local = self.unwarned_shadows.remove(index);
@@ -667,8 +680,17 @@ impl Transpiler {
                 let source_location = if self.unroll.depth > 0 || self.in_prelude {
                     self.current_statement_source.clone()
                 } else {
-                    self.take_raw_command_source(clean_cmd.trim())
+                    if self.current_context.safe_plain_text {
+                        self.current_statement_source.clone()
+                    } else {
+                        self.take_raw_command_source(clean_cmd.trim())
+                    }
                 };
+                if let Some(source) = self.replay_sources.as_mut().and_then(|sources| {
+                    sources.get_mut(&function_context::statement_address(statement))
+                }) {
+                    *source = source_location.clone();
+                }
                 if Self::is_raw_return_command(cmd) && self.in_recursive_function() {
                     let function = self.current_function_name.as_deref().unwrap_or_default();
                     return Err(TranspileError::from(format!(
@@ -679,6 +701,7 @@ impl Transpiler {
                 let processor = CommandProcessor {
                     namespace: self.data_pack.namespace.clone(),
                     current_params: &self.current_context.params,
+                    safe_plain_text: self.current_context.safe_plain_text,
                     symbols: &self.symbols,
                 };
 

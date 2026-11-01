@@ -922,6 +922,7 @@ impl Transpiler {
     /// A statement or expression as compact source text, without spaces.
     pub(in crate::transpiler) fn expression_source_key(expr: &Expression) -> String {
         match expr {
+            Expression::MinecraftCondition(raw) => raw.clone(),
             Expression::Number(n) => Self::number_source_key(*n),
             Expression::String(value) => serde_json::to_string(value)
                 .unwrap_or_else(|_| format!("\"{}\"", value.replace('"', "\\\""))),

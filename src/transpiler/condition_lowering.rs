@@ -38,6 +38,12 @@ pub(crate) fn raw_minecraft_condition_verdict(condition: &str) -> Option<bool> {
     ))
 }
 
+/// The Python portion of a mixed Minecraft header, for semantic walks.
+pub(crate) fn minecraft_condition_expression(raw: &str) -> Option<Expression> {
+    let (masked, _) = mask_minecraft_conditions(raw)?;
+    Transpiler::parse_raw_condition_expression(&masked)
+}
+
 /// A condition that combines Minecraft conditions with Python with `and`,
 /// `or`, or `not`, as `entity @a and x > 3` or `not entity @a`, with each
 /// Minecraft condition replaced by an identifier, so the whole condition
@@ -369,6 +375,25 @@ impl Transpiler {
         &mut self,
         condition: &Expression,
     ) -> Result<String, TranspileError> {
+        if let Expression::MinecraftCondition(raw) = condition {
+            let flag = self.hidden_local(CobbleType::Integer);
+            self.process_assignment(&crate::ast::Assignment {
+                target: flag.clone(),
+                target_expr: None,
+                value: Expression::Number(0.0),
+                persist: false,
+            })?;
+            self.process_execute_block(&crate::ast::ExecuteBlock {
+                modifiers: vec![crate::ast::ExecuteModifier::IfRaw(raw.clone())],
+                body: vec![Statement::Assignment(crate::ast::Assignment {
+                    target: flag.clone(),
+                    target_expr: None,
+                    value: Expression::Number(1.0),
+                    persist: false,
+                })],
+            })?;
+            return Ok(format!("if score {flag} temp matches 1"));
+        }
         let processed = self.preprocess_condition(condition)?;
         let translated = self.translate_condition(&processed)?;
         let lowered = self.lower_translated_condition(translated)?;
@@ -793,7 +818,8 @@ impl Transpiler {
         let Statement::If(if_stmt) = function.body.first()? else {
             return None;
         };
-        Some(if_stmt.condition.clone())
+        (!matches!(if_stmt.condition, Expression::MinecraftCondition(_)))
+            .then(|| if_stmt.condition.clone())
     }
 
     pub(in crate::transpiler) fn translate_condition(
