@@ -2702,14 +2702,11 @@ datapack.recipe("swift", {
     let recipe = read_json(&output_dir, "recipe/swift.json");
     assert_eq!(recipe["input"]["item"], "minecraft:potion");
 
-    // Other recipes still take an id or a tag there.
+    // Stonecutting reads an `ingredient`, not an `input`.
     let error = resource_format_error(
         r#"datapack.recipe("cut", {"type": "minecraft:stonecutting", "input": {"item": "minecraft:stone"}, "result": {"id": "minecraft:stone_slab"}})"#,
     );
-    assert!(
-        error.contains("`input` is now the item id itself"),
-        "{error}"
-    );
+    assert!(error.contains("`ingredient` is missing"), "{error}");
 }
 
 #[test]

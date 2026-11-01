@@ -372,11 +372,11 @@ fn arithmetic_in_resource_json_is_named_in_cobble_terms() {
         );
     }
     let (_temp, output) = compile(
-        "from stdlib import datapack\n\ndatapack.predicate(\"a\", {\"type\": \"minecraft:random_chance\", \"chance\": \"x\" + \"y\"})\n",
+        "from stdlib import datapack\n\ndatapack.item_modifier(\"a\", {\"type\": \"minecraft:set_name\", \"name\": \"x\" + \"y\"})\n",
     )
     .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(
-        read_json(&output, "data/sim/predicate/a.json")["chance"],
+        read_json(&output, "data/sim/item_modifier/a.json")["name"],
         "xy"
     );
 }
