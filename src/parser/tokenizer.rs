@@ -25,7 +25,6 @@ pub enum Token {
     And,
     Or,
     Not,
-    Unless,
     Match,
     Case,
     Const,
@@ -176,7 +175,6 @@ impl std::fmt::Display for Token {
             Token::GtEq => write!(f, ">="),
             // Keywords - must be lowercase for Minecraft compatibility
             Token::If => write!(f, "if"),
-            Token::Unless => write!(f, "unless"),
             Token::As => write!(f, "as"),
             Token::At => write!(f, "at"),
             Token::And => write!(f, "and"),
@@ -1098,7 +1096,6 @@ fn keyword_or_ident(ident: String) -> Token {
         "and" => Token::And,
         "or" => Token::Or,
         "not" => Token::Not,
-        "unless" => Token::Unless,
         "match" => Token::Match,
         "case" => Token::Case,
         "const" => Token::Const,
@@ -1229,14 +1226,16 @@ fn strip_minecraft_inline_comment(command: &str) -> &str {
         }
 
         if *ch == '#' {
+            // Only ASCII spaces set a comment apart: U+00A0 and U+3000 are
+            // text of the command.
             let prev_is_space = position == 0
                 || chars
                     .get(position.wrapping_sub(1))
-                    .map(|(_, c)| c.is_whitespace())
+                    .map(|(_, c)| c.is_ascii_whitespace())
                     .unwrap_or(false);
             let next_is_space_or_end = chars
                 .get(position + 1)
-                .map(|(_, c)| c.is_whitespace())
+                .map(|(_, c)| c.is_ascii_whitespace())
                 .unwrap_or(true);
             if prev_is_space && next_is_space_or_end {
                 return trim_command_end(&command[..*index]);

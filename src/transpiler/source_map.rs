@@ -516,6 +516,9 @@ impl Transpiler {
                     )));
                 }
             }
+            // A leading `execute`, as Minecraft writes it, is optional.
+            let prefixed: Vec<String> = keys.iter().map(|key| format!("execute{key}")).collect();
+            keys.extend(prefixed);
         }
         keys
     }
@@ -707,7 +710,7 @@ impl Transpiler {
                 format!("{}:", modifiers)
             }
             Statement::SelectorDef(selector_def) => {
-                format!("{}={}", selector_def.name, selector_def.selector)
+                format!("@{}={}", selector_def.name, selector_def.selector)
             }
             Statement::EntityDef(entity_def) => {
                 format!(

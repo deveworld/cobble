@@ -1485,8 +1485,9 @@ struct ReferenceLineScan {
     line: usize,
     params: Rc<HashSet<String>>,
     /// The Python conditions of an execute header on this line, as in
-    /// `as @a if x > 3:`. The header's other words are Minecraft syntax.
-    conditions: Vec<String>,
+    /// `as @a if x > 3:`. The header's other words are Minecraft syntax,
+    /// such as the `=` of `if score a temp = b temp:`.
+    conditions: Option<Vec<String>>,
 }
 
 /// Reports `undefined-variable` for identifier references that resolve
@@ -1518,8 +1519,8 @@ pub(super) fn check_undefined_variable_references(
     scans.sort_by_key(|scan| scan.line);
     scans.dedup_by(|later, kept| {
         let same = later.line == kept.line;
-        if same && kept.conditions.is_empty() {
-            kept.conditions = std::mem::take(&mut later.conditions);
+        if same && kept.conditions.is_none() {
+            kept.conditions = later.conditions.take();
         }
         same
     });
@@ -1534,13 +1535,12 @@ pub(super) fn check_undefined_variable_references(
         }
         let indent = masked.len() - trimmed.len();
 
-        let mut expressions = if scan.conditions.is_empty() {
-            expression_spans_for_undefined_scan(trimmed)
-        } else {
-            execute_condition_spans(trimmed, &scan.conditions)
+        let mut expressions = match &scan.conditions {
+            None => expression_spans_for_undefined_scan(trimmed),
+            Some(conditions) => execute_condition_spans(trimmed, conditions),
         };
         // The keys of a target such as `nums[i] = 5` are read too.
-        if scan.conditions.is_empty() && compound_assignment_span(trimmed).is_none() {
+        if scan.conditions.is_none() && compound_assignment_span(trimmed).is_none() {
             if let Some(equals_index) = single_equals_index(trimmed) {
                 expressions.extend(subscript_key_spans(&ExpressionSpan {
                     text: trimmed[..equals_index].to_string(),
@@ -1695,7 +1695,7 @@ fn collect_reference_line_scans(
                         scans.push(ReferenceLineScan {
                             line: node.span.line,
                             params: Rc::clone(params),
-                            conditions: execute_python_conditions(execute_block),
+                            conditions: Some(execute_python_conditions(execute_block)),
                         });
                     }
                 }
@@ -1794,7 +1794,7 @@ fn push_reference_scan_lines(
         scans.push(ReferenceLineScan {
             line,
             params: Rc::clone(params),
-            conditions: Vec::new(),
+            conditions: None,
         });
     }
 }

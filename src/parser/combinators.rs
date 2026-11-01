@@ -818,7 +818,7 @@ fn execute_modifier<'a>(
         just(&Token::If)
             .ignore_then(exec_condition.clone())
             .map(ExecuteModifier::IfRaw),
-        just(&Token::Unless)
+        select_ref! { Token::Ident(s) if s == "unless" => () }
             .ignore_then(exec_condition.clone())
             .map(ExecuteModifier::UnlessRaw),
         // positioned as <selector>, rotated as <selector>. These come before
@@ -843,21 +843,22 @@ fn execute_modifier<'a>(
         just(&Token::In)
             .ignore_then(exec_condition.clone())
             .map(ExecuteModifier::In),
-        // anchored <eyes|feet>
+        // anchored <eyes|feet>; a placeholder may be part of the word, as in
+        // `anchored {a}s` or `align x{a}`.
         select_ref! { Token::Ident(s) if s == "anchored" => s.clone() }
-            .ignore_then(selector_or_macro)
+            .ignore_then(exec_condition.clone())
             .map(ExecuteModifier::Anchored),
         // align <axes>
         select_ref! { Token::Ident(s) if s == "align" => s.clone() }
-            .ignore_then(selector_or_macro)
+            .ignore_then(exec_condition.clone())
             .map(ExecuteModifier::Align),
         // store result/success ...
         select_ref! { Token::Ident(s) if s == "store" => s.clone() }
             .ignore_then(exec_condition.clone())
             .map(ExecuteModifier::Store),
-        // on <relation>, summon <entity>
+        // on <relation>, summon <entity>, as `summon minecraft:{kind}`
         select_ref! { Token::Ident(s) if s == "on" || s == "summon" => s.clone() }
-            .then(selector_or_macro)
+            .then(exec_condition.clone())
             .map(|(word, value)| ExecuteModifier::Other(format!("{word} {value}"))),
         // facing <position>, facing entity <selector> <anchor>
         select_ref! { Token::Ident(s) if s == "facing" => s.clone() }
@@ -884,10 +885,7 @@ fn selector_or_macro<'a>() -> impl Parser<'a, &'a [Token], String, Extra<'a>> + 
 /// such as `on` that is followed by an operator is a variable, as in
 /// `if on == 1`.
 fn is_execute_modifier_boundary(token: &Token, index: usize, spans: &[SpannedToken]) -> bool {
-    let hard_keyword = matches!(
-        token,
-        Token::As | Token::At | Token::If | Token::Unless | Token::In
-    );
+    let hard_keyword = matches!(token, Token::As | Token::At | Token::If | Token::In);
     let soft_keyword = matches!(
         token,
         Token::Ident(s)
@@ -901,12 +899,36 @@ fn is_execute_modifier_boundary(token: &Token, index: usize, spans: &[SpannedTok
                     | "on"
                     | "summon"
                     | "facing"
+                    | "unless"
             )
     );
     if matches!(token, Token::Colon | Token::Newline) {
         return true;
     }
     if !hard_keyword && !soft_keyword {
+        return false;
+    }
+    // A holder or an objective of a score test or store, as `facing` in
+    // `if score facing temp matches 1` or `if` in `store result score if
+    // temp`, is a word of the condition.
+    let back = |count: usize| {
+        index
+            .checked_sub(count)
+            .and_then(|previous| spans.get(previous))
+            .map(|previous| &previous.token)
+    };
+    let is_score = |token: Option<&Token>| matches!(token, Some(Token::Ident(s)) if s == "score");
+    let is_operator = |token: Option<&Token>| {
+        matches!(
+            token,
+            Some(Token::Lt | Token::LtEq | Token::Gt | Token::GtEq | Token::Equals)
+        )
+    };
+    if is_score(back(1))
+        || is_score(back(2))
+        || is_operator(back(1)) && is_score(back(4))
+        || is_operator(back(2)) && is_score(back(5))
+    {
         return false;
     }
     let glued_to_previous = index
