@@ -331,3 +331,233 @@ fn a_parameter_in_a_quoted_selector_value_is_a_macro_argument() {
     assert_eq!(f, "$tellraw @a[name=\"$(m)\", tag=x] {\"text\":\"hit\"}");
     assert!(!f.contains(['\u{E000}', '\u{E001}']));
 }
+
+// --- Execute headers ---
+
+#[test]
+fn a_keyword_word_can_be_a_score_holder_in_a_header() {
+    let source = r#"x = 0
+def main():
+    /scoreboard players set facing temp 1
+    /scoreboard players set as temp 1
+    /scoreboard players set if temp 1
+    /scoreboard players set #a temp 2
+    /scoreboard players set #b temp 2
+    if score facing temp matches 1:
+        /say facing
+    if score as temp matches 1:
+        /say as
+    if score if temp matches 1:
+        /say if
+    unless score summon temp matches 1:
+        /say summon
+    if score #a temp = #b temp:
+        /say equal
+    if score #a temp = #b temp and score facing temp = as temp:
+        /say both
+    as @a if score #a temp = #b temp unless score facing temp = if temp:
+        /say never
+    store result score positioned temp:
+        /scoreboard players get #a temp
+"#;
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.call("main");
+    assert_eq!(
+        sim.log,
+        [
+            "Server: facing",
+            "Server: as",
+            "Server: if",
+            "Server: summon",
+            "Server: equal",
+            "Server: both"
+        ]
+    );
+    assert_eq!(sim.var("positioned"), 2);
+}
+
+#[test]
+fn unless_is_a_name_outside_execute_headers() {
+    let source = r#"unless = 1
+def f(unless):
+    return unless + 1
+def main():
+    global unless
+    unless = f(unless)
+    if unless > 1:
+        /say big
+    unless entity @a[tag=nobody]:
+        /say nobody
+"#;
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.call("main");
+    assert_eq!(sim.var("unless"), 2);
+    assert_eq!(sim.log, ["Server: big", "Server: nobody"]);
+}
+
+#[test]
+fn a_placeholder_may_be_part_of_a_header_word() {
+    let f = function(
+        r#"def f(k, a):
+    summon minecraft:{k}:
+        /say s
+    align x{a}:
+        /say a
+    on {a}s:
+        /say o
+    anchored {a}s:
+        /say n
+def main():
+    f("pig", "y")
+"#,
+        "f",
+    );
+    assert_eq!(
+        f,
+        "$execute summon minecraft:$(k) run say s\n\
+         $execute align x$(a) run say a\n\
+         $execute on $(a)s run say o\n\
+         $execute anchored $(a)s run say n"
+    );
+}
+
+#[test]
+fn header_and_alias_errors_name_their_line() {
+    let error =
+        compile_error("def go():\n    /say hi\n    execute as @a[tag=t{nope}]:\n        /say x\n");
+    assert!(error.contains("main.cbl:3:5"), "{error}");
+    let error = compile_error("x = 1\n\ndef go():\n    /say hi\n@Far = @e[distance=..{NOPE}]\n");
+    assert!(error.contains("main.cbl:5:1"), "{error}");
+}
+
+#[test]
+fn elif_and_while_with_a_minecraft_condition_name_the_rewrite() {
+    for (source, keyword) in [
+        (
+            "x = 1\ndef go():\n    if x > 9:\n        pass\n    elif entity @a and x > 3:\n        pass\n",
+            "elif",
+        ),
+        (
+            "x = 1\ndef go():\n    if x > 9:\n        pass\n    elif entity @a:\n        pass\n",
+            "elif",
+        ),
+        (
+            "x = 1\ndef go():\n    while entity @a and x < 3:\n        x += 1\n",
+            "while",
+        ),
+    ] {
+        let error = compile_error(source);
+        assert!(
+            error.contains(&format!("`{keyword}` can't test a Minecraft condition")),
+            "{error}"
+        );
+        assert!(error.contains("store result score found temp:"), "{error}");
+    }
+}
+
+#[test]
+fn a_mixed_condition_in_an_expanded_loop_reads_the_loop_value() {
+    let source = r#"x = 5
+n = 0
+def main():
+    global n
+    n = 0
+    for i in range(3):
+        if entity @a and x > i:
+            n += 1
+        if entity @a[tag=nobody] or x > i:
+            n += 1
+        if x > i and entity @a:
+            n += 1
+        if not entity @a[tag=nobody] and x > i:
+            n += 1
+        if entity @a if x > i:
+            n += 1
+        as @a if entity @s and x > i:
+            n += 1
+    for j in [1, 2, 6]:
+        if entity @a and x > j:
+            n += 10
+"#;
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.call("main");
+    assert_eq!(sim.var("n"), 18 + 20);
+    assert!(!sim.function_text("main").contains("main.i"));
+}
+
+// --- Raw command text ---
+
+#[test]
+fn a_unicode_space_does_not_start_a_comment() {
+    let main = function(
+        "def main():\n    /say a\u{a0}#\u{a0}b\n    /say a #\u{a0}b\n    /say c\u{3000}#\u{3000}d\n    /say e # real comment\n",
+        "main",
+    );
+    assert_eq!(
+        main,
+        "say a\u{a0}#\u{a0}b\nsay a #\u{a0}b\nsay c\u{3000}#\u{3000}d\nsay e"
+    );
+}
+
+#[test]
+fn show_entity_and_show_item_hover_fields_are_macro_text() {
+    let hover = function(
+        r#"def hover(note):
+    /tellraw @a {"text":"e","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,0,0,1],"name":{"text":"{note}"}}}
+    /tellraw @a {"text":"i","hover_event":{"action":"show_item","id":"minecraft:stone","components":{"minecraft:custom_name":"{note}"}}}
+def main():
+    hover("x")
+"#,
+        "hover",
+    );
+    assert_eq!(
+        hover,
+        "$tellraw @a {\"text\":\"e\",\"hover_event\":{\"action\":\"show_entity\",\"id\":\"minecraft:pig\",\"uuid\":[0,0,0,1],\"name\":{\"text\":\"$(note)\"}}}\n\
+         $tellraw @a {\"text\":\"i\",\"hover_event\":{\"action\":\"show_item\",\"id\":\"minecraft:stone\",\"components\":{\"minecraft:custom_name\":\"$(note)\"}}}"
+    );
+}
+
+#[test]
+fn a_selector_alias_names_a_score_component_holder() {
+    let main = function(
+        r#"from stdlib import text
+@Near = @a[limit=1]
+def main():
+    /tellraw @a {"score":{"name":"@Near","objective":"x"}}
+    text.tellraw("@a", text.score("@Near", "x"))
+"#,
+        "main",
+    );
+    assert_eq!(
+        main,
+        "tellraw @a {\"score\":{\"name\":\"@a[limit=1]\",\"objective\":\"x\"}}\n\
+         tellraw @a {\"score\":{\"name\":\"@a[limit=1]\",\"objective\":\"x\"}}"
+    );
+    let error = compile_error(
+        "def main():\n    /tellraw @a {\"score\":{\"name\":\"@Nobody\",\"objective\":\"x\"}}\n",
+    );
+    assert!(error.contains("Unknown selector `@Nobody`"), "{error}");
+}
+
+#[test]
+fn a_placeholder_cobble_cannot_fill_is_a_compile_error() {
+    for source in [
+        "l = [4, 6]\nfor v in l:\n    pass\ndef go():\n    /tellraw @a {\"text\":\"{v}\"}\n",
+        "def go():\n    /scoreboard players set x temp {LATER}\nconst LATER = 3\n",
+    ] {
+        match compile(source) {
+            // Another fix may give these names a value; then the text must
+            // not show the braces.
+            Ok((_temp, output)) => {
+                let functions = load_functions(&output);
+                assert!(
+                    !functions["go"].join("\n").contains("{v}")
+                        && !functions["go"].join("\n").contains("{LATER}"),
+                    "{:?}",
+                    functions["go"]
+                );
+            }
+            Err(error) => assert!(error.contains("can't fill the placeholder"), "{error}"),
+        }
+    }
+}

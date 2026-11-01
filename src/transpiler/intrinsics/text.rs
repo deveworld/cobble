@@ -120,7 +120,7 @@ impl Transpiler {
                 if args.len() != 2 {
                     return Err("text.score() takes 2 arguments".into());
                 }
-                let name = self.expr_to_plain_arg(&args[0], "score component name")?;
+                let name = self.expr_to_selector_arg(&args[0], "score component name")?;
                 let objective = self.expr_to_plain_arg(&args[1], "score component objective")?;
                 serde_json::json!({ "score": { "name": name, "objective": objective } })
             }

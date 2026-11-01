@@ -52,9 +52,10 @@ struct Substituted {
 /// The error for a placeholder Cobble has no value for.
 fn undefined_placeholder(raw: &str, name: &str) -> String {
     format!(
-        "Undefined placeholder `{raw}`: `{name}` is not a function parameter, a const, or the \
-         variable of a loop Cobble expands, and a variable shows only in `say`, `tellraw`, and \
-         `title` text. Write `{{{{{name}}}}}` for literal braces."
+        "Cobble can't fill the placeholder `{raw}` here: `{name}` is not a parameter of this \
+         function, a const, the variable of a loop Cobble expands, or a variable Cobble knows at \
+         this point, and a variable shows only in `say`, `tellraw`, and `title` text. Write \
+         `{{{{{name}}}}}` for literal braces."
     )
 }
 
@@ -130,7 +131,9 @@ impl<'a> CommandProcessor<'a> {
             .into());
         }
         let expanded = expand_selector_aliases(&result, &self.symbols.selector_aliases);
-        if let Some(selector) = unknown_selector(expanded.trim_start_matches('$')) {
+        if let Some(selector) = unknown_selector(expanded.trim_start_matches('$'))
+            .or_else(|| unknown_selector_in_text_strings(&expanded))
+        {
             let name = &selector[1..];
             let hint = if self.symbols.entity_templates.contains_key(name) {
                 format!(
@@ -808,7 +811,9 @@ pub(crate) fn expand_selector_aliases(text: &str, aliases: &HashMap<String, Stri
             escape_next = true;
         } else if ch == '"' {
             in_string = !in_string;
-            in_selector_string = in_string && follows_selector_key(&text[..index]);
+            in_selector_string = in_string
+                && text[index + 1..].starts_with('@')
+                && (follows_selector_key(&text[..index]) || is_score_holder_string(&text[..index]));
         } else if ch == '@' && (!in_string || in_selector_string) {
             let name_end = text[index + 1..]
                 .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
@@ -1097,6 +1102,15 @@ impl QuoteScan {
 /// message.
 fn opens_text_string(before: &str) -> bool {
     let before = before.trim();
+    // Minecraft fills in text components only in the text itself and in
+    // `show_text` hover text, so a `show_entity` name or a `show_item`
+    // component takes the value as macro text.
+    let path = key_path(before);
+    if let Some(at) = path.iter().position(|key| key == "hover_event") {
+        if path.get(at + 1).is_some_and(|key| key != "value") {
+            return false;
+        }
+    }
     if before.ends_with('[') || before.ends_with(',') {
         return true;
     }
@@ -1113,6 +1127,94 @@ fn opens_text_string(before: &str) -> bool {
         && enclosing_object_start(key)
             .and_then(|start| before[..start].trim_end().strip_suffix(':'))
             .is_some_and(|outer| ends_with_key(outer.trim_end(), "hover_event"))
+}
+
+/// The first `@Name` that starts a `selector` string or a score
+/// component's `name` in `text` and is not a vanilla selector. Minecraft
+/// reads such a string as a selector, and an unknown name there shows
+/// nothing.
+fn unknown_selector_in_text_strings(text: &str) -> Option<String> {
+    let mut in_string = false;
+    let mut escape_next = false;
+    for (index, ch) in text.char_indices() {
+        if escape_next {
+            escape_next = false;
+        } else if ch == '\\' {
+            escape_next = true;
+        } else if ch == '"' {
+            in_string = !in_string;
+            let rest = &text[index + 1..];
+            if in_string
+                && rest.starts_with('@')
+                && (follows_selector_key(&text[..index]) || is_score_holder_string(&text[..index]))
+            {
+                let name: String = rest[1..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if !matches!(name.as_str(), "a" | "e" | "p" | "r" | "s" | "n") {
+                    return Some(format!("@{name}"));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether a string opened right after `before` is the `name` of a score
+/// text component, `{"score":{"name":"@s",...}}`, which takes a selector.
+fn is_score_holder_string(before: &str) -> bool {
+    let path = key_path(before.trim_end());
+    path.len() >= 2 && path[path.len() - 2] == "score" && path[path.len() - 1] == "name"
+}
+
+/// The keys of the JSON or SNBT objects that the end of `text` is inside,
+/// outermost first, ending with the key whose value comes next, if any.
+fn key_path(text: &str) -> Vec<String> {
+    // The key of each open object or list, and the last key read in the
+    // innermost one.
+    let mut open: Vec<Option<String>> = Vec::new();
+    let mut current: Option<String> = None;
+    let mut word = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active {
+                quote = None;
+            } else {
+                word.push(ch);
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                word.clear();
+            }
+            ':' => current = Some(std::mem::take(&mut word).trim().to_string()),
+            '{' | '[' => {
+                open.push(current.take());
+                word.clear();
+            }
+            '}' | ']' => {
+                open.pop();
+                current = None;
+                word.clear();
+            }
+            ',' => {
+                current = None;
+                word.clear();
+            }
+            ch if ch.is_whitespace() => {}
+            ch => word.push(ch),
+        }
+    }
+    open.into_iter().flatten().chain(current).collect()
 }
 
 /// Whether `text` ends with the object key `key`, quoted or bare.
