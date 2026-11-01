@@ -6,13 +6,14 @@
 //! or a cycle, along with every function that names the tag.
 //!
 //! A `minecraft:` id counts if Minecraft or the pack defines it. Ids of
-//! namespaces the pack doesn't declare anything in aren't checked, since
-//! another pack or a mod can define them.
+//! other namespaces than `minecraft` and the pack's own aren't checked, even
+//! where the pack declares something in them, since another pack or a mod
+//! can define them.
 
 use super::resource_format::{RefKind, Reference};
 use super::{SourceLocation, TranspileError, TranspileErrorKind, Transpiler};
 use crate::validator::registries::vanilla_ids;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A reference found in a `datapack.*` declaration.
 pub(in crate::transpiler) struct DeclaredReference {
@@ -46,6 +47,11 @@ impl Transpiler {
     /// includes itself. Call it once every file is compiled.
     pub fn check_resource_references(&self) -> Result<(), TranspileError> {
         let tags = self.declared_tags();
+        let stdlib_tags = self
+            .data_pack
+            .stdlib
+            .generate_tags(&self.data_pack.namespace);
+        let defined = |kind: RefKind, id: &str| self.is_defined(kind, id, &stdlib_tags);
         for (folder, tags) in &tags {
             let entry_kind = TAG_FOLDERS
                 .iter()
@@ -65,9 +71,26 @@ impl Transpiler {
                         },
                     };
                     let Some(kind) = kind else {
+                        // A data pack can't add blocks, items, or entity
+                        // types, so none exist in the pack's own namespace.
+                        if split(entry).0 == self.data_pack.namespace {
+                            let message = format!(
+                                "The {} tag `{}` names `{}`, which doesn't exist: a data pack can't add {}. Minecraft doesn't load a tag with a missing entry, nor the functions that name the tag; for a tag of this pack, write `#{}`",
+                                folder_what(folder),
+                                tag.id,
+                                full_id(entry),
+                                match folder.as_str() {
+                                    "block" => "blocks",
+                                    "item" => "items",
+                                    _ => "entity types",
+                                },
+                                full_id(entry),
+                            );
+                            return Err(Self::reference_error(message, tag.source.as_ref()));
+                        }
                         continue;
                     };
-                    if self.is_defined(kind, id) != Some(false) {
+                    if defined(kind, id) != Some(false) {
                         continue;
                     }
                     let shown = if entry.starts_with('#') {
@@ -111,9 +134,24 @@ impl Transpiler {
             }
         }
 
+        if let Some(cycle) = self.advancement_parent_cycle() {
+            let message = format!(
+                "The advancement `{}` is its own parent ({}). Minecraft doesn't load advancements whose parents go round in a cycle",
+                cycle[0],
+                cycle.join(" -> ")
+            );
+            let key = cycle[0].replacen(':', "/advancement/", 1);
+            let source = self
+                .data_pack
+                .json_resource_origins
+                .get(&key)
+                .and_then(|sources| sources.first());
+            return Err(Self::reference_error(message, source));
+        }
+
         for declared in &self.resource_references {
             let reference = &declared.reference;
-            if self.is_defined(reference.kind, &reference.id) != Some(false) {
+            if defined(reference.kind, &reference.id) != Some(false) {
                 continue;
             }
             let shown = if reference.kind.is_tag() {
@@ -150,8 +188,15 @@ impl Transpiler {
     }
 
     /// Whether `id` of `kind` exists: `None` when it can't be checked,
-    /// because another pack or a mod can define it.
-    fn is_defined(&self, kind: RefKind, id: &str) -> Option<bool> {
+    /// because another pack or a mod can define it. That is every namespace
+    /// but `minecraft` and the pack's own, even one the pack declares
+    /// something in, since another pack can add to it.
+    fn is_defined(
+        &self,
+        kind: RefKind,
+        id: &str,
+        stdlib_tags: &HashMap<String, Vec<String>>,
+    ) -> Option<bool> {
         let pack = &self.data_pack;
         let (namespace, path) = split(id);
         if namespace == "minecraft" {
@@ -162,7 +207,7 @@ impl Transpiler {
                 Some(_) => {}
             }
         }
-        if namespace != "minecraft" && !self.pack_namespaces().contains(namespace) {
+        if namespace != "minecraft" && namespace != pack.namespace {
             return None;
         }
         let defined = match kind {
@@ -171,10 +216,7 @@ impl Transpiler {
                 let full = format!("{namespace}:{path}");
                 pack.json_resources
                     .contains_key(&format!("{namespace}/tags/function/{path}"))
-                    || pack
-                        .stdlib
-                        .generate_tags(&pack.namespace)
-                        .contains_key(&full)
+                    || stdlib_tags.contains_key(&full)
                     || pack.tags.contains_key(&full)
                     || (namespace == pack.namespace && pack.tags.contains_key(path))
             }
@@ -197,16 +239,39 @@ impl Transpiler {
         Some(defined)
     }
 
-    /// The pack's namespace and every namespace it declares a resource in.
-    fn pack_namespaces(&self) -> HashSet<&str> {
-        let pack = &self.data_pack;
-        let mut namespaces: HashSet<&str> = pack
-            .json_resources
-            .keys()
-            .filter_map(|key| key.split_once('/').map(|(namespace, _)| namespace))
-            .collect();
-        namespaces.insert(pack.namespace.as_str());
-        namespaces
+    /// The advancements of a cycle of `parent`s, from the first one back to
+    /// it, in a stable order.
+    fn advancement_parent_cycle(&self) -> Option<Vec<String>> {
+        let mut parents: BTreeMap<String, String> = BTreeMap::new();
+        for (key, json) in &self.data_pack.json_resources {
+            let Some((namespace, path)) = key.split_once('/').and_then(|(namespace, rest)| {
+                Some((namespace, rest.strip_prefix("advancement/")?))
+            }) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+                continue;
+            };
+            if let Some(parent) = value.get("parent").and_then(|parent| parent.as_str()) {
+                parents.insert(format!("{namespace}:{path}"), full_id(parent));
+            }
+        }
+        for start in parents.keys() {
+            let mut chain = vec![start.clone()];
+            let mut current = start;
+            while let Some(parent) = parents.get(current) {
+                if parent == start {
+                    chain.push(parent.clone());
+                    return Some(chain);
+                }
+                if chain.contains(parent) {
+                    break;
+                }
+                chain.push(parent.clone());
+                current = parent;
+            }
+        }
+        None
     }
 
     /// The typed tags the pack declares, by folder (`block`, `function`, ...)
@@ -285,7 +350,9 @@ fn find_cycle(tags: &BTreeMap<String, DeclaredTag>) -> Option<(&DeclaredTag, Vec
         }
         let tag = tags.get(id)?;
         path.push(id);
-        for (entry, _) in &tag.entries {
+        // Minecraft skips an optional entry that would close a cycle, and
+        // the tags load.
+        for (entry, _) in tag.entries.iter().filter(|(_, required)| *required) {
             let Some(next) = entry.strip_prefix('#') else {
                 continue;
             };

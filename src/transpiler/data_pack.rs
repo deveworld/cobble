@@ -172,6 +172,10 @@ pub struct DataPack {
     pub predicates: HashMap<String, String>,
     pub item_modifiers: HashMap<String, String>,
     pub json_resources: HashMap<String, String>,
+    /// The typed tags of `json_resources` as they are merged, so a merge
+    /// doesn't parse and write the whole tag again; see
+    /// [`DataPack::flush_tags`].
+    pub(crate) merged_tags: HashMap<String, tags::MergedTag>,
     pub json_resource_origins: HashMap<String, Vec<SourceLocation>>,
     pub resource_pack_models: HashMap<String, String>,
     pub resource_pack_langs: HashMap<String, String>,
@@ -224,6 +228,7 @@ impl DataPack {
             predicates: HashMap::new(),
             item_modifiers: HashMap::new(),
             json_resources: HashMap::new(),
+            merged_tags: HashMap::new(),
             json_resource_origins: HashMap::new(),
             resource_pack_models: HashMap::new(),
             resource_pack_langs: HashMap::new(),

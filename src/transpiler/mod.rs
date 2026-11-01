@@ -343,6 +343,13 @@ impl Transpiler {
     }
 
     pub fn transpile(&mut self, program: &Program) -> Result<(), TranspileError> {
+        let result = self.transpile_program(program);
+        // Tags merged by the file's declarations reach `json_resources`.
+        let flushed = self.data_pack.flush_tags().map_err(TranspileError::from);
+        result.and(flushed)
+    }
+
+    fn transpile_program(&mut self, program: &Program) -> Result<(), TranspileError> {
         // Emit the stdlib v1 deprecation warning once per build.
         self.maybe_emit_stdlib_v1_warning();
 

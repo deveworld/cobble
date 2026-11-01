@@ -1,6 +1,30 @@
 use super::INIT_FUNCTION;
 use super::{DataPack, SourceLocation};
 use crate::stdlib::EventType;
+use std::collections::HashSet;
+
+/// A typed tag as its declarations are merged: its values without repeats,
+/// in declaration order, and its `replace`. [`DataPack::flush_tags`] writes
+/// it to `json_resources`, so each merge costs only its own values.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MergedTag {
+    values: Vec<serde_json::Value>,
+    seen: HashSet<String>,
+    replace: Option<bool>,
+    function_tag: bool,
+    /// Changed since it was last written to `json_resources`.
+    dirty: bool,
+}
+
+impl MergedTag {
+    fn extend(&mut self, values: Vec<serde_json::Value>) {
+        for value in values {
+            if self.seen.insert(value.to_string()) {
+                self.values.push(value);
+            }
+        }
+    }
+}
 
 impl DataPack {
     /// Returns true when `relative_path` points at a Cobble-owned typed tag
@@ -27,6 +51,7 @@ impl DataPack {
     /// repeats after the first dropped; other tags are sorted.
     /// Object entries with `required: true` are normalized to the equivalent
     /// string entry; `required: false` entries stay distinct.
+    /// The merged tag reaches `json_resources` at [`Self::flush_tags`].
     pub(in crate::transpiler::data_pack) fn merge_tag_resource(
         &mut self,
         key: &str,
@@ -58,59 +83,69 @@ impl DataPack {
         let new_values = Self::normalize_tag_values(namespace, relative_path, &raw_new_values)?;
         let new_replace = Self::tag_replace(namespace, relative_path, &new_value)?;
 
-        let merged_json = if let Some(existing_json) = self.json_resources.get(key) {
-            let existing_value: serde_json::Value =
-                serde_json::from_str(existing_json).map_err(|e| {
-                    format!(
-                        "Failed to parse existing tag JSON for '{}:{}': {}",
-                        namespace, relative_path, e
-                    )
-                })?;
-            let raw_existing_values = existing_value
-                .get("values")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let existing_values =
-                Self::normalize_tag_values(namespace, relative_path, &raw_existing_values)?;
-            let existing_replace = Self::tag_replace(namespace, relative_path, &existing_value)?;
-
-            let mut merged: Vec<serde_json::Value> = existing_values;
-            merged.extend(new_values);
-            Self::order_tag_values(relative_path, &mut merged);
-
-            let mut merged_obj = serde_json::Map::new();
-            merged_obj.insert("values".to_string(), serde_json::Value::Array(merged));
-
-            if let Some(replace) = Self::merged_tag_replace(existing_replace, new_replace) {
-                merged_obj.insert("replace".to_string(), serde_json::Value::Bool(replace));
+        if !self.merged_tags.contains_key(key) {
+            // A tag written before, or one `json_resources` already holds.
+            let mut merged = MergedTag {
+                function_tag: Self::is_function_tag_path(relative_path),
+                ..MergedTag::default()
+            };
+            if let Some(existing_json) = self.json_resources.get(key) {
+                let existing_value: serde_json::Value = serde_json::from_str(existing_json)
+                    .map_err(|e| {
+                        format!(
+                            "Failed to parse existing tag JSON for '{}:{}': {}",
+                            namespace, relative_path, e
+                        )
+                    })?;
+                let raw_existing_values = existing_value
+                    .get("values")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                merged.extend(Self::normalize_tag_values(
+                    namespace,
+                    relative_path,
+                    &raw_existing_values,
+                )?);
+                merged.replace = Self::tag_replace(namespace, relative_path, &existing_value)?;
             }
-
-            serde_json::to_string_pretty(&serde_json::Value::Object(merged_obj))
-                .map_err(|e| format!("Failed to serialize merged tag JSON: {}", e))?
-        } else {
-            // First declaration: store canonical values in deterministic order.
-            let mut sorted_values = new_values;
-            Self::order_tag_values(relative_path, &mut sorted_values);
-
-            let mut obj = serde_json::Map::new();
-            obj.insert(
-                "values".to_string(),
-                serde_json::Value::Array(sorted_values),
-            );
-            if let Some(replace) = new_replace {
-                obj.insert("replace".to_string(), serde_json::Value::Bool(replace));
-            }
-            serde_json::to_string_pretty(&serde_json::Value::Object(obj))
-                .map_err(|e| format!("Failed to serialize tag JSON: {}", e))?
-        };
-
-        self.json_resources.insert(key.to_string(), merged_json);
+            self.merged_tags.insert(key.to_string(), merged);
+        }
+        let merged = self
+            .merged_tags
+            .get_mut(key)
+            .expect("the merged tag was just added");
+        merged.extend(new_values);
+        merged.replace = Self::merged_tag_replace(merged.replace, new_replace);
+        merged.dirty = true;
         if let Some(source) = source {
             self.json_resource_origins
                 .entry(key.to_string())
                 .or_default()
                 .push(source);
+        }
+        Ok(())
+    }
+
+    /// Writes the tags merged since the last call to `json_resources`.
+    pub fn flush_tags(&mut self) -> Result<(), String> {
+        for (key, merged) in &mut self.merged_tags {
+            if !merged.dirty {
+                continue;
+            }
+            let mut values = merged.values.clone();
+            if !merged.function_tag {
+                Self::sort_and_dedup_tag_values(&mut values);
+            }
+            let mut object = serde_json::Map::new();
+            object.insert("values".to_string(), serde_json::Value::Array(values));
+            if let Some(replace) = merged.replace {
+                object.insert("replace".to_string(), serde_json::Value::Bool(replace));
+            }
+            let json = serde_json::to_string_pretty(&serde_json::Value::Object(object))
+                .map_err(|e| format!("Failed to serialize tag JSON: {}", e))?;
+            self.json_resources.insert(key.clone(), json);
+            merged.dirty = false;
         }
         Ok(())
     }

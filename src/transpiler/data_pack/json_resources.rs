@@ -21,6 +21,20 @@ impl DataPack {
         json: String,
         source: Option<SourceLocation>,
     ) -> Result<(), String> {
+        self.declare_json_resource(namespace, relative_path, json, source)?;
+        self.flush_tags()
+    }
+
+    /// Adds a JSON resource like
+    /// [`Self::add_json_resource_in_namespace_with_source`], but a tag
+    /// reaches `json_resources` only at the next [`Self::flush_tags`].
+    pub(crate) fn declare_json_resource(
+        &mut self,
+        namespace: String,
+        relative_path: String,
+        json: String,
+        source: Option<SourceLocation>,
+    ) -> Result<(), String> {
         let key = Self::json_resource_key(&namespace, &relative_path);
 
         // Tags (tags/function/, tags/block/, tags/item/, tags/entity_type/)
