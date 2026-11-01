@@ -127,8 +127,8 @@ impl<'a> ConditionTranslator<'a> {
                  - Boolean variables (x)\n\
                  - Boolean literals (True, False)\n\
                  - Logical operators (and, or, not)\n\
-                 Got: {:?}",
-                condition
+                 Got: `{}`",
+                Transpiler::expression_source_key(condition)
             )
             .into()),
         }

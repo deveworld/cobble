@@ -439,3 +439,58 @@ fn numbers_a_score_cannot_hold_in_list_and_map_literals_warn() {
     );
     assert_eq!(sim.call("go"), Some(2_147_483_647));
 }
+
+#[test]
+fn values_resource_json_cannot_hold_are_named_at_their_line() {
+    // Bug 80: no line, an internal name, advice for another place, and Rust
+    // names in the message.
+    for (source, shown, line) in [
+        (
+            "from stdlib import datapack\n\n\nx = (1 / 0)\ndatapack.predicate(\"a\", {\"type\": \"minecraft:random_chance\", \"chance\": (1 / 2)})\n",
+            "`1/2` can't be worked out in resource JSON",
+            "main.cbl:5:1",
+        ),
+        (
+            "from stdlib import datapack\n\ndatapack.predicate(\"a\", {\"type\": \"minecraft:random_chance\", \"chance\": 0.5, \"x\": not True})\n",
+            "`not True` can't be worked out in resource JSON",
+            "main.cbl:3:1",
+        ),
+        (
+            "from stdlib import datapack\n\ndef f():\n    datapack.predicate(\"a\", {\"type\": \"minecraft:random_chance\", \"chance\": 0.5, \"x\": 1 in [1]})\n",
+            "`1 in [1]` can't be worked out in resource JSON",
+            "main.cbl:4:5",
+        ),
+        (
+            "from stdlib import datapack\n\ndef f():\n    datapack.predicate(\"a\", {\"type\": \"minecraft:random_chance\", \"chance\": 0.5, \"x\": True and False})\n",
+            "`True and False` can't be worked out",
+            "main.cbl:4:5",
+        ),
+        ("const A = 1 < 2\n", "`<` can't be worked out in a const", "main.cbl:1:1"),
+        ("def go():\n    if [1]:\n        /say x\n", "Got: `[1]`", "main.cbl:2:5"),
+        ("def go():\n    x.y = 2\n", "Assignment target `x.y`", "main.cbl:2:5"),
+    ] {
+        let error = compile_error(source);
+        assert!(error.contains(shown), "{source}: {error}");
+        assert!(error.contains(line), "{source}: {error}");
+        assert!(
+            !error.contains("_cobble_") && !error.contains("Array(") && !error.contains("Attribute("),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_parameter_in_a_resource_text_component_is_a_compile_error() {
+    // Bug 70: the parameter's name was written as the text.
+    for source in [
+        "from stdlib import datapack, text\n\ndef f(p):\n    datapack.dialog(\"d\", {\"type\": \"minecraft:notice\", \"title\": text.plain(p)})\n",
+        "from stdlib import datapack, text, item_component\n\ndef f(p):\n    datapack.item_modifier(\"m\", {\"type\": \"minecraft:set_components\", \"components\": item_component.components(item_component.custom_name(text.plain(p)))})\n",
+    ] {
+        let error = compile_error(source);
+        assert!(
+            error.contains("`p` is a parameter, but a resource is written when the pack is built"),
+            "{error}"
+        );
+        assert!(error.contains("main.cbl:4:5"), "{error}");
+    }
+}

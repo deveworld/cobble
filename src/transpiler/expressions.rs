@@ -1,4 +1,4 @@
-use crate::ast::{CobbleType, Expression, UnaryOp};
+use crate::ast::{BinaryOp, CobbleType, Expression, UnaryOp};
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{GeneratedCommandKind, StoragePathPlan, TranspileError, Transpiler};
@@ -373,6 +373,14 @@ impl Transpiler {
                 Ok(serde_json::Value::Object(object))
             }
             Expression::Call(func, args) => {
+                // A resource is written when the pack is built, while a
+                // parameter only has a value when the function runs.
+                if let Some(param) = args.iter().find_map(|arg| self.parameter_in(arg)) {
+                    return Err(format!(
+                        "`{param}` is a parameter, but a resource is written when the pack is built, before any call gives it a value; write the text as a literal, or build the component in a command such as `/tellraw @a {{\"text\": \"{{{param}}}\"}}`"
+                    )
+                    .into());
+                }
                 if let Some(value) = self.item_component_helper_json(func, args)? {
                     Ok(value)
                 } else if let Some(value) = self.text_component_helper_json(func, args)? {
@@ -392,10 +400,28 @@ impl Transpiler {
                     .into())
                 }
             }
+            // Text joined from literals is known when the pack is built.
+            Expression::Binary(left, BinaryOp::Add, right)
+                if matches!(
+                    (left.as_ref(), right.as_ref()),
+                    (Expression::String(_) | Expression::Binary(..), Expression::String(_))
+                ) =>
+            {
+                match (self.expr_to_json_value(left), self.expr_to_json_value(right)) {
+                    (Ok(serde_json::Value::String(left)), Ok(serde_json::Value::String(right))) => {
+                        Ok(serde_json::Value::String(left + &right))
+                    }
+                    _ => Err(format!(
+                        "`{}` can't be worked out in resource JSON; write the result as a literal",
+                        Self::json_expression_text(expr)
+                    )
+                    .into()),
+                }
+            }
             Expression::Binary(..) | Expression::Unary(..) | Expression::Conditional(..) => {
                 Err(format!(
                     "`{}` can't be worked out in resource JSON; write the result as a literal",
-                    Self::expression_source_key(expr)
+                    Self::json_expression_text(expr)
                 )
                 .into())
             }
@@ -404,6 +430,55 @@ impl Transpiler {
                 Self::expression_source_key(expr)
             )
             .into()),
+        }
+    }
+
+    /// The first parameter of the running function that `expr` reads.
+    fn parameter_in(&self, expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::Identifier(name) if self.current_context.is_param(name) => {
+                Some(name.clone())
+            }
+            Expression::Call(_, args) | Expression::Array(args) => {
+                args.iter().find_map(|arg| self.parameter_in(arg))
+            }
+            Expression::Map(entries) => entries
+                .iter()
+                .find_map(|(_, value)| self.parameter_in(value)),
+            _ => None,
+        }
+    }
+
+    /// `expr` as compact source text, with the spaces a word operator
+    /// needs, as in `not True` and `1 in [1]`.
+    fn json_expression_text(expr: &Expression) -> String {
+        match expr {
+            Expression::Unary(UnaryOp::Not, inner) => {
+                format!("not {}", Self::json_expression_text(inner))
+            }
+            Expression::Binary(left, op, right)
+                if matches!(
+                    op,
+                    BinaryOp::And | BinaryOp::Or | BinaryOp::In | BinaryOp::NotIn
+                ) =>
+            {
+                let op = match op {
+                    BinaryOp::NotIn => "not in",
+                    op => Self::binary_op_source_key(op),
+                };
+                format!(
+                    "{} {op} {}",
+                    Self::json_expression_text(left),
+                    Self::json_expression_text(right)
+                )
+            }
+            Expression::Conditional(condition, value, otherwise) => format!(
+                "{} if {} else {}",
+                Self::json_expression_text(value),
+                Self::json_expression_text(condition),
+                Self::json_expression_text(otherwise)
+            ),
+            expr => Self::expression_source_key(expr),
         }
     }
 

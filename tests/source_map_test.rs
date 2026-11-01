@@ -934,3 +934,109 @@ fn validate_reports_stale_source_map_entries() {
         report.source_map_errors
     );
 }
+
+/// The source line of each generated command and JSON resource of
+/// `source`, built with the namespace `sim`, by generated path and line.
+fn source_lines(source: &str) -> Vec<(String, usize, Option<u64>)> {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("main.cbl");
+    let output_dir = temp_dir.path().join("output");
+    fs::write(&input_file, source).unwrap();
+    cobble::commands::build::build(cobble::commands::build::BuildOptions {
+        input: Some(input_file),
+        output: Some(output_dir.clone()),
+        namespace: Some("sim".to_string()),
+        pack_format: None,
+        description: None,
+        verbose: false,
+        quiet: true,
+        zip: false,
+        experimental_resource_pack: false,
+        validate: false,
+        dry_run: false,
+        commands_json: PathBuf::from("data/commands.json"),
+    })
+    .unwrap();
+    let map: Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join(".cobble/source_map.json")).unwrap(),
+    )
+    .unwrap();
+    map["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["generated_path"].as_str().unwrap().to_string(),
+                entry["generated_line"].as_u64().unwrap() as usize,
+                entry["source"]["line"].as_u64(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn source_map_finds_statements_however_the_source_spells_them() {
+    // Bug 61: a trailing comma, grouping parentheses, `**` and `//` lost
+    // the line, or took the line of the other spelling in another function.
+    let lines = source_lines(
+        r#"from stdlib import datapack
+datapack.predicate("p", {"type": "minecraft:random_chance", "chance": 0.5,})
+datapack.function_tag("t", ["sim:alpha", "sim:beta",])
+datapack.loot_table("l", {
+    "pools": [],
+})
+def alpha():
+    x = (1 + 2)
+    l = [1, 2,]
+    y = 2 ** 3
+    z = 7 // 2
+    m = {"a": 1,}
+    w = (1)
+    w += (1)
+    w = w + (1)
+    h(1, 2,)
+def beta():
+    x = 1 + 2
+    l = [1, 2]
+    y = 2 ^ 3
+    z = 7 / 2
+def h(a, b):
+    /say {a}
+"#,
+    );
+    let line_of = |path: &str, line: usize| {
+        lines
+            .iter()
+            .find(|(generated, generated_line, _)| generated == path && *generated_line == line)
+            .unwrap_or_else(|| panic!("no {path}:{line} in {lines:?}"))
+            .2
+    };
+    assert_eq!(line_of("data/sim/predicate/p.json", 1), Some(2));
+    assert_eq!(line_of("data/sim/tags/function/t.json", 1), Some(3));
+    assert_eq!(line_of("data/sim/loot_table/l.json", 1), Some(4));
+    for (line, source) in [
+        (1, 8),
+        (2, 9),
+        (3, 10),
+        (4, 11),
+        (5, 12),
+        (6, 13),
+        (7, 14),
+        (8, 15),
+        (9, 16),
+    ] {
+        assert_eq!(
+            line_of("data/sim/function/alpha.mcfunction", line),
+            Some(source),
+            "alpha line {line}"
+        );
+    }
+    for (line, source) in [(1, 18), (2, 19), (3, 20), (4, 21)] {
+        assert_eq!(
+            line_of("data/sim/function/beta.mcfunction", line),
+            Some(source),
+            "beta line {line}"
+        );
+    }
+}

@@ -666,31 +666,68 @@ impl Transpiler {
         depth
     }
 
+    /// The key a statement's source text is found by: its tokens, written
+    /// the way [`Self::statement_source_key`] writes the parsed statement.
+    /// Spellings the parser reads alike key alike: grouping parentheses,
+    /// a trailing comma, `**` for `^`, and `//` for `/`.
     pub(crate) fn source_line_key(source: &str) -> String {
-        match crate::parser::tokenize(source) {
-            Ok(tokens) => tokens
-                .into_iter()
-                .filter(|token| {
-                    !matches!(
-                        token,
-                        crate::parser::Token::Newline
-                            | crate::parser::Token::Indent
-                            | crate::parser::Token::Dedent
-                            | crate::parser::Token::Eof
-                    )
-                })
-                .map(|token| match token {
-                    // `0.50` and `1.0` are the numbers `0.5` and `1`, the
-                    // way the statement's own key prints them.
-                    crate::parser::Token::Number(text) => {
-                        Self::number_source_key(text.parse().unwrap_or(0.0))
+        use crate::parser::Token;
+        let Ok(tokens) = crate::parser::tokenize(source) else {
+            return Self::normalize_source_key(source);
+        };
+        let tokens: Vec<Token> = tokens
+            .into_iter()
+            .filter(|token| {
+                !matches!(
+                    token,
+                    Token::Newline | Token::Indent | Token::Dedent | Token::Eof
+                )
+            })
+            .collect();
+        let mut key = String::new();
+        // Whether each open parenthesis is a call's, which the key keeps.
+        let mut calls: Vec<bool> = Vec::new();
+        let mut index = 0;
+        while index < tokens.len() {
+            let token = &tokens[index];
+            let next = tokens.get(index + 1);
+            index += 1;
+            match token {
+                Token::LParen => {
+                    let call = index >= 2
+                        && matches!(
+                            tokens[index - 2],
+                            Token::Ident(_) | Token::RParen | Token::RBracket
+                        );
+                    calls.push(call);
+                    if call {
+                        key.push('(');
                     }
-                    token => token.to_string(),
-                })
-                .collect::<Vec<_>>()
-                .join(""),
-            Err(_) => Self::normalize_source_key(source),
+                }
+                Token::RParen => {
+                    if calls.pop().unwrap_or(true) {
+                        key.push(')');
+                    }
+                }
+                Token::Comma
+                    if matches!(next, Some(Token::RParen | Token::RBracket | Token::RBrace)) => {}
+                Token::Star if next == Some(&Token::Star) => {
+                    key.push('^');
+                    index += 1;
+                }
+                Token::Slash if next == Some(&Token::Slash) => {
+                    key.push('/');
+                    index += 1;
+                }
+                // `0.50` and `1.0` are the numbers `0.5` and `1`, the way
+                // the statement's own key prints them.
+                Token::Number(text) => {
+                    key.push_str(&Self::number_source_key(text.parse().unwrap_or(0.0)))
+                }
+                token => key.push_str(&token.to_string()),
+            }
         }
+        key
     }
 
     fn statement_source_key(statement: &Statement) -> Option<String> {

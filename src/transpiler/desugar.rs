@@ -181,6 +181,14 @@ impl Transpiler {
     ) -> Result<Option<Vec<Statement>>, TranspileError> {
         let mut out = Vec::new();
         match statement {
+            // A `datapack.*` resource is JSON worked out when the pack is
+            // built, so its values stay as written.
+            Statement::Expression(Expression::Call(func, _))
+                if matches!(&**func, Expression::Attribute(base, _)
+                    if matches!(&**base, Expression::Identifier(name) if name == "datapack")) =>
+            {
+                return Ok(None)
+            }
             // `items.pop()` on its own is a storage command.
             Statement::Expression(Expression::Call(func, args))
                 if matches!(&**func, Expression::Attribute(base, method)

@@ -87,7 +87,11 @@ impl Transpiler {
                         Ok(f64::from(base).powi(exp))
                     }
                     _ => {
-                        Err(format!("Operator {:?} not supported in const expressions", op).into())
+                        Err(format!(
+                            "`{}` can't be worked out in a const; a const holds a number from `+`, `-`, `*`, `/`, `%`, and `**`",
+                            Self::binary_op_source_key(op)
+                        )
+                        .into())
                     }
                 }
             }

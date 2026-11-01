@@ -55,8 +55,9 @@ impl Transpiler {
     ) -> Result<Vec<String>, TranspileError> {
         let Some(path_plan) = self.resolve_storage_path_plan(target_expr) else {
             return Err(format!(
-                "Assignment target `{target_expr:?}` must resolve to a storage-backed value. \
-                 Assign to a storage-backed list/map/string field such as `config.count` or `items[i]`."
+                "Assignment target `{}` must resolve to a storage-backed value. \
+                 Assign to a storage-backed list/map/string field such as `config.count` or `items[i]`.",
+                Self::expression_source_key(target_expr)
             ).into());
         };
 
@@ -205,8 +206,9 @@ impl Transpiler {
                 .is_some_and(|base| self.symbols.pending_module_declarations.contains(*base));
             if base_pending || self.resolve_storage_path_plan(target_expr).is_none() {
                 return Err(format!(
-                    "Assignment target `{target_expr:?}` must resolve to an already-defined storage-backed value. \
-                     Define the base list, map, or string before assigning to one of its fields."
+                    "Assignment target `{}` must resolve to an already-defined storage-backed value. \
+                     Define the base list, map, or string before assigning to one of its fields.",
+                    Self::expression_source_key(target_expr)
                 ).into());
             }
             self.module_level_vars
