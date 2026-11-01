@@ -259,7 +259,14 @@ impl Sim {
                     let args = macro_args.unwrap_or_else(|| {
                         panic!("macro line in `{name}` run without arguments: {command}")
                     });
-                    (expand_macro(macro_line, args)?, true)
+                    let line = expand_macro(macro_line, args)?;
+                    // Minecraft parses every filled line before the
+                    // function runs, so a storage path it refuses in one of
+                    // them fails the whole call, earlier lines included.
+                    if !macro_paths_parse(&line) {
+                        return None;
+                    }
+                    (line, true)
                 }
                 None => (command.clone(), false),
             });
@@ -1188,6 +1195,24 @@ fn expand_macro(line: &str, args: &Value) -> Option<String> {
     }
     result.push_str(rest);
     Some(result)
+}
+
+/// Whether every storage path in the command `line` is one Minecraft reads:
+/// the word after each `storage <id>`.
+fn macro_paths_parse(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(start) = rest.find("storage ") {
+        let after = &rest[start + "storage ".len()..];
+        let Some((_, after_id)) = after.split_once(' ') else {
+            return true;
+        };
+        let (path, tail) = split_path(after_id);
+        if parse_path(path).is_none() {
+            return false;
+        }
+        rest = tail;
+    }
+    true
 }
 
 /// Split a leading selector (with an optional `[...]` argument list) from the

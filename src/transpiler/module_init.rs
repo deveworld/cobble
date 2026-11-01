@@ -389,11 +389,9 @@ impl Transpiler {
         // score too when its type is unknown.
         if matches!(value, Expression::Subscript(..) | Expression::Attribute(..)) {
             let read_type = self.storage_read_type(value);
-            if let (true, Some(plan)) = (
-                read_type != CobbleType::Integer,
-                self.resolve_storage_path_plan(value),
-            ) {
-                let mut commands = self.copy_storage_commands(&storage_path, &plan)?;
+            if read_type != CobbleType::Integer && self.resolve_storage_path_plan(value).is_some() {
+                // One that isn't there gives an empty value, or 0.
+                let mut commands = self.storage_leaf_set_commands(&storage_path, value)?;
                 if read_type == CobbleType::Unknown {
                     commands.push(format!(
                         "execute store result score {var_name} temp run data get storage {}:global {storage_path}",

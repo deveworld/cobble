@@ -350,7 +350,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
         kind_score: &str,
     ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.storage_data_pack().namespace.clone();
-        let mut commands = self.storage_leaf_set_commands(&format!("{base}_k"), expr)?;
+        let mut commands = self.storage_key_set_commands(&format!("{base}_k"), expr)?;
         commands.extend([
             format!(
                 "execute store result storage {namespace}:global {base}_i int 1 run data get storage {namespace}:global {base}_k"
@@ -474,7 +474,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
                     .into(),
             );
         }
-        self.storage_leaf_set_commands(target_path, expr)
+        self.storage_key_set_commands(target_path, expr)
     }
 
     /// The storage path of a variable or parameter whose type Cobble
@@ -575,6 +575,10 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
             ),
             format!(
                 "execute if score {start} temp matches ..-1 run scoreboard players operation {start} temp += {end} temp"
+            ),
+            // Minecraft counts a negative position from the end again.
+            format!(
+                "execute if score {start} temp matches ..-1 run scoreboard players operation {start} temp = {end} temp"
             ),
             format!("scoreboard players operation {end} temp = {start} temp"),
             format!("scoreboard players add {end} temp 1"),
@@ -677,6 +681,19 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
         })
     }
 
+    /// Whether `expr` is a character of text, or an item of a value whose
+    /// type only the running pack knows, which may be one: a value that
+    /// commands compute, where a storage path through it names nothing.
+    fn picks_computed_value(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Subscript(base, index) => {
+                self.is_string_base(base)
+                    || (!self.picks_field(base, index) && self.is_unknown_base(base))
+            }
+            _ => false,
+        }
+    }
+
     /// Runs `commands` with the static path of the item or field `base`. A
     /// path known only when the pack runs is copied to a path of its own
     /// first, and removed after.
@@ -685,19 +702,54 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
         base: &Expression,
         commands: impl FnOnce(&mut Self, &str) -> Result<Vec<String>, TranspileError>,
     ) -> Result<Vec<String>, TranspileError> {
+        let namespace = self.storage_data_pack().namespace.clone();
+        // A character of text, or an item of a value whose type only the
+        // running pack knows, has no path of its own: it is copied out.
+        if self.picks_computed_value(base) {
+            let copy = format!("_cobble_base_{}", self.storage_next_temp_id());
+            let mut result = vec![format!("data remove storage {namespace}:global {copy}")];
+            result.extend(self.storage_leaf_set_commands(&copy, base)?);
+            result.extend(commands(self, &copy)?);
+            result.push(format!("data remove storage {namespace}:global {copy}"));
+            return Ok(result);
+        }
         let plan = self
             .resolve_storage_path_plan(base)
             .ok_or("The base of this subscript doesn't resolve to storage.")?;
         if let Some(path) = plan.as_static() {
             return commands(self, path);
         }
-        let namespace = self.storage_data_pack().namespace.clone();
         let copy = format!("_cobble_base_{}", self.storage_next_temp_id());
         let mut result = vec![format!("data remove storage {namespace}:global {copy}")];
         result.extend(self.copy_storage_commands(&copy, &plan)?);
         result.extend(commands(self, &copy)?);
         result.push(format!("data remove storage {namespace}:global {copy}"));
         Ok(result)
+    }
+
+    /// Commands that give `target_path` the value `read` copies to the
+    /// scratch path it gets, or `empty` when the read found nothing, as for
+    /// an item past the end or a path Minecraft refuses.
+    fn read_or_empty_commands(
+        &mut self,
+        target_path: &str,
+        empty: &str,
+        read: impl FnOnce(&mut Self, &str) -> Result<Vec<String>, TranspileError>,
+    ) -> Result<Vec<String>, TranspileError> {
+        let namespace = self.storage_data_pack().namespace.clone();
+        let scratch = format!("_cobble_read_{}", self.storage_next_temp_id());
+        let mut commands = vec![format!("data remove storage {namespace}:global {scratch}")];
+        commands.extend(read(self, &scratch)?);
+        commands.extend([
+            format!(
+                "execute unless data storage {namespace}:global {scratch} run data modify storage {namespace}:global {scratch} set value {empty}"
+            ),
+            format!(
+                "data modify storage {namespace}:global {target_path} set from storage {namespace}:global {scratch}"
+            ),
+            format!("data remove storage {namespace}:global {scratch}"),
+        ]);
+        Ok(commands)
     }
 
     /// Commands that store the character of the string `base` that `index`
@@ -744,25 +796,35 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
     }
 
     /// Commands that store the character of the string at `base_path` that
-    /// `index` picks at `target_path`. An index out of range fails the
-    /// command and leaves the target as it was.
+    /// `index` picks at `target_path`. An index out of range gives empty
+    /// text: the target never keeps what it held.
     fn string_char_from_path(
         &mut self,
         target_path: &str,
         base_path: &str,
         index: &Expression,
     ) -> Result<Vec<String>, TranspileError> {
+        // Clearing the target first would clear the text it is read from.
+        if paths_overlap(target_path, base_path) {
+            return self.read_or_empty_commands(target_path, "\"\"", |this, scratch| {
+                this.string_char_from_path(scratch, base_path, index)
+            });
+        }
         let namespace = self.storage_data_pack().namespace.clone();
+        let clear = format!("data modify storage {namespace}:global {target_path} set value \"\"");
         let set_string = format!(
             "data modify storage {namespace}:global {target_path} set string storage {namespace}:global {base_path}"
         );
         if let Some(index) = static_integer(self.storage_symbols(), index) {
             // `-1` has no end that counts from the end, so it runs to the end.
-            return Ok(vec![if index == -1 {
-                format!("{set_string} -1")
-            } else {
-                format!("{set_string} {index} {}", index + 1)
-            }]);
+            return Ok(vec![
+                clear,
+                if index == -1 {
+                    format!("{set_string} -1")
+                } else {
+                    format!("{set_string} {index} {}", index + 1)
+                },
+            ]);
         }
 
         let id = self.storage_next_temp_id();
@@ -778,6 +840,11 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
             format!(
                 "execute if score {start} temp matches ..-1 run scoreboard players operation {start} temp += {end} temp"
             ),
+            // Minecraft counts a negative position from the end again, so
+            // one still before the start becomes one past the end.
+            format!(
+                "execute if score {start} temp matches ..-1 run scoreboard players operation {start} temp = {end} temp"
+            ),
             format!("scoreboard players operation {end} temp = {start} temp"),
             format!("scoreboard players add {end} temp 1"),
             format!(
@@ -786,6 +853,7 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
             format!(
                 "execute store result storage {namespace}:global {args_path}.end int 1 run scoreboard players get {end} temp"
             ),
+            clear,
             format!("function {namespace}:{helper} with storage {namespace}:global {args_path}"),
             format!("data remove storage {namespace}:global {args_path}"),
         ]);
@@ -949,6 +1017,28 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
         target_path: &str,
         expr: &Expression,
     ) -> Result<Vec<String>, TranspileError> {
+        self.storage_leaf_set_or(target_path, expr, None)
+    }
+
+    /// Commands that store the value of a key `expr` at `target_path`. A
+    /// missing item or field gives empty text, which no key can be, rather
+    /// than 0, which picks an item.
+    fn storage_key_set_commands(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+    ) -> Result<Vec<String>, TranspileError> {
+        self.storage_leaf_set_or(target_path, expr, Some("\"\""))
+    }
+
+    /// [`Self::storage_leaf_set_commands`], where `missing` overrides the
+    /// value that an item or a field that isn't there gives.
+    fn storage_leaf_set_or(
+        &mut self,
+        target_path: &str,
+        expr: &Expression,
+        missing: Option<&'static str>,
+    ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.storage_data_pack().namespace.clone();
         match expr {
             Expression::Identifier(name) => {
@@ -982,21 +1072,37 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
             | Expression::Map(_) => self.storage_value_commands(target_path, expr),
             Expression::None => self.storage_static_snbt(expr).map(|_| Vec::new()),
             // A character of a string, and an item or field that isn't a
-            // number, are copied in storage.
+            // number, are copied in storage. A character past the end is
+            // empty text.
             Expression::Subscript(base, index) if self.is_string_base(base) => {
                 self.string_char_commands(target_path, base, index)
             }
+            // An item or a field that isn't there gives the empty value of
+            // its type, or 0; the target never keeps what it held.
             Expression::Subscript(base, index)
                 if !self.picks_field(base, index) && self.is_unknown_base(base) =>
             {
-                self.unknown_base_item_commands(target_path, base, index)
+                let empty = missing.unwrap_or(empty_value_snbt(&self.storage_read_type(expr)));
+                self.read_or_empty_commands(target_path, empty, |this, scratch| {
+                    this.unknown_base_item_commands(scratch, base, index)
+                })
             }
             Expression::Subscript(..) | Expression::Attribute(..)
                 if self.storage_read_type(expr) != CobbleType::Integer
                     && self.resolve_storage_path_plan(expr).is_some() =>
             {
                 let plan = self.resolve_storage_path_plan(expr).expect("checked above");
-                self.copy_storage_commands(target_path, &plan)
+                let empty = missing.unwrap_or(empty_value_snbt(&self.storage_read_type(expr)));
+                if let Some(source) = plan.as_static() {
+                    let mut commands = vec![format!(
+                        "execute unless data storage {namespace}:global {source} run data modify storage {namespace}:global {target_path} set value {empty}"
+                    )];
+                    commands.extend(self.copy_storage_commands(target_path, &plan)?);
+                    return Ok(commands);
+                }
+                self.read_or_empty_commands(target_path, empty, |this, scratch| {
+                    this.copy_storage_commands(scratch, &plan)
+                })
             }
             _ => {
                 let id = self.storage_next_temp_id();
@@ -1010,6 +1116,27 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
             }
         }
     }
+}
+
+/// The SNBT of the value a read of `value_type` gives when there is nothing
+/// to read: empty text, an empty list or map, or 0.
+pub(in crate::transpiler) fn empty_value_snbt(value_type: &CobbleType) -> &'static str {
+    match value_type {
+        CobbleType::String => "\"\"",
+        CobbleType::List => "[]",
+        CobbleType::Map => "{}",
+        _ => "0",
+    }
+}
+
+/// Whether one of the storage paths is the other or holds it.
+fn paths_overlap(first: &str, second: &str) -> bool {
+    let holds = |outer: &str, inner: &str| {
+        inner
+            .strip_prefix(outer)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '[']))
+    };
+    holds(first, second) || holds(second, first)
 }
 
 fn storage_child_path(base: &str, key: &str) -> String {

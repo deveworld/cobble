@@ -73,7 +73,8 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   nothing to find, where Python raises an error.
 - Reading an item or a field that isn't there, and `pop()` on an empty list,
   give 0, or empty text, an empty list, or an empty map when Cobble knows the
-  value is one, where Python raises an error. The variable never keeps the
+  value is one, where Python raises an error. A character past the end of
+  text, as `word[7]` of `"hello"`, is empty text. The variable never keeps the
   value it had before. Passed to a function, as in `show(config.nick)`, such
   a read gives the same empty value, and the function still runs.
 - Text positions count UTF-16 units, so an emoji is two long in a running pack.

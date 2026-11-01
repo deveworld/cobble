@@ -306,19 +306,20 @@ impl<'a> ExpressionEvaluator<'a> {
         let helper_name = format!("_cobble_storage_read_{}", id);
         let namespace = self.data_pack.namespace.clone();
         let helper_commands = plan.helper_lines(id, |path| {
-            vec![
-                format!("scoreboard players set {} {} 0", target, target_obj),
-                format!(
-                    "$execute store result score {} {} run data get storage {}:global {}",
-                    target, target_obj, namespace, path
-                ),
-            ]
+            vec![format!(
+                "$execute store result score {} {} run data get storage {}:global {}",
+                target, target_obj, namespace, path
+            )]
         });
         self.add_generated_helper_function(
             helper_name.clone(),
             helper_commands,
             GeneratedCommandKind::ControlFlow,
         );
+        // A missing value reads as 0. The helper doesn't run at all when its
+        // path is one Minecraft refuses, as for an empty key, so the target
+        // is cleared before the call.
+        commands.push(format!("scoreboard players set {target} {target_obj} 0"));
         commands.push(format!(
             "function {}:{} with storage {}:global {}",
             namespace, helper_name, namespace, args_path
@@ -720,6 +721,21 @@ impl<'a> ExpressionEvaluator<'a> {
                 "scoreboard players set {} {} {}",
                 target, target_obj, len
             )]);
+        }
+        // A character of text, or an item of a value only the running pack
+        // knows, is copied out first: a path through it names nothing.
+        if self.picks_computed_value(&args[0]) {
+            let namespace = self.data_pack.namespace.clone();
+            let copy = format!("_cobble_len_{}", self.next_temp_id());
+            let mut commands = vec![format!("data remove storage {namespace}:global {copy}")];
+            commands.extend(self.storage_leaf_set_commands(&copy, &args[0])?);
+            commands.extend([
+                format!(
+                    "execute store result score {target} {target_obj} run data get storage {namespace}:global {copy}"
+                ),
+                format!("data remove storage {namespace}:global {copy}"),
+            ]);
+            return Ok(commands);
         }
 
         let Some(path_plan) = self.resolve_storage_path_plan(&args[0]) else {

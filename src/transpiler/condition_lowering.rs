@@ -269,6 +269,15 @@ impl Transpiler {
                 );
                 self.lower_condition_value_to_temp(&size)
             }
+            // A character of text is true when it isn't empty, and so is an
+            // item that may be text; `len` reads a number as itself.
+            Expression::Subscript(..) if self.picks_computed_value(condition) => {
+                let size = Expression::Call(
+                    Box::new(Expression::Identifier("len".to_string())),
+                    vec![condition.clone()],
+                );
+                self.lower_condition_value_to_temp(&size)
+            }
             expr if self.condition_operand_needs_temp(expr) => {
                 self.lower_condition_value_to_temp(expr)
             }
