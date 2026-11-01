@@ -24,6 +24,8 @@ STATIC = {
     "data_component": "minecraft:data_component_type",
     "data_component_predicate": "minecraft:data_component_predicate_type",
     "poi_type": "minecraft:point_of_interest_type",
+    "potion": "minecraft:potion",
+    "fluid": "minecraft:fluid",
 }
 DATA_DRIVEN = {
     "enchantment": "data/minecraft/enchantment/",
@@ -48,6 +50,8 @@ DATA_DRIVEN = {
     "slot_source": "data/minecraft/slot_source/",
     "world_clock": "data/minecraft/world_clock/",
     "timeline": "data/minecraft/timeline/",
+    "instrument": "data/minecraft/instrument/",
+    "trim_pattern": "data/minecraft/trim_pattern/",
 }
 
 

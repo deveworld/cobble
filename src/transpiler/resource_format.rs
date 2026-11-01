@@ -207,6 +207,9 @@ pub(crate) struct Problems {
     pub(crate) errors: Vec<String>,
     pub(crate) warnings: Vec<String>,
     pub(crate) references: Vec<Reference>,
+    /// The resource was written in SNBT, as in a command, where `true` and
+    /// `1b` are the same byte, so numbers and booleans stand for each other.
+    pub(crate) nbt: bool,
 }
 
 impl Problems {
@@ -329,36 +332,229 @@ pub(crate) struct Reference {
     pub(crate) path: String,
 }
 
-/// Reports a `type`-like id that `known` doesn't list. `what` names the
-/// registry in the message.
-fn check_registry_id(
-    value: Option<&Value>,
-    path: &str,
-    key: &str,
-    known: &[&str],
-    what: &str,
-    problems: &mut Problems,
-) {
-    let Some(id) = value.and_then(Value::as_str) else {
-        return;
-    };
-    let name = id.strip_prefix("minecraft:").unwrap_or(id);
-    if known.contains(&name) {
-        return;
+// ---------------------------------------------------------------------------
+// The walk. Each resource is described by the fields of its objects, and one
+// walk checks every field the same way: a missing required field (`None`
+// counts as missing, as in Minecraft), a value of the wrong JSON kind (text
+// for a list, a list for an object), the ids Minecraft looks up, the
+// resources the field names, and the nested objects, whatever resource they
+// sit in. The field lists come from Minecraft 26.3's codecs, and each rule
+// was confirmed on a 26.3 server.
+// ---------------------------------------------------------------------------
+
+/// A registry of ids Minecraft looks up when it loads a resource.
+#[derive(Clone, Copy)]
+struct Registry {
+    /// Its name for [`crate::validator::registries::vanilla_ids`].
+    ids: &'static str,
+    /// "an item", for messages.
+    what: &'static str,
+    /// What a `#tag` of it names.
+    tags: Tags,
+    /// `minecraft:air` is refused: item stacks and ingredients.
+    no_air: bool,
+}
+
+#[derive(Clone, Copy)]
+enum Tags {
+    /// A tag the pack can declare, checked once every file is compiled.
+    Pack(RefKind),
+    /// Only Minecraft's own tags are known, under this name.
+    Vanilla(&'static str),
+    /// Not checked.
+    Unchecked,
+}
+
+const fn registry(ids: &'static str, what: &'static str, tags: Tags) -> Registry {
+    Registry {
+        ids,
+        what,
+        tags,
+        no_air: false,
     }
-    let hint = REPLACED_TYPES
-        .iter()
-        .find(|(old, _)| *old == name)
-        .map(|(_, new)| format!(" (use `{new}`)"))
-        .unwrap_or_default();
-    problems.push(format!(
-        "{} `{id}` is not {what} in Minecraft 26.3{hint}; rejected",
-        at(path, key)
-    ));
+}
+
+const ITEM: Registry = registry("item", "an item", Tags::Pack(RefKind::ItemTag));
+/// An item of an item stack or an ingredient, which can't be air.
+const STACK_ITEM: Registry = Registry {
+    no_air: true,
+    ..ITEM
+};
+const BLOCK: Registry = registry("block", "a block", Tags::Pack(RefKind::BlockTag));
+const ENTITY_TYPE: Registry = registry(
+    "entity_type",
+    "an entity type",
+    Tags::Pack(RefKind::EntityTypeTag),
+);
+const FLUID: Registry = registry("fluid", "a fluid", Tags::Unchecked);
+const BIOME: Registry = registry("biome", "a biome", Tags::Vanilla("biome_tag"));
+const ENCHANTMENT: Registry = registry(
+    "enchantment",
+    "an enchantment",
+    Tags::Vanilla("enchantment_tag"),
+);
+const MOB_EFFECT: Registry = registry("mob_effect", "an effect", Tags::Unchecked);
+const POTION: Registry = registry("potion", "a potion", Tags::Unchecked);
+const INSTRUMENT: Registry = registry("instrument", "an instrument", Tags::Unchecked);
+const ATTRIBUTE: Registry = registry("attribute", "an attribute", Tags::Unchecked);
+const DAMAGE_TYPE: Registry = registry("damage_type", "a damage type", Tags::Unchecked);
+const TRIM_PATTERN: Registry = registry("trim_pattern", "a trim pattern", Tags::Unchecked);
+const WORLD_CLOCK: Registry = registry("world_clock", "a world clock", Tags::Unchecked);
+const INT_PROVIDER: Registry =
+    registry("context_int_provider", "a number provider", Tags::Unchecked);
+const FLOAT_PROVIDER: Registry = registry(
+    "context_float_provider",
+    "a number provider",
+    Tags::Unchecked,
+);
+
+/// What a field holds.
+#[derive(Clone, Copy)]
+enum Shape {
+    /// Not checked.
+    Any,
+    Bool,
+    Number,
+    /// A string.
+    Text,
+    /// An object whose fields aren't checked.
+    Object,
+    /// A text component: text, a list, or an object.
+    Component,
+    List(&'static Shape),
+    /// A list with at least one item.
+    NonEmptyList(&'static Shape),
+    /// An object whose values are all of the shape.
+    Values(&'static Shape),
+    /// An object with these fields.
+    Fields(&'static [Field]),
+    /// One id of the registry.
+    Id(Registry),
+    /// One id, a `#tag`, or a list of ids, of the registry.
+    Holders(Registry),
+    /// The id of a resource.
+    Ref(RefKind),
+    /// The id of a resource, or a list of them.
+    Refs(RefKind),
+    /// A number, a number provider with a `type`, or the id of one.
+    Provider(Registry),
+    /// One predicate, or the id of a predicate file.
+    Predicate,
+    /// A predicate about an entity, in an advancement criterion.
+    EntityCondition,
+    /// The `terms` of `all_of` and `any_of`: a list of predicates or ids, or
+    /// one id.
+    Terms,
+    /// One item modifier, the id of one, or a list of them.
+    Modifier,
+    EntityPredicate,
+    /// An object whose keys are effects.
+    Effects,
+    /// An object whose keys are enchantments.
+    Enchantments,
+    /// An item id, or an object with an `id`.
+    ItemStack,
+    /// The result of a transmute recipe: an item stack that may leave out
+    /// its `id`.
+    TransmuteResult,
+    Ingredient,
+    LootEntry,
+    Pool,
+    /// The id of a loot table, or one written in place.
+    LootTable,
+}
+
+#[derive(Clone, Copy)]
+struct Field {
+    name: &'static str,
+    shape: Shape,
+    required: bool,
+}
+
+/// A required field. A macro rather than a function, so a list of fields in
+/// a `match` arm is a constant.
+macro_rules! req {
+    ($name:expr, $shape:expr $(,)?) => {
+        Field {
+            name: $name,
+            shape: $shape,
+            required: true,
+        }
+    };
+}
+
+/// A field that may be left out.
+macro_rules! opt {
+    ($name:expr, $shape:expr $(,)?) => {
+        Field {
+            name: $name,
+            shape: $shape,
+            required: false,
+        }
+    };
+}
+
+const INT: Shape = Shape::Provider(INT_PROVIDER);
+const FLOAT: Shape = Shape::Provider(FLOAT_PROVIDER);
+const ITEM_PREDICATE: Shape = Shape::Fields(&[
+    opt!("items", Shape::Holders(ITEM)),
+    opt!("components", Shape::Object),
+    opt!("predicates", Shape::Object),
+]);
+const BLOCK_PREDICATE: &[Field] = &[
+    opt!("blocks", Shape::Holders(BLOCK)),
+    opt!("state", Shape::Object),
+];
+const LOCATION_PREDICATE: Shape = Shape::Fields(&[
+    opt!("position", Shape::Object),
+    opt!("biomes", Shape::Holders(BIOME)),
+    opt!("dimension", Shape::Text),
+    opt!("smokey", Shape::Bool),
+    opt!("light", Shape::Object),
+    opt!("block", Shape::Fields(BLOCK_PREDICATE)),
+    opt!(
+        "fluid",
+        Shape::Fields(&[
+            opt!("fluids", Shape::Holders(FLUID)),
+            opt!("state", Shape::Object)
+        ]),
+    ),
+    opt!("can_see_sky", Shape::Bool),
+]);
+const DAMAGE_SOURCE_PREDICATE: Shape = Shape::Fields(&[
+    opt!(
+        "tags",
+        Shape::List(&Shape::Fields(&[
+            req!("id", Shape::Holders(DAMAGE_TYPE)),
+            req!("expected", Shape::Bool),
+        ])),
+    ),
+    opt!("direct_entity", Shape::EntityPredicate),
+    opt!("source_entity", Shape::EntityPredicate),
+    opt!("is_direct", Shape::Bool),
+]);
+const DAMAGE_PREDICATE: Shape = Shape::Fields(&[
+    opt!("source_entity", Shape::EntityPredicate),
+    opt!("blocked", Shape::Bool),
+    opt!("type", DAMAGE_SOURCE_PREDICATE),
+]);
+const EQUIPMENT_PREDICATE: Shape = Shape::Fields(&[
+    opt!("head", ITEM_PREDICATE),
+    opt!("chest", ITEM_PREDICATE),
+    opt!("legs", ITEM_PREDICATE),
+    opt!("feet", ITEM_PREDICATE),
+    opt!("body", ITEM_PREDICATE),
+    opt!("mainhand", ITEM_PREDICATE),
+    opt!("offhand", ITEM_PREDICATE),
+]);
+
+/// `null` is the same as a field left out, for Minecraft.
+fn present<'a>(json: &'a Value, key: &str) -> Option<&'a Value> {
+    json.get(key).filter(|value| !value.is_null())
 }
 
 fn has(json: &Value, key: &str) -> bool {
-    json.get(key).is_some()
+    present(json, key).is_some()
 }
 
 fn at(path: &str, key: &str) -> String {
@@ -388,12 +584,264 @@ fn type_name(json: &Value) -> &str {
     kind.strip_prefix("minecraft:").unwrap_or(kind)
 }
 
-/// Reports each of `keys` that `json` lacks.
-fn require(json: &Value, path: &str, keys: &[&str], problems: &mut Problems) {
-    for key in keys {
-        if !has(json, key) {
-            problems.push(format!("{} is missing; rejected", at(path, key)));
+/// `value` in a message.
+fn describe(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_string(),
+        Value::Bool(flag) => if *flag { "True" } else { "False" }.to_string(),
+        Value::Number(number) => format!("the number {number}"),
+        Value::String(text) => format!("the text {}", Value::String(text.clone())),
+        Value::Array(_) => "a list".to_string(),
+        Value::Object(_) => "an object".to_string(),
+    }
+}
+
+/// Reports a value of the wrong JSON kind.
+fn wrong(value: &Value, path: &str, expected: &str, problems: &mut Problems) {
+    problems.push(format!(
+        "`{path}` is {}, but it must be {expected}; rejected",
+        describe(value)
+    ));
+}
+
+/// Checks each field of an object: required fields are there, and every
+/// field holds its shape.
+fn check_fields(json: &Value, path: &str, fields: &[Field], problems: &mut Problems) {
+    for field in fields {
+        match present(json, field.name) {
+            None if field.required => {
+                problems.push(format!("{} is missing; rejected", at(path, field.name)))
+            }
+            None => {}
+            Some(value) => check_value(value, &join(path, field.name), field.shape, problems),
         }
+    }
+}
+
+fn check_list(items: &[Value], path: &str, shape: Shape, problems: &mut Problems) {
+    for (index, item) in items.iter().enumerate() {
+        check_value(item, &format!("{path}[{index}]"), shape, problems);
+    }
+}
+
+/// Checks that `value` holds `shape`.
+fn check_value(value: &Value, path: &str, shape: Shape, problems: &mut Problems) {
+    match shape {
+        Shape::Any => {}
+        Shape::Bool => {
+            if !(value.is_boolean() || (problems.nbt && value.is_number())) {
+                wrong(value, path, "True or False", problems);
+            }
+        }
+        Shape::Number => {
+            if !(value.is_number() || (problems.nbt && value.is_boolean())) {
+                wrong(value, path, "a number", problems);
+            }
+        }
+        Shape::Text => {
+            if !value.is_string() {
+                wrong(value, path, "text", problems);
+            }
+        }
+        Shape::Object => {
+            if !value.is_object() {
+                wrong(value, path, "an object", problems);
+            }
+        }
+        Shape::Component => {
+            if value.is_number() || value.is_boolean() {
+                wrong(
+                    value,
+                    path,
+                    "a text component (text, a list, or an object)",
+                    problems,
+                );
+            }
+        }
+        Shape::List(item) => match value.as_array() {
+            Some(items) => check_list(items, path, *item, problems),
+            None => wrong(value, path, "a list", problems),
+        },
+        Shape::NonEmptyList(item) => match value.as_array() {
+            Some(items) if items.is_empty() => problems.push(format!(
+                "`{path}` is an empty list; it needs at least one entry; rejected"
+            )),
+            Some(items) => check_list(items, path, *item, problems),
+            None => wrong(value, path, "a list", problems),
+        },
+        Shape::Values(item) => match value.as_object() {
+            Some(entries) => {
+                for (key, entry) in entries {
+                    check_value(entry, &join(path, key), *item, problems);
+                }
+            }
+            None => wrong(value, path, "an object", problems),
+        },
+        Shape::Fields(fields) => {
+            if value.is_object() {
+                check_fields(value, path, fields, problems);
+            } else {
+                wrong(value, path, "an object", problems);
+            }
+        }
+        Shape::Id(registry) => match value.as_str() {
+            Some(id) => check_id(id, path, registry, problems),
+            None => wrong(
+                value,
+                path,
+                &format!("the id of {}", registry.what),
+                problems,
+            ),
+        },
+        Shape::Holders(registry) => check_holder_set(value, path, registry, problems),
+        Shape::Ref(kind) => match value.as_str() {
+            Some(id) => problems.refer(kind, id, path),
+            None => wrong(
+                value,
+                path,
+                &format!("the id of a {}", kind.what()),
+                problems,
+            ),
+        },
+        Shape::Refs(kind) => match value {
+            Value::String(id) => refer_holder(kind, id, path, problems),
+            Value::Array(ids) => {
+                for (index, id) in ids.iter().enumerate() {
+                    let item_path = format!("{path}[{index}]");
+                    match id.as_str() {
+                        Some(id) => refer_holder(kind, id, &item_path, problems),
+                        None => wrong(
+                            id,
+                            &item_path,
+                            &format!("the id of a {}", kind.what()),
+                            problems,
+                        ),
+                    }
+                }
+            }
+            _ => wrong(
+                value,
+                path,
+                &format!("the id of a {}, or a list of them", kind.what()),
+                problems,
+            ),
+        },
+        Shape::Provider(registry) => check_provider(value, path, registry, problems),
+        Shape::Predicate => check_condition(value, path, false, problems),
+        Shape::EntityCondition => check_condition(value, path, true, problems),
+        Shape::Terms => match value {
+            Value::Array(terms) => check_list(terms, path, Shape::Predicate, problems),
+            Value::String(id) => refer_holder(RefKind::Predicate, id, path, problems),
+            _ => wrong(value, path, "a list of predicates", problems),
+        },
+        Shape::Modifier => match value {
+            Value::Array(modifiers) => {
+                for (index, modifier) in modifiers.iter().enumerate() {
+                    check_modifier(modifier, &format!("{path}[{index}]"), problems);
+                }
+            }
+            _ => check_modifier(value, path, problems),
+        },
+        Shape::EntityPredicate => check_entity_predicate(value, path, problems),
+        Shape::Effects => check_keys(value, path, MOB_EFFECT, problems),
+        Shape::Enchantments => check_keys(value, path, ENCHANTMENT, problems),
+        Shape::ItemStack => check_item_stack(value, path, true, problems),
+        Shape::TransmuteResult => check_item_stack(value, path, false, problems),
+        Shape::Ingredient => check_ingredient(value, path, problems),
+        Shape::LootEntry => check_loot_entry(value, path, problems),
+        Shape::Pool => check_pool(value, path, problems),
+        Shape::LootTable => match value {
+            Value::String(id) => problems.refer(RefKind::LootTable, id, path),
+            Value::Object(_) => check_loot_table_at(value, path, problems),
+            _ => wrong(
+                value,
+                path,
+                "the id of a loot table, or a loot table object",
+                problems,
+            ),
+        },
+    }
+}
+
+/// One item modifier, or the id of an item modifier file.
+fn check_modifier(value: &Value, path: &str, problems: &mut Problems) {
+    match value {
+        Value::String(id) => refer_holder(RefKind::ItemModifier, id, path, problems),
+        Value::Object(_) => check_item_modifier(value, path, problems),
+        _ => wrong(
+            value,
+            path,
+            "an item modifier object or the id of an item modifier file",
+            problems,
+        ),
+    }
+}
+
+/// An id or a `#tag` where Minecraft takes either. Tags of resources aren't
+/// declared by `datapack.*`, so they aren't looked up.
+fn refer_holder(kind: RefKind, id: &str, path: &str, problems: &mut Problems) {
+    if !id.starts_with('#') {
+        problems.refer(kind, id, path);
+    }
+}
+
+/// Reports a `type`-like id that `known` doesn't list. `what` names the
+/// registry in the message.
+fn check_registry_id(
+    value: Option<&Value>,
+    path: &str,
+    key: &str,
+    known: &[&str],
+    what: &str,
+    problems: &mut Problems,
+) {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return;
+    };
+    let Some(id) = value.as_str() else {
+        wrong(
+            value,
+            &join(path, key),
+            &format!("the id of {what}"),
+            problems,
+        );
+        return;
+    };
+    let name = id.strip_prefix("minecraft:").unwrap_or(id);
+    if known.contains(&name) {
+        return;
+    }
+    let hint = REPLACED_TYPES
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| format!(" (use `{new}`)"))
+        .unwrap_or_default();
+    problems.push(format!(
+        "{} `{id}` is not {what} in Minecraft 26.3{hint}; rejected",
+        at(path, key)
+    ));
+}
+
+/// Checks a resource's `type`: it's there (`old_key` was its name before)
+/// and Minecraft knows it.
+fn check_type(
+    json: &Value,
+    path: &str,
+    old_key: Option<(&str, &str)>,
+    known: &[&str],
+    what: &str,
+    problems: &mut Problems,
+) {
+    match old_key {
+        Some((old, example)) if has(json, old) && !has(json, "type") => problems.push(format!(
+            "{} is now `type` ({}); rejected",
+            at(path, old),
+            renamed_to_type(json, old, example)
+        )),
+        _ if !has(json, "type") => {
+            problems.push(format!("{} is missing; rejected", at(path, "type")))
+        }
+        _ => check_registry_id(json.get("type"), path, "type", known, what, problems),
     }
 }
 
@@ -409,41 +857,37 @@ fn vanilla_name(id: &str) -> Option<&str> {
 
 /// Reports a `minecraft:` id that isn't in Minecraft's `registry`. Data packs
 /// can't add to these registries.
-fn check_vanilla_id(id: &str, registry: &str, what: &str, path: &str, problems: &mut Problems) {
+fn check_id(id: &str, path: &str, registry: Registry, problems: &mut Problems) {
     if id.contains("$(") {
         return;
     }
     let Some(name) = vanilla_name(id) else {
         return;
     };
-    let Some(known) = crate::validator::registries::vanilla_ids(registry) else {
+    if registry.no_air && name == "air" {
+        problems.push(format!(
+            "`{path}` `{id}` is not an item Minecraft takes here: an item stack or an ingredient can't be air; rejected"
+        ));
+        return;
+    }
+    let Some(known) = crate::validator::registries::vanilla_ids(registry.ids) else {
         return;
     };
     if !known.contains(name) {
         problems.push(format!(
-            "`{path}` `{id}` is not {what} in Minecraft 26.3; rejected"
+            "`{path}` `{id}` is not {} in Minecraft 26.3; rejected",
+            registry.what
         ));
     }
 }
 
 /// An item, block, or entity type list: one id, a `#tag`, or a list of ids.
 /// A list can't hold a tag.
-fn check_holder_set(
-    value: &Value,
-    path: &str,
-    registry: &str,
-    what: &str,
-    tag: Option<RefKind>,
-    problems: &mut Problems,
-) {
+fn check_holder_set(value: &Value, path: &str, registry: Registry, problems: &mut Problems) {
     match value {
         Value::String(id) => match id.strip_prefix('#') {
-            Some(tag_id) => {
-                if let Some(tag) = tag {
-                    problems.refer(tag, tag_id, path);
-                }
-            }
-            None => check_vanilla_id(id, registry, what, path, problems),
+            Some(tag) => check_tag(tag, path, registry, problems),
+            None => check_id(id, path, registry, problems),
         },
         Value::Array(ids) => {
             for (index, id) in ids.iter().enumerate() {
@@ -452,34 +896,102 @@ fn check_holder_set(
                     Some(id) if id.starts_with('#') => problems.push(format!(
                         "`{item_path}` is the tag `{id}`, but a list holds ids only; write the tag on its own instead of the list (\"{id}\"), or list the ids; rejected"
                     )),
-                    Some(id) => check_vanilla_id(id, registry, what, &item_path, problems),
-                    None => {}
+                    Some(id) => check_id(id, &item_path, registry, problems),
+                    None => wrong(id, &item_path, &format!("the id of {}", registry.what), problems),
                 }
             }
         }
-        _ => {}
+        _ => wrong(
+            value,
+            path,
+            &format!("the id of {}, a `#tag`, or a list of ids", registry.what),
+            problems,
+        ),
     }
 }
 
-fn check_items(value: &Value, path: &str, problems: &mut Problems) {
-    check_holder_set(
-        value,
-        path,
-        "item",
-        "an item",
-        Some(RefKind::ItemTag),
-        problems,
-    );
+fn check_tag(tag: &str, path: &str, registry: Registry, problems: &mut Problems) {
+    match registry.tags {
+        Tags::Pack(kind) => problems.refer(kind, tag, path),
+        Tags::Vanilla(tags) => {
+            if tag.contains("$(") {
+                return;
+            }
+            let Some(name) = vanilla_name(tag) else {
+                return;
+            };
+            let Some(known) = crate::validator::registries::vanilla_ids(tags) else {
+                return;
+            };
+            if !known.contains(name) {
+                problems.push(format!(
+                    "`{path}` names the tag `#{tag}`, which Minecraft doesn't define; rejected"
+                ));
+            }
+        }
+        Tags::Unchecked => {}
+    }
 }
 
-/// A `condition` field: one predicate, or the id of a predicate file.
-fn check_condition(condition: &Value, path: &str, problems: &mut Problems) {
+/// A number provider: a number, an object with a `type`, or the id of a
+/// provider Minecraft defines.
+fn check_provider(value: &Value, path: &str, registry: Registry, problems: &mut Problems) {
+    match value {
+        Value::Number(_) => {}
+        Value::Bool(_) if problems.nbt => {}
+        Value::String(id) => check_id(id, path, registry, problems),
+        Value::Object(_) if !has(value, "type") => problems.push(format!(
+            "`{path}` is a number provider without a `type`; write the number, or name its type, as in {{\"type\": \"minecraft:uniform\", \"min\": 1, \"max\": 3}}; rejected"
+        )),
+        Value::Object(_) => {}
+        _ => wrong(
+            value,
+            path,
+            "a number, a number provider object with a `type`, or the id of one",
+            problems,
+        ),
+    }
+}
+
+/// The keys of an object are ids of `registry`.
+fn check_keys(value: &Value, path: &str, registry: Registry, problems: &mut Problems) {
+    match value.as_object() {
+        Some(entries) => {
+            for key in entries.keys() {
+                check_id(key, path, registry, problems);
+            }
+        }
+        None => wrong(value, path, "an object", problems),
+    }
+}
+
+/// A `condition` field: one predicate, or the id of a predicate file. In an
+/// advancement criterion, an entity condition was a list of predicates or an
+/// entity predicate on its own before.
+fn check_condition(condition: &Value, path: &str, entity: bool, problems: &mut Problems) {
     match condition {
         Value::String(id) => problems.refer(RefKind::Predicate, id, path),
+        Value::Array(list) if entity => {
+            problems.push(format!(
+                "`{path}` is now one predicate, not a list (combine several with \"type\": \"minecraft:all_of\"); rejected"
+            ));
+            check_list(list, path, Shape::Predicate, problems);
+        }
         Value::Array(_) => problems.push(format!(
             "`{path}` is one predicate, not a list (combine several with \"type\": \"minecraft:all_of\" and \"terms\"); rejected"
         )),
-        _ => check_predicate(condition, path, problems),
+        Value::Object(_) if entity && !has(condition, "type") && !has(condition, "condition") => {
+            problems.push(format!(
+                "`{path}` is now a predicate with a `type`; wrap an entity predicate as {{\"type\": \"minecraft:entity_properties\", \"entity\": \"this\", \"predicate\": {{...}}}}; rejected"
+            ))
+        }
+        Value::Object(_) => check_predicate(condition, path, problems),
+        _ => wrong(
+            condition,
+            path,
+            "one predicate, or the id of a predicate file",
+            problems,
+        ),
     }
 }
 
@@ -490,56 +1002,22 @@ pub(crate) fn check_predicate(json: &Value, path: &str, problems: &mut Problems)
     if !json.is_object() {
         return;
     }
-    if has(json, "condition") && !has(json, "type") {
-        problems.push(format!(
-            "{} is now `type` ({}); rejected",
-            at(path, "condition"),
-            renamed_to_type(json, "condition", "minecraft:random_chance")
-        ));
-    } else if !has(json, "type") {
-        problems.push(format!("{} is missing; rejected", at(path, "type")));
-    }
-    check_registry_id(
-        json.get("type"),
+    check_type(
+        json,
         path,
-        "type",
+        Some(("condition", "minecraft:random_chance")),
         LOOT_CONDITION_TYPES,
         "a predicate type",
         problems,
     );
-    if type_name(json) == "time_check" && !has(json, "clock") {
+    let kind = type_name(json);
+    if kind == "time_check" && !has(json, "clock") {
         problems.push(format!(
             "{} is missing; a time check names the clock it reads, such as \"clock\": \"minecraft:overworld\"; rejected",
             at(path, "clock")
         ));
     }
-    require(json, path, predicate_fields(type_name(json)), problems);
-    if let Some(terms) = json.get("terms").and_then(Value::as_array) {
-        for (index, term) in terms.iter().enumerate() {
-            check_predicate(term, &format!("{}terms[{}]", prefix(path), index), problems);
-        }
-    }
-    if let Some(term) = json.get("term") {
-        check_condition(term, &join(path, "term"), problems);
-    }
-    match type_name(json) {
-        "entity_properties" => {
-            if let Some(predicate) = json.get("predicate") {
-                check_entity_predicate(predicate, &join(path, "predicate"), problems);
-            }
-        }
-        "location_check" => {
-            if let Some(predicate) = json.get("predicate") {
-                check_location_predicate(predicate, &join(path, "predicate"), problems);
-            }
-        }
-        "match_tool" => {
-            if let Some(predicate) = json.get("predicate") {
-                check_item_predicate(predicate, &join(path, "predicate"), problems);
-            }
-        }
-        _ => {}
-    }
+    check_fields(json, path, predicate_fields(kind), problems);
 }
 
 /// The `"type": ...` that replaces the old `key`, with its value when it is
@@ -549,99 +1027,198 @@ fn renamed_to_type(json: &Value, key: &str, example: &str) -> String {
     format!("\"type\": {}", Value::String(value.to_string()))
 }
 
-/// The fields each predicate type can't go without (`clock` of a time check
-/// has its own message).
-fn predicate_fields(kind: &str) -> &'static [&'static str] {
+/// The fields of each predicate type (`clock` of a time check has its own
+/// message when it's missing).
+fn predicate_fields(kind: &str) -> &'static [Field] {
     match kind {
-        "random_chance" => &["chance"],
-        "entity_properties" => &["entity"],
-        "entity_scores" => &["entity", "scores"],
-        "table_bonus" => &["enchantment", "chances"],
-        "all_of" | "any_of" => &["terms"],
-        "inverted" => &["term"],
-        "time_check" => &["value"],
-        "int_value_check" => &["value", "test"],
-        "enchantment_active_check" => &["active"],
+        "all_of" | "any_of" => &[req!("terms", Shape::Terms)],
+        "damage_source_properties" => &[opt!("predicate", DAMAGE_SOURCE_PREDICATE)],
+        "enchantment_active_check" => &[req!("active", Shape::Bool)],
+        "entity_properties" => &[
+            req!("entity", Shape::Text),
+            opt!("predicate", Shape::EntityPredicate),
+        ],
+        "entity_scores" => &[req!("entity", Shape::Text), req!("scores", Shape::Object)],
+        "environment_attribute_check" => {
+            &[req!("attribute", Shape::Text), req!("value", Shape::Any)]
+        }
+        "float_value_check" => &[req!("value", FLOAT), req!("test", Shape::Any)],
+        "int_value_check" => &[req!("value", INT), req!("test", Shape::Any)],
+        "inverted" => &[req!("term", Shape::Predicate)],
+        "location_check" => &[opt!("predicate", LOCATION_PREDICATE)],
+        "match_block" => BLOCK_PREDICATE,
+        "match_tool" => &[opt!("predicate", ITEM_PREDICATE)],
+        "random_chance" => &[req!("chance", FLOAT)],
+        "random_chance_with_enchanted_bonus" => &[
+            req!("unenchanted_chance", Shape::Number),
+            req!("enchanted_chance", Shape::Any),
+            req!("enchantment", Shape::Id(ENCHANTMENT)),
+        ],
+        "table_bonus" => &[
+            req!("enchantment", Shape::Id(ENCHANTMENT)),
+            req!("chances", Shape::NonEmptyList(&Shape::Number)),
+        ],
+        "time_check" => &[
+            opt!("clock", Shape::Id(WORLD_CLOCK)),
+            req!("value", Shape::Any),
+        ],
+        "weather_check" => &[
+            opt!("raining", Shape::Bool),
+            opt!("thundering", Shape::Bool),
+        ],
         _ => &[],
     }
 }
 
-/// An entity predicate: the entity type and the effects are looked up.
+/// An entity predicate is an object of sub-predicates, whose names Minecraft
+/// knows. Other namespaces' names, which a mod can add, aren't checked.
 fn check_entity_predicate(json: &Value, path: &str, problems: &mut Problems) {
-    if let Some(types) = json.get("minecraft:entity_type") {
-        check_holder_set(
-            types,
-            &join(path, "minecraft:entity_type"),
-            "entity_type",
-            "an entity type",
-            Some(RefKind::EntityTypeTag),
-            problems,
-        );
-    }
-    if let Some(effects) = json.get("effects").and_then(Value::as_object) {
-        for effect in effects.keys() {
-            check_vanilla_id(
-                effect,
-                "mob_effect",
-                "an effect",
-                &join(path, "effects"),
-                problems,
-            );
-        }
-    }
-}
-
-/// A location predicate: the blocks of `block` are looked up.
-fn check_location_predicate(json: &Value, path: &str, problems: &mut Problems) {
-    if let Some(blocks) = json.get("block").and_then(|block| block.get("blocks")) {
-        check_holder_set(
-            blocks,
-            &join(path, "block.blocks"),
-            "block",
-            "a block",
-            Some(RefKind::BlockTag),
-            problems,
-        );
-    }
-}
-
-/// An item predicate: the items are looked up.
-fn check_item_predicate(json: &Value, path: &str, problems: &mut Problems) {
-    if let Some(items) = json.get("items") {
-        check_items(items, &join(path, "items"), problems);
+    let Some(predicates) = json.as_object() else {
+        wrong(json, path, "an entity predicate object", problems);
+        return;
+    };
+    for (key, value) in predicates {
+        let Some(name) = vanilla_name(key) else {
+            continue;
+        };
+        let key_path = join(path, key);
+        let shape = match name {
+            "entity_type" => Shape::Holders(ENTITY_TYPE),
+            "location" | "stepping_on" | "movement_affected_by" => LOCATION_PREDICATE,
+            "effects" => Shape::Effects,
+            "equipment" => EQUIPMENT_PREDICATE,
+            "vehicle" | "passenger" | "targeted_entity" => Shape::EntityPredicate,
+            "slots" => Shape::Values(&ITEM_PREDICATE),
+            "flags" | "distance" | "movement" | "nbt" | "periodic_tick" | "team" | "components"
+            | "predicates" | "entity_tags" => Shape::Any,
+            name if name.starts_with("type_specific/") => Shape::Any,
+            _ => {
+                let hint = if name == "type" {
+                    " (the entity type is \"minecraft:entity_type\")"
+                } else {
+                    ""
+                };
+                problems.push(format!(
+                    "`{key_path}` is not a part of an entity predicate in Minecraft 26.3{hint}; rejected"
+                ));
+                continue;
+            }
+        };
+        check_value(value, &key_path, shape, problems);
     }
 }
 
 /// `conditions` lists on loot functions, pools, and entries are now a single
-/// `condition` (use `minecraft:all_of` to combine several).
-fn check_conditions_list(json: &Value, path: &str, problems: &mut Problems) {
+/// `condition` (use `minecraft:all_of` to combine several), and `functions`
+/// lists of loot tables are now `modifier`.
+fn check_old_lists(json: &Value, path: &str, functions: bool, problems: &mut Problems) {
     if has(json, "conditions") {
         problems.push(format!(
             "{} is now a single `condition` (combine several with \"type\": \"minecraft:all_of\"); ignored, so the conditions would never apply",
             at(path, "conditions")
         ));
     }
-    if let Some(condition) = json.get("condition") {
-        check_condition(condition, &join(path, "condition"), problems);
+    if functions && has(json, "functions") {
+        problems.push(format!(
+            "{} is now `modifier`; ignored, so the functions would never apply",
+            at(path, "functions")
+        ));
     }
 }
 
-/// The fields each item modifier type can't go without.
-fn item_modifier_fields(kind: &str) -> &'static [&'static str] {
+/// The fields of each item modifier type, besides `condition`.
+fn item_modifier_fields(kind: &str) -> &'static [Field] {
+    const PAGES: &[Field] = &[
+        req!("pages", Shape::List(&Shape::Any)),
+        req!("mode", Shape::Text),
+    ];
+    const OPTIONS: Field = opt!("options", Shape::Holders(ENCHANTMENT));
     match kind {
-        "set_count" => &["count"],
-        "set_lore" => &["lore", "mode"],
-        "set_components" => &["components"],
-        "set_custom_data" => &["tag"],
-        "sequence" => &["functions"],
-        "set_damage" => &["damage"],
-        "set_item" => &["item"],
-        "set_potion" => &["id"],
-        "enchant_with_levels" => &["levels"],
-        "limit_count" => &["limit"],
-        "copy_name" => &["source"],
-        "toggle_tooltips" => &["toggles"],
-        "apply_bonus" => &["enchantment", "formula"],
+        "apply_bonus" => &[
+            req!("enchantment", Shape::Id(ENCHANTMENT)),
+            req!("formula", Shape::Text),
+            opt!("parameters", Shape::Object),
+        ],
+        "copy_components" => &[req!("source", Shape::Text)],
+        "copy_custom_data" => &[
+            req!("source", Shape::Any),
+            req!("ops", Shape::List(&Shape::Object)),
+        ],
+        "copy_name" => &[req!("source", Shape::Text)],
+        "copy_state" => &[
+            req!("block", Shape::Id(BLOCK)),
+            req!("properties", Shape::List(&Shape::Text)),
+        ],
+        "enchant_randomly" => &[OPTIONS, opt!("only_compatible", Shape::Bool)],
+        "enchant_with_levels" => &[req!("levels", INT), OPTIONS],
+        "enchanted_count_increase" => &[
+            req!("enchantment", Shape::Id(ENCHANTMENT)),
+            req!("count", FLOAT),
+            opt!("limit", Shape::Number),
+        ],
+        "exploration_map" => &[req!("destination", Shape::Any)],
+        "fill_player_head" => &[req!("entity", Shape::Text)],
+        "filtered" => &[
+            req!("item_filter", ITEM_PREDICATE),
+            opt!("on_pass", Shape::Modifier),
+            opt!("on_fail", Shape::Modifier),
+        ],
+        "limit_count" => &[req!("limit", Shape::Any)],
+        "modify_contents" => &[
+            req!("component", Shape::Text),
+            req!("modifier", Shape::Modifier),
+        ],
+        "sequence" => &[req!("functions", Shape::Modifier)],
+        "set_attributes" => &[
+            req!(
+                "modifiers",
+                Shape::List(&Shape::Fields(&[
+                    req!("id", Shape::Text),
+                    req!("attribute", Shape::Id(ATTRIBUTE)),
+                    req!("operation", Shape::Text),
+                    req!("amount", FLOAT),
+                    req!("slot", Shape::Any),
+                ])),
+            ),
+            opt!("replace", Shape::Bool),
+        ],
+        "set_banner_pattern" => &[
+            req!("patterns", Shape::List(&Shape::Any)),
+            req!("append", Shape::Bool),
+        ],
+        "set_components" => &[req!("components", Shape::Object)],
+        "set_contents" => &[
+            req!("component", Shape::Text),
+            req!("entries", Shape::List(&Shape::LootEntry)),
+        ],
+        "set_count" => &[req!("count", INT), opt!("add", Shape::Bool)],
+        "set_custom_data" => &[req!("tag", Shape::Any)],
+        "set_damage" => &[req!("damage", FLOAT), opt!("add", Shape::Bool)],
+        "set_enchantments" => &[
+            opt!("enchantments", Shape::Enchantments),
+            opt!("add", Shape::Bool),
+        ],
+        "set_instrument" => &[req!("options", Shape::Holders(INSTRUMENT))],
+        "set_item" => &[req!("item", Shape::Id(STACK_ITEM))],
+        "set_loot_table" => &[req!("loot_table_id", Shape::Ref(RefKind::LootTable))],
+        "set_lore" => &[
+            req!("lore", Shape::List(&Shape::Component)),
+            req!("mode", Shape::Text),
+        ],
+        "set_name" => &[opt!("name", Shape::Component)],
+        "set_ominous_bottle_amplifier" => &[req!("amplifier", INT)],
+        "set_potion" => &[req!("id", Shape::Id(POTION))],
+        "set_random_dyes" => &[req!("number_of_dyes", INT)],
+        "set_random_potion" => &[opt!("options", Shape::Holders(POTION))],
+        "set_stew_effect" => &[opt!(
+            "effects",
+            Shape::List(&Shape::Fields(&[
+                req!("type", Shape::Id(MOB_EFFECT)),
+                req!("duration", INT),
+            ])),
+        )],
+        "set_writable_book_pages" | "set_written_book_pages" => PAGES,
+        "toggle_tooltips" => &[req!("toggles", Shape::Object)],
         _ => &[],
     }
 }
@@ -653,311 +1230,359 @@ pub(crate) fn check_item_modifier(json: &Value, path: &str, problems: &mut Probl
     if !json.is_object() {
         return;
     }
-    if has(json, "function") && !has(json, "type") {
-        problems.push(format!(
-            "{} is now `type` ({}); rejected",
-            at(path, "function"),
-            renamed_to_type(json, "function", "minecraft:set_components")
-        ));
-    } else if !has(json, "type") {
-        problems.push(format!("{} is missing; rejected", at(path, "type")));
-    }
-    check_registry_id(
-        json.get("type"),
+    check_type(
+        json,
         path,
-        "type",
+        Some(("function", "minecraft:set_components")),
         LOOT_FUNCTION_TYPES,
         "an item modifier type",
         problems,
     );
-    check_conditions_list(json, path, problems);
-    let kind = type_name(json);
-    require(json, path, item_modifier_fields(kind), problems);
-    match kind {
-        "sequence" => {
-            if let Some(functions) = json.get("functions").and_then(Value::as_array) {
-                for (index, function) in functions.iter().enumerate() {
-                    check_item_modifier(
-                        function,
-                        &format!("{}functions[{index}]", prefix(path)),
-                        problems,
-                    );
-                }
-            }
-        }
-        "enchant_randomly" => {
-            if let Some(options) = json.get("options") {
-                check_holder_set(
-                    options,
-                    &join(path, "options"),
-                    "enchantment",
-                    "an enchantment",
-                    // Enchantment tags aren't listed, so they pass.
-                    None,
-                    problems,
-                );
-            }
-        }
-        _ => {}
-    }
-}
-
-/// An item modifier field of a loot table: one modifier, a list, or the id
-/// of an item modifier file.
-fn check_loot_modifiers(json: &Value, path: &str, problems: &mut Problems) {
-    if has(json, "functions") {
-        problems.push(format!(
-            "{} is now `modifier`; ignored, so the functions would never apply",
-            at(path, "functions")
-        ));
-    }
-    match json.get("modifier") {
-        Some(Value::Array(modifiers)) => {
-            for (index, modifier) in modifiers.iter().enumerate() {
-                check_item_modifier(
-                    modifier,
-                    &format!("{}modifier[{}]", prefix(path), index),
-                    problems,
-                );
-            }
-        }
-        Some(Value::String(id)) => {
-            problems.refer(RefKind::ItemModifier, id, &join(path, "modifier"))
-        }
-        Some(modifier) => check_item_modifier(modifier, &join(path, "modifier"), problems),
-        None => {}
-    }
+    check_old_lists(json, path, false, problems);
+    check_fields(json, path, &[opt!("condition", Shape::Predicate)], problems);
+    check_fields(json, path, item_modifier_fields(type_name(json)), problems);
 }
 
 /// Loot tables: `functions` lists are now `modifier`, `conditions` lists are
-/// a single `condition`, a `minecraft:tag` entry names its tag in `items`,
+/// a single `condition`, a `minecraft:tag` entry names its items in `items`,
 /// and pools and entries have the fields they can't go without.
 pub(crate) fn check_loot_table(json: &Value, problems: &mut Problems) {
-    check_loot_modifiers(json, "", problems);
-    let Some(pools) = json.get("pools").and_then(Value::as_array) else {
+    check_loot_table_at(json, "", problems);
+}
+
+fn check_loot_table_at(json: &Value, path: &str, problems: &mut Problems) {
+    check_old_lists(json, path, true, problems);
+    check_fields(
+        json,
+        path,
+        &[
+            opt!("type", Shape::Text),
+            opt!("random_sequence", Shape::Text),
+            opt!("pools", Shape::List(&Shape::Pool)),
+            opt!("modifier", Shape::Modifier),
+        ],
+        problems,
+    );
+}
+
+fn check_pool(pool: &Value, path: &str, problems: &mut Problems) {
+    if !pool.is_object() {
+        wrong(pool, path, "a pool object", problems);
         return;
-    };
-    for (pool_index, pool) in pools.iter().enumerate() {
-        let pool_path = format!("pools[{}]", pool_index);
-        check_conditions_list(pool, &pool_path, problems);
-        check_loot_modifiers(pool, &pool_path, problems);
-        if pool.is_object() {
-            require(pool, &pool_path, &["rolls", "entries"], problems);
-        }
-        if let Some(entries) = pool.get("entries").and_then(Value::as_array) {
-            for (entry_index, entry) in entries.iter().enumerate() {
-                check_loot_entry(
-                    entry,
-                    &format!("{}.entries[{}]", pool_path, entry_index),
-                    problems,
-                );
-            }
-        }
     }
+    check_old_lists(pool, path, true, problems);
+    check_fields(
+        pool,
+        path,
+        &[
+            req!("rolls", INT),
+            opt!("bonus_rolls", FLOAT),
+            req!("entries", Shape::List(&Shape::LootEntry)),
+            opt!("condition", Shape::Predicate),
+            opt!("modifier", Shape::Modifier),
+        ],
+        problems,
+    );
 }
 
 fn check_loot_entry(entry: &Value, path: &str, problems: &mut Problems) {
     if !entry.is_object() {
+        wrong(entry, path, "a loot entry object", problems);
         return;
     }
-    check_conditions_list(entry, path, problems);
-    check_loot_modifiers(entry, path, problems);
-    if !has(entry, "type") {
-        problems.push(format!("{} is missing; rejected", at(path, "type")));
-    }
-    check_registry_id(
-        entry.get("type"),
+    check_old_lists(entry, path, true, problems);
+    check_type(
+        entry,
         path,
-        "type",
+        None,
         LOOT_ENTRY_TYPES,
         "a loot entry type",
         problems,
     );
-    match type_name(entry) {
-        "item" => match entry.get("name").and_then(Value::as_str) {
-            None => require(entry, path, &["name"], problems),
-            Some(id) if vanilla_name(id) == Some("air") => problems.push(format!(
+    let kind = type_name(entry);
+    let mut fields = vec![
+        opt!("condition", Shape::Predicate),
+        opt!("modifier", Shape::Modifier),
+    ];
+    match kind {
+        "alternatives" | "group" | "sequence" => {
+            fields.push(opt!("children", Shape::List(&Shape::LootEntry)))
+        }
+        _ => fields.extend([
+            opt!("weight", Shape::Number),
+            opt!("quality", Shape::Number),
+        ]),
+    }
+    match kind {
+        "item" => match present(entry, "name") {
+            Some(Value::String(id)) if vanilla_name(id) == Some("air") => problems.push(format!(
                 "{} `{id}` is not an item a loot table can drop; for a pool entry that drops nothing, use {{\"type\": \"minecraft:empty\"}}; rejected",
                 at(path, "name")
             )),
-            Some(id) if id.starts_with('#') => problems.push(format!(
+            Some(Value::String(id)) if id.starts_with('#') => problems.push(format!(
                 "{} `{id}` names a tag; a `minecraft:tag` entry drops the items of a tag (\"type\": \"minecraft:tag\", \"items\": \"{id}\"); rejected",
                 at(path, "name")
             )),
-            Some(id) => check_vanilla_id(id, "item", "an item", &join(path, "name"), problems),
+            _ => fields.push(req!("name", Shape::Id(ITEM))),
         },
-        "tag" => {
-            if has(entry, "name") && !has(entry, "items") {
-                problems.push(format!(
-                    "{} of a `minecraft:tag` entry is now `items` (\"items\": \"#minecraft:logs\"); rejected",
-                    at(path, "name")
-                ));
-            } else {
-                match entry.get("items") {
-                    None => require(entry, path, &["items"], problems),
-                    Some(Value::String(id)) if !id.starts_with('#') => problems.push(format!(
-                        "{} of a `minecraft:tag` entry names a tag, written with `#` (\"items\": \"#{}\"); rejected",
-                        at(path, "items"),
-                        id
-                    )),
-                    Some(Value::String(id)) => {
-                        problems.refer(RefKind::ItemTag, &id[1..], &join(path, "items"))
-                    }
-                    Some(_) => {}
-                }
-            }
-        }
-        "loot_table" => {
-            if has(entry, "name") && !has(entry, "value") {
-                problems.push(format!(
-                    "{} of a `minecraft:loot_table` entry is now `value` (\"value\": \"minecraft:chests/simple_dungeon\"); rejected",
-                    at(path, "name")
-                ));
-            } else {
-                match entry.get("value") {
-                    None => require(entry, path, &["value"], problems),
-                    Some(Value::String(id)) => {
-                        problems.refer(RefKind::LootTable, id, &join(path, "value"))
-                    }
-                    Some(table) if table.is_object() => check_loot_table(table, problems),
-                    Some(_) => {}
-                }
-            }
-        }
+        "tag" if has(entry, "name") && !has(entry, "items") => problems.push(format!(
+            "{} of a `minecraft:tag` entry is now `items` (\"items\": \"#minecraft:logs\"); rejected",
+            at(path, "name")
+        )),
+        "tag" => fields.extend([req!("items", Shape::Holders(ITEM)), opt!("expand", Shape::Bool)]),
+        "loot_table" if has(entry, "name") && !has(entry, "value") => problems.push(format!(
+            "{} of a `minecraft:loot_table` entry is now `value` (\"value\": \"minecraft:chests/simple_dungeon\"); rejected",
+            at(path, "name")
+        )),
+        "loot_table" => fields.push(req!("value", Shape::LootTable)),
+        "dynamic" => fields.push(req!("name", Shape::Text)),
+        "slots" => fields.push(req!("slot_source", Shape::Any)),
         _ => {}
     }
-    if let Some(children) = entry.get("children").and_then(Value::as_array) {
-        for (index, child) in children.iter().enumerate() {
-            check_loot_entry(child, &format!("{}.children[{}]", path, index), problems);
-        }
-    }
+    check_fields(entry, path, &fields, problems);
 }
 
-/// The triggers whose conditions have an `entity` field. Minecraft ignores
-/// the field on the others.
-const ENTITY_TRIGGERS: &[&str] = &[
-    "player_interacted_with_entity",
-    "player_killed_entity",
-    "player_sheared_equipment",
-    "summoned_entity",
-    "tame_animal",
-    "thrown_item_picked_up_by_entity",
-    "thrown_item_picked_up_by_player",
-    "entity_killed_player",
-    "kill_mob_near_sculk_catalyst",
-    "player_hurt_entity",
-];
+/// The conditions of each advancement trigger, besides `player`, which all
+/// but `minecraft:impossible` have. `None` for a trigger that reads none.
+fn trigger_fields(trigger: &str) -> Option<&'static [Field]> {
+    const EC: Shape = Shape::EntityCondition;
+    const P: Shape = Shape::Predicate;
+    const IP: Shape = ITEM_PREDICATE;
+    const BLOCKS: &[Field] = &[
+        opt!("blocks", Shape::Holders(BLOCK)),
+        opt!("state", Shape::Object),
+    ];
+    const DISTANCE: &[Field] = &[
+        opt!("start_position", LOCATION_PREDICATE),
+        opt!("distance", Shape::Object),
+    ];
+    const KILLED: &[Field] = &[
+        opt!("entity", EC),
+        opt!("killing_blow", DAMAGE_SOURCE_PREDICATE),
+    ];
+    const ITEM_ONLY: &[Field] = &[opt!("item", IP)];
+    const ITEM_AND_ENTITY: &[Field] = &[opt!("item", IP), opt!("entity", EC)];
+    const LOCATION: &[Field] = &[opt!("location", P)];
+    const ENTITY: &[Field] = &[opt!("entity", EC)];
+    const RECIPES: &[Field] = &[
+        req!("recipes", Shape::Refs(RefKind::Recipe)),
+        opt!("ingredients", Shape::List(&IP)),
+    ];
+    Some(match trigger {
+        "impossible" => return None,
+        "allay_drop_item_on_block"
+        | "any_block_use"
+        | "default_block_use"
+        | "item_used_on_block"
+        | "placed_block" => LOCATION,
+        "avoid_vibration"
+        | "hero_of_the_village"
+        | "location"
+        | "slept_in_bed"
+        | "started_riding"
+        | "tick"
+        | "voluntary_exile" => &[],
+        "bee_nest_destroyed" => &[
+            opt!("blocks", Shape::Holders(BLOCK)),
+            opt!("state", Shape::Object),
+            opt!("item", IP),
+            opt!("num_bees_inside", Shape::Any),
+        ],
+        "bred_animals" => &[opt!("parent", EC), opt!("partner", EC), opt!("child", EC)],
+        "brewed_potion" => &[opt!("potion", Shape::Object)],
+        "changed_dimension" => &[opt!("from", Shape::Text), opt!("to", Shape::Text)],
+        "channeled_lightning" => &[opt!("victims", Shape::List(&EC))],
+        "construct_beacon" => &[opt!("level", Shape::Any)],
+        "consume_item" | "filled_bucket" | "shot_crossbow" | "used_totem" | "using_item" => {
+            ITEM_ONLY
+        }
+        "crafter_recipe_crafted" | "recipe_crafted" => RECIPES,
+        "cured_zombie_villager" => &[opt!("zombie", EC), opt!("villager", EC)],
+        "effects_changed" => &[opt!("effects", Shape::Effects), opt!("source", EC)],
+        "enchanted_item" => &[opt!("item", IP), opt!("levels", Shape::Any)],
+        "enter_block" | "slide_down_block" => BLOCKS,
+        "entity_hurt_player" => &[opt!("damage", DAMAGE_PREDICATE)],
+        "entity_killed_player" | "kill_mob_near_sculk_catalyst" | "player_killed_entity" => KILLED,
+        "fall_after_explosion" => &[
+            opt!("start_position", LOCATION_PREDICATE),
+            opt!("distance", Shape::Object),
+            opt!("cause", EC),
+        ],
+        "fall_from_height" | "nether_travel" | "ride_entity_in_lava" => DISTANCE,
+        "fishing_rod_hooked" => &[opt!("rod", IP), opt!("entity", EC), opt!("item", IP)],
+        "inventory_changed" => &[
+            opt!("slots", Shape::Object),
+            opt!("items", Shape::List(&IP)),
+        ],
+        "item_durability_changed" => &[
+            opt!("item", IP),
+            opt!("durability", Shape::Any),
+            opt!("delta", Shape::Any),
+        ],
+        "killed_by_arrow" => &[
+            opt!("victims", Shape::List(&EC)),
+            opt!("unique_entity_types", Shape::Any),
+            opt!("fired_from_weapon", IP),
+        ],
+        "levitation" => &[
+            opt!("distance", Shape::Object),
+            opt!("duration", Shape::Any),
+        ],
+        "lightning_strike" => &[opt!("lightning", EC), opt!("bystander", EC)],
+        "player_generates_container_loot" => {
+            &[req!("loot_tables", Shape::Refs(RefKind::LootTable))]
+        }
+        "player_hurt_entity" => &[opt!("damage", DAMAGE_PREDICATE), opt!("entity", EC)],
+        "player_interacted_with_entity"
+        | "player_sheared_equipment"
+        | "thrown_item_picked_up_by_entity"
+        | "thrown_item_picked_up_by_player" => ITEM_AND_ENTITY,
+        "recipe_unlocked" => &[req!("recipes", Shape::Refs(RefKind::Recipe))],
+        "spear_mobs" => &[opt!("count", Shape::Number)],
+        "summoned_entity" | "tame_animal" => ENTITY,
+        "target_hit" => &[opt!("signal_strength", Shape::Any), opt!("projectile", EC)],
+        "used_ender_eye" => &[opt!("distance", Shape::Any)],
+        "villager_trade" => &[opt!("villager", EC), opt!("item", IP)],
+        _ => return None,
+    })
+}
 
 /// Advancements: criteria and their triggers, `requirements`, `display`,
 /// `parent`, and `rewards`.
 pub(super) fn check_advancement(json: &Value, problems: &mut Problems) {
-    let criteria = json.get("criteria").and_then(Value::as_object);
+    let criteria = present(json, "criteria");
     match criteria {
         None => require(json, "", &["criteria"], problems),
-        Some(criteria) if criteria.is_empty() => problems.push(
+        Some(Value::Object(criteria)) if criteria.is_empty() => problems.push(
             "`criteria` is empty; an advancement needs at least one criterion; rejected"
                 .to_string(),
         ),
-        Some(_) => {}
+        Some(Value::Object(_)) => {}
+        Some(other) => wrong(other, "criteria", "an object of criteria", problems),
     }
+    let criteria = criteria.and_then(Value::as_object);
     for (name, criterion) in criteria.into_iter().flatten() {
-        let criterion_path = format!("criteria.{name}");
-        if criterion.is_object() && !has(criterion, "trigger") {
-            problems.push(format!(
-                "{} is missing; rejected",
-                at(&criterion_path, "trigger")
-            ));
-        }
-        check_registry_id(
-            criterion.get("trigger"),
-            &criterion_path,
-            "trigger",
-            TRIGGER_TYPES,
-            "an advancement trigger",
-            problems,
-        );
-        let trigger = criterion
-            .get("trigger")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let trigger = trigger.strip_prefix("minecraft:").unwrap_or(trigger);
-        let Some(conditions) = criterion.get("conditions") else {
-            continue;
-        };
-        let conditions_path = format!("{criterion_path}.conditions");
-        if let Some(condition) = conditions.get("player") {
-            check_entity_condition(condition, &join(&conditions_path, "player"), problems);
-        }
-        if let Some(condition) = conditions.get("entity") {
-            let path = join(&conditions_path, "entity");
-            if ENTITY_TRIGGERS.contains(&trigger) {
-                check_entity_condition(condition, &path, problems);
-            } else if !trigger.is_empty() {
-                problems.warn(format!(
-                    "`{path}` is ignored: `minecraft:{trigger}` has no `entity` condition"
-                ));
-            }
-        }
-        if let Some(item) = conditions.get("item") {
-            check_item_predicate(item, &join(&conditions_path, "item"), problems);
-        }
-        if trigger == "recipe_unlocked" {
-            if let Some(recipe) = conditions.get("recipe").and_then(Value::as_str) {
-                problems.refer(RefKind::Recipe, recipe, &join(&conditions_path, "recipe"));
-            }
-            if let Some(recipes) = conditions.get("recipes").and_then(Value::as_array) {
-                for (index, recipe) in recipes.iter().enumerate() {
-                    if let Some(recipe) = recipe.as_str() {
-                        problems.refer(
-                            RefKind::Recipe,
-                            recipe,
-                            &format!("{conditions_path}.recipes[{index}]"),
-                        );
-                    }
-                }
-            }
-        }
+        check_criterion(criterion, &format!("criteria.{name}"), problems);
     }
     check_requirements(json, criteria, problems);
-    if let Some(parent) = json.get("parent").and_then(Value::as_str) {
-        problems.refer(RefKind::Advancement, parent, "parent");
-    }
-    if let Some(rewards) = json.get("rewards") {
-        if let Some(loot) = rewards.get("loot").and_then(Value::as_array) {
-            for (index, table) in loot.iter().enumerate() {
-                if let Some(table) = table.as_str() {
-                    problems.refer(RefKind::LootTable, table, &format!("rewards.loot[{index}]"));
-                }
-            }
-        }
-    }
+    check_fields(
+        json,
+        "",
+        &[
+            opt!("parent", Shape::Ref(RefKind::Advancement)),
+            opt!(
+                "rewards",
+                Shape::Fields(&[
+                    opt!("experience", Shape::Number),
+                    opt!("loot", Shape::Refs(RefKind::LootTable)),
+                    opt!("recipes", Shape::List(&Shape::Text)),
+                    opt!("function", Shape::Text),
+                ]),
+            ),
+            opt!("sends_telemetry_event", Shape::Bool),
+        ],
+        problems,
+    );
     // `"display": None` is the same as no display.
-    let Some(display) = json.get("display").filter(|display| !display.is_null()) else {
+    let Some(display) = present(json, "display") else {
         return;
     };
-    if display.is_object() {
-        require(
-            display,
-            "display",
-            &["icon", "title", "description"],
-            problems,
-        );
-    }
-    if let Some(icon) = display.get("icon") {
-        check_item_stack(icon, "display.icon", problems);
-    }
-    if let Some(frame) = display.get("frame").and_then(Value::as_str) {
+    check_value(
+        display,
+        "display",
+        Shape::Fields(&[
+            req!("icon", Shape::ItemStack),
+            req!("title", Shape::Component),
+            req!("description", Shape::Component),
+            opt!("background", Shape::Text),
+            opt!("frame", Shape::Text),
+            opt!("show_toast", Shape::Bool),
+            opt!("announce_to_chat", Shape::Bool),
+            opt!("hidden", Shape::Bool),
+        ]),
+        problems,
+    );
+    if let Some(frame) = present(display, "frame").and_then(Value::as_str) {
         if !matches!(frame, "task" | "challenge" | "goal") {
             problems.push(format!(
                 "`display.frame` `{frame}` is not a frame; use \"task\", \"goal\", or \"challenge\"; rejected"
             ));
         }
     }
-    if !has(json, "parent") && display.get("background").is_none() {
+    if display.is_object() && !has(json, "parent") && !has(display, "background") {
         problems.push(
             "a root advancement with `display` must set `display.background` (or give it a `parent`); rejected"
                 .to_string(),
         );
+    }
+}
+
+/// One criterion: its `trigger` and the conditions that trigger reads.
+/// Minecraft ignores the others, so they're warnings.
+fn check_criterion(criterion: &Value, path: &str, problems: &mut Problems) {
+    if !criterion.is_object() {
+        wrong(
+            criterion,
+            path,
+            "a criterion object with a `trigger`",
+            problems,
+        );
+        return;
+    }
+    if !has(criterion, "trigger") {
+        problems.push(format!("{} is missing; rejected", at(path, "trigger")));
+    }
+    check_registry_id(
+        criterion.get("trigger"),
+        path,
+        "trigger",
+        TRIGGER_TYPES,
+        "an advancement trigger",
+        problems,
+    );
+    let trigger = criterion
+        .get("trigger")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let trigger = trigger.strip_prefix("minecraft:").unwrap_or(trigger);
+    let Some(conditions) = present(criterion, "conditions") else {
+        return;
+    };
+    let conditions_path = join(path, "conditions");
+    let Some(entries) = conditions.as_object() else {
+        wrong(conditions, &conditions_path, "an object", problems);
+        return;
+    };
+    if !TRIGGER_TYPES.contains(&trigger) {
+        return;
+    }
+    let fields = trigger_fields(trigger);
+    if let Some(fields) = fields {
+        check_fields(
+            conditions,
+            &conditions_path,
+            &[opt!("player", Shape::EntityCondition)],
+            problems,
+        );
+        check_fields(conditions, &conditions_path, fields, problems);
+    }
+    for key in entries.keys() {
+        let read = fields
+            .is_some_and(|fields| key == "player" || fields.iter().any(|field| field.name == key));
+        if !read {
+            problems.warn(format!(
+                "`{conditions_path}.{key}` is ignored: `minecraft:{trigger}` has no `{key}` condition"
+            ));
+        }
+    }
+}
+
+/// Reports each of `keys` that `json` lacks.
+fn require(json: &Value, path: &str, keys: &[&str], problems: &mut Problems) {
+    for key in keys {
+        if !has(json, key) {
+            problems.push(format!("{} is missing; rejected", at(path, key)));
+        }
     }
 }
 
@@ -968,7 +1593,16 @@ fn check_requirements(
     criteria: Option<&serde_json::Map<String, Value>>,
     problems: &mut Problems,
 ) {
-    let Some(requirements) = json.get("requirements").and_then(Value::as_array) else {
+    let Some(requirements) = present(json, "requirements") else {
+        return;
+    };
+    let Some(requirements) = requirements.as_array() else {
+        wrong(
+            requirements,
+            "requirements",
+            "a list of lists of criterion names, as in [[\"a\"], [\"b\", \"c\"]]",
+            problems,
+        );
         return;
     };
     let mut named = std::collections::HashSet::new();
@@ -981,6 +1615,12 @@ fn check_requirements(
         };
         for (item_index, name) in group.iter().enumerate() {
             let Some(name) = name.as_str() else {
+                wrong(
+                    name,
+                    &format!("requirements[{index}][{item_index}]"),
+                    "the name of a criterion",
+                    problems,
+                );
                 continue;
             };
             named.insert(name);
@@ -1000,44 +1640,34 @@ fn check_requirements(
     }
 }
 
-/// A `player` or `entity` condition of an advancement criterion is one
-/// predicate with a `type`. A list of predicates and a bare entity predicate
-/// were the older forms.
-fn check_entity_condition(condition: &Value, path: &str, problems: &mut Problems) {
-    if let Some(list) = condition.as_array() {
-        problems.push(format!(
-            "`{path}` is now one predicate, not a list (combine several with \"type\": \"minecraft:all_of\"); rejected"
-        ));
-        for (index, predicate) in list.iter().enumerate() {
-            check_predicate(predicate, &format!("{path}[{index}]"), problems);
-        }
-        return;
-    }
-    if !condition.is_object() || has(condition, "type") {
-        check_predicate(condition, path, problems);
-        return;
-    }
-    if has(condition, "condition") {
-        check_predicate(condition, path, problems);
-    } else {
-        problems.push(format!(
-            "`{path}` is now a predicate with a `type`; wrap an entity predicate as {{\"type\": \"minecraft:entity_properties\", \"entity\": \"this\", \"predicate\": {{...}}}}; rejected"
-        ));
-    }
-}
-
-/// An item stack names its item in `id` (formerly `item`), and the item
-/// exists.
-fn check_item_stack(stack: &Value, path: &str, problems: &mut Problems) {
-    if has(stack, "item") && !has(stack, "id") {
-        problems.push(format!(
+/// An item stack is an item id or an object that names its item in `id`
+/// (formerly `item`). A transmute result may leave out its id.
+fn check_item_stack(stack: &Value, path: &str, needs_id: bool, problems: &mut Problems) {
+    match stack {
+        Value::String(id) => check_id(id, path, STACK_ITEM, problems),
+        Value::Object(_) if has(stack, "item") && !has(stack, "id") => problems.push(format!(
             "{} is now `id` (\"id\": \"minecraft:diamond\"); rejected",
             at(path, "item")
-        ));
-        return;
-    }
-    if let Some(id) = stack.get("id").and_then(Value::as_str) {
-        check_vanilla_id(id, "item", "an item", &join(path, "id"), problems);
+        )),
+        Value::Object(_) => check_fields(
+            stack,
+            path,
+            &[
+                Field {
+                    required: needs_id,
+                    ..opt!("id", Shape::Id(STACK_ITEM))
+                },
+                opt!("count", Shape::Number),
+                opt!("components", Shape::Object),
+            ],
+            problems,
+        ),
+        _ => wrong(
+            stack,
+            path,
+            "an item id, or an object with the item's `id`",
+            problems,
+        ),
     }
 }
 
@@ -1060,42 +1690,96 @@ fn check_ingredient(ingredient: &Value, path: &str, problems: &mut Problems) {
                     check_ingredient(item, &format!("{path}[{index}]"), problems);
                 }
             }
-            check_items(ingredient, path, problems);
+            check_holder_set(ingredient, path, STACK_ITEM, problems);
         }
-        _ => check_items(ingredient, path, problems),
+        _ => check_holder_set(ingredient, path, STACK_ITEM, problems),
     }
 }
 
-/// The ingredient fields of each recipe type, besides `key` and
-/// `ingredients`.
-fn ingredient_fields(kind: &str) -> &'static [&'static str] {
+/// Minecraft holds one recipe of a type without fields, so a pack can only
+/// replace `minecraft:repair_item`, not add a second one under `id`.
+pub(super) fn check_recipe_id(json: &Value, id: &str, problems: &mut Problems) {
+    if type_name(json) == "crafting_special_repairitem" && id != "minecraft:repair_item" {
+        problems.push(
+            "`type` `minecraft:crafting_special_repairitem` is the recipe `minecraft:repair_item`, which Minecraft holds once; a pack can replace it under that id, but not add a second one; rejected"
+                .to_string(),
+        );
+    }
+}
+
+/// The fields of each recipe type (`cookingtime` has its own messages).
+fn recipe_fields(kind: &str) -> &'static [Field] {
+    const I: Shape = Shape::Ingredient;
+    const RESULT: Field = req!("result", Shape::ItemStack);
+    const POTION_INGREDIENT: Shape = Shape::Fields(&[
+        req!("item", Shape::Ingredient),
+        opt!("potion_contents", Shape::Any),
+    ]);
     match kind {
-        "smelting" | "blasting" | "smoking" | "campfire_cooking" | "stonecutting" => {
-            &["ingredient"]
-        }
-        "smithing_transform" | "smithing_trim" => &["template", "base", "addition"],
-        "crafting_transmute" => &["input", "material"],
-        "crafting_dye" => &["target", "dye"],
-        "crafting_imbue" => &["source", "material"],
-        "crafting_decorated_pot" => &["back", "front", "left", "right"],
-        "crafting_special_bannerduplicate" => &["banner"],
-        "crafting_special_bookcloning" => &["source", "material"],
-        "crafting_special_firework_rocket" => &["shell", "fuel", "star"],
-        "crafting_special_firework_star" => &["fuel", "dye", "trail", "twinkle"],
-        "crafting_special_firework_star_fade" => &["target", "dye"],
-        "crafting_special_mapextending" => &["map", "material"],
-        "crafting_special_shielddecoration" => &["target", "banner"],
-        // The `input` and `reagent` of a brewing recipe are objects that
-        // name a potion and an item.
-        "brewing" => &[],
-        _ => &[
-            "ingredient",
-            "template",
-            "base",
-            "addition",
-            "input",
-            "material",
+        "smelting" | "blasting" | "smoking" | "campfire_cooking" => &[
+            req!("ingredient", I),
+            RESULT,
+            opt!("experience", Shape::Number),
         ],
+        "stonecutting" => &[req!("ingredient", I), RESULT],
+        "crafting_shaped" => &[
+            req!("pattern", Shape::List(&Shape::Text)),
+            req!("key", Shape::Values(&I)),
+            RESULT,
+        ],
+        "crafting_shapeless" => &[req!("ingredients", Shape::List(&I)), RESULT],
+        "crafting_transmute" => &[
+            req!("input", I),
+            req!("material", I),
+            req!("result", Shape::TransmuteResult),
+        ],
+        "crafting_dye" => &[req!("target", I), req!("dye", I), RESULT],
+        "crafting_imbue" => &[req!("source", I), req!("material", I), RESULT],
+        "crafting_decorated_pot" => &[
+            req!("back", I),
+            req!("left", I),
+            req!("right", I),
+            req!("front", I),
+            RESULT,
+        ],
+        "crafting_special_bannerduplicate" => &[req!("banner", I), RESULT],
+        "crafting_special_bookcloning" => &[req!("source", I), req!("material", I), RESULT],
+        "crafting_special_firework_rocket" => {
+            &[req!("shell", I), req!("fuel", I), req!("star", I), RESULT]
+        }
+        "crafting_special_firework_star" => &[
+            req!("shapes", Shape::Values(&I)),
+            req!("trail", I),
+            req!("twinkle", I),
+            req!("fuel", I),
+            req!("dye", I),
+            RESULT,
+        ],
+        "crafting_special_firework_star_fade" => &[req!("target", I), req!("dye", I), RESULT],
+        "crafting_special_mapextending" => &[
+            req!("map", I),
+            req!("material", I),
+            req!("result", Shape::TransmuteResult),
+        ],
+        "crafting_special_shielddecoration" => &[req!("banner", I), req!("target", I), RESULT],
+        "smithing_transform" => &[
+            opt!("template", I),
+            req!("base", I),
+            opt!("addition", I),
+            RESULT,
+        ],
+        "smithing_trim" => &[
+            req!("template", I),
+            req!("base", I),
+            req!("addition", I),
+            req!("pattern", Shape::Id(TRIM_PATTERN)),
+        ],
+        "brewing" => &[
+            req!("input", POTION_INGREDIENT),
+            req!("reagent", POTION_INGREDIENT),
+            req!("output", Shape::ItemStack),
+        ],
+        _ => &[],
     }
 }
 
@@ -1103,66 +1787,23 @@ fn ingredient_fields(kind: &str) -> &'static [&'static str] {
 /// pattern matches its key, the result names an item, and cooking recipes
 /// set a whole `cookingtime`.
 pub(super) fn check_recipe(json: &Value, problems: &mut Problems) {
-    if json.is_object() && !has(json, "type") {
-        problems.push("`type` is missing; rejected".to_string());
-    }
-    check_registry_id(
-        json.get("type"),
+    check_type(json, "", None, RECIPE_TYPES, "a recipe type", problems);
+    let recipe_type = type_name(json);
+    check_fields(json, "", recipe_fields(recipe_type), problems);
+    check_fields(
+        json,
         "",
-        "type",
-        RECIPE_TYPES,
-        "a recipe type",
+        &[
+            opt!("group", Shape::Text),
+            opt!("show_notification", Shape::Bool),
+        ],
         problems,
     );
-    let recipe_type = type_name(json);
-    if let Some(key) = json.get("key").and_then(Value::as_object) {
-        for (symbol, ingredient) in key {
-            check_ingredient(ingredient, &format!("key.{symbol}"), problems);
-        }
-    }
-    if let Some(ingredients) = json.get("ingredients").and_then(Value::as_array) {
-        for (index, ingredient) in ingredients.iter().enumerate() {
-            check_ingredient(ingredient, &format!("ingredients[{index}]"), problems);
-        }
-    }
-    // The older ingredient fields of any type are checked too, so an
-    // `{"item": ...}` object is caught where a type doesn't read it.
-    let older: &[&str] = if recipe_type == "brewing" {
-        &[]
-    } else {
-        &[
-            "ingredient",
-            "template",
-            "base",
-            "addition",
-            "input",
-            "material",
-        ]
-    };
-    for field in ingredient_fields(recipe_type) {
-        if let Some(ingredient) = json.get(*field) {
-            check_ingredient(ingredient, field, problems);
-        }
-    }
-    for field in older {
-        if !ingredient_fields(recipe_type).contains(field) {
-            if let Some(ingredient) = json.get(*field) {
-                check_ingredient(ingredient, field, problems);
-            }
-        }
-    }
-    if recipe_type == "crafting_special_firework_star" {
-        if let Some(shapes) = json.get("shapes").and_then(Value::as_object) {
-            for (shape, ingredient) in shapes {
-                check_ingredient(ingredient, &format!("shapes.{shape}"), problems);
-            }
-        }
-    }
     if recipe_type == "crafting_shaped" {
         check_shaped_pattern(json, problems);
     }
     if recipe_type == "crafting_shapeless" {
-        if let Some(ingredients) = json.get("ingredients").and_then(Value::as_array) {
+        if let Some(ingredients) = present(json, "ingredients").and_then(Value::as_array) {
             if ingredients.is_empty() || ingredients.len() > 9 {
                 problems.push(format!(
                     "`ingredients` has {} ingredients; a shapeless recipe takes 1 to 9; rejected",
@@ -1172,47 +1813,21 @@ pub(super) fn check_recipe(json: &Value, problems: &mut Problems) {
         }
     }
     check_recipe_category(json, recipe_type, problems);
-    // The types whose result is an item stack with an `id`. A transmute
-    // result may leave out its id, and some special recipes have none.
-    let stack_result = matches!(
-        recipe_type,
-        "crafting_shaped"
-            | "crafting_shapeless"
-            | "stonecutting"
-            | "smelting"
-            | "blasting"
-            | "smoking"
-            | "campfire_cooking"
-            | "smithing_transform"
-    );
-    if (stack_result || recipe_type == "crafting_dye") && json.is_object() {
-        require(json, "", &["result"], problems);
-    }
-    if let Some(result) = json.get("result").filter(|result| result.is_object()) {
-        check_item_stack(result, "result", problems);
-        if stack_result && !has(result, "id") && !has(result, "item") {
-            problems.push("`result.id` is missing; rejected".to_string());
-        }
-        if let Some(id) = result.get("id").and_then(Value::as_str) {
-            if vanilla_name(id) == Some("air") {
-                problems.push(format!(
-                    "`result.id` `{id}` is not an item a recipe can make; rejected"
-                ));
-            }
-        }
-        if let Some(count) = result.get("count").and_then(Value::as_f64) {
-            if !(1.0..=99.0).contains(&count) {
-                problems.push(format!(
-                    "`result.count` is {count}; a recipe makes 1 to 99 items; rejected"
-                ));
-            }
+    if let Some(count) = present(json, "result")
+        .and_then(|result| present(result, "count"))
+        .and_then(Value::as_f64)
+    {
+        if !(1.0..=99.0).contains(&count) {
+            problems.push(format!(
+                "`result.count` is {count}; a recipe makes 1 to 99 items; rejected"
+            ));
         }
     }
     if matches!(
         recipe_type,
         "smelting" | "blasting" | "smoking" | "campfire_cooking"
     ) {
-        match json.get("cookingtime") {
+        match present(json, "cookingtime") {
             None => problems.push(format!(
                 "`minecraft:{}` recipes must set `cookingtime` (200 was the smelting default); rejected",
                 recipe_type
@@ -1228,27 +1843,27 @@ pub(super) fn check_recipe(json: &Value, problems: &mut Problems) {
 /// A recipe book `category`: one of the crafting or the cooking categories.
 fn check_recipe_category(json: &Value, recipe_type: &str, problems: &mut Problems) {
     let categories: &[&str] = match recipe_type {
-        "crafting_shaped" | "crafting_shapeless" | "crafting_transmute" => {
-            &["building", "redstone", "equipment", "misc"]
-        }
+        "crafting_shaped" | "crafting_shapeless" | "crafting_transmute" | "crafting_dye"
+        | "crafting_imbue" => &["building", "redstone", "equipment", "misc"],
         "smelting" | "blasting" | "smoking" | "campfire_cooking" => &["food", "blocks", "misc"],
         _ => return,
     };
-    let Some(category) = json.get("category").and_then(Value::as_str) else {
+    let Some(category) = present(json, "category") else {
         return;
     };
-    if !categories.contains(&category) {
-        problems.push(format!(
-            "`category` `{category}` is not a category of this recipe; use {}; rejected",
-            categories
-                .iter()
-                .map(|category| format!("\"{category}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+    let listed = categories
+        .iter()
+        .map(|category| format!("\"{category}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match category.as_str() {
+        Some(name) if categories.contains(&name) => {}
+        Some(name) => problems.push(format!(
+            "`category` `{name}` is not a category of this recipe; use {listed}; rejected"
+        )),
+        None => wrong(category, "category", &format!("one of {listed}"), problems),
     }
 }
-
 /// A shaped recipe's `pattern` is up to 3 rows of up to 3 symbols, all rows
 /// as wide, and its `key` defines every symbol but the space and no other.
 fn check_shaped_pattern(json: &Value, problems: &mut Problems) {
@@ -1270,6 +1885,16 @@ fn check_shaped_pattern(json: &Value, problems: &mut Problems) {
     }
     if rows.iter().any(|row| row.chars().count() != width) {
         problems.push("`pattern` rows must all be as wide; rejected".to_string());
+    }
+    if width > 0
+        && rows
+            .iter()
+            .all(|row| row.chars().all(|symbol| symbol == ' '))
+    {
+        problems.push(
+            "`pattern` is all spaces; a shaped recipe needs at least one ingredient in it; rejected"
+                .to_string(),
+        );
     }
     let Some(key) = json.get("key").and_then(Value::as_object) else {
         return;

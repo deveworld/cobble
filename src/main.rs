@@ -114,6 +114,10 @@ enum Commands {
         /// Include the experimental Python compatibility report
         #[arg(long)]
         experimental_python_compat: bool,
+
+        /// Override the namespace, as `cobble build --namespace` does
+        #[arg(long)]
+        namespace: Option<String>,
     },
 
     /// Format Cobble source files
@@ -313,12 +317,14 @@ fn run() {
             symbols,
             experimental_plugins,
             experimental_python_compat,
+            namespace,
         } => commands::check(CheckOptions {
             input,
             json,
             symbols,
             experimental_plugins,
             experimental_python_compat,
+            namespace,
         }),
         Commands::Fmt { input, check, diff } => {
             commands::format_sources(FmtOptions { input, check, diff })

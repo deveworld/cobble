@@ -19,6 +19,9 @@ pub struct CheckOptions {
     pub symbols: bool,
     pub experimental_plugins: bool,
     pub experimental_python_compat: bool,
+    /// The pack's namespace, as `cobble build --namespace` takes it: the
+    /// project's, or `cobble` outside a project, when `None`.
+    pub namespace: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -231,6 +234,7 @@ pub fn check(options: CheckOptions) -> Result<(), String> {
         config.as_ref(),
         &config_dir,
         experimental_resource_pack,
+        options.namespace.as_deref(),
     );
     let observed = observed_constructs_from_parsed(&parsed_files);
     if !errors.is_empty() {
@@ -497,9 +501,13 @@ fn semantic_check(
     config: Option<&CobbleConfig>,
     config_dir: &Path,
     experimental_resource_pack: bool,
+    namespace: Option<&str>,
 ) -> SemanticCheck {
-    let namespace = config
-        .map(|config| config.project.namespace.clone())
+    // The same namespace `cobble build` uses, so references to the pack's
+    // own resources are checked alike.
+    let namespace = namespace
+        .map(str::to_string)
+        .or_else(|| config.map(|config| config.project.namespace.clone()))
         .unwrap_or_else(|| "cobble".to_string());
     let pack_format = config
         .and_then(|config| PackFormat::parse_format(&config.project.pack_format).ok())

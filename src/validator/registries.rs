@@ -34,6 +34,10 @@ struct Registries {
     data_component: HashSet<String>,
     data_component_predicate: HashSet<String>,
     poi_type: HashSet<String>,
+    potion: HashSet<String>,
+    fluid: HashSet<String>,
+    instrument: HashSet<String>,
+    trim_pattern: HashSet<String>,
     block_tag: HashSet<String>,
     item_tag: HashSet<String>,
     biome_tag: HashSet<String>,
@@ -58,11 +62,14 @@ struct Registries {
 
 /// The names of Minecraft's own entries of `registry`, without the
 /// `minecraft:` namespace: `item`, `block`, `entity_type`, `mob_effect`,
-/// `enchantment`, the tags `block_tag`, `item_tag`, `entity_type_tag`, and
-/// `dialog_tag`, and the data pack resources `loot_table`, `predicate`,
-/// `item_modifier`, `dialog`, `advancement`, and `recipe`. Any other name
-/// has no entries. `None` where the lists aren't built in (the browser
-/// build), so nothing is checked against them.
+/// `enchantment`, `potion`, `fluid`, `instrument`, `trim_pattern`,
+/// `attribute`, `world_clock`, `context_int_provider`,
+/// `context_float_provider`, the tags `block_tag`, `item_tag`,
+/// `entity_type_tag`, `enchantment_tag`, `biome_tag`, and `dialog_tag`, and
+/// the data pack resources `loot_table`, `predicate`, `item_modifier`,
+/// `dialog`, `advancement`, and `recipe`. Any other name has no entries.
+/// `None` where the lists aren't built in (the browser build), so nothing is
+/// checked against them.
 pub(crate) fn vanilla_ids(registry: &str) -> Option<&'static HashSet<String>> {
     static EMPTY: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
     let registries = &*REGISTRIES;
@@ -72,7 +79,18 @@ pub(crate) fn vanilla_ids(registry: &str) -> Option<&'static HashSet<String>> {
         "entity_type" => &registries.entity_type,
         "mob_effect" => &registries.mob_effect,
         "enchantment" => &registries.enchantment,
+        "potion" => &registries.potion,
+        "fluid" => &registries.fluid,
+        "instrument" => &registries.instrument,
+        "trim_pattern" => &registries.trim_pattern,
+        "attribute" => &registries.attribute,
+        "biome" => &registries.biome,
+        "damage_type" => &registries.damage_type,
         "world_clock" => &registries.world_clock,
+        "context_int_provider" => &registries.context_int_provider,
+        "context_float_provider" => &registries.context_float_provider,
+        "enchantment_tag" => &registries.enchantment_tag,
+        "biome_tag" => &registries.biome_tag,
         "block_tag" => &registries.block_tag,
         "item_tag" => &registries.item_tag,
         "entity_type_tag" => &registries.entity_type_tag,
@@ -702,7 +720,10 @@ fn inline_resource_problem(parser_type: &str, token: &str) -> Option<String> {
         Ok(value) => value,
         Err(problem) => return Some(problem),
     };
-    let mut problems = resource_format::Problems::default();
+    let mut problems = resource_format::Problems {
+        nbt: true,
+        ..Default::default()
+    };
     match parser_type {
         "minecraft:loot_predicate" if !value.is_object() => {
             problems.push("an inline predicate must be one compound".to_string())

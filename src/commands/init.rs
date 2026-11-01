@@ -529,6 +529,7 @@ mod tests {
                 symbols: false,
                 experimental_plugins: false,
                 experimental_python_compat: false,
+                namespace: None,
             })
             .unwrap();
 

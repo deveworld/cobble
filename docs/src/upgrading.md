@@ -343,17 +343,19 @@ because a 26.3 server whose packs fail to load refuses to start):
   (`"#minecraft:logs"`).
 - Root advancements with `display` need `display.background`.
 - Cooking recipes need `cookingtime` (it no longer defaults to 200).
+- Entity predicates (26.2): `type` is now `minecraft:entity_type`, and unknown
+  `minecraft:` keys are rejected.
+- Advancement trigger fields were renamed (for example `recipe` to `recipes`):
+  a required field under its old name is reported as missing, and a condition
+  the trigger no longer reads is a warning. Predicate lists are no longer
+  `all_of` shorthand.
+- Number provider objects need an explicit `type`.
 
 Other resource changes Cobble does not check:
 
-- Entity predicates (26.2): `type` is now `minecraft:entity_type`, unknown keys
-  are rejected, and `type_specific` sub-predicates moved to top-level keys such
-  as `minecraft:type_specific/player`.
-- Advancement trigger fields were renamed (for example `recipe` to `recipes`
-  and `block` to `blocks`), and predicate lists are no longer `all_of`
-  shorthand.
-- Number providers need an explicit `type`, and several were renamed (`sum` to
-  `add`, `product` to `mul`).
+- `type_specific` sub-predicates moved to top-level keys such as
+  `minecraft:type_specific/player`.
+- Several number providers were renamed (`sum` to `add`, `product` to `mul`).
 - Block state SNBT: `Name`/`Properties` are now `id`/`properties`.
 
 Raw commands:

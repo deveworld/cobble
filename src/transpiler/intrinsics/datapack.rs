@@ -85,7 +85,7 @@ impl Transpiler {
                 .push((listeners, values));
         }
         self.data_pack
-            .add_json_resource_in_namespace_with_source(
+            .declare_json_resource(
                 namespace,
                 format!("tags/{}/{}", tag_type, name),
                 content,
@@ -177,7 +177,7 @@ impl Transpiler {
             .map_err(|e| format!("Failed to encode resource JSON: {}", e))?;
         let namespace = namespace.unwrap_or_else(|| self.data_pack.namespace.clone());
         self.data_pack
-            .add_json_resource_in_namespace_with_source(
+            .declare_json_resource(
                 namespace,
                 format!("{}/{}", resource_type, name),
                 content,
@@ -212,7 +212,10 @@ impl Transpiler {
             },
             "loot_table" => resource_format::check_loot_table(json, &mut problems),
             "advancement" => resource_format::check_advancement(json, &mut problems),
-            "recipe" => resource_format::check_recipe(json, &mut problems),
+            "recipe" => {
+                resource_format::check_recipe(json, &mut problems);
+                resource_format::check_recipe_id(json, id, &mut problems);
+            }
             "dialog" => resource_format::check_dialog(json, &mut problems),
             _ => {}
         }
@@ -220,6 +223,7 @@ impl Transpiler {
             errors,
             warnings,
             references,
+            ..
         } = problems;
         for warning in warnings {
             self.warn(

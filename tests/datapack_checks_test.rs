@@ -81,7 +81,7 @@ fn loot_tables_need_their_fields() {
         ),
         (
             &pool(r###"{"type": "minecraft:tag", "items": "minecraft:logs", "expand": True}"###),
-            "written with `#`",
+            "`minecraft:logs` is not an item",
         ),
     ]);
     builds(&pool(
@@ -196,7 +196,7 @@ fn predicates_need_their_fields_and_known_ids() {
             "the item tag `#minecraft:nope`",
         ),
     ]);
-    // The server loads a match_block with an unknown block.
+    // The server ignores `block`, which match_block doesn't read.
     builds(
         r###"datapack.predicate("a", {"type": "minecraft:match_block", "block": "minecraft:ston"})"###,
     );
@@ -257,7 +257,7 @@ fn recipes_need_their_fields_and_known_items() {
         ),
         (
             &stonecutting(r###""minecraft:stone""###, r###"{"id": "minecraft:air"}"###),
-            "not an item a recipe can make",
+            "can't be air",
         ),
         (
             r###"datapack.recipe("a", {"type": "minecraft:crafting_shapeless", "category": "weapons", "ingredients": ["minecraft:stone"], "result": {"id": "minecraft:stone_slab"}})"###,
@@ -525,5 +525,802 @@ datapack.function_tag("more", ["sim:setup"])
 def setup():
     /say setup-ran
 "###,
+    );
+}
+
+/// `cobble check --json --namespace sim` of a file holding `declarations`:
+/// the diagnostics, and whether the check passed.
+fn check_json(declarations: &str) -> (Vec<serde_json::Value>, bool) {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file = temp_dir.path().join("main.cbl");
+    std::fs::write(
+        &file,
+        format!("from stdlib import datapack\n\n{declarations}\n"),
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_cobble"))
+        .args(["check", "--json", "--namespace", "sim"])
+        .arg(&file)
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostics = report["diagnostics"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    (diagnostics, output.status.success())
+}
+
+#[test]
+fn references_into_another_packs_namespace_stay_unchecked() {
+    // Regression: the ICY105_Mechanization import names tags of its
+    // dependency packs, in namespaces it also declares something in.
+    builds(
+        r###"datapack.function_tag("xlib:v1/hook", ["sim:a"])
+datapack.function_tag("minecraft:load", ["#xlib:v1/internal/wipe"])
+datapack.predicate("xlib:here", {"type": "minecraft:random_chance", "chance": 0.5})
+datapack.loot_table("a", {"pools": [{"rolls": 1, "condition": "xlib:elsewhere", "entries": [{"type": "minecraft:tag", "items": "#xlib:fuels", "expand": True}]}]})
+datapack.item_tag("xlib:fuels", ["minecraft:coal"])
+datapack.block_tag("b", ["#xlib:ores", "xlib:ore"])
+
+def a():
+    /say hooked
+"###,
+    );
+    // The pack's own namespace is still checked.
+    assert_errors(&[(
+        r###"datapack.function_tag("minecraft:load", ["#sim:v1/wipe"])"###,
+        "names the function tag `#sim:v1/wipe`, which the pack doesn't define",
+    )]);
+    // `cobble check` takes the namespace `cobble build` does.
+    let (diagnostics, ok) =
+        check_json(r###"datapack.function_tag("minecraft:load", ["#sim:nope"])"###);
+    assert!(!ok, "{diagnostics:?}");
+}
+
+#[test]
+fn optional_tag_entries_may_name_the_tag_itself() {
+    builds(
+        r###"datapack.block_tag("a", [{"id": "#sim:a", "required": False}, "minecraft:stone"])
+datapack.item_tag("a", [{"id": "#sim:a", "required": False}, "minecraft:stone"])
+datapack.function_tag("a", [{"id": "#sim:a", "required": False}, "sim:go"])
+datapack.block_tag("c", [{"id": "#sim:d", "required": False}])
+datapack.block_tag("d", ["#sim:c"])
+
+def go():
+    /say ran
+"###,
+    );
+    // A tag entry in the pack's own namespace names a block or an item
+    // that can't exist.
+    assert_errors(&[
+        (
+            r###"datapack.block_tag("a", ["sim:nope"])"###,
+            "The block tag `sim:a` names `sim:nope`, which doesn't exist",
+        ),
+        (
+            r###"datapack.item_tag("a", ["sim:nope"])"###,
+            "a data pack can't add items",
+        ),
+    ]);
+    builds(r###"datapack.item_tag("a", [{"id": "sim:nope", "required": False}])"###);
+}
+
+#[test]
+fn a_tag_entry_names_its_items_like_any_item_list() {
+    builds(&pool(
+        r###"{"type": "minecraft:tag", "items": "minecraft:stone", "expand": True}"###,
+    ));
+    builds(&pool(
+        r###"{"type": "minecraft:tag", "items": ["minecraft:stone", "minecraft:dirt"], "expand": True}"###,
+    ));
+    builds(&pool(
+        r###"{"type": "minecraft:tag", "items": "#minecraft:logs"}"###,
+    ));
+    assert_errors(&[
+        (
+            &pool(r###"{"type": "minecraft:tag", "items": ["#minecraft:logs"], "expand": True}"###),
+            "a list holds ids only",
+        ),
+        (
+            &pool(r###"{"type": "minecraft:tag", "items": "#minecraft:nope", "expand": True}"###),
+            "the item tag `#minecraft:nope`",
+        ),
+    ]);
+}
+
+const FISHING: &str = r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:fishing_rod_hooked", "conditions": {"entity": ENTITY}}}})"###;
+
+#[test]
+fn every_trigger_reads_its_own_entity_conditions() {
+    // Regression: fishing_rod_hooked has an `entity`.
+    assert_errors(&[
+        (
+            &FISHING.replace("ENTITY", "{}"),
+            "`criteria.a.conditions.entity` is now a predicate with a `type`",
+        ),
+        (
+            &FISHING.replace("ENTITY", r###"{"flags": {"is_baby": True}}"###),
+            "is now a predicate with a `type`",
+        ),
+        (
+            &FISHING.replace("ENTITY", "[]"),
+            "`criteria.a.conditions.entity` is now one predicate, not a list",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:bred_animals", "conditions": {"child": {"type": "minecraft:entity_properties"}}}}})"###,
+            "`criteria.a.conditions.child.entity` is missing",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:tick", "conditions": {"player": {"flags": {"is_sneaking": True}}}}}})"###,
+            "`criteria.a.conditions.player` is now a predicate with a `type`",
+        ),
+    ]);
+    // A wrapped predicate there builds without a warning, an `entity` on a
+    // trigger without one is ignored with a warning, and `impossible` reads
+    // no conditions at all.
+    let wrapped = FISHING.replace(
+        "ENTITY",
+        r###"{"type": "minecraft:entity_properties", "entity": "this", "predicate": {"flags": {"is_baby": True}}}"###,
+    );
+    let (diagnostics, ok) = check_json(&wrapped);
+    assert!(ok && diagnostics.is_empty(), "{diagnostics:?}");
+    let (diagnostics, ok) = check_json(
+        r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:impossible", "conditions": {"player": {}}}, "b": {"trigger": "minecraft:tick", "conditions": {"entity": {}}}}})"###,
+    );
+    assert!(ok, "{diagnostics:?}");
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["message"].as_str().unwrap())
+        .collect();
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(
+        messages[0].contains(
+            "`criteria.a.conditions.player` is ignored: `minecraft:impossible` has no `player` condition"
+        ),
+        "{messages:?}"
+    );
+    assert!(
+        messages[1].contains("`criteria.b.conditions.entity` is ignored"),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn none_in_a_required_field_is_missing() {
+    let display = r###"{"icon": {"id": "minecraft:stone"}, "title": "t", "description": "d"}"###;
+    assert_errors(&[
+        (
+            &format!(
+                r###"datapack.loot_table("a", {{"pools": [{{"rolls": None, "entries": [{STONE}]}}]}})"###
+            ),
+            "`pools[0].rolls` is missing",
+        ),
+        (
+            r###"datapack.loot_table("a", {"pools": [{"rolls": 1, "entries": None}]})"###,
+            "`pools[0].entries` is missing",
+        ),
+        (
+            &pool(r###"{"type": "minecraft:item", "name": None}"###),
+            "`pools[0].entries[0].name` is missing",
+        ),
+        (
+            &pool(r###"{"type": "minecraft:tag", "items": None}"###),
+            "`pools[0].entries[0].items` is missing",
+        ),
+        (
+            &pool(r###"{"type": "minecraft:loot_table", "value": None}"###),
+            "`pools[0].entries[0].value` is missing",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:random_chance", "chance": None})"###,
+            "`chance` is missing",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:all_of", "terms": None})"###,
+            "`terms` is missing",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:time_check", "clock": None, "value": 0})"###,
+            "`clock` is missing",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_count", "count": None})"###,
+            "`count` is missing",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_lore", "lore": [], "mode": None})"###,
+            "`mode` is missing",
+        ),
+        (
+            &stonecutting(r###""minecraft:stone""###, "None"),
+            "`result` is missing",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:crafting_shaped", "pattern": None, "key": {"#": "minecraft:stone"}, "result": {"id": "minecraft:stone"}})"###,
+            "`pattern` is missing",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": None})"###,
+            "`criteria` is missing",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": None}}})"###,
+            "`criteria.a.trigger` is missing",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"parent": "minecraft:story/root", "criteria": {IMPOSSIBLE}, "display": {{"icon": {{"id": "minecraft:stone"}}, "title": None, "description": "d"}}}})"###
+            ),
+            "`display.title` is missing",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"parent": "minecraft:story/root", "criteria": {IMPOSSIBLE}, "display": {{"icon": None, "title": "t", "description": "d"}}}})"###
+            ),
+            "`display.icon` is missing",
+        ),
+        // A root with a display needs a background, and `None` is none.
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"criteria": {IMPOSSIBLE}, "display": {{"icon": {{"id": "minecraft:stone"}}, "title": "t", "description": "d", "background": None}}}})"###
+            ),
+            "must set `display.background`",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"parent": None, "criteria": {IMPOSSIBLE}, "display": {display}}})"###
+            ),
+            "must set `display.background`",
+        ),
+    ]);
+    // `None` in a field that may be left out is the field left out.
+    builds(&format!(
+        r###"datapack.advancement("a", {{"parent": "minecraft:story/root", "criteria": {IMPOSSIBLE}, "display": {display}, "rewards": None}})"###
+    ));
+}
+
+#[test]
+fn fields_hold_the_kind_of_value_minecraft_reads() {
+    assert_errors(&[
+        (
+            &format!(
+                r###"datapack.loot_table("a", {{"pools": [{{"rolls": "x", "entries": [{STONE}]}}]}})"###
+            ),
+            "`pools[0].rolls` `x` is not a number provider",
+        ),
+        (
+            &format!(
+                r###"datapack.loot_table("a", {{"pools": [{{"rolls": [1], "entries": [{STONE}]}}]}})"###
+            ),
+            "`pools[0].rolls` is a list, but it must be a number",
+        ),
+        (
+            &format!(
+                r###"datapack.loot_table("a", {{"pools": [{{"rolls": {{"min": 1, "max": 2}}, "entries": [{STONE}]}}]}})"###
+            ),
+            "`pools[0].rolls` is a number provider without a `type`",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:random_chance", "chance": {"min": 0, "max": 1}})"###,
+            "`chance` is a number provider without a `type`",
+        ),
+        (
+            &format!(
+                r###"datapack.loot_table("a", {{"pools": [{{"rolls": 1, "condition": 5, "entries": [{STONE}]}}]}})"###
+            ),
+            "`pools[0].condition` is the number 5, but it must be one predicate",
+        ),
+        (
+            r###"datapack.loot_table("a", {"pools": [{"rolls": 1, "entries": {}}]})"###,
+            "`pools[0].entries` is an object, but it must be a list",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:all_of", "terms": [[{"type": "minecraft:random_chance", "chance": 0.5}]]})"###,
+            "`terms[0]` is one predicate, not a list",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:any_of", "terms": [[]]})"###,
+            "`terms[0]` is one predicate, not a list",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:placed_block", "conditions": {"location": [{"type": "minecraft:random_chance", "chance": 0.5}]}}}})"###,
+            "`criteria.a.conditions.location` is one predicate, not a list",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:placed_block", "conditions": {"location": []}}}})"###,
+            "`criteria.a.conditions.location` is one predicate, not a list",
+        ),
+        (
+            &pool(r###"{"type": "minecraft:item", "name": "minecraft:stone", "weight": "2"}"###),
+            "`pools[0].entries[0].weight` is the text \"2\", but it must be a number",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:weather_check", "raining": 1})"###,
+            "`raining` is the number 1, but it must be True or False",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:entity_scores", "entity": "this", "scores": []})"###,
+            "`scores` is a list, but it must be an object",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:table_bonus", "enchantment": "minecraft:fortune", "chances": []})"###,
+            "`chances` is an empty list",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_name", "name": 5})"###,
+            "`name` is the number 5, but it must be a text component",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:crafting_shaped", "pattern": "#", "key": {"#": "minecraft:stone"}, "result": {"id": "minecraft:stone"}})"###,
+            "`pattern` is the text \"#\", but it must be a list",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:crafting_shapeless", "category": 1, "ingredients": ["minecraft:stone"], "result": {"id": "minecraft:stone"}})"###,
+            "`category` is the number 1, but it must be one of",
+        ),
+        (
+            &stonecutting(
+                r###""minecraft:stone""###,
+                r###"{"id": "minecraft:stone_slab", "count": "2"}"###,
+            ),
+            "`result.count` is the text \"2\", but it must be a number",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": 5}}})"###,
+            "`criteria.a.trigger` is the number 5, but it must be the id of an advancement trigger",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": []})"###,
+            "`criteria` is a list, but it must be an object of criteria",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": []}})"###,
+            "`criteria.a` is a list, but it must be a criterion object",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"criteria": {IMPOSSIBLE}, "requirements": "a"}})"###
+            ),
+            "`requirements` is the text \"a\", but it must be a list of lists",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"parent": "minecraft:story/root", "criteria": {IMPOSSIBLE}, "display": {{"icon": {{"id": "minecraft:stone"}}, "title": "t", "description": "d", "frame": 1}}}})"###
+            ),
+            "`display.frame` is the number 1, but it must be text",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"parent": "minecraft:story/root", "criteria": {IMPOSSIBLE}, "display": {{"icon": {{"count": 1}}, "title": "t", "description": "d"}}}})"###
+            ),
+            "`display.icon.id` is missing",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"parent": "minecraft:story/root", "criteria": {IMPOSSIBLE}, "display": {{"icon": {{"id": "minecraft:stone"}}, "title": 5, "description": "d"}}}})"###
+            ),
+            "`display.title` is the number 5, but it must be a text component",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:brewing", "input": {"item": "minecraft:potion"}, "reagent": "minecraft:gunpowder", "output": {"id": "minecraft:splash_potion"}})"###,
+            "`reagent` is the text \"minecraft:gunpowder\", but it must be an object",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:brewing", "input": {"tag": "minecraft:logs"}, "reagent": {"item": "minecraft:gunpowder"}, "output": {"id": "minecraft:splash_potion"}})"###,
+            "`input.item` is missing",
+        ),
+    ]);
+    // The forms Minecraft takes.
+    builds(&format!(
+        r###"datapack.loot_table("a", {{"pools": [{{"rolls": {{"type": "minecraft:uniform", "min": 1, "max": 2}}, "bonus_rolls": 0.5, "entries": [{STONE}]}}, {{"rolls": "minecraft:compostable/low", "entries": []}}]}})
+datapack.predicate("b", {{"type": "minecraft:random_chance", "chance": {{"type": "minecraft:uniform", "min": 0, "max": 1}}}})
+datapack.recipe("c", {{"type": "minecraft:stonecutting", "ingredient": "minecraft:stone", "result": "minecraft:stone_slab"}})
+datapack.recipe("d", {{"type": "minecraft:brewing", "input": {{"item": "#minecraft:logs"}}, "reagent": {{"item": "minecraft:gunpowder"}}, "output": "minecraft:splash_potion"}})
+datapack.recipe("e", {{"type": "minecraft:smithing_transform", "base": "minecraft:diamond_sword", "result": {{"id": "minecraft:netherite_sword"}}}})
+datapack.advancement("f", {{"parent": "minecraft:story/root", "criteria": {IMPOSSIBLE}, "display": {{"icon": "minecraft:stone", "title": ["t"], "description": {{"text": "d"}}}}}})"###
+    ));
+}
+
+#[test]
+fn types_need_the_fields_minecraft_reads() {
+    for (kind, missing) in [
+        ("copy_components", "source"),
+        ("copy_custom_data", "source"),
+        ("copy_state", "block"),
+        ("enchanted_count_increase", "enchantment"),
+        ("exploration_map", "destination"),
+        ("fill_player_head", "entity"),
+        ("filtered", "item_filter"),
+        ("modify_contents", "component"),
+        ("set_attributes", "modifiers"),
+        ("set_banner_pattern", "patterns"),
+        ("set_contents", "component"),
+        ("set_instrument", "options"),
+        ("set_loot_table", "loot_table_id"),
+        ("set_ominous_bottle_amplifier", "amplifier"),
+        ("set_random_dyes", "number_of_dyes"),
+        ("set_writable_book_pages", "pages"),
+        ("set_written_book_pages", "pages"),
+    ] {
+        let error = error(&format!(
+            r###"datapack.item_modifier("a", {{"type": "minecraft:{kind}"}})"###
+        ));
+        assert!(
+            error.contains(&format!("`{missing}` is missing")),
+            "{kind}: {error}"
+        );
+    }
+    for (kind, missing) in [
+        ("float_value_check", "value"),
+        ("environment_attribute_check", "attribute"),
+        ("random_chance_with_enchanted_bonus", "enchantment"),
+        ("entity_scores", "scores"),
+    ] {
+        let error = error(&format!(
+            r###"datapack.predicate("a", {{"type": "minecraft:{kind}"}})"###
+        ));
+        assert!(
+            error.contains(&format!("`{missing}` is missing")),
+            "{kind}: {error}"
+        );
+    }
+    for (kind, missing) in [
+        ("stonecutting", "ingredient"),
+        ("smelting", "ingredient"),
+        ("crafting_shapeless", "ingredients"),
+        ("smithing_transform", "base"),
+        ("crafting_dye", "target"),
+        ("crafting_shaped", "pattern"),
+        ("crafting_shaped", "key"),
+        ("crafting_special_bannerduplicate", "result"),
+        ("smithing_trim", "pattern"),
+    ] {
+        let error = error(&format!(
+            r###"datapack.recipe("a", {{"type": "minecraft:{kind}"}})"###
+        ));
+        assert!(
+            error.contains(&format!("`{missing}` is missing")),
+            "{kind}: {error}"
+        );
+    }
+    assert_errors(&[
+        (
+            &pool(r###"{"type": "minecraft:dynamic"}"###),
+            "`pools[0].entries[0].name` is missing",
+        ),
+        (
+            &pool(r###"{"type": "minecraft:slots"}"###),
+            "`pools[0].entries[0].slot_source` is missing",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:modify_contents", "component": "minecraft:container", "modifier": {"function": "minecraft:set_count", "count": 1}})"###,
+            "`modifier.function` is now `type`",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:placed_block", "conditions": {"location": {"type": "minecraft:random_chance"}}}}})"###,
+            "`criteria.a.conditions.location.chance` is missing",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:placed_block", "conditions": {"location": {"type": "minecraft:all_of"}}}}})"###,
+            "`criteria.a.conditions.location.terms` is missing",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:item_used_on_block", "conditions": {"location": {"type": "minecraft:time_check", "value": 0}}}}})"###,
+            "`criteria.a.conditions.location.clock` is missing",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:recipe_unlocked", "conditions": {"recipe": "minecraft:stone"}}}})"###,
+            "`criteria.a.conditions.recipes` is missing",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:entity_properties", "entity": "this", "predicate": {"type": "minecraft:zombie"}})"###,
+            "`predicate.type` is not a part of an entity predicate",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:crafting_shaped", "pattern": ["   "], "key": {}, "result": {"id": "minecraft:stone"}})"###,
+            "`pattern` is all spaces",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:crafting_shaped", "pattern": [" "], "key": {}, "result": {"id": "minecraft:stone"}})"###,
+            "`pattern` is all spaces",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:crafting_dye", "category": "weapons", "target": "minecraft:white_wool", "dye": "minecraft:red_dye", "result": {"id": "minecraft:red_wool"}})"###,
+            "`category` `weapons` is not a category of this recipe",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:crafting_imbue", "category": "weapons", "source": "minecraft:arrow", "material": "minecraft:lingering_potion", "result": {"id": "minecraft:tipped_arrow"}})"###,
+            "`category` `weapons` is not a category of this recipe",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:crafting_special_repairitem"})"###,
+            "Minecraft holds once",
+        ),
+    ]);
+    // Minecraft's own repair recipe can be replaced, a category another
+    // type doesn't read is ignored, and a blank row beside a real one is
+    // fine.
+    builds(
+        r###"datapack.recipe("minecraft:repair_item", {"type": "minecraft:crafting_special_repairitem"})
+datapack.recipe("a", {"type": "minecraft:stonecutting", "category": "weapons", "ingredient": "minecraft:stone", "result": {"id": "minecraft:stone_slab"}})
+datapack.recipe("b", {"type": "minecraft:crafting_dye", "category": "equipment", "target": "minecraft:white_wool", "dye": "minecraft:red_dye", "result": {"id": "minecraft:red_wool"}})
+datapack.recipe("c", {"type": "minecraft:crafting_shaped", "pattern": ["#", " "], "key": {"#": "minecraft:stone"}, "result": {"id": "minecraft:stone"}})
+datapack.predicate("d", {"type": "minecraft:entity_properties", "entity": "this", "predicate": {"flags": {"is_sneaking": True}}})
+datapack.item_modifier("e", {"type": "minecraft:set_enchantments"})"###,
+    );
+}
+
+#[test]
+fn ids_are_looked_up_in_every_nested_field() {
+    assert_errors(&[
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_item", "item": "minecraft:diamon"})"###,
+            "`item` `minecraft:diamon` is not an item",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:match_block", "blocks": "minecraft:ston"})"###,
+            "`blocks` `minecraft:ston` is not a block",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:match_block", "blocks": "#minecraft:nope"})"###,
+            "the block tag `#minecraft:nope`",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:entity_properties", "entity": "this", "predicate": {"location": {"block": {"blocks": "minecraft:ston"}}}})"###,
+            "`predicate.location.block.blocks` `minecraft:ston` is not a block",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:entity_properties", "entity": "this", "predicate": {"equipment": {"mainhand": {"items": "minecraft:diamon"}}}})"###,
+            "`predicate.equipment.mainhand.items` `minecraft:diamon` is not an item",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:entity_properties", "entity": "this", "predicate": {"vehicle": {"minecraft:entity_type": "minecraft:zombi"}}})"###,
+            "`minecraft:zombi` is not an entity type",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:location_check", "predicate": {"fluid": {"fluids": "minecraft:wate"}}})"###,
+            "`predicate.fluid.fluids` `minecraft:wate` is not a fluid",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:location_check", "predicate": {"biomes": "minecraft:nope"}})"###,
+            "`minecraft:nope` is not a biome",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:location_check", "predicate": {"biomes": "#minecraft:nope"}})"###,
+            "names the tag `#minecraft:nope`, which Minecraft doesn't define",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:time_check", "clock": "minecraft:nope", "value": 0})"###,
+            "`clock` `minecraft:nope` is not a world clock",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:damage_source_properties", "predicate": {"tags": [{"id": "minecraft:nope", "expected": True}]}})"###,
+            "`minecraft:nope` is not a damage type",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:brewing", "input": {"item": "minecraft:potio"}, "reagent": {"item": "minecraft:gunpowder"}, "output": {"id": "minecraft:splash_potion"}})"###,
+            "`input.item` `minecraft:potio` is not an item",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:brewing", "input": {"item": "minecraft:potion"}, "reagent": {"item": "minecraft:gunpowder"}, "output": {"id": "minecraft:splash_potio"}})"###,
+            "`output.id` `minecraft:splash_potio` is not an item",
+        ),
+        (
+            r###"datapack.recipe("a", {"type": "minecraft:smithing_trim", "template": "minecraft:stone", "base": "minecraft:stone", "addition": "minecraft:stone", "pattern": "minecraft:nope"})"###,
+            "`pattern` `minecraft:nope` is not a trim pattern",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:enchant_with_levels", "levels": 1, "options": "minecraft:sharpnes"})"###,
+            "`options` `minecraft:sharpnes` is not an enchantment",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_enchantments", "enchantments": {"minecraft:sharpnes": 1}})"###,
+            "`minecraft:sharpnes` is not an enchantment",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_potion", "id": "minecraft:nope"})"###,
+            "`id` `minecraft:nope` is not a potion",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_instrument", "options": "minecraft:nope"})"###,
+            "`options` `minecraft:nope` is not an instrument",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_stew_effect", "effects": [{"type": "minecraft:sped", "duration": 1}]})"###,
+            "`effects[0].type` `minecraft:sped` is not an effect",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_attributes", "modifiers": [{"id": "a:b", "attribute": "minecraft:nope", "operation": "add_value", "amount": 1, "slot": "any"}]})"###,
+            "`modifiers[0].attribute` `minecraft:nope` is not an attribute",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:copy_state", "block": "minecraft:ston", "properties": []})"###,
+            "`block` `minecraft:ston` is not a block",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_count", "count": "nope"})"###,
+            "`count` `nope` is not a number provider",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:inventory_changed", "conditions": {"items": [{"items": "minecraft:diamon"}]}}}})"###,
+            "`criteria.a.conditions.items[0].items` `minecraft:diamon` is not an item",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:inventory_changed", "conditions": {"items": [{"items": ["#minecraft:logs"]}]}}}})"###,
+            "a list holds ids only",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:inventory_changed", "conditions": {"items": [{"items": "#minecraft:nope"}]}}}})"###,
+            "the item tag `#minecraft:nope`",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:enter_block", "conditions": {"blocks": "minecraft:ston"}}}})"###,
+            "`minecraft:ston` is not a block",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:effects_changed", "conditions": {"effects": {"minecraft:sped": {}}}}}})"###,
+            "`minecraft:sped` is not an effect",
+        ),
+    ]);
+    // Instrument tags and a match_block's block state pass.
+    builds(
+        r###"datapack.item_modifier("a", {"type": "minecraft:set_instrument", "options": "#minecraft:goat_horns"})
+datapack.predicate("b", {"type": "minecraft:match_block", "blocks": "minecraft:stone", "state": {"nope": "x"}})"###,
+    );
+}
+
+#[test]
+fn air_is_no_item_stack_or_ingredient() {
+    for declaration in [
+        stonecutting(r###""minecraft:stone""###, r###""air""###),
+        stonecutting(r###""minecraft:stone""###, r###""minecraft:air""###),
+        stonecutting(r###""minecraft:air""###, SLAB),
+        stonecutting(r###"["minecraft:stone", "minecraft:air"]"###, SLAB),
+        r###"datapack.recipe("a", {"type": "minecraft:crafting_shaped", "pattern": ["#"], "key": {"#": "minecraft:air"}, "result": {"id": "minecraft:stone"}})"###.to_string(),
+        r###"datapack.recipe("a", {"type": "minecraft:crafting_shapeless", "ingredients": ["minecraft:air"], "result": {"id": "minecraft:stone"}})"###.to_string(),
+        format!(
+            r###"datapack.advancement("a", {{"parent": "minecraft:story/root", "criteria": {IMPOSSIBLE}, "display": {{"icon": {{"id": "minecraft:air"}}, "title": "t", "description": "d"}}}})"###
+        ),
+        r###"datapack.recipe("a", {"type": "minecraft:brewing", "input": {"item": "minecraft:potion"}, "reagent": {"item": "minecraft:gunpowder"}, "output": {"id": "minecraft:air"}})"###.to_string(),
+        r###"datapack.item_modifier("a", {"type": "minecraft:set_item", "item": "minecraft:air"})"###.to_string(),
+    ] {
+        let error = error(&declaration);
+        assert!(error.contains("can't be air"), "{declaration}: {error}");
+    }
+}
+
+#[test]
+fn references_are_found_in_every_form_minecraft_reads() {
+    assert_errors(&[
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:recipe_unlocked", "conditions": {"recipes": "sim:nope"}}}})"###,
+            "the recipe `sim:nope` at `criteria.a.conditions.recipes`",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:recipe_crafted", "conditions": {"recipes": ["sim:nope"]}}}})"###,
+            "the recipe `sim:nope` at `criteria.a.conditions.recipes[0]`",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:crafter_recipe_crafted", "conditions": {"recipes": "sim:nope"}}}})"###,
+            "the recipe `sim:nope`",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:player_generates_container_loot", "conditions": {"loot_tables": "sim:nope"}}}})"###,
+            "the loot table `sim:nope` at `criteria.a.conditions.loot_tables`",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:player_generates_container_loot", "conditions": {"loot_tables": ["sim:nope"]}}}})"###,
+            "the loot table `sim:nope`",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"criteria": {IMPOSSIBLE}, "rewards": {{"loot": "sim:nope"}}}})"###
+            ),
+            "the loot table `sim:nope` at `rewards.loot`",
+        ),
+        (
+            &pool(
+                r###"{"type": "minecraft:item", "name": "minecraft:stone", "modifier": ["sim:nope"]}"###,
+            ),
+            "the item modifier `sim:nope` at `pools[0].entries[0].modifier[0]`",
+        ),
+        (
+            r###"datapack.loot_table("a", {"pools": [], "modifier": "sim:nope"})"###,
+            "the item modifier `sim:nope` at `modifier`",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:all_of", "terms": ["sim:nope"]})"###,
+            "the predicate `sim:nope` at `terms[0]`",
+        ),
+        (
+            r###"datapack.predicate("a", {"type": "minecraft:inverted", "term": "sim:nope"})"###,
+            "the predicate `sim:nope` at `term`",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:sequence", "functions": ["sim:nope"]})"###,
+            "the item modifier `sim:nope` at `functions[0]`",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:filtered", "item_filter": {}, "on_pass": "sim:nope"})"###,
+            "the item modifier `sim:nope` at `on_pass`",
+        ),
+        (
+            r###"datapack.item_modifier("a", {"type": "minecraft:set_loot_table", "loot_table_id": "sim:nope"})"###,
+            "the loot table `sim:nope` at `loot_table_id`",
+        ),
+        (
+            r###"datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:tick", "conditions": {"player": "sim:nope"}}}})"###,
+            "the predicate `sim:nope` at `criteria.a.conditions.player`",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"parent": "sim:a", "criteria": {IMPOSSIBLE}}})"###
+            ),
+            "The advancement `sim:a` is its own parent (sim:a -> sim:a)",
+        ),
+        (
+            &format!(
+                r###"datapack.advancement("a", {{"parent": "sim:b", "criteria": {IMPOSSIBLE}}})
+datapack.advancement("b", {{"parent": "sim:c", "criteria": {IMPOSSIBLE}}})
+datapack.advancement("c", {{"parent": "sim:a", "criteria": {IMPOSSIBLE}}})"###
+            ),
+            "(sim:a -> sim:b -> sim:c -> sim:a)",
+        ),
+    ]);
+    builds(
+        r###"datapack.predicate("p", {"type": "minecraft:random_chance", "chance": 0.5})
+datapack.item_modifier("m", {"type": "minecraft:set_count", "count": 1})
+datapack.loot_table("t", {"pools": [], "modifier": ["sim:m"]})
+datapack.recipe("r", {"type": "minecraft:stonecutting", "ingredient": "minecraft:stone", "result": {"id": "minecraft:stone_slab"}})
+datapack.predicate("q", {"type": "minecraft:all_of", "terms": "sim:p"})
+datapack.item_modifier("n", {"type": "minecraft:sequence", "functions": {"type": "minecraft:set_count", "count": 1}})
+datapack.advancement("a", {"criteria": {"a": {"trigger": "minecraft:recipe_unlocked", "conditions": {"recipes": "sim:r", "player": "sim:p"}}}, "rewards": {"loot": "sim:t", "recipes": ["sim:not_checked"]}})"###,
+    );
+}
+
+#[test]
+fn many_tag_declarations_build_in_linear_time() {
+    // Each merge used to parse and write the whole tag again, and each
+    // reference check listed every resource: 20,000 declarations took
+    // minutes in a release build.
+    let count = 10_000;
+    let mut merged = String::new();
+    let mut distinct = String::new();
+    let mut items = String::new();
+    for i in 0..count {
+        merged.push_str(&format!(
+            "datapack.function_tag(\"t\", [\"sim:f\", \"sim:f{i}\"])\n"
+        ));
+        distinct.push_str(&format!("datapack.function_tag(\"t{i}\", [\"sim:f\"])\n"));
+        items.push_str(&format!(
+            "datapack.item_tag(\"t\", [{{\"id\": \"sim:i{i}\", \"required\": False}}])\n"
+        ));
+    }
+    let defs: String = (0..count)
+        .map(|i| format!("def f{i}():\n    /say {i}\n"))
+        .collect();
+    for declarations in [
+        format!("{merged}{defs}def f():\n    /say f\n"),
+        format!("{distinct}def f():\n    /say f\n"),
+        items,
+    ] {
+        let start = std::time::Instant::now();
+        builds(&declarations);
+        let seconds = start.elapsed().as_secs_f64();
+        assert!(seconds < 40.0, "took {seconds:.1} s");
+    }
+    // Merged function tags keep their order and drop repeats.
+    let (_temp, output) = compile(
+        "from stdlib import datapack\ndatapack.function_tag(\"t\", [\"sim:g\", \"sim:f\"])\ndatapack.function_tag(\"t\", [\"sim:f\", \"sim:h\"])\ndef f():\n    /say f\ndef g():\n    /say g\ndef h():\n    /say h\n",
+    )
+    .unwrap();
+    let tag: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output.join("data/sim/tags/function/t.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        tag["values"],
+        serde_json::json!(["sim:g", "sim:f", "sim:h"])
     );
 }
