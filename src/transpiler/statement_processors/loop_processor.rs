@@ -721,15 +721,19 @@ impl Transpiler {
         // The loop counts in the target itself, which ends one step past
         // the last value. When the target is read after the loop, it counts
         // in a hidden score instead and the target is set from it at the
-        // start of each pass, so it keeps the last value, as in Python.
+        // start of each pass, so it keeps the last value, as in Python. So
+        // it does when the body assigns the target, as Python sets it again
+        // at the start of the next pass.
         let keep_target = self.runtime_loop_target_read_after(&for_loop.target);
-        let counter = if keep_target {
+        let hidden_counter =
+            keep_target || function_context::assigns_name(&for_loop.body, &for_loop.target);
+        let counter = if hidden_counter {
             format!("#for_range_value_{}", self.next_temp_id())
         } else {
             for_loop.target.clone()
         };
         let counter_snapshot =
-            keep_target.then(|| (counter.clone(), self.save_variable_binding(&counter)));
+            hidden_counter.then(|| (counter.clone(), self.save_variable_binding(&counter)));
 
         let target_snapshot = self.save_variable_binding(&for_loop.target);
         let stop_snapshot = self.save_variable_binding(&stop_var);
@@ -785,7 +789,7 @@ impl Transpiler {
                         &step_var,
                     )?,
                 }));
-                let binding_commands = if keep_target {
+                let binding_commands = if hidden_counter {
                     vec![format!(
                         "scoreboard players operation {} temp = {} temp",
                         for_loop.target, counter
@@ -2367,13 +2371,6 @@ fn validate_runtime_loop_statement_target(
     target: &str,
 ) -> Result<(), TranspileError> {
     match statement {
-        Statement::Assignment(assign) if assign.target == target => Err(TranspileError::new(
-            TranspileErrorKind::RuntimeForUnsupported,
-            format!(
-                "runtime-for-unsupported: cannot assign to dynamic loop target '{}'.",
-                target
-            ),
-        )),
         Statement::ConstAssignment(assign) if assign.target == target => Err(TranspileError::new(
             TranspileErrorKind::RuntimeForUnsupported,
             format!(

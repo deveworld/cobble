@@ -394,3 +394,34 @@ fn a_store_block_stores_the_last_call_not_its_cleanup() {
         assert_eq!(sim.var("x"), expected, "{body}");
     }
 }
+
+// --- The body of a runtime loop may assign its variable (bug 51) ---
+
+#[test]
+fn a_runtime_loop_body_may_assign_its_variable() {
+    // Expected values come from Python 3.
+    assert_eq!(
+        said("def main():\n    n = 3\n    for i in range(n):\n        i = i * 10\n        /say {i}\n    /say after {i}\n"),
+        vec!["0", "10", "20", "after 20"]
+    );
+    assert_eq!(
+        said("def main():\n    n = 3\n    for i in range(n, 0, -1):\n        i = i * 2\n        /say {i}\n"),
+        vec!["6", "4", "2"]
+    );
+    assert_eq!(
+        said("def main():\n    items = [1, 2]\n    for i in items:\n        i = i * 10\n        /say {i}\n"),
+        vec!["10", "20"]
+    );
+    assert_eq!(
+        said("def main():\n    x = \"b\"\n    for s in [\"a\", x]:\n        s = s + \"!\"\n        /say {s}\n"),
+        vec!["a!", "b!"]
+    );
+    assert_eq!(
+        said("def main():\n    v = 1\n    for v in [v, v + 1]:\n        v = v * 2\n        /say {v}\n    /say after {v}\n"),
+        vec!["2", "4", "after 4"]
+    );
+    assert_eq!(
+        said("def main():\n    items = [1, 2]\n    for k, x in enumerate(items):\n        x = x * 10\n        /say {k} {x}\n"),
+        vec!["0 10", "1 20"]
+    );
+}
