@@ -1,10 +1,12 @@
 use crate::ast::{Assignment, CobbleType, Expression, FunctionDef, Program, Statement};
 use crate::transpiler::function_context::{
-    expression_reads, global_literal_assignments, read_names, FunctionContext,
+    expression_reads, first_assigned_value, global_assignments, global_literal_assignments,
+    read_names, FunctionContext,
 };
 use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{
-    GeneratedCommand, GeneratedCommandKind, SourceLocation, TranspileError, Transpiler,
+    FunctionCapture, GeneratedCommand, GeneratedCommandKind, SourceLocation, TranspileError,
+    Transpiler,
 };
 use std::collections::HashMap;
 
@@ -21,6 +23,39 @@ pub(in crate::transpiler) enum ModuleLevelAssignment {
         value: Expression,
         source: Option<SourceLocation>,
     },
+    /// Module-level code that runs commands, such as a loop over a list or
+    /// a call, lowered where it stands in the file.
+    Code(FunctionCapture),
+}
+
+/// `expr` with each local of `function` replaced by the value the function
+/// first assigns it, `depth` levels deep, so its type can be told before
+/// the function is lowered. Parameters and names the function declares
+/// `global` stay.
+fn substitute_locals(expr: &Expression, function: &FunctionDef, depth: usize) -> Expression {
+    let again = |expr: &Expression| Box::new(substitute_locals(expr, function, depth));
+    match expr {
+        Expression::Identifier(name)
+            if depth > 0
+                && !function.params.iter().any(|param| &param.name == name)
+                && !global_assignments(function)
+                    .iter()
+                    .any(|(global, _)| global == name) =>
+        {
+            match first_assigned_value(&function.body, name) {
+                Some(value) => substitute_locals(value, function, depth - 1),
+                None => expr.clone(),
+            }
+        }
+        Expression::Binary(left, op, right) => {
+            Expression::Binary(again(left), op.clone(), again(right))
+        }
+        Expression::Unary(op, inner) => Expression::Unary(op.clone(), again(inner)),
+        Expression::Conditional(condition, value, otherwise) => {
+            Expression::Conditional(again(condition), again(value), again(otherwise))
+        }
+        other => other.clone(),
+    }
 }
 
 impl Transpiler {
@@ -30,6 +65,34 @@ impl Transpiler {
     /// below it. Each name is recorded the way its first module-level
     /// assignment records it.
     pub(in crate::transpiler) fn register_module_declarations(&mut self, program: &Program) {
+        // A `const` has its value before any function body is lowered, so
+        // a function above it reads it. Module-level code still can't read
+        // it before its line.
+        for statement in &program.statements {
+            let Statement::ConstAssignment(constant) = statement else {
+                continue;
+            };
+            let name = &constant.target;
+            self.module_consts.insert(name.clone());
+            if self.is_declared_name(name) {
+                continue;
+            }
+            let Ok(value) = self.evaluate_const_expr(&constant.value) else {
+                continue;
+            };
+            self.symbols
+                .pending_module_declarations
+                .insert(name.clone());
+            self.symbols
+                .variable_types
+                .insert(name.clone(), self.infer_type(&constant.value));
+            self.symbols
+                .compile_time_constants
+                .insert(name.clone(), value);
+            self.symbols
+                .variables
+                .insert(name.clone(), Expression::Number(value));
+        }
         for statement in &program.statements {
             let assignments: Vec<Assignment> = match statement {
                 Statement::Assignment(assign) if assign.assigns_name() => vec![assign.clone()],
@@ -51,15 +114,18 @@ impl Transpiler {
                 Statement::For(for_loop)
                     if self.module_loop_variables.contains(&for_loop.target) =>
                 {
-                    self.expanded_loop_last_value(for_loop)
-                        .map(|value| Assignment {
+                    match self.expanded_loop_last_value(for_loop) {
+                        Some(value) => vec![Assignment {
                             target: for_loop.target.clone(),
                             target_expr: None,
                             value,
                             persist: false,
-                        })
-                        .into_iter()
-                        .collect()
+                        }],
+                        None => {
+                            self.register_runtime_loop_variable(for_loop);
+                            Vec::new()
+                        }
+                    }
                 }
                 _ => Vec::new(),
             };
@@ -160,6 +226,86 @@ impl Transpiler {
                 });
             }
         }
+        // Any other value a function assigns under `global` declares a
+        // module variable of the value's type: text, a list, or a map in
+        // storage, a number as a score, and a value whose type only the
+        // running pack knows, such as a parameter, in both.
+        let module_level: std::collections::HashSet<&str> = program
+            .statements
+            .iter()
+            .flat_map(|statement| -> Vec<&str> {
+                match statement {
+                    Statement::Assignment(assign) if assign.assigns_name() => {
+                        vec![assign.target.as_str()]
+                    }
+                    Statement::MultiAssign(multi) => multi
+                        .targets
+                        .iter()
+                        .filter_map(|target| match target {
+                            Expression::Identifier(name) => Some(name.as_str()),
+                            _ => None,
+                        })
+                        .collect(),
+                    Statement::For(for_loop) => vec![for_loop.target.as_str()],
+                    Statement::ConstAssignment(constant) => vec![constant.target.as_str()],
+                    _ => Vec::new(),
+                }
+            })
+            .collect();
+        for statement in &program.statements {
+            let Statement::FunctionDef(function) = statement else {
+                continue;
+            };
+            for (name, value) in global_assignments(function) {
+                if module_level.contains(name.as_str())
+                    || self.imports.later_variables.contains_key(&name)
+                    || self.is_declared_name(&name)
+                    || self.symbols.late_module_declarations.contains(&name)
+                {
+                    continue;
+                }
+                // The type is known here only for a value of module names
+                // and literals, with each local replaced by the value the
+                // function first assigns it. A call's result, and a
+                // parameter, are stored both ways.
+                let value = substitute_locals(&value, function, 3);
+                let mut reads = Vec::new();
+                expression_reads(&value, &mut reads);
+                let module_value = reads.iter().all(|read| {
+                    self.is_declared_name(read) && !function.params.iter().any(|p| p.name == *read)
+                }) && (!matches!(value, Expression::Call(..))
+                    || matches!(
+                        self.value_type(&value),
+                        CobbleType::String | CobbleType::List | CobbleType::Map
+                    ));
+                let value_type = if module_value {
+                    self.value_type(&value)
+                } else {
+                    CobbleType::Unknown
+                };
+                let storage = matches!(
+                    value_type,
+                    CobbleType::String | CobbleType::List | CobbleType::Map | CobbleType::Unknown
+                );
+                let score = !matches!(
+                    value_type,
+                    CobbleType::String | CobbleType::List | CobbleType::Map
+                );
+                self.symbols.variable_types.insert(name.clone(), value_type);
+                if storage {
+                    self.symbols
+                        .variable_storage_paths
+                        .insert(name.clone(), format!("vars.{name}"));
+                }
+                if score {
+                    self.data_pack.track_objective("temp");
+                    self.symbols
+                        .variable_objectives
+                        .insert(name.clone(), "temp".to_string());
+                    self.symbols.scoreboard_variables.insert(name.clone());
+                }
+            }
+        }
     }
 
     /// Module-level code runs in order: it can't read a module variable
@@ -210,6 +356,104 @@ impl Transpiler {
             .into()),
             None => Ok(()),
         }
+    }
+
+    /// Records the variable of a module-level runtime loop as a module
+    /// variable, before function bodies are lowered: a score for a `range`,
+    /// and otherwise an item of a type the running pack knows, in storage
+    /// and as a score, as the loop binds it.
+    fn register_runtime_loop_variable(&mut self, for_loop: &crate::ast::ForLoop) {
+        let name = &for_loop.target;
+        if self.is_declared_name(name) || self.symbols.late_module_declarations.contains(name) {
+            return;
+        }
+        self.symbols
+            .pending_module_declarations
+            .insert(name.clone());
+        self.data_pack.track_objective("temp");
+        self.symbols
+            .variable_objectives
+            .insert(name.clone(), "temp".to_string());
+        self.symbols.scoreboard_variables.insert(name.clone());
+        let is_range = matches!(
+            &for_loop.iter,
+            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(f) if f == "range")
+        );
+        if is_range {
+            self.symbols
+                .variable_types
+                .insert(name.clone(), CobbleType::Integer);
+        } else {
+            self.symbols
+                .variable_types
+                .insert(name.clone(), CobbleType::Unknown);
+            self.symbols
+                .variable_storage_paths
+                .insert(name.clone(), format!("vars.{name}"));
+        }
+    }
+
+    /// Whether the module-level `statement` is code that runs commands, as
+    /// a loop over a list, a `while`, a call, or a raw command, rather than
+    /// a declaration. Such code runs in `_cobble_init`, in source order with
+    /// the module variables' assignments. A loop expanded at compile time,
+    /// or an `if` on a constant, whose body only assigns, stays a list of
+    /// declarations.
+    pub(in crate::transpiler) fn is_module_code(&self, statement: &Statement) -> bool {
+        fn declarations_only(body: &[Statement]) -> bool {
+            body.iter().all(|statement| {
+                matches!(
+                    statement,
+                    Statement::Assignment(_)
+                        | Statement::MultiAssign(_)
+                        | Statement::ConstAssignment(_)
+                        | Statement::Pass
+                )
+            })
+        }
+        match statement {
+            Statement::For(for_loop) => {
+                !self.expands_at_compile_time(for_loop) || !declarations_only(&for_loop.body)
+            }
+            Statement::If(if_stmt) => {
+                self.try_eval_const(&if_stmt.condition).is_none()
+                    || !declarations_only(&if_stmt.then_branch)
+                    || if_stmt.elif_branches.iter().any(|(condition, branch)| {
+                        self.try_eval_const(condition).is_none() || !declarations_only(branch)
+                    })
+                    || !if_stmt.else_branch.as_deref().is_none_or(declarations_only)
+            }
+            Statement::While(_)
+            | Statement::Match(_)
+            | Statement::Expression(_)
+            | Statement::MinecraftCommand(_)
+            | Statement::Execute(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Lowers the module-level code `statement` where it stands, into
+    /// commands that `_cobble_init` runs after the module variables
+    /// assigned above it. The names it assigns are module variables.
+    pub(in crate::transpiler) fn process_module_code(
+        &mut self,
+        statement: &Statement,
+    ) -> Result<(), TranspileError> {
+        if let Statement::For(for_loop) = statement {
+            self.symbols
+                .pending_module_declarations
+                .remove(&for_loop.target);
+        }
+        let saved_context = std::mem::replace(&mut self.current_context, FunctionContext::new());
+        let saved_return = self.current_return.take();
+        let saved_flag = std::mem::replace(&mut self.in_module_code, true);
+        let capture = self.capture_commands(|transpiler| transpiler.process_statement(statement));
+        self.in_module_code = saved_flag;
+        self.current_return = saved_return;
+        self.current_context = saved_context;
+        self.module_level_vars
+            .push(ModuleLevelAssignment::Code(capture?));
+        Ok(())
     }
 
     /// Whether `name` already names a variable or a constant.
@@ -267,6 +511,13 @@ impl Transpiler {
                         generated,
                         source,
                     );
+                }
+                ModuleLevelAssignment::Code(capture) => {
+                    let start = init_commands.len();
+                    for (index, generated) in capture.metadata {
+                        init_metadata.insert(start + index, generated);
+                    }
+                    init_commands.extend(capture.commands);
                 }
             }
         }

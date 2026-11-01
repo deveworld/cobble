@@ -5,6 +5,7 @@ use crate::transpiler::{
 };
 use std::collections::HashMap;
 
+#[derive(Clone)]
 pub(in crate::transpiler) struct FunctionCapture {
     pub(in crate::transpiler) commands: Vec<String>,
     pub(in crate::transpiler) metadata: HashMap<usize, GeneratedCommand>,

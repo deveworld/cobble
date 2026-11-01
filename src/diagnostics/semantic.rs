@@ -423,6 +423,8 @@ pub(super) struct ModuleVariableDef {
     pub(super) name: String,
     pub(super) line: usize,
     pub(super) column: usize,
+    /// The value of a `const`. The same `const` in two files is one value.
+    pub(super) const_value: Option<Expression>,
 }
 
 /// Every name the program binds at module level (`name = ...`,
@@ -430,6 +432,28 @@ pub(super) struct ModuleVariableDef {
 /// first binding of each name, in source order. Names a function binds under
 /// `global`, and names brought in with `from x import y`, are not counted:
 /// they refer to a variable another file may own.
+/// Whether a `for` over `iter` is expanded at compile time: a `range` of
+/// number literals, or a list of number, text, and boolean literals.
+fn expands_at_compile_time(iter: &Expression) -> bool {
+    fn literal_number(expr: &Expression) -> bool {
+        match expr {
+            Expression::Number(_) => true,
+            Expression::Unary(_, inner) => literal_number(inner),
+            _ => false,
+        }
+    }
+    match iter {
+        Expression::Array(items) => items.iter().all(|item| {
+            literal_number(item) || matches!(item, Expression::String(_) | Expression::Boolean(_))
+        }),
+        Expression::Call(func, args) => {
+            matches!(&**func, Expression::Identifier(name) if name == "range")
+                && args.iter().all(literal_number)
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn collect_module_variable_defs(
     context: &SemanticContext<'_>,
 ) -> Vec<ModuleVariableDef> {
@@ -453,10 +477,17 @@ pub(super) fn collect_module_variable_defs(
                     _ => None,
                 })
                 .collect(),
+            // A loop that runs when the pack loads binds its variable in
+            // every pass, a real module variable whether or not it's read.
             Statement::For(for_loop) => std::iter::once(for_loop.target.as_str())
-                .filter(|target| loop_variables.contains(*target))
+                .filter(|target| {
+                    loop_variables.contains(*target) || !expands_at_compile_time(&for_loop.iter)
+                })
                 .chain(for_loop.index.as_deref())
                 .collect(),
+            // A `const` and a module variable of another file share the
+            // name too.
+            Statement::ConstAssignment(constant) => vec![constant.target.as_str()],
             _ => Vec::new(),
         };
         let (line, column) = match statement {
@@ -473,6 +504,10 @@ pub(super) fn collect_module_variable_defs(
                     name: name.to_string(),
                     line,
                     column,
+                    const_value: match statement {
+                        Statement::ConstAssignment(constant) => Some(constant.value.clone()),
+                        _ => None,
+                    },
                 });
             }
         }
@@ -2541,6 +2576,15 @@ fn module_level_assignment_types(
                 }
             }
             _ => {}
+        }
+    }
+    // A name a function assigns under `global` is a module variable too,
+    // whose type the compiler works out.
+    for statement in &context.program.statements {
+        if let Statement::FunctionDef(function) = statement {
+            for (name, _) in crate::transpiler::global_assignments(function) {
+                types.entry(name).or_insert(CobbleType::Unknown);
+            }
         }
     }
     types

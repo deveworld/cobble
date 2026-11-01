@@ -46,6 +46,77 @@ struct ExecuteChain {
     has_macro_params: bool,
 }
 
+/// A block of only `store` modifiers around an `if`, a loop, or a `match`
+/// stores what the commands inside it store: the store moves into each
+/// branch and loop body, so the last call or command that runs decides,
+/// rather than the helper function the branch runs in. `None` for any
+/// other block.
+fn distribute_store(exec_block: &ExecuteBlock) -> Option<Vec<Statement>> {
+    let only_stores = exec_block
+        .modifiers
+        .iter()
+        .all(|modifier| matches!(modifier, ExecuteModifier::Store(_)));
+    let has_flow = exec_block.body.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::If(_) | Statement::For(_) | Statement::While(_) | Statement::Match(_)
+        )
+    });
+    if !only_stores || !has_flow || exec_block.modifiers.is_empty() {
+        return None;
+    }
+    let wrap = |body: &[Statement]| -> Vec<Statement> {
+        if body.is_empty() || matches!(body, [Statement::Pass]) {
+            return body.to_vec();
+        }
+        vec![Statement::Execute(ExecuteBlock {
+            modifiers: exec_block.modifiers.clone(),
+            body: body.to_vec(),
+        })]
+    };
+    Some(
+        exec_block
+            .body
+            .iter()
+            .map(|statement| match statement {
+                Statement::If(if_stmt) => Statement::If(IfStatement {
+                    condition: if_stmt.condition.clone(),
+                    then_branch: wrap(&if_stmt.then_branch),
+                    elif_branches: if_stmt
+                        .elif_branches
+                        .iter()
+                        .map(|(condition, branch)| (condition.clone(), wrap(branch)))
+                        .collect(),
+                    else_branch: if_stmt.else_branch.as_deref().map(wrap),
+                }),
+                Statement::For(for_loop) => Statement::For(ForLoop {
+                    body: wrap(&for_loop.body),
+                    ..for_loop.clone()
+                }),
+                Statement::While(while_loop) => Statement::While(WhileLoop {
+                    body: wrap(&while_loop.body),
+                    ..while_loop.clone()
+                }),
+                Statement::Match(match_stmt) => Statement::Match(MatchStatement {
+                    value: match_stmt.value.clone(),
+                    cases: match_stmt
+                        .cases
+                        .iter()
+                        .map(|case| MatchCase {
+                            pattern: case.pattern.clone(),
+                            body: wrap(&case.body),
+                        })
+                        .collect(),
+                }),
+                other => Statement::Execute(ExecuteBlock {
+                    modifiers: exec_block.modifiers.clone(),
+                    body: vec![other.clone()],
+                }),
+            })
+            .collect(),
+    )
+}
+
 impl ExecuteChain {
     fn map_text(&mut self, mut f: impl FnMut(&str) -> String) {
         for part in &mut self.parts {
@@ -120,6 +191,51 @@ impl Transpiler {
         &mut self,
         exec_block: &ExecuteBlock,
     ) -> Result<(), TranspileError> {
+        if let Some(statements) = distribute_store(exec_block) {
+            // The moved blocks have no line of their own: they report at
+            // this block's line.
+            let mut wrappers = Vec::new();
+            for statement in &statements {
+                let bodies: Vec<&[Statement]> = match statement {
+                    Statement::Execute(_) => vec![std::slice::from_ref(statement)],
+                    Statement::If(if_stmt) => std::iter::once(if_stmt.then_branch.as_slice())
+                        .chain(
+                            if_stmt
+                                .elif_branches
+                                .iter()
+                                .map(|(_, branch)| branch.as_slice()),
+                        )
+                        .chain(if_stmt.else_branch.as_deref())
+                        .collect(),
+                    Statement::For(for_loop) => vec![for_loop.body.as_slice()],
+                    Statement::While(while_loop) => vec![while_loop.body.as_slice()],
+                    Statement::Match(match_stmt) => match_stmt
+                        .cases
+                        .iter()
+                        .map(|case| case.body.as_slice())
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for body in bodies {
+                    if let [wrapper @ Statement::Execute(_)] = body {
+                        wrappers.push(crate::transpiler::function_context::statement_address(
+                            wrapper,
+                        ));
+                    }
+                }
+            }
+            for address in &wrappers {
+                self.unrolled_sources
+                    .insert(*address, self.current_statement_source.clone());
+            }
+            let result = statements
+                .iter()
+                .try_for_each(|statement| self.process_statement(statement));
+            for address in &wrappers {
+                self.unrolled_sources.remove(address);
+            }
+            return result;
+        }
         let mut chain = self.build_execute_chain(&exec_block.modifiers)?;
         self.expand_execute_header_placeholders(&mut chain)?;
         self.lower_deferred_execute_conditions(&mut chain);
@@ -137,20 +253,26 @@ impl Transpiler {
             );
             return Ok(());
         }
-        // A `store` block around a call stores the call's result. The
-        // commands that pass the arguments, and clean them up afterwards,
-        // run without the `store`.
-        if let ([Statement::Expression(Expression::Call(..))], true) = (
-            exec_block.body.as_slice(),
-            chain.parts.iter().any(|part| part.starts_with("store ")),
-        ) {
-            let call_index = capture.commands.iter().rposition(|command| {
-                command
-                    .strip_prefix('$')
-                    .unwrap_or(command)
-                    .starts_with("function ")
-            });
-            if let Some(call_index) = call_index.filter(|_| capture.commands.len() > 1) {
+        // A `store` block stores the result of the last command or call in
+        // it. The commands that clean up after that call, as the ones that
+        // pass a call's arguments, run without the `store`.
+        if chain.parts.iter().any(|part| part.starts_with("store ")) {
+            let call_index = capture
+                .commands
+                .iter()
+                .enumerate()
+                .rposition(|(index, command)| {
+                    let command = command.strip_prefix('$').unwrap_or(command);
+                    let runs = command
+                        .rsplit_once(" run ")
+                        .map_or(command, |(_, runs)| runs);
+                    runs.starts_with("function ")
+                        || capture.metadata.get(&index).is_some_and(|generated| {
+                            generated.kind == GeneratedCommandKind::UserCommand
+                        })
+                });
+            if let Some(call_index) = call_index.filter(|index| index + 1 < capture.commands.len())
+            {
                 let plain_prefix = chain
                     .parts
                     .iter()

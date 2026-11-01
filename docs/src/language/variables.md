@@ -124,6 +124,22 @@ module variable assigned further down the file, or one that another function
 assigns under `global`. Module-level code runs from top to bottom: reading a
 module variable there before its own assignment is a compile error.
 
+Module-level code that runs commands, such as a `for` loop over a list, a
+`while` loop, an `if` on a variable, a call, `out.append(8)`, or a raw command,
+runs in the pack's load function, in source order with the module variables'
+assignments, each time the pack loads or reloads. The names it assigns are
+module variables, and so is the variable of a module-level `for` loop:
+
+```python
+scores = [3, 5]
+total = 0
+for s in scores:
+    total += s
+
+def show():
+    /say {total} {s}    # says 8 5
+```
+
 A function parameter hides the module variable with the same name inside its
 function (see
 [Functions with Parameters](functions.md#functions-with-parameters)) and
@@ -148,3 +164,7 @@ def apply_damage():
 
 `/` inside a `const` declaration is real division; see
 [Integer Division And Modulo](arithmetic.md#integer-division-and-modulo).
+
+As with module variables, a function can use a `const` declared further down
+the file, while module-level code can't read it before its line. Assigning the
+name of a `const`, at module level or under `global`, is a compile error.

@@ -458,8 +458,19 @@ fn analyze_cross_file_named_symbols(
     // `vars.<name>` keep the plain name so `persist` and `migrate` find
     // them), so the same name in two files would silently be one value.
     let mut variables: HashMap<String, (usize, usize, usize)> = HashMap::new();
+    let mut const_values: HashMap<String, Option<crate::ast::Expression>> = HashMap::new();
     for (file_index, context) in contexts.iter().enumerate() {
         for variable in semantic::collect_module_variable_defs(context) {
+            // The same `const` with the same value in two files is one
+            // value, as each file means it.
+            let same_const = variable.const_value.is_some()
+                && const_values.get(&variable.name) == Some(&variable.const_value);
+            const_values
+                .entry(variable.name.clone())
+                .or_insert_with(|| variable.const_value.clone());
+            if same_const {
+                continue;
+            }
             if let Some(&(first_index, first_line, first_column)) = variables.get(&variable.name) {
                 let first_path = &files[first_index].path;
                 let this_path = &files[file_index].path;

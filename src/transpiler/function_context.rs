@@ -710,6 +710,73 @@ pub(in crate::transpiler) fn assigns_name(body: &[Statement], name: &str) -> boo
     assigned.contains(name)
 }
 
+/// Module variables that `function` declares `global` and assigns, each
+/// with its first value. Nested function definitions are not searched.
+pub(crate) fn global_assignments(function: &FunctionDef) -> Vec<(String, Expression)> {
+    let mut assigned = Vec::new();
+    let mut globals = HashSet::new();
+    collect_bindings(&function.body, &mut assigned, &mut globals);
+    let mut statements = Vec::new();
+    collect_statements(&function.body, &mut statements);
+    let mut out: Vec<(String, Expression)> = Vec::new();
+    for statement in statements {
+        if let Statement::Assignment(assign) = statement {
+            if assign.assigns_name()
+                && globals.contains(&assign.target)
+                && !out.iter().any(|(name, _)| name == &assign.target)
+            {
+                out.push((assign.target.clone(), assign.value.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// The value `body` first assigns the name `name`, if any.
+pub(in crate::transpiler) fn first_assigned_value<'a>(
+    body: &'a [Statement],
+    name: &str,
+) -> Option<&'a Expression> {
+    let mut statements = Vec::new();
+    collect_statements(body, &mut statements);
+    statements
+        .into_iter()
+        .find_map(|statement| match statement {
+            Statement::Assignment(assign) if assign.assigns_name() && assign.target == name => {
+                Some(&assign.value)
+            }
+            _ => None,
+        })
+}
+
+/// The statements of `body` and of the blocks inside it, in source order.
+/// Function definitions are not entered.
+fn collect_statements<'a>(body: &'a [Statement], out: &mut Vec<&'a Statement>) {
+    for statement in body {
+        out.push(statement);
+        match statement {
+            Statement::If(if_stmt) => {
+                collect_statements(&if_stmt.then_branch, out);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_statements(branch, out);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_statements(branch, out);
+                }
+            }
+            Statement::For(for_loop) => collect_statements(&for_loop.body, out),
+            Statement::While(while_loop) => collect_statements(&while_loop.body, out),
+            Statement::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    collect_statements(&case.body, out);
+                }
+            }
+            Statement::Execute(exec_block) => collect_statements(&exec_block.body, out),
+            _ => {}
+        }
+    }
+}
+
 /// Module variables that `function` declares `global` and assigns a literal
 /// (a number, boolean, string, list, or map), each with its first such
 /// value. Nested function definitions are included, each with its own

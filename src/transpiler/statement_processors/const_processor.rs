@@ -6,6 +6,15 @@ impl Transpiler {
         &mut self,
         const_assign: &ConstAssignment,
     ) -> Result<(), TranspileError> {
+        // Module-level code runs from top to bottom, so its value can't
+        // read a module name declared further down.
+        if self.current_function.is_none() {
+            self.check_module_level_reads(&const_assign.value)?;
+            self.symbols
+                .pending_module_declarations
+                .remove(&const_assign.target);
+        }
+
         // Infer the type of the constant value
         let value_type = self.infer_type(&const_assign.value);
 
@@ -36,7 +45,10 @@ impl Transpiler {
     }
 
     /// Evaluate an expression at compile time (must be constant)
-    fn evaluate_const_expr(&self, expr: &Expression) -> Result<f64, TranspileError> {
+    pub(in crate::transpiler) fn evaluate_const_expr(
+        &self,
+        expr: &Expression,
+    ) -> Result<f64, TranspileError> {
         match expr {
             Expression::Number(n) => Ok(*n),
             Expression::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),

@@ -445,7 +445,7 @@ impl Transpiler {
         let target = &for_loop.target;
         let assigned_in_body = function_context::assigns_name(&for_loop.body, target);
         let read_outside_loop = self.loop_target_read_outside(for_loop);
-        let real_target = if self.current_function.is_some() {
+        let real_target = if self.current_function.is_some() && !self.in_module_code {
             assigned_in_body || read_outside_loop || self.symbols.global_variables.contains(target)
         } else {
             self.module_loop_variables.contains(target)
@@ -575,6 +575,11 @@ impl Transpiler {
     /// Whether a runtime loop over `target` must leave its last value in
     /// it: the function reads `target` outside every loop over it.
     fn runtime_loop_target_read_after(&self, target: &str) -> bool {
+        if self.in_module_code {
+            // A module-level loop variable a function or later module code
+            // reads is a module variable.
+            return self.module_loop_variables.contains(target);
+        }
         self.current_function.is_some()
             && self.current_context.for_targets_read_after.contains(target)
     }
@@ -684,6 +689,11 @@ impl Transpiler {
     ) -> Option<Expression> {
         let values = self.unroll_values(for_loop).ok()?;
         values.last().map(UnrollValue::as_expression)
+    }
+
+    /// Whether `for_loop` is expanded at compile time.
+    pub(in crate::transpiler) fn expands_at_compile_time(&self, for_loop: &ForLoop) -> bool {
+        self.unroll_values(for_loop).is_ok()
     }
 
     fn is_range_iterable(iter: &Expression) -> bool {

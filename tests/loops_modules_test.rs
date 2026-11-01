@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::mcsim::{compile, Sim};
+use common::mcsim::{compile, compile_project, Sim};
 
 /// The `say` lines `main` prints.
 fn said(source: &str) -> Vec<String> {
@@ -165,4 +165,232 @@ fn a_loop_variable_of_another_known_type_read_after_the_loop_is_refused() {
         "def main():\n    v = \"a\"\n    nums = [1, 2]\n    for v in nums:\n        pass\n    /say {v}\n",
     );
     assert!(error.contains("depends on whether the loop ran"), "{error}");
+}
+
+// --- Module-level code runs in `_cobble_init` (bugs 21, 38, 51) ---
+
+#[test]
+fn module_level_runtime_loops_run_in_source_order() {
+    // Expected values come from Python 3.
+    assert_eq!(
+        said("lst = [1, 2]\ntotal = 0\nfor v in lst:\n    total += v\n\ndef main():\n    w = v + 1\n    /say {total} {v} {w}\n"),
+        vec!["3 2 3"]
+    );
+    assert_eq!(
+        said("total = 0\nwhile total < 3:\n    total += 1\n\ndef main():\n    /say {total}\n"),
+        vec!["3"]
+    );
+    assert_eq!(
+        said("n = 3\nfor i in range(n):\n    pass\n\ndef main():\n    w = i + 1\n    /tellraw @a {\"text\":\"{i} {w}\"}\n"),
+        vec!["2 3"]
+    );
+    assert_eq!(
+        said(
+            "a = 2\ntotal = 0\nfor v in [a, 2]:\n    total += v\n\ndef main():\n    /say {total}\n"
+        ),
+        vec!["4"]
+    );
+    // A function above the loop reads its variable.
+    assert_eq!(
+        said("def main():\n    /say {v}\n\nl = [4, 6]\nfor v in l:\n    pass\n"),
+        vec!["6"]
+    );
+}
+
+#[test]
+fn module_level_calls_and_commands_run_at_load() {
+    let sim = Sim::load(
+        "lst = [1, 2]\nfor v in lst:\n    /say {v}\nout = []\nout.append(8)\n/say {out}\n",
+        &[],
+    );
+    assert_eq!(lines(&sim), vec!["1", "2", "[8]"]);
+    assert_eq!(
+        said(
+            "out = []\nfor j in [7, 8]:\n    pass\nout.append(j)\n\ndef main():\n    /say {out}\n"
+        ),
+        vec!["[8]"]
+    );
+    assert_eq!(
+        said("out = []\nn = 3\nfor i in range(n):\n    pass\n\ndef main():\n    out.append(i)\n    /say {out}\n"),
+        vec!["[2]"]
+    );
+    // The init runs again on `/reload`, from the declared values.
+    let mut sim = Sim::load("x = 2\ntotal = 0\nfor v in [1, x]:\n    total += v\n", &[]);
+    sim.reload();
+    assert_eq!(sim.var("total"), 3);
+}
+
+#[test]
+fn module_level_code_reading_a_later_variable_is_refused() {
+    let error = compile_error("for v in later:\n    pass\nlater = [1, 2]\n");
+    assert!(error.contains("before its assignment"), "{error}");
+    assert!(error.contains("main.cbl:1"), "{error}");
+}
+
+// --- A `const` declared below the function that reads it (bugs 35, 47) ---
+
+/// `main` with `body` (indented by 4) above `const LATER = 3`.
+fn above_later(body: &str) -> Vec<String> {
+    let body = body
+        .lines()
+        .map(|line| format!("    {line}\n"))
+        .collect::<String>();
+    said(&format!(
+        "def h(v):\n    return v + 1\n\ndef main():\n{body}\n\nconst LATER = 1 + 2\n"
+    ))
+}
+
+#[test]
+fn a_const_declared_below_a_function_has_its_value_there() {
+    // Expected values come from Python 3.
+    for (body, expected) in [
+        ("x = LATER\n/say {x}", "3"),
+        ("/say {LATER}", "3"),
+        ("/tellraw @a {\"text\":\"{LATER}\"}", "3"),
+        ("y = LATER + 1\n/say {y}", "4"),
+        ("x = -LATER\n/say {x}", "-3"),
+        ("x = abs(LATER)\n/say {x}", "3"),
+        ("x = 5\nx += LATER\n/say {x}", "8"),
+        ("if LATER == 3:\n    /say yes", "yes"),
+        ("if LATER in [1, 2, 3]:\n    /say yes", "yes"),
+        ("if LATER > 1:\n    /say yes\nelse:\n    /say no", "yes"),
+        ("x = [10, 11, 12, 13]\ny = x[LATER]\n/say {y}", "13"),
+        ("y = h(LATER)\n/say {y}", "4"),
+        ("l = [LATER]\n/say {l}", "[3]"),
+        ("m = {\"a\": LATER}\ny = m.a\n/say {y}", "3"),
+        ("y = sum([LATER, 1])\n/say {y}", "4"),
+        ("/scoreboard players set x temp {LATER}\n/scoreboard players add x temp 1\nx = 0\n/say done", "done"),
+    ] {
+        assert_eq!(above_later(body), vec![expected.to_string()], "{body}");
+    }
+    assert_eq!(
+        above_later("for i in range(LATER):\n    /say {i}"),
+        vec!["0", "1", "2"]
+    );
+    assert_eq!(
+        above_later("i = 0\nwhile i < LATER:\n    i += 1\n/say {i}"),
+        vec!["3"]
+    );
+    assert_eq!(
+        said("def f():\n    return LATER\n\ndef main():\n    r = f()\n    /say {r}\n\nconst LATER = 3\n"),
+        vec!["3"]
+    );
+}
+
+#[test]
+fn module_level_code_reading_a_later_const_is_refused() {
+    for source in [
+        "x = LATER + 1\nconst LATER = 3\n",
+        "const A = B + 1\nconst B = 2\n",
+    ] {
+        let error = compile_error(source);
+        assert!(error.contains("before its assignment"), "{source}: {error}");
+    }
+}
+
+#[test]
+fn assigning_a_const_name_is_refused() {
+    for source in [
+        "const LIMIT = 2\nLIMIT = 1\n",
+        "const LIMIT = 2\n\ndef main():\n    global LIMIT\n    LIMIT = 1\n",
+    ] {
+        let error = compile_error(source);
+        assert!(error.contains("is declared `const`"), "{source}: {error}");
+    }
+}
+
+// --- A name assigned only under `global` (bugs 35, 47) ---
+
+#[test]
+fn a_name_assigned_only_under_global_has_its_value_in_either_order() {
+    let setup = "def calc():\n    return 5\n\ndef setup(v):\n    global n, note, lst, word, joined, copy\n    n = calc()\n    note = v\n    lst = sorted([3, 1])\n    a = \"x\"\n    word = a + \"y\"\n    joined = [1] + [2]\n    s = \"hello\"\n    copy = s\n";
+    let reader = "def main():\n    setup(\"hi\")\n    y = note\n    m = n + 1\n    k = lst[0]\n    w = word\n    j = len(joined)\n    c = copy\n    /say {n} {m} {y} {note} {k} {w} {j} {c}\n";
+    // Expected values come from Python 3.
+    for source in [format!("{setup}\n{reader}"), format!("{reader}\n{setup}")] {
+        assert_eq!(said(&source), vec!["5 6 hi hi 1 xy 2 hello"], "{source}");
+    }
+}
+
+// --- Module names in two files (bugs 27, 36) ---
+
+#[test]
+fn a_const_and_a_variable_of_one_name_in_two_files_are_refused() {
+    for main in [
+        "import other\ntotal = 20\n\ndef go():\n    /say {total}\n",
+        "from other import total\ntotal = 20\n\ndef go():\n    /say {total}\n",
+    ] {
+        let error = compile_project(&[
+            ("main.cbl", main),
+            (
+                "other.cbl",
+                "const total = 10\n\ndef other_get():\n    /say {total}\n",
+            ),
+        ])
+        .err()
+        .unwrap_or_else(|| panic!("expected a compile error for:\n{main}"));
+        assert!(error.contains("is defined in both"), "{error}");
+    }
+    // The same `const` with the same value is one value.
+    compile_project(&[
+        (
+            "main.cbl",
+            "import other\nconst SIZE = 4\n\ndef go():\n    /say {SIZE}\n",
+        ),
+        (
+            "other.cbl",
+            "const SIZE = 4\n\ndef other_get():\n    /say {SIZE}\n",
+        ),
+    ])
+    .unwrap();
+}
+
+#[test]
+fn module_level_runtime_loops_in_two_files_share_no_variable() {
+    let error = compile_project(&[
+        (
+            "main.cbl",
+            "import other\nlst = [7, 8, 9]\nfor i in lst:\n    pass\n",
+        ),
+        (
+            "other.cbl",
+            "items = [1, 2]\nfor i in items:\n    pass\n\ndef other_get():\n    /say {i}\n",
+        ),
+    ])
+    .map(|_| ())
+    .expect_err("expected a compile error");
+    assert!(
+        error.contains("Module variable `i` is defined in both"),
+        "{error}"
+    );
+}
+
+// --- A `store` block stores the last call or command in it (bug 34) ---
+
+#[test]
+fn a_store_block_stores_the_last_call_not_its_cleanup() {
+    for (body, expected) in [
+        ("double(4)", 8),
+        ("y = double(4)", 8),
+        ("/scoreboard players set b temp 5\ndouble(4)", 8),
+        ("double(4)\ndouble(5)", 10),
+        ("seven()\ndouble(4)", 8),
+        ("for i in [3, 4]:\n    double(i)", 8),
+        ("if c == 1:\n    double(4)", 8),
+        ("if c == 2:\n    double(4)\nelse:\n    double(6)", 12),
+        ("if c == 1:\n    seven()", 7),
+        ("/scoreboard players set b temp 5", 5),
+    ] {
+        let body = body
+            .lines()
+            .map(|line| format!("        {line}\n"))
+            .collect::<String>();
+        let mut sim = Sim::load(
+            &format!(
+                "def double(n):\n    return n * 2\n\ndef seven():\n    return 7\n\ndef main():\n    c = 1\n    store result score x temp:\n{body}"
+            ),
+            &[],
+        );
+        sim.call("main");
+        assert_eq!(sim.var("x"), expected, "{body}");
+    }
 }

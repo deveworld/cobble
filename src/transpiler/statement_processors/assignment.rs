@@ -271,6 +271,22 @@ impl Transpiler {
     ) -> Result<(), TranspileError> {
         let target_kind = self.classify_assignment_target(assign);
 
+        // A `const` is substituted where it's read, so assigning its name
+        // at module level or under `global` would leave the reads with the
+        // constant.
+        if assign.assigns_name()
+            && self.module_consts.contains(&assign.target)
+            && (self.current_function.is_none()
+                || self.in_module_code
+                || self.symbols.global_variables.contains(&assign.target))
+        {
+            return Err(format!(
+                "`{}` is declared `const`, so it can't be assigned. Use a module variable without `const`, or another name.",
+                assign.target
+            )
+            .into());
+        }
+
         if assign.persist {
             if !matches!(target_kind, AssignTargetKind::ModuleLevel) {
                 return Err(format!(

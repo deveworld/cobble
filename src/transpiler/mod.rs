@@ -51,7 +51,7 @@ pub(crate) use condition_lowering::{
     mask_minecraft_conditions, merged_execute_in_condition, raw_minecraft_condition_verdict,
 };
 pub use function_context::module_variables_made_local;
-pub(crate) use function_context::{function_locals, module_loop_variables};
+pub(crate) use function_context::{function_locals, global_assignments, module_loop_variables};
 
 pub(in crate::transpiler) use capture::FunctionCapture;
 pub(in crate::transpiler) use const_eval::const_mod;
@@ -139,6 +139,8 @@ pub struct Transpiler {
     /// variable and haven't warned yet. The first assignment warns. Block
     /// helpers restore `current_context`, so this lives outside it.
     unwarned_shadows: Vec<String>,
+    /// Names the files declare `const` at module level.
+    module_consts: HashSet<String>,
     /// The runtime list loops being lowered whose body may rebind their
     /// list, innermost last.
     list_loops: Vec<statement_processors::ActiveListLoop>,
@@ -146,6 +148,9 @@ pub struct Transpiler {
     /// function, which may rebind the variable. Every rebind of such a
     /// variable tells a running loop over it.
     signalled_list_roots: std::collections::BTreeSet<String>,
+    /// Whether the statements being lowered are module-level code that
+    /// runs in `_cobble_init` (see `Transpiler::process_module_code`).
+    in_module_code: bool,
 }
 
 /// The expressions `statement` itself evaluates, without its body.
@@ -299,6 +304,8 @@ impl Transpiler {
             unwarned_shadows: Vec::new(),
             list_loops: Vec::new(),
             signalled_list_roots: Default::default(),
+            in_module_code: false,
+            module_consts: HashSet::new(),
         };
         if let Some(version) = options.stdlib_version {
             transpiler.set_stdlib_version(version);
@@ -384,7 +391,11 @@ impl Transpiler {
 
         // PASS 2: Process all statements (function bodies, etc.)
         for statement in &program.statements {
-            self.process_statement(statement)?;
+            if self.is_module_code(statement) {
+                self.process_module_code(statement)?;
+            } else {
+                self.process_statement(statement)?;
+            }
         }
         self.release_later_variables(program);
 
@@ -481,7 +492,12 @@ impl Transpiler {
         // An unrolled loop sets the location of each body statement itself.
         // Substituted text no longer matches its source line and could claim
         // the location of identical text elsewhere in the file.
-        let statement_source = if self.unroll.depth > 0 || self.in_prelude {
+        let statement_source = if self.unroll.depth > 0
+            || self.in_prelude
+            || self
+                .unrolled_sources
+                .contains_key(&function_context::statement_address(statement))
+        {
             self.unrolled_sources
                 .get(&function_context::statement_address(statement))
                 .cloned()
@@ -566,6 +582,22 @@ impl Transpiler {
             storage_paths::StoragePathOps::check_assignment_target(self, target)?;
         }
         self.check_later_variables(statement)?;
+        if self.in_module_code {
+            for expr in statement_expressions(statement) {
+                let assigned_name = match statement {
+                    Statement::Assignment(assign) => {
+                        assign.assigns_name() && assign.target_expr.as_ref() == Some(expr)
+                    }
+                    Statement::MultiAssign(multi) => {
+                        multi.targets.contains(expr) && matches!(expr, Expression::Identifier(_))
+                    }
+                    _ => false,
+                };
+                if !assigned_name {
+                    self.check_module_level_reads(expr)?;
+                }
+            }
+        }
         if let Some(lowered) = self.desugar_statement(statement)? {
             for statement in &lowered {
                 self.process_statement_inner(statement)?;
