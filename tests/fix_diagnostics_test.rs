@@ -195,6 +195,20 @@ fn expect_kind_with_message<'a>(
 }
 
 #[test]
+fn a_quoted_subscript_placeholder_is_reported() {
+    // `{m["k"]}` is an expression, not a JSON component; it used to print
+    // literally because the scan skipped any brace content with a quote.
+    let source = "m = {\"k\": 1}\n\ndef go():\n    /say {m[\"k\"]}\n";
+    let diagnostics = analyze_source(source);
+    let diagnostic = expect_kind(&diagnostics, "invalid-placeholder");
+    assert!(
+        diagnostic.message.contains("m[\"k\"]"),
+        "the message names the expression: {}",
+        diagnostic.message
+    );
+}
+
+#[test]
 fn joined_string_map_key_is_not_reported() {
     // A key joined from a literal and a parameter is text; the map-key check
     // must not infer it as a number from the masked source.

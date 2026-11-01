@@ -4279,14 +4279,15 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
 }
 
 fn is_potential_command_placeholder(content: &str) -> bool {
+    // A JSON or SNBT object always has a `key: value` pair, so a `:` marks
+    // one; a `{name[...]}` expression is no placeholder and must be reported
+    // even when it holds a quoted key, as `{m["k"]}`.
     !content.is_empty()
         && !content.contains(':')
         && !content.contains(',')
         && !content.contains('{')
         && !content.contains('}')
         && !content.contains('=')
-        && !content.contains('"')
-        && !content.contains('\'')
 }
 
 /// Counts the column of byte offsets that mostly come in order, counting on

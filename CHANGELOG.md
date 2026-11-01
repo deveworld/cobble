@@ -131,6 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- A command brace holding a quoted expression, as `{m["k"]}`, is reported as an
+  invalid placeholder instead of printed as literal text.
 - A numeric assignment keeps an earlier storage copy current through every
   later write, so a condition compiled before those writes sees the current
   value on subsequent loop passes.
