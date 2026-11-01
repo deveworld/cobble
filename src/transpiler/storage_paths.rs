@@ -206,10 +206,70 @@ pub(in crate::transpiler) trait StoragePathOps {
                 )
                 .into());
             }
+            let key_type = match &**index {
+                Expression::Array(_) => Some(CobbleType::List),
+                Expression::Map(_) => Some(CobbleType::Map),
+                index => self.storage_expr_type(index),
+            };
+            if matches!(key_type, Some(CobbleType::List | CobbleType::Map)) {
+                return Err(format!(
+                    "`[{}]` uses {} as a key, which can't pick an item or a field (Python raises TypeError). Use a number or text.",
+                    Transpiler::expression_source_key(index),
+                    if key_type == Some(CobbleType::List) { "a list" } else { "a map" },
+                )
+                .into());
+            }
+            if matches!(
+                self.storage_expr_type(base),
+                Some(CobbleType::Integer | CobbleType::Boolean)
+            ) {
+                return Err(format!(
+                    "`{}` holds a number, so `[{}]` can't pick an item of it (Python raises TypeError).",
+                    Transpiler::expression_source_key(base),
+                    Transpiler::expression_source_key(index),
+                )
+                .into());
+            }
         }
         crate::transpiler::desugar::sub_expressions(expr)
             .into_iter()
             .try_for_each(|part| self.check_subscript_keys(part))
+    }
+
+    /// Refuses an assignment target that Python can't change: a character
+    /// of text, and a field of a list, of text, or of a number.
+    fn check_assignment_target(&self, target: &Expression) -> Result<(), TranspileError> {
+        let phrase = |value_type: Option<CobbleType>| match value_type {
+            Some(CobbleType::String) => Some("text"),
+            Some(CobbleType::List) => Some("a list"),
+            Some(CobbleType::Integer | CobbleType::Boolean) => Some("a number"),
+            _ => None,
+        };
+        match target {
+            Expression::Subscript(base, index) => {
+                if self.storage_expr_type(base) == Some(CobbleType::String) {
+                    return Err(format!(
+                        "`{}` is text, which can't be changed in place, so `{}[{}] = ...` changes nothing (Python raises TypeError). Build new text instead, as `s = s[:i] + c + s[i + 1:]`.",
+                        Transpiler::expression_source_key(base),
+                        Transpiler::expression_source_key(base),
+                        Transpiler::expression_source_key(index),
+                    )
+                    .into());
+                }
+                self.check_assignment_target(base)
+            }
+            Expression::Attribute(base, field) => {
+                if let Some(kind) = phrase(self.storage_expr_type(base)) {
+                    return Err(format!(
+                        "`{}` is {kind}, so it has no field `{field}` to set (Python raises an error). Store a map there to give it fields.",
+                        Transpiler::expression_source_key(base),
+                    )
+                    .into());
+                }
+                self.check_assignment_target(base)
+            }
+            _ => Ok(()),
+        }
     }
 
     fn resolve_storage_path_plan(&self, expr: &Expression) -> Option<StoragePathPlan> {

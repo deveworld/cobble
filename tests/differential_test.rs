@@ -2771,3 +2771,229 @@ fn random_programs_match_python() {
         first_report.unwrap_or_default()
     );
 }
+
+// --- Container shapes ---
+//
+// Small programs of the shapes the generator above doesn't make: an item of
+// another kind added to a list by `+=` or `+` and read by a key in another
+// function, slices of a parameter joined, and a number compared with a
+// value that may be a list, a map, or text. Each program is the same text
+// in Cobble and in Python and appends its results to the list `out`.
+
+/// A literal of `kind` 0 (a list of numbers) or 1 (a map of numbers), with
+/// the keys a read can use.
+fn container_literal(rng: &mut Rng, kind: usize) -> (String, Vec<String>) {
+    let size = 1 + rng.below(3);
+    let values: Vec<i32> = (0..size).map(|_| rng.range(-9, 9)).collect();
+    if kind == 0 {
+        let keys = (0..size)
+            .flat_map(|index| [index.to_string(), format!("-{}", size - index)])
+            .collect();
+        let items: Vec<String> = values.iter().map(i32::to_string).collect();
+        (format!("[{}]", items.join(", ")), keys)
+    } else {
+        let names = ["a", "k", "x y"];
+        let keys: Vec<String> = names[..size]
+            .iter()
+            .map(|name| format!("{name:?}"))
+            .collect();
+        let entries: Vec<String> = keys
+            .iter()
+            .zip(&values)
+            .map(|(key, value)| format!("{key}: {value}"))
+            .collect();
+        (format!("{{{}}}", entries.join(", ")), keys)
+    }
+}
+
+/// `rows` starts with an item of one kind; `main` adds one of the other
+/// kind, and another function reads and writes it by a parameter key and by
+/// a literal key.
+fn added_item_program(rng: &mut Rng) -> String {
+    let kind = rng.below(2);
+    let (first, _) = container_literal(rng, kind);
+    let (added, keys) = container_literal(rng, 1 - kind);
+    let key = rng.pick(&keys);
+    let literal_key = rng.pick(&keys);
+    let value = rng.range(-9, 9);
+    let (setup, base, path) = match rng.below(3) {
+        0 => ("rows = [FIRST]", "rows", "rows[1]"),
+        1 => ("rows = [[FIRST]]", "rows[0]", "rows[0][1]"),
+        _ => ("rows = {\"a\": [FIRST]}", "rows[\"a\"]", "rows[\"a\"][1]"),
+    };
+    let add = match rng.below(3) {
+        0 => format!("{base} += [{added}]"),
+        1 => format!("{base} = {base} + [{added}]"),
+        _ => format!("{base}.append({added})"),
+    };
+    let global = if base == "rows" {
+        "    global rows\n"
+    } else {
+        ""
+    };
+    format!(
+        "{setup}\nout = []\n\ndef use(key):\n    out.append({path}[key])\n    out.append({path}[{literal_key}])\n    {path}[key] = {value}\n    {path}[key] += 1\n\ndef main():\n{global}    {add}\n    use({key})\n    out.append(rows)\n",
+        setup = setup.replace("FIRST", &first),
+    )
+}
+
+/// A list or a text, with bounds of slices of it.
+fn sliced_program(rng: &mut Rng) -> String {
+    let size = rng.below(5);
+    let value = if rng.chance(50) {
+        let items: Vec<String> = (0..size).map(|_| rng.range(0, 9).to_string()).collect();
+        format!("[{}]", items.join(", "))
+    } else {
+        let text: String = (0..size).map(|_| rng.pick(&['a', 'b', 'c'])).collect();
+        format!("{text:?}")
+    };
+    let bound = |rng: &mut Rng| rng.range(-(size as i32) - 1, size as i32 + 1);
+    let (i, j) = (bound(rng), bound(rng));
+    let count = rng.range(0, 3);
+    let joins = [
+        "v[:i] + v[i:]",
+        "v[:i] + v[i:j] + v[j:]",
+        "v[i:] + v[:i]",
+        "v[:i] + (v[i:j] + v[j:])",
+        "a + b",
+        "b + a + b",
+        "v[i:j] * n",
+        "a * n",
+        "v[:0] + v",
+    ];
+    let mut body = String::from("    a = v[:i]\n    b = v[i:j]\n");
+    for _ in 0..1 + rng.below(3) {
+        writeln!(body, "    out.append({})", rng.pick(&joins)).unwrap();
+    }
+    writeln!(body, "    out.append(len(v[i:j] + v[:i]))").unwrap();
+    format!(
+        "out = []\n\ndef f(v, i, j, n):\n{body}\ndef main():\n    f({value}, {i}, {j}, {count})\n"
+    )
+}
+
+/// A number compared with a parameter that may hold a number, text, a
+/// list, or a map.
+fn compared_program(rng: &mut Rng) -> String {
+    let values = [
+        "0",
+        "1",
+        "3",
+        "-1",
+        "[]",
+        "[1]",
+        "[0, 0, 0]",
+        "\"\"",
+        "\"a\"",
+        "\"abc\"",
+        "{}",
+        "{\"k\": 1}",
+    ];
+    let number = rng.pick(&["0", "1", "3", "-1"]);
+    let mut calls = String::new();
+    for _ in 0..1 + rng.below(4) {
+        writeln!(calls, "    out.append(f({}))", rng.pick(&values)).unwrap();
+    }
+    format!(
+        "out = []\n\ndef f(m):\n    r = 0\n    if m == {number}:\n        r += 1\n    if {number} == m:\n        r += 2\n    if m != {number}:\n        r += 4\n    x = m == {number}\n    r += x * 8\n    return r\n\ndef main():\n{calls}"
+    )
+}
+
+const SHAPE_RUNNER: &str = r#"
+import json, sys
+for line in sys.stdin:
+    results = []
+    for source in json.loads(line):
+        scope = {}
+        try:
+            exec(source + "\nmain()\n", scope)
+            results.append({"out": scope["out"]})
+        except Exception as error:
+            results.append({"error": repr(error)})
+    print(json.dumps(results), flush=True)
+"#;
+
+#[test]
+fn container_shapes_match_python() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let runner = dir.path().join("shapes.py");
+    std::fs::write(&runner, SHAPE_RUNNER).unwrap();
+    let Ok(mut child) = Command::new("python3")
+        .arg("-I")
+        .arg(&runner)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+    else {
+        assert!(
+            std::env::var("COBBLE_DIFF_REQUIRE_PYTHON").as_deref() != Ok("1"),
+            "python3 is required for the differential test"
+        );
+        return;
+    };
+    let cases = env_number("COBBLE_DIFF_CASES", 300);
+    let first_seed = env_number("COBBLE_DIFF_SEED", 1);
+    let programs: Vec<(u64, String)> = (0..cases)
+        .map(|index| {
+            let seed = first_seed + index;
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let source = match index % 3 {
+                0 => added_item_program(&mut rng),
+                1 => sliced_program(&mut rng),
+                _ => compared_program(&mut rng),
+            };
+            (seed, source)
+        })
+        .collect();
+    let sources: Vec<&str> = programs.iter().map(|(_, source)| source.as_str()).collect();
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&sources).unwrap()).unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let _ = child.kill();
+    let expected: Vec<serde_json::Value> = serde_json::from_str(&line).unwrap();
+
+    let default_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for ((seed, source), expected) in programs.iter().zip(&expected) {
+        // Python raised: the program isn't one this test checks.
+        let Some(want) = expected.get("out") else {
+            continue;
+        };
+        checked += 1;
+        let got = match Sim::try_load(source, &[]) {
+            Err(error) => Err(format!("build failed: {error}")),
+            Ok(mut sim) => panic::catch_unwind(AssertUnwindSafe(|| {
+                sim.call("main");
+                sim.storage["vars"]["out"].clone()
+            }))
+            .map_err(|_| "simulator panicked".to_string()),
+        };
+        if got.as_ref() != Ok(want) {
+            failures.push(format!(
+                "seed {seed}:\n{source}--- python ---\n{want}\n--- cobble ---\n{got:?}\n"
+            ));
+        }
+    }
+    panic::set_hook(default_hook);
+    assert!(
+        checked * 4 >= cases * 3,
+        "Python raised for {} of {cases} container programs",
+        cases - checked
+    );
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} container programs differ from Python:\n\n{}",
+        failures.len(),
+        failures
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

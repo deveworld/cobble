@@ -14,6 +14,9 @@ pub(in crate::transpiler) struct SourceLocations {
         HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
     pub(in crate::transpiler) statements:
         HashMap<PathBuf, HashMap<String, VecDeque<SourceLocation>>>,
+    /// The keys of `statements` by their text without parentheses, built
+    /// when a statement first misses its own key.
+    pub(in crate::transpiler) bare_statement_keys: HashMap<PathBuf, HashMap<String, Vec<String>>>,
     /// Where each top-level import of each file starts, in import order.
     pub(in crate::transpiler) imports: HashMap<PathBuf, Vec<SourceLocation>>,
     /// The text of each source file, with continued raw commands joined.
@@ -176,6 +179,9 @@ impl Transpiler {
             .statements
             .insert(canonical_path.clone(), statement_locations);
         self.source_locations
+            .bare_statement_keys
+            .remove(&canonical_path);
+        self.source_locations
             .sources
             .insert(canonical_path.clone(), source.to_string());
         self.source_locations
@@ -224,6 +230,9 @@ impl Transpiler {
         self.source_locations
             .statements
             .insert(canonical_path.clone(), statement_locations);
+        self.source_locations
+            .bare_statement_keys
+            .remove(&canonical_path);
         self.source_locations
             .sources
             .insert(canonical_path.clone(), source.to_string());
@@ -498,7 +507,8 @@ impl Transpiler {
     ) -> Option<SourceLocation> {
         let keys = Self::statement_source_keys(statement);
         let file_path = self.imports.current_file.as_ref()?;
-        let statements = self.source_locations.statements.get_mut(file_path)?;
+        let source_locations = &mut self.source_locations;
+        let statements = source_locations.statements.get_mut(file_path)?;
         // Statements are lowered in source order, so the earliest pending
         // location among the candidate keys is this statement's. Taking the
         // first key with any location could hand `asat @p:` the location of a
@@ -510,7 +520,31 @@ impl Transpiler {
                 Some((key, location.line, location.column))
             })
             .min_by_key(|(_, line, column)| (*line, *column))
-            .map(|(key, _, _)| key.clone())?;
+            .map(|(key, _, _)| key.clone())
+            .or_else(|| {
+                // The parsed statement has lost its parentheses, as in
+                // `b = (a and h) == h`, so compare without them.
+                let bare = |key: &str| key.replace(['(', ')'], "");
+                let bare_keys = source_locations
+                    .bare_statement_keys
+                    .entry(file_path.clone())
+                    .or_insert_with(|| {
+                        let mut bare_keys: HashMap<String, Vec<String>> = HashMap::new();
+                        for key in statements.keys() {
+                            bare_keys.entry(bare(key)).or_default().push(key.clone());
+                        }
+                        bare_keys
+                    });
+                keys.iter()
+                    .filter_map(|key| bare_keys.get(&bare(key)))
+                    .flatten()
+                    .filter_map(|key| {
+                        let location = statements.get(key)?.front()?;
+                        Some((key, location.line, location.column))
+                    })
+                    .min_by_key(|(_, line, column)| (*line, *column))
+                    .map(|(key, _, _)| key.clone())
+            })?;
         statements.get_mut(&key).and_then(VecDeque::pop_front)
     }
 
@@ -522,6 +556,49 @@ impl Transpiler {
             return Vec::new();
         };
         let mut keys = vec![primary];
+        // A target such as `box[n + 1]`, whose parsed name can't spell its
+        // key.
+        if let Statement::Assignment(assign) = statement {
+            if let Some(target) = assign
+                .target_expr
+                .as_ref()
+                .filter(|_| !assign.assigns_name())
+            {
+                let target_key = Self::expression_source_key(target);
+                keys.push(Self::normalize_source_key(&format!(
+                    "{}={}",
+                    target_key,
+                    Self::expression_source_key(&assign.value)
+                )));
+                if let Expression::Binary(left, op, right) = &assign.value {
+                    if left.as_ref() == target {
+                        keys.push(Self::normalize_source_key(&format!(
+                            "{}{}={}",
+                            target_key,
+                            Self::binary_op_source_key(op),
+                            Self::expression_source_key(right)
+                        )));
+                    }
+                }
+            }
+        }
+        // `for i, item in pairs:`
+        if let Statement::For(for_loop) = statement {
+            if let Some(index) = &for_loop.index {
+                let mut source = format!(
+                    "for{},{}in{}",
+                    index,
+                    for_loop.target,
+                    Self::expression_source_key(&for_loop.iter)
+                );
+                if let Some(step) = &for_loop.step {
+                    source.push_str("by");
+                    source.push_str(&Self::expression_source_key(step));
+                }
+                source.push(':');
+                keys.push(Self::normalize_source_key(&source));
+            }
+        }
         // `x += 5` parses to `x = x + 5`, but its source line keys as `x+=5`.
         if let Statement::Assignment(assign) = statement {
             if let Expression::Binary(left, op, right) = &assign.value {

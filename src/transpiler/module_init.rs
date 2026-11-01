@@ -414,6 +414,21 @@ impl Transpiler {
                     })
                     .map_err(TranspileError::from)
             }
+            // Comparing text, lists, or maps takes commands of its own.
+            Expression::Binary(left, op, right)
+                if matches!(op, crate::ast::BinaryOp::Eq | crate::ast::BinaryOp::NotEq)
+                    && [left, right].iter().any(|side| {
+                        matches!(
+                            self.infer_type(side),
+                            CobbleType::String | CobbleType::List | CobbleType::Map
+                        )
+                    }) =>
+            {
+                Err(format!(
+                    "Failed to initialize module variable '{var_name}': comparing text, lists, or maps takes commands, so it can't set a module variable. Assign it inside a function."
+                )
+                .into())
+            }
             _ => {
                 self.data_pack.track_objective("temp");
                 self.symbols

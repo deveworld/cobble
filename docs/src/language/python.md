@@ -44,12 +44,15 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   False.
 - At any depth, as in `grid[r][c]`, the key's type decides: text picks a
   field of a map, and a number an item of a list or a character of text.
-  When Cobble can't tell the key's type, as for a parameter, the type of
-  what it indexes decides, and when that isn't known either, the pack checks
-  when it runs whether the key holds text or a number. A number is never a
-  map key, so `5 in {"5": 1}` is false, as in Python. A text key of a value
-  Cobble knows is a list, as `rows[0]["k"]` after `rows = [[1, 2]]`, is a
-  compile error, where Python raises `TypeError`.
+  When Cobble can't tell the key's type, as for a parameter, the pack checks
+  when it runs whether the key holds text or a number, even for a list or a
+  map Cobble knows. A number is never a map key, so `5 in {"5": 1}` is
+  false, as in Python, and reading `m[k]` with a number `k` gives 0 and
+  writing it changes nothing; text picks no item of a list the same way.
+  These are compile errors, where Python raises `TypeError`: a text key of a
+  value Cobble knows is a list, as `rows[0]["k"]` after `rows = [[1, 2]]`; a
+  list or a map as a key; an item of a number; setting a character of text,
+  as `s[0] = "x"`; and setting a field of a list or of text.
 - A list or map is a value: assigning it to another variable or passing it to
   a function copies it, so a change through one name doesn't show through the
   other.
@@ -64,7 +67,17 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   results. `return x > 3` and other conditions return 1 or 0.
 - `/` and `//` are both floor division, and `^` and `**` are both power.
 - `+` joins text and lists when Cobble can tell that one side is text or a
-  list. Two parameters add as numbers, so write `str(a) + b` to join them.
+  list. When it can't tell for either side, as for slices or items of a
+  parameter, the pack checks when it runs: text and lists join and numbers
+  add. `*` repeats text and lists the same way, as in `p * 2` for a
+  parameter `p`. Two parameters add and multiply as numbers, so write
+  `str(a) + b` to join them.
+- A number is never equal to text, a list, or a map, as in Python, even when
+  the other side is a parameter: `1 == m` is false for `m = [1]`.
+- An item added by `+=`, `+`, or `append` can have another type than the
+  items the list started with, as `rows += [{"k": 3}]` after
+  `rows = [[1, 2]]`; a read of it, in any function, checks its type when the
+  pack runs.
 - Text joined, repeated, or passed to `str()` while the pack runs keeps every
   character, `"` and `\` included.
 - In `items[f()]`, a list that `f` changes in place shows the change, as in

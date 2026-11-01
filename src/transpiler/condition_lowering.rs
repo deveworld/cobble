@@ -189,6 +189,16 @@ impl Transpiler {
                 {
                     return self.lower_stored_equality(left, op, right);
                 }
+                if matches!(op, BinaryOp::Eq | BinaryOp::NotEq) {
+                    let (left_stored, right_stored) =
+                        (self.stored_operand(left), self.stored_operand(right));
+                    if left_stored == Some(false) && right_stored.is_none() {
+                        return self.lower_number_equality(left, op, right);
+                    }
+                    if right_stored == Some(false) && left_stored.is_none() {
+                        return self.lower_number_equality(right, op, left);
+                    }
+                }
 
                 if is_comparison {
                     // Evaluate each complex side (arithmetic, calls, storage
@@ -474,6 +484,73 @@ impl Transpiler {
             BinaryOp::Eq,
             Box::new(Expression::Number(expected)),
         ))
+    }
+
+    /// `value == number`, where `value` may hold text, a list, or a map as
+    /// well as a number: only a number can be equal, as in Python. Text has
+    /// itself as its text, and a list or a map has none, so a value is a
+    /// number when `set string` works and changes it.
+    fn lower_number_equality(
+        &mut self,
+        value: &Expression,
+        op: &BinaryOp,
+        number: &Expression,
+    ) -> Result<Expression, TranspileError> {
+        let id = self.next_temp_id();
+        let namespace = self.data_pack.namespace.clone();
+        let root = format!("_cobble_compare_{id}");
+        let (copy, text) = (format!("{root}.value"), format!("{root}.text"));
+        let is_number = format!("expr_kind_temp_{id}");
+        let read = format!("expr_cond_temp_{id}");
+
+        self.data_pack.track_objective("temp");
+        for name in [&is_number, &read] {
+            self.symbols
+                .variable_objectives
+                .insert(name.clone(), "temp".to_string());
+            self.symbols.scoreboard_variables.insert(name.clone());
+        }
+
+        let mut commands = vec![format!("data remove storage {namespace}:global {root}")];
+        commands.extend(self.storage_value_commands(&copy, value)?);
+        commands.extend([
+            format!(
+                "execute store success score {is_number} temp run data modify storage {namespace}:global {text} set string storage {namespace}:global {copy}"
+            ),
+            format!(
+                "execute if score {is_number} temp matches 1 store success score {is_number} temp run data modify storage {namespace}:global {text} set from storage {namespace}:global {copy}"
+            ),
+            format!(
+                "execute store result score {read} temp run data get storage {namespace}:global {copy}"
+            ),
+            format!("data remove storage {namespace}:global {root}"),
+        ]);
+        self.extend_current_function(commands);
+        let number = match self.fold_condition_operand(number) {
+            Some(folded) => folded,
+            None if self.condition_operand_needs_temp(number) => {
+                self.lower_condition_value_to_temp(number)?
+            }
+            None => number.clone(),
+        };
+
+        let flag = |expected: f64| {
+            Expression::Binary(
+                Box::new(Expression::Identifier(is_number.clone())),
+                BinaryOp::Eq,
+                Box::new(Expression::Number(expected)),
+            )
+        };
+        let compared = Expression::Binary(
+            Box::new(Expression::Identifier(read.clone())),
+            op.clone(),
+            Box::new(number),
+        );
+        Ok(if matches!(op, BinaryOp::Eq) {
+            Expression::Binary(Box::new(flag(1.0)), BinaryOp::And, Box::new(compared))
+        } else {
+            Expression::Binary(Box::new(flag(0.0)), BinaryOp::Or, Box::new(compared))
+        })
     }
 
     pub(in crate::transpiler) fn condition_operand_needs_temp(&self, expr: &Expression) -> bool {

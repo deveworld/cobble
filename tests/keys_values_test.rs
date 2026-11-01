@@ -642,3 +642,177 @@ def main():
     assert_eq!(storage(&sim, "t"), json!([[{"lx": [1, 2]}]]));
     assert_eq!(storage(&sim, "out"), json!([7, 6, 4, 0]));
 }
+
+// --- Second check: augmented keys, pops, comparisons ---
+
+#[test]
+fn a_pop_in_an_augmented_key_runs_once() {
+    let sim = run(r#"q = ["b", "a"]
+d = {"a": 1, "b": 2}
+n = [1, 2]
+qq = [1, 0]
+t = [[[{"x": 1, "y": 2}]]]
+q3 = ["y", "x"]
+
+def main():
+    d[q.pop(0)] += 5
+    n[qq.pop(0)] += 5
+    t[0][0][0][q3.pop(0)] += 5
+"#);
+    assert_eq!(storage(&sim, "d"), json!({"a": 1, "b": 7}));
+    assert_eq!(storage(&sim, "q"), json!(["a"]));
+    assert_eq!(storage(&sim, "n"), json!([1, 7]));
+    assert_eq!(storage(&sim, "t"), json!([[[{"x": 1, "y": 7}]]]));
+}
+
+#[test]
+fn popped_text_joins() {
+    let sim = run(r#"q = ["b", "a", "c"]
+s = ""
+
+def main():
+    global s
+    s = q.pop(0) + q.pop(0) + q.pop(0) + "z"
+"#);
+    assert_eq!(storage(&sim, "s"), json!("bacz"));
+}
+
+#[test]
+fn a_number_is_never_equal_to_text_a_list_or_a_map() {
+    let sim = run(r#"out = []
+
+def f(m):
+    r = 0
+    if m == 1:
+        r += 1
+    if 1 == m:
+        r += 2
+    if m != 1:
+        r += 4
+    x = m == 1
+    r += x * 8
+    return r
+
+def g(m):
+    return 0 == m
+
+def main():
+    out.append(f({"k": 1}))
+    out.append(f([1]))
+    out.append(f("a"))
+    out.append(f(1))
+    out.append(f(0))
+    out.append(g([]))
+    out.append(g(""))
+    out.append(g({}))
+    out.append(g(0))
+"#);
+    assert_eq!(storage(&sim, "out"), json!([4, 4, 4, 11, 4, 0, 0, 0, 1]));
+}
+
+#[test]
+fn augmented_assignments_python_rejects_are_errors() {
+    let cases = [
+        ("d = {\"a\": 1}", "d[[1]] += 1", "uses a list as a key"),
+        ("nums = [1, 2]", "nums[nums] += 1", "uses a list as a key"),
+        ("s = \"ab\"", "s[0] += 1", "can't be changed in place"),
+        ("s = \"ab\"", "s[\"a\"] += 1", "can't be changed in place"),
+        ("nums = [1, 2]", "nums.a += 1", "has no field `a`"),
+        ("d = {\"a\": 1}", "d[\"a\"][\"z\"] += 1", "holds a number"),
+        (
+            "cfg = {\"s\": \"hi\"}",
+            "cfg.s[1] = \"x\"",
+            "can't be changed in place",
+        ),
+    ];
+    for (setup, line, message) in cases {
+        let source = format!("{setup}\n\ndef main():\n    {line}\n");
+        let error = Sim::try_load(&source, &[]).err().unwrap_or_default();
+        assert!(
+            error.contains("main.cbl:4:") && error.contains(message),
+            "{line}: {error}"
+        );
+    }
+}
+
+#[test]
+fn key_errors_name_their_line() {
+    let cases = [
+        (
+            "box = {\"a\": 1}\nn = 1\n\ndef main():\n    box[n + 1] += 1\n",
+            "main.cbl:5:",
+        ),
+        (
+            "box = {\"a\": 1}\nn = 1\n\ndef main():\n    if n:\n        pass\n    else:\n        box[n + 1] += 1\n",
+            "main.cbl:8:",
+        ),
+        (
+            "box = {\"a\": 1}\nn = 1\n\ndef main():\n    box[n * 2] = 1\n",
+            "main.cbl:5:",
+        ),
+        (
+            "pairs = [[\"a\", 1]]\nm = {}\n\ndef main():\n    for k, v in pairs:\n        m[k] = v\n",
+            "main.cbl:5:",
+        ),
+        (
+            "a = [1]\nh = {\"k\": 1}\n\ndef main():\n    b = (a and h) == h\n",
+            "main.cbl:5:",
+        ),
+    ];
+    for (source, location) in cases {
+        let error = Sim::try_load(source, &[]).err().unwrap_or_default();
+        assert!(error.contains(location), "{source}: {error}");
+    }
+}
+
+#[test]
+fn a_choice_between_a_list_and_a_map_names_no_internal_variable() {
+    let error = Sim::try_load(
+        "a = [1]\nh = {\"k\": 1}\nc = 1\n\ndef g(x):\n    pass\n\ndef main():\n    g(a if c else h)\n",
+        &[],
+    )
+    .err()
+    .unwrap_or_default();
+    assert!(
+        error.contains("main.cbl:9:") && error.contains("gives a list or a map"),
+        "{error}"
+    );
+    assert!(!error.contains("_cobble_hold"), "{error}");
+}
+
+#[test]
+fn a_condition_assigned_to_an_item_or_a_field_stores_its_flag() {
+    let sim = run(r#"out = [0, 0, 0, 0, 0]
+d = {"k": 0, "j": 0}
+
+def f(s, a):
+    out[0] = s in ["a"]
+    d["k"] = s in ["b"]
+    d.j = a == 2
+    out[1] = a not in [2]
+    out[2] = not a
+    out[3] = a > 1
+    out[4] = s in d
+
+def main():
+    f("a", 2)
+"#);
+    assert_eq!(storage(&sim, "out"), json!([1, 0, 0, 1, 0]));
+    assert_eq!(storage(&sim, "d"), json!({"k": 0, "j": 1}));
+}
+
+#[test]
+fn a_module_comparison_of_lists_names_the_rewrite() {
+    let error = Sim::try_load("x = [1] == [1]\n\ndef main():\n    pass\n", &[])
+        .err()
+        .unwrap_or_default();
+    assert!(error.contains("Assign it inside a function"), "{error}");
+}
+
+#[test]
+fn a_missing_read_at_module_level_still_prints() {
+    let lines = said(
+        "cfg = {}\nleft = cfg.value\n\ndef main():\n    /say before\n    /say got {left}\n    /say after\n",
+    );
+    assert_eq!(lines, vec!["before", "got 0", "after"]);
+}

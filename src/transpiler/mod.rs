@@ -525,6 +525,16 @@ impl Transpiler {
         for expr in statement_expressions(statement) {
             storage_paths::StoragePathOps::check_subscript_keys(self, expr)?;
         }
+        let targets: Vec<&Expression> = match statement {
+            Statement::Assignment(assign) if !assign.assigns_name() => {
+                assign.target_expr.iter().collect()
+            }
+            Statement::MultiAssign(multi) => multi.targets.iter().collect(),
+            _ => Vec::new(),
+        };
+        for target in targets {
+            storage_paths::StoragePathOps::check_assignment_target(self, target)?;
+        }
         self.check_later_variables(statement)?;
         if let Some(lowered) = self.desugar_statement(statement)? {
             for statement in &lowered {

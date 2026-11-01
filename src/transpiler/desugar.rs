@@ -215,6 +215,9 @@ impl Transpiler {
             Statement::Assignment(assign)
                 if self.needs_lowering(&assign.value)
                     || self.is_operand_choice(&assign.value)
+                    || (!assign.assigns_name()
+                        && is_condition(&assign.value)
+                        && self.current_function.is_some())
                     || assign
                         .target_expr
                         .as_ref()
@@ -486,8 +489,54 @@ impl Transpiler {
             {
                 CobbleType::List
             }
+            // `items.pop()` gives an item of the list.
+            Expression::Call(func, _)
+                if matches!(&**func, Expression::Attribute(base, method)
+                    if method == "pop" && self.is_list_value(base)) =>
+            {
+                match &**func {
+                    Expression::Attribute(base, _) => self.value_type(&Expression::Subscript(
+                        base.clone(),
+                        Box::new(Expression::Number(0.0)),
+                    )),
+                    _ => CobbleType::Unknown,
+                }
+            }
             expr => self.infer_type(expr),
         }
+    }
+
+    /// Refuses `a if c else h` when Cobble knows the two values have types
+    /// one variable can't both hold, as a list and a map.
+    fn check_choice_types(
+        &self,
+        value: &Expression,
+        otherwise: &Expression,
+    ) -> Result<(), TranspileError> {
+        let (left, right) = (self.value_type(value), self.value_type(otherwise));
+        let holds_values = |value_type: &CobbleType| {
+            matches!(
+                value_type,
+                CobbleType::String | CobbleType::List | CobbleType::Map
+            )
+        };
+        let known = |value_type: &CobbleType| {
+            holds_values(value_type)
+                || matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
+        };
+        if left != right
+            && known(&left)
+            && known(&right)
+            && (holds_values(&left) || holds_values(&right))
+        {
+            return Err(format!(
+                "`... if ... else ...` gives {} or {} here, which one value can't be. Give both values the same type, or use an `if` statement with a variable of each type.",
+                type_phrase(&left),
+                type_phrase(&right),
+            )
+            .into());
+        }
+        Ok(())
     }
 
     /// The type of a value that is either `left` or `right`.
@@ -550,6 +599,25 @@ impl Transpiler {
             .as_ref()
             .filter(|target| self.target_needs_lowering(target))
         {
+            // `d[q.pop(0)] += 5` works out its key once, before it reads the
+            // item, as Python does.
+            if let Expression::Binary(left, op, right) = &assignment.value {
+                if **left == *target {
+                    let target_expr = self.lower_target(target, out)?;
+                    let value = Expression::Binary(
+                        Box::new(target_expr.clone()),
+                        op.clone(),
+                        right.clone(),
+                    );
+                    let value = self.lower_operand(&value, out)?;
+                    out.push(Statement::Assignment(Assignment {
+                        target_expr: Some(target_expr),
+                        value,
+                        ..assignment.clone()
+                    }));
+                    return Ok(());
+                }
+            }
             let holder = self.hidden_local(self.value_type(&assignment.value));
             out.push(assign(&holder, assignment.value.clone()));
             let target_expr = Some(self.lower_target(target, out)?);
@@ -583,7 +651,14 @@ impl Transpiler {
             }));
             return Ok(());
         }
-        let value = self.lower_operand(&assignment.value, out)?;
+        let mut value = self.lower_operand(&assignment.value, out)?;
+        // An item or a field takes a condition's 1 or 0 from a flag, as in
+        // `out[0] = s in names`.
+        if !assignment.assigns_name() && is_condition(&value) {
+            let holder = self.hidden_local(CobbleType::Boolean);
+            out.push(assign(&holder, value));
+            value = Expression::Identifier(holder);
+        }
         out.push(Statement::Assignment(Assignment {
             value,
             ..assignment.clone()
@@ -1096,6 +1171,7 @@ impl Transpiler {
                     let chosen = if constant != 0.0 { value } else { otherwise };
                     return self.lower_value(chosen, out);
                 }
+                self.check_choice_types(value, otherwise)?;
                 let holder = self.hidden_local(self.value_type(expr));
                 out.push(Statement::If(IfStatement {
                     condition: (**condition).clone(),
