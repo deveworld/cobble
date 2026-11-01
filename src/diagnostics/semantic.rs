@@ -2238,6 +2238,18 @@ fn collect_assignment_scan_events_into(
                     collect_assignment_scan_events_into(context, &case.body, case_nodes, events);
                 }
             }
+            // `a, b = pair`: each name holds an item, whose type the
+            // compiler knows.
+            Statement::MultiAssign(multi) => {
+                for target in &multi.targets {
+                    if let Expression::Identifier(name) = target {
+                        events.push(AssignmentScanEvent::LoopTarget(
+                            name.clone(),
+                            CobbleType::Unknown,
+                        ));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -3428,7 +3440,8 @@ fn expression_references_are_known(
     expression: &str,
     type_env: &HashMap<String, CobbleType>,
 ) -> bool {
-    identifier_references_in_expression(expression)
+    // A word inside a string literal, as `z` in `s + "z"`, is no reference.
+    identifier_references_in_expression(&mask_non_code(expression))
         .into_iter()
         .all(|reference| {
             is_builtin_symbol(&reference.name) || type_env.contains_key(&reference.name)
