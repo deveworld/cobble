@@ -1241,6 +1241,27 @@ pub(in crate::transpiler) fn empty_value_snbt(value_type: &CobbleType) -> &'stat
 
 /// Whether one of the storage paths is the other or holds it.
 fn paths_overlap(first: &str, second: &str) -> bool {
+    // Two indexes can pick the same item, as `[-2]` and `[0]` of two items.
+    let any_item = |path: &str| {
+        let mut out = String::with_capacity(path.len());
+        let mut depth = 0usize;
+        for ch in path.chars() {
+            match ch {
+                '[' => {
+                    if depth == 0 {
+                        out.push_str("[]");
+                    }
+                    depth += 1;
+                }
+                ']' => depth = depth.saturating_sub(1),
+                _ if depth == 0 => out.push(ch),
+                _ => {}
+            }
+        }
+        out
+    };
+    let (first, second) = (any_item(first), any_item(second));
+    let (first, second) = (first.as_str(), second.as_str());
     let holds = |outer: &str, inner: &str| {
         inner
             .strip_prefix(outer)

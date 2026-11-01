@@ -159,14 +159,17 @@ fn a_character_read_into_its_own_text_reads_first() {
     let sim = run(r#"
 s = "hello"
 t = "hello"
+gn = ["hello", "Mc"]
 
 def go():
     global s, t
     s = s[1]
     t = t[9]
+    gn[-2] = gn[0][0]
 "#);
     assert_eq!(var(&sim, "s"), json!("e"));
     assert_eq!(var(&sim, "t"), json!(""));
+    assert_eq!(var(&sim, "gn"), json!(["h", "Mc"]));
 }
 
 #[test]
