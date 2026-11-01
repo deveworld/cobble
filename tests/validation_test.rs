@@ -390,6 +390,9 @@ stdlib.addEventListener(event.TICK, game_tick)
 
 #[test]
 fn test_validate_references_of_an_inline_predicate() {
+    let Some(_) = get_validator() else {
+        return;
+    };
     // Refuted 14: Minecraft looks these up when it loads the function, and
     // a missing one stops the function from loading.
     let errors = compile_and_validate(

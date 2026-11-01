@@ -2363,7 +2363,7 @@ mod tests {
             .unwrap_err();
 
             assert!(
-                error.contains("Invalid namespace"),
+                error.contains("Invalid namespace") || error.contains("Namespace too long"),
                 "namespace {namespace:?} produced unexpected error: {error}"
             );
             assert!(

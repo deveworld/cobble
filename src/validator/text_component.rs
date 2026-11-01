@@ -319,7 +319,7 @@ fn check_nbt(fields: &Map<String, Value>) -> Option<String> {
     };
     if let Some(text) = path.as_str() {
         let parser = "minecraft:nbt_path";
-        if !text.is_empty() && !(reads_as(parser, text) && values::problem(parser, text).is_none())
+        if !(text.is_empty() || (reads_as(parser, text) && values::problem(parser, text).is_none()))
         {
             return Some(format!("`{text}` is not a valid NBT path"));
         }

@@ -393,10 +393,10 @@ fn component_value_problem(name: &str, parsed: &Value) -> Option<String> {
             Some(format!("`predicates` of `{name}` must be a compound"))
         }
         "dyed_color" if !is_color(parsed) => must_be("a color number or a list of three numbers"),
-        "damage" | "repair_cost" if !whole_number(parsed).is_some_and(|number| number >= 0) => {
+        "damage" | "repair_cost" if whole_number(parsed).is_none_or(|number| number < 0) => {
             must_be("a number from 0")
         }
-        "max_damage" if !whole_number(parsed).is_some_and(|number| number >= 1) => {
+        "max_damage" if whole_number(parsed).is_none_or(|number| number < 1) => {
             must_be("a number from 1")
         }
         "max_stack_size" if !whole_number(parsed).is_some_and(|size| (1..=99).contains(&size)) => {

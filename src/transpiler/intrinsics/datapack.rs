@@ -152,7 +152,7 @@ impl Transpiler {
         let (namespace, name) = self.expr_to_resource_id(&args[0], "resource name")?;
         let json = self.expr_to_json_value(&args[1])?;
         self.check_resource_json_placeholders(&json)?;
-        if !json.is_object() && !(resource_type == "item_modifier" && json.is_array()) {
+        if !(json.is_object() || (resource_type == "item_modifier" && json.is_array())) {
             return Err(
                 format!("datapack.{}() JSON value must be an object", resource_type).into(),
             );
