@@ -262,15 +262,16 @@ def lookup(key):
     let content = read_function(&output_dir, "lookup");
     let all_functions = read_all_functions(&output_dir);
 
+    // A parameter can hold a number, which picks no field, so the pack
+    // checks the key when it runs; text is escaped for the quoted path key.
     assert!(
-        // The key is escaped for the quoted path key on its way.
-        content.contains("data modify storage cobble:global _cobble_esc.key set from storage cobble:global args.key")
-            && content.contains(".key0 set from storage cobble:global _cobble_esc.done"),
+        content.contains(".seg0_k set from storage cobble:global args.key")
+            && content.contains(".seg0_k set from storage cobble:global _cobble_esc.done"),
         "{content}"
     );
     assert!(all_functions.contains(
-        "$execute store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.\"$(key0)\""
-    ));
+        "$execute if score #cobble_dyn_0_seg0 cobble.vars matches 0 store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.\"$(seg0_k)\""
+    ), "{all_functions}");
 }
 
 #[test]

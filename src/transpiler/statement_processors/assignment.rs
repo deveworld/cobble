@@ -428,6 +428,25 @@ impl Transpiler {
                     score,
                 })
             }
+            // A copy of a value whose type only the running pack knows, as
+            // a helper's result for a slice of a parameter.
+            Expression::Identifier(name)
+                if name != target
+                    && matches!(
+                        self.symbols.variable_types.get(name),
+                        None | Some(CobbleType::Unknown)
+                    )
+                    && !self.symbols.scoreboard_variables.contains(name)
+                    && !self.symbols.variable_objectives.contains_key(name) =>
+            {
+                self.symbols
+                    .variable_storage_paths
+                    .get(name)
+                    .map(|path| StorageRead::Path {
+                        plan: StoragePathPlan::static_path(path.clone()),
+                        score,
+                    })
+            }
             Expression::Subscript(base, _) if self.is_string_base(base) => None,
             Expression::Subscript(base, index)
                 if !self.picks_field(base, index) && self.is_unknown_base(base) =>

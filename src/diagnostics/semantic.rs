@@ -1534,16 +1534,33 @@ pub(super) fn check_undefined_variable_references(
         }
         let indent = masked.len() - trimmed.len();
 
-        let expressions = if scan.conditions.is_empty() {
+        let mut expressions = if scan.conditions.is_empty() {
             expression_spans_for_undefined_scan(trimmed)
         } else {
             execute_condition_spans(trimmed, &scan.conditions)
         };
-        for expression in expressions {
+        // The keys of a target such as `nums[i] = 5` are read too.
+        if scan.conditions.is_empty() && compound_assignment_span(trimmed).is_none() {
+            if let Some(equals_index) = single_equals_index(trimmed) {
+                expressions.extend(subscript_key_spans(&ExpressionSpan {
+                    text: trimmed[..equals_index].to_string(),
+                    offset: 0,
+                }));
+            }
+        }
+        let mut pending = expressions;
+        let mut expressions = Vec::new();
+        while let Some(expression) = pending.pop() {
             if expression_has_unsupported_reference_shape(&expression.text) {
+                // The keys of `nums[nokey]` are plain expressions, whatever
+                // the rest of the line holds.
+                pending.extend(subscript_key_spans(&expression));
                 continue;
             }
-
+            expressions.push(expression);
+        }
+        expressions.sort_by_key(|expression| expression.offset);
+        for expression in expressions {
             for reference in identifier_references_in_expression(&expression.text) {
                 if symbols.contains(&reference.name) || scan.params.contains(&reference.name) {
                     continue;
@@ -1999,6 +2016,46 @@ fn identifier_references_in_expression(expression: &str) -> Vec<IdentifierRefere
     }
 
     refs
+}
+
+/// The keys of the subscripts in `expression`, as `i + 1` of `nums[i + 1]`.
+/// A list literal such as `[a, b]` and a slice are left out.
+fn subscript_key_spans(expression: &ExpressionSpan) -> Vec<ExpressionSpan> {
+    let text = &expression.text;
+    let bytes = text.as_bytes();
+    let mut spans = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'[' {
+            index += 1;
+            continue;
+        }
+        let Some(close) = matching_close_bracket(text, index) else {
+            break;
+        };
+        let subscript = match previous_non_whitespace_byte(text, index) {
+            Some(b']' | b')') => true,
+            Some(byte) if is_ident_continue_byte(byte) => {
+                identifier_before(text, index).is_some_and(|(name, _)| !is_expression_keyword(name))
+            }
+            _ => false,
+        };
+        let key = &text[index + 1..close];
+        if subscript && !key.contains(':') && !key.trim().is_empty() {
+            spans.push(ExpressionSpan {
+                text: key.to_string(),
+                offset: expression.offset + index + 1,
+            });
+        } else {
+            // The items of a list literal can hold subscripts too.
+            spans.extend(subscript_key_spans(&ExpressionSpan {
+                text: key.to_string(),
+                offset: expression.offset + index + 1,
+            }));
+        }
+        index = close + 1;
+    }
+    spans
 }
 
 fn expression_has_unsupported_reference_shape(expression: &str) -> bool {
@@ -2619,6 +2676,14 @@ impl Imports {
         }
         imports
     }
+
+    /// Whether the file imports a whole file of the project, as `import
+    /// state`, rather than the standard library.
+    fn has_user_module(&self) -> bool {
+        self.modules.iter().any(|module| {
+            module != "stdlib" && !crate::stdlib::STDLIB_MODULES.contains(&module.as_str())
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2677,7 +2742,14 @@ fn unsupported_subscript_access(
             continue;
         };
         let index_expression = expression[index + 1..close_index].trim();
-        let (base_type, nested_storage_chain) = match type_env.get(base) {
+        // In `x.y[1]`, `y` is a field of `x`, whatever a variable `y` holds.
+        let chain_root = storage_chain_root_before_subscript(expression, base_start);
+        let base_variable = if chain_root.is_some() {
+            None
+        } else {
+            type_env.get(base)
+        };
+        let (base_type, nested_storage_chain) = match base_variable {
             // A parameter or a value of unknown type: the compiler decides.
             Some(CobbleType::Unknown) => {
                 index = close_index + 1;
@@ -2686,14 +2758,16 @@ fn unsupported_subscript_access(
             Some(base_type) => (base_type.clone(), false),
             // A variable imported from another file: the compiler knows its
             // type.
-            None if imported.names.contains(base) => {
+            // `import state` makes every variable of `state.cbl` readable
+            // by its own name; the compiler knows which ones there are.
+            None if chain_root.is_none()
+                && (imported.names.contains(base) || imported.has_user_module()) =>
+            {
                 index = close_index + 1;
                 continue;
             }
             None => {
-                let Some((root, _root_start)) =
-                    storage_chain_root_before_subscript(expression, base_start)
-                else {
+                let Some((root, _root_start)) = chain_root else {
                     return Some(StorageAccessDiagnostic {
                         offset: base_start,
                         message: format!(
@@ -2702,7 +2776,10 @@ fn unsupported_subscript_access(
                         help: "Assign a list, map, or string literal to the base variable before using storage-backed access.".to_string(),
                     });
                 };
-                if imported.names.contains(root) {
+                // `state.items[0]` reads a variable of another file.
+                if imported.names.contains(root)
+                    || (imported.modules.contains(root) && !type_env.contains_key(root))
+                {
                     index = close_index + 1;
                     continue;
                 }

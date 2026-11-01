@@ -295,8 +295,12 @@ impl Transpiler {
             Expression::Subscript(base, index) => {
                 is_condition(index) || self.reads_base_before_call(base, index)
             }
-            Expression::Binary(left, BinaryOp::Add, right) => self.joins(left, right),
-            Expression::Binary(left, BinaryOp::Mul, right) => self.repeats(left, right),
+            Expression::Binary(left, BinaryOp::Add, right) => {
+                self.joins(left, right) || self.adds_at_run_time(left, right)
+            }
+            Expression::Binary(left, BinaryOp::Mul, right) => {
+                self.repeats(left, right) || self.multiplies_at_run_time(left, right)
+            }
             Expression::Call(func, args) => {
                 self.is_python_call(func)
                     || args.iter().any(|arg| self.is_passed_condition(arg))
@@ -384,6 +388,55 @@ impl Transpiler {
         self.is_container_or_text(left) != self.is_container_or_text(right)
     }
 
+    /// Whether `expr` holds a value whose type only the running pack knows,
+    /// so it may be text or a list as well as a number: a parameter, a copy
+    /// of one, or an item or a field of unknown type.
+    fn holds_any_value(&self, expr: &Expression) -> bool {
+        if self.value_type(expr) != CobbleType::Unknown {
+            return false;
+        }
+        match expr {
+            Expression::Identifier(name) => {
+                self.current_context.is_param(name)
+                    || self.symbols.variable_storage_paths.contains_key(name)
+            }
+            Expression::Subscript(..) | Expression::Attribute(..) => {
+                self.resolve_storage_path_plan(expr).is_some()
+            }
+            _ => false,
+        }
+    }
+
+    fn is_number_value(&self, expr: &Expression) -> bool {
+        matches!(
+            self.value_type(expr),
+            CobbleType::Integer | CobbleType::Boolean
+        )
+    }
+
+    /// Whether `left + right` adds, joins text, or joins lists by what the
+    /// running pack finds in them. Two parameters add as numbers, as the
+    /// docs say, and a number on one side keeps it arithmetic.
+    fn adds_at_run_time(&self, left: &Expression, right: &Expression) -> bool {
+        let is_param = |expr: &Expression| matches!(expr, Expression::Identifier(name) if self.current_context.is_param(name));
+        self.holds_any_value(left)
+            && self.holds_any_value(right)
+            && !(is_param(left) && is_param(right))
+    }
+
+    /// Whether `left * right` multiplies or repeats by what the running pack
+    /// finds in it: one side may be text or a list, and the other is a
+    /// number or may be one. Two parameters multiply as numbers.
+    fn multiplies_at_run_time(&self, left: &Expression, right: &Expression) -> bool {
+        let is_param = |expr: &Expression| matches!(expr, Expression::Identifier(name) if self.current_context.is_param(name));
+        if is_param(left) && is_param(right) {
+            return false;
+        }
+        let (left_any, right_any) = (self.holds_any_value(left), self.holds_any_value(right));
+        (left_any && (right_any || self.is_number_value(right)))
+            || (right_any && self.is_number_value(left))
+    }
+
     /// The type of `expr`, as far as Cobble can tell before lowering it.
     pub(in crate::transpiler) fn value_type(&self, expr: &Expression) -> CobbleType {
         match expr {
@@ -395,6 +448,16 @@ impl Transpiler {
                 if self.is_operand_choice(expr) =>
             {
                 self.common_type(left, right)
+            }
+            Expression::Binary(left, BinaryOp::Add, right)
+                if self.adds_at_run_time(left, right) =>
+            {
+                CobbleType::Unknown
+            }
+            Expression::Binary(left, BinaryOp::Mul, right)
+                if self.multiplies_at_run_time(left, right) =>
+            {
+                CobbleType::Unknown
             }
             Expression::Binary(left, BinaryOp::Add | BinaryOp::Mul, right) => {
                 match (self.value_type(left), self.value_type(right)) {
@@ -676,6 +739,20 @@ impl Transpiler {
     ) -> Result<(), TranspileError> {
         if let Expression::Call(func, args) = expr {
             if let Expression::Attribute(base, method) = &**func {
+                if self.is_list_value(base) && self.needs_lowering(base) {
+                    let base = self.lower_value(base, out)?;
+                    if self.needs_lowering(&base) {
+                        return Err(
+                            "Cobble can't compute the list this method changes. Copy the key into a variable first, as `k = ...`, then use `items[k]`."
+                                .into(),
+                        );
+                    }
+                    let func = Expression::Attribute(Box::new(base), method.clone());
+                    return self.desugar_expression_statement(
+                        &Expression::Call(Box::new(func), args.clone()),
+                        out,
+                    );
+                }
                 if self.is_list_value(base) && LIST_HELPER_METHODS.contains(&method.as_str()) {
                     return self.desugar_list_helper(base, method, args, out);
                 }
@@ -722,8 +799,8 @@ impl Transpiler {
             call_args.push(self.hold_call(arg, out));
         }
         out.push(Statement::Expression(call(&helper, call_args)));
-        self.declare_result(CobbleType::List);
-        out.push(assign_to(base, Expression::Identifier(RESULT.to_string())));
+        let result = self.declare_result(CobbleType::List);
+        out.push(assign_to(base, Expression::Identifier(result)));
         Ok(())
     }
 
@@ -1147,6 +1224,14 @@ impl Transpiler {
         match op {
             BinaryOp::In | BinaryOp::NotIn => self.lower_membership(left, op, right, out),
             BinaryOp::Add if self.joins(left, right) => self.lower_join(left, right, out),
+            BinaryOp::Add if self.adds_at_run_time(left, right) => {
+                let args = self.lower_values(&[left.clone(), right.clone()], out)?;
+                self.helper_value("_cobble_add", args, CobbleType::Unknown, out)
+            }
+            BinaryOp::Mul if self.multiplies_at_run_time(left, right) => {
+                let args = self.lower_values(&[left.clone(), right.clone()], out)?;
+                self.helper_value("_cobble_mul", args, CobbleType::Unknown, out)
+            }
             BinaryOp::Mul if self.repeats(left, right) => {
                 if self.is_container_or_text(left) {
                     self.lower_repeat(left, right, out)
@@ -1316,6 +1401,19 @@ impl Transpiler {
         args: &[Expression],
         out: &mut Vec<Statement>,
     ) -> Result<Expression, TranspileError> {
+        // The list a method works on, as `b[k + "x"]` in
+        // `b[k + "x"].append(3)`, with its keys lowered first.
+        let lowered_func;
+        let func = match func {
+            Expression::Attribute(base, method)
+                if self.is_list_value(base) && self.needs_lowering(base) =>
+            {
+                lowered_func =
+                    Expression::Attribute(Box::new(self.lower_value(base, out)?), method.clone());
+                &lowered_func
+            }
+            func => func,
+        };
         if let Expression::Attribute(base, method) = func {
             if self.is_list_value(base) {
                 if let Some(value) = self.lower_list_value(base, method, args, out)? {
@@ -1415,19 +1513,21 @@ impl Transpiler {
         self.require_prelude(helper)?;
         out.push(Statement::Expression(call(helper, args)));
         let holder = self.hidden_local(value_type.clone());
-        self.declare_result(value_type);
-        out.push(assign(&holder, Expression::Identifier(RESULT.to_string())));
+        let result = self.declare_result(value_type);
+        out.push(assign(&holder, Expression::Identifier(result)));
         Ok(Expression::Identifier(holder))
     }
 
-    /// Makes [`RESULT`] readable as a variable of `value_type`.
-    fn declare_result(&mut self, value_type: CobbleType) {
+    /// A name that reads [`RESULT`] as a variable of `value_type`. Each
+    /// helper call gets its own, since one statement can call helpers whose
+    /// results have different types.
+    fn declare_result(&mut self, value_type: CobbleType) -> String {
+        let name = format!("{RESULT}_{}", self.next_temp_id());
         self.symbols
             .variable_storage_paths
-            .insert(RESULT.to_string(), RESULT.to_string());
-        self.symbols
-            .variable_types
-            .insert(RESULT.to_string(), value_type);
+            .insert(name.clone(), RESULT.to_string());
+        self.symbols.variable_types.insert(name.clone(), value_type);
+        name
     }
 
     /// A new local variable that holds a value for one statement.

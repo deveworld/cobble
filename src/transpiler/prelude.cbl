@@ -185,11 +185,56 @@ def _cobble_contains(box, value):
     return _cobble_has_key(box, value)
 
 def _cobble_join(left, right):
-    if _cobble_is_list(left):
+    # An empty list has no item to find, so a list is whatever isn't text.
+    if not _cobble_is_text(left):
         /data modify storage NS:global _cobble_result set from storage NS:global args.left
         /data modify storage NS:global _cobble_result append from storage NS:global args.right[]
     else:
         _cobble_text_join(left, right)
+
+def _cobble_kind(value):
+    # 0 for a number, 1 for text, 2 for a list or a map. A list or a map
+    # has no text, so the first `set` fails; a number's text differs from
+    # it, so the second `set` succeeds, and for text it changes nothing.
+    kind = 0
+    /data remove storage NS:global _cobble_kind
+    /execute store success score kind temp run data modify storage NS:global _cobble_kind set string storage NS:global args.value
+    if kind == 0:
+        return 2
+    /execute store success score kind temp run data modify storage NS:global _cobble_kind set from storage NS:global args.value
+    return 1 - kind
+
+# `+` and `*` on values whose type only the running pack knows: text and
+# lists join and repeat, and numbers add and multiply.
+def _cobble_add(left, right):
+    kind = _cobble_kind(left)
+    if kind == 0:
+        out = [left + right]
+        /data modify storage NS:global _cobble_result set from storage NS:global locals._cobble_add.out[0]
+    elif kind == 1:
+        _cobble_text_join(left, right)
+    else:
+        /data modify storage NS:global _cobble_result set from storage NS:global args.left
+        /data modify storage NS:global _cobble_result append from storage NS:global args.right[]
+
+def _cobble_repeat(value, count, kind):
+    if kind == 1:
+        _cobble_text_repeat(value, count)
+    else:
+        _cobble_list_repeat(value, count)
+
+def _cobble_mul(left, right):
+    kind = _cobble_kind(left)
+    if kind != 0:
+        _cobble_repeat(left, right, kind)
+        return 0
+    kind = _cobble_kind(right)
+    if kind != 0:
+        _cobble_repeat(right, left, kind)
+        return 0
+    out = [left * right]
+    /data modify storage NS:global _cobble_result set from storage NS:global locals._cobble_mul.out[0]
+    return 0
 
 def _cobble_slice(value, start, stop):
     if _cobble_is_text(value):

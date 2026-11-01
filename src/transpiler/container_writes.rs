@@ -206,7 +206,10 @@ fn record_added_items(writes: &mut ContainerWrites, target: &Expression, added: 
                 record(writes, target, 1, Some(item));
             }
         }
-        Expression::Number(_) | Expression::String(_) | Expression::Boolean(_) | Expression::None => {}
+        Expression::Number(_)
+        | Expression::String(_)
+        | Expression::Boolean(_)
+        | Expression::None => {}
         Expression::Slice(base, _, _) if **base == *target => {}
         _ if added == target => {}
         Expression::Binary(left, BinaryOp::Add, right) => {

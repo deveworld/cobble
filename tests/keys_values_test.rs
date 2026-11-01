@@ -323,3 +323,322 @@ def main():
     assert_eq!(sim.var("q"), 1);
     assert_eq!(storage(&sim, "m"), json!({"5": 1}));
 }
+
+// --- Slices of a parameter, and `+` and `*` on values of unknown type
+// (bugs 40, 14, 15, 9) ---
+
+#[test]
+fn slices_of_a_parameter_join_as_lists_or_text() {
+    let lines = said(
+        r#"def f(v):
+    r = v[:1] + v[1:2] + v[2:]
+    a = v[:1]
+    b = v[1:]
+    s = a + b
+    t = v[:1] + (v[1:2] + v[2:])
+    u = v[:1] + v[1:] + v[:1]
+    /say {r} {s} {t} {u}
+
+def main():
+    f([1, 2, 3])
+    f("abc")
+"#,
+    );
+    assert_eq!(
+        lines,
+        vec!["[1,2,3] [1,2,3] [1,2,3] [1,2,3,1]", "abc abc abc abca"]
+    );
+}
+
+#[test]
+fn an_empty_slice_joins_as_an_empty_list() {
+    let lines = said(
+        r#"def f(v, i, p):
+    r = v[:0] + v[1:]
+    s = v[:i] + v[i + 1:]
+    t = p.k[:0] + p.k
+    /say {r} {s} {t}
+
+def g(v):
+    r = v[:1] + v[1:]
+    n = len(r)
+    /say {r} {n}
+
+def main():
+    f([1, 2, 3], 0, {"k": [1]})
+    f([1, 2, 3], 1, {"k": [1]})
+    g([])
+"#,
+    );
+    assert_eq!(lines, vec!["[2,3] [2,3] [1]", "[2,3] [1,3] [1]", "[] 0"]);
+}
+
+#[test]
+fn permutations_built_from_slices_of_a_parameter() {
+    let sim = run(r#"out = []
+
+def perms(rest, acc):
+    if len(rest) == 0:
+        out.append(acc)
+        return 0
+    i = 0
+    while i < len(rest):
+        perms(rest[:i] + rest[i + 1:], acc + [rest[i]])
+        i += 1
+    return 0
+
+def main():
+    perms([1, 2, 3], [])
+"#);
+    assert_eq!(
+        storage(&sim, "out"),
+        json!([
+            [1, 2, 3],
+            [1, 3, 2],
+            [2, 1, 3],
+            [2, 3, 1],
+            [3, 1, 2],
+            [3, 2, 1]
+        ])
+    );
+}
+
+#[test]
+fn repeating_a_value_of_unknown_type_repeats_lists_and_text() {
+    let lines = said(
+        r#"def f(v, n):
+    r = v[:1] * 2
+    s = v[:] * n
+    a = v[:1]
+    t = a * 2
+    p = v * 2
+    q = v[0] * 2
+    /say {r} {s} {t} {p} {q}
+
+def main():
+    f([1, 2], 2)
+    f("ab", 2)
+    f(["cd"], 1)
+    f([4], 1)
+"#,
+    );
+    assert_eq!(
+        lines,
+        vec![
+            "[1,1] [1,2,1,2] [1,1] [1,2,1,2] 2",
+            "aa abab aa abab aa",
+            "[\"cd\",\"cd\"] [\"cd\"] [\"cd\",\"cd\"] [\"cd\",\"cd\"] cdcd",
+            "[4,4] [4] [4,4] [4,4] 8",
+        ]
+    );
+}
+
+#[test]
+fn items_of_lists_read_through_a_loop_or_a_copy_join_and_repeat() {
+    let lines = said(
+        r#"rows = [[1], [2]]
+mixed = [[5, 6, 7], [3]]
+names = ["ab", "cd"]
+
+def main():
+    for row in rows:
+        got = row * 2
+        both = row + row
+        n = len(row * 2)
+        /say {got} {both} {n}
+    m = mixed[0] * 2
+    /say {m}
+    mixed[0] = 3
+    p = names
+    joined = p[1] + p[0]
+    a, b = p
+    swapped = b + a
+    /say {joined} {swapped}
+"#,
+    );
+    assert_eq!(
+        lines,
+        vec![
+            "[1,1] [1,1] 2",
+            "[2,2] [2,2] 2",
+            "[5,6,7,5,6,7]",
+            "cdab cdab"
+        ]
+    );
+}
+
+#[test]
+fn items_of_a_parameter_join_as_text() {
+    let lines = said(
+        r#"def f(v):
+    a, b = v
+    r = b + a
+    s = v[1] + v[0]
+    /say {r} {s}
+
+def main():
+    f(["ab", "cd"])
+"#,
+    );
+    assert_eq!(lines, vec!["cdab cdab"]);
+}
+
+#[test]
+fn augmented_repeat_on_a_parameter_keeps_text_and_lists() {
+    let lines = said(
+        r#"def f(x, l, p):
+    x *= 2
+    l[0] *= 2
+    p.s *= 2
+    /say {x} {l} {p}
+
+def main():
+    f("ab", ["cd"], {"s": "ab"})
+    f(3, [4], {"s": 5})
+"#,
+    );
+    assert_eq!(
+        lines,
+        vec!["abab [\"cdcd\"] {\"s\":\"abab\"}", "6 [8] {\"s\":10}"]
+    );
+}
+
+#[test]
+fn two_parameters_still_add_and_multiply_as_numbers() {
+    let sim = run(r#"out = [0, 0, 0]
+
+def f(a, b):
+    out[0] = a + b
+    out[1] = a * b
+    out[2] = a * 3 + b
+
+def main():
+    f(4, 5)
+"#);
+    assert_eq!(storage(&sim, "out"), json!([9, 20, 17]));
+}
+
+// --- Unpacked values and fields named like variables (bugs 12, 45) ---
+
+#[test]
+fn unpacked_values_can_be_subscripted() {
+    let sim = run(r#"rows = [[1, 2], [3, 4]]
+maps = [{"k": 4}, {"k": 5}]
+cfg = {"p": [[1, 2], [3, 4]]}
+out = [0, 0, 0, 0, 0]
+
+def main():
+    a, b = rows
+    out[0] = b[1]
+    x = b
+    out[1] = x[1]
+    c, d = [1, 2], [3, 4]
+    out[2] = d[1]
+    e, f = maps
+    out[3] = f.k
+    g, h = cfg.p
+    out[4] = h[1]
+"#);
+    assert_eq!(storage(&sim, "out"), json!([4, 4, 4, 5, 4]));
+}
+
+#[test]
+fn a_field_named_like_a_variable_is_still_a_field() {
+    let sim = run(r#"y = {"k": 1}
+count = 3
+items = {"a": 1}
+x = {"y": [1, 2]}
+b = {"z": [5, 6, 7], "m": {"k": 7}, "count": [8, 9], "items": [4, 5], "x": {"z": [6]}}
+cc = {"a": {"b": {"c": [1, 2]}}}
+out = [0, 0, 0, 0, 0, 0, 0, 0]
+
+def main():
+    z = 1
+    m = "k"
+    out[0] = x.y[1]
+    out[1] = b.z[0]
+    out[2] = b.m[m]
+    out[3] = b.count[0]
+    out[4] = b.items[1]
+    out[5] = b.x.z[0]
+    out[6] = cc.a.b.c[1]
+    out[7] = cc.a["b"].c[1]
+"#);
+    assert_eq!(storage(&sim, "out"), json!([2, 5, 7, 8, 5, 6, 2, 2]));
+}
+
+#[test]
+fn a_copy_of_an_imported_list_item_reads_its_fields() {
+    let mut sim = Sim::load_project(
+        &[
+            ("state.cbl", "items = [{\"value\": 7}, {\"value\": 9}]\n"),
+            (
+                "main.cbl",
+                r#"import state
+
+out = [0, 0, 0]
+
+def main():
+    e = items[0]
+    out[0] = e.value
+    out[1] = items[0].value
+    left = items[1].value
+    out[2] = left
+"#,
+            ),
+        ],
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(storage(&sim, "out"), json!([7, 7, 9]));
+}
+
+#[test]
+fn an_undefined_name_as_a_list_index_is_an_error() {
+    for line in [
+        "x = nums[nokey]",
+        "nums[nokey] = 5",
+        "y = nums[nokey + 1]",
+        "nums[nokey] += 1",
+    ] {
+        let source = format!("nums = [10, 20]\n\ndef main():\n    {line}\n");
+        let error = Sim::try_load(&source, &[]).err().unwrap_or_default();
+        assert!(
+            error.contains("main.cbl:4:") && error.contains("Undefined variable `nokey`"),
+            "{line}: {error}"
+        );
+    }
+}
+
+// --- Computed keys (bug 13) ---
+
+#[test]
+fn a_method_on_an_item_with_a_computed_key_runs() {
+    let sim = run(r#"b = {"lx": [9], "z": [1, 2], "l": [5]}
+t = [[{"lx": [1]}]]
+out = [0, 0, 0, 0]
+
+def f(k, c):
+    b[k + "x"].append(3)
+    b[str(k)].extend([4])
+    b[k or "z"].append(6)
+    b[k if c else "z"].append(7)
+    b["z"].clear()
+    t[0][0][k + "x"].append(2)
+    out[0] = b[str(k)].pop()
+    out[1] = b[k or "z"].pop()
+    out[2] = b[k if c else "z"].pop()
+    x = b[str(k)][1:]
+    out[3] = len(x)
+
+def main():
+    b["l" + "x"].append(8)
+    f("l", 1)
+"#);
+    assert_eq!(
+        storage(&sim, "b"),
+        json!({"l": [5], "lx": [9, 8, 3], "z": []})
+    );
+    assert_eq!(storage(&sim, "t"), json!([[{"lx": [1, 2]}]]));
+    assert_eq!(storage(&sim, "out"), json!([7, 6, 4, 0]));
+}
