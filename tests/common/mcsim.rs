@@ -509,7 +509,7 @@ impl Sim {
             }
             Store::Storage { path, scale, .. } => {
                 let scaled = (value as f64 * scale) as i64;
-                self.storage_set(path, Value::from(scaled));
+                let _ = self.storage_set(path, Value::from(scaled));
             }
         }
     }
@@ -630,8 +630,7 @@ impl Sim {
                         return None;
                     }
                     list.insert(index, value);
-                    self.storage_set(path, Value::Array(list));
-                    return Some(1);
+                    return self.storage_set(path, Value::Array(list)).then_some(1);
                 }
                 _ => panic!("unsupported data modify: {rest}"),
             };
@@ -651,8 +650,7 @@ impl Sim {
                     _ => Vec::new(),
                 };
                 list.extend(items);
-                self.storage_set(path, Value::Array(list));
-                return Some(1);
+                return self.storage_set(path, Value::Array(list)).then_some(1);
             } else if let Some(source) = source.strip_prefix("from storage ") {
                 let (_, source_path) = source.split_once(' ').expect("source path");
                 // Copying from a missing path fails the command.
@@ -694,13 +692,17 @@ impl Sim {
                     None => Vec::new(),
                 };
                 list.push(value);
-                self.storage_set(path, Value::Array(list));
+                if !self.storage_set(path, Value::Array(list)) {
+                    return None;
+                }
             } else {
                 // `set` fails when the value is already there.
                 if self.storage_get(path) == Some(&value) {
                     return None;
                 }
-                self.storage_set(path, value);
+                if !self.storage_set(path, value) {
+                    return None;
+                }
             }
             return Some(1);
         }
@@ -835,30 +837,32 @@ impl Sim {
         Some(current)
     }
 
-    fn storage_set(&mut self, path: &str, value: Value) {
+    /// Sets the value at `path`, creating the compounds on the way. Like
+    /// Minecraft, a key under a value that isn't a compound and an index
+    /// under one that isn't a list match nothing, and the command fails.
+    fn storage_set(&mut self, path: &str, value: Value) -> bool {
         let Some(segments) = parse_path(path) else {
-            return;
+            return false;
         };
         let mut current = &mut self.storage;
         for (position, segment) in segments.iter().enumerate() {
             let last = position + 1 == segments.len();
             current = match segment {
                 Segment::Key(key) => {
-                    if !current.is_object() {
-                        *current = Value::Object(Map::new());
-                    }
-                    let map = current.as_object_mut().unwrap();
+                    let Some(map) = current.as_object_mut() else {
+                        return false;
+                    };
                     if last {
                         map.insert(key.clone(), value);
-                        return;
+                        return true;
                     }
                     map.entry(key.clone())
                         .or_insert_with(|| Value::Object(Map::new()))
                 }
                 Segment::Index(index) => {
-                    let items = current
-                        .as_array_mut()
-                        .unwrap_or_else(|| panic!("index into non-list at {path}"));
+                    let Some(items) = current.as_array_mut() else {
+                        return false;
+                    };
                     let index = if *index < 0 {
                         items.len() as i64 + index
                     } else {
@@ -869,12 +873,13 @@ impl Sim {
                         .unwrap_or_else(|| panic!("list index out of range at {path}"));
                     if last {
                         *slot = value;
-                        return;
+                        return true;
                     }
                     slot
                 }
             };
         }
+        false
     }
 
     fn storage_remove(&mut self, path: &str) {

@@ -177,9 +177,13 @@ pub(in crate::transpiler) trait StoragePathOps {
         match self.storage_key_type(index) {
             CobbleType::String => SubscriptKind::Key,
             // A number is no map key; the key commands report it.
-            _ if base_type == CobbleType::Map => SubscriptKind::Key,
+            CobbleType::Integer if base_type == CobbleType::Map => SubscriptKind::Key,
             CobbleType::Integer => SubscriptKind::Index,
-            _ if matches!(base_type, CobbleType::List | CobbleType::String) => SubscriptKind::Index,
+            // A character of text; the character commands check the key.
+            _ if base_type == CobbleType::String => SubscriptKind::Index,
+            // A key of either type on a known map or list too: a number
+            // picks no field of a map and text no item of a list, so the
+            // path the running pack picks then finds nothing.
             _ => SubscriptKind::Runtime,
         }
     }

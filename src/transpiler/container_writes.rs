@@ -6,7 +6,7 @@
 //! file compiled later, so a read keeps the literal's type only when every
 //! write that can reach it gives that type too.
 
-use crate::ast::{Assignment, CobbleType, Expression, MultiAssign, Statement};
+use crate::ast::{Assignment, BinaryOp, CobbleType, Expression, MultiAssign, Statement};
 use std::collections::HashMap;
 
 /// One step of a path into a value: a field, or an item picked by an index
@@ -129,11 +129,16 @@ fn record(
 }
 
 /// `a[i], b.x = ...` can write anything to each target.
+/// A name gets its own value of `a, b = x, y`; an item of the one value of
+/// `a, b = pair` can be anything.
 fn record_multi_assign(multi: &MultiAssign, writes: &mut ContainerWrites) {
-    for target in &multi.targets {
-        if !matches!(target, Expression::Identifier(_)) {
-            record(writes, target, 0, None);
-        }
+    let paired = multi.values.len() == multi.targets.len();
+    for (index, target) in multi.targets.iter().enumerate() {
+        let value = match target {
+            Expression::Identifier(_) if paired => multi.values.get(index),
+            _ => None,
+        };
+        record(writes, target, 0, value);
     }
 }
 
@@ -170,13 +175,46 @@ fn record_assignment(assign: &Assignment, writes: &mut ContainerWrites) {
     {
         return;
     }
-    // `x += 1`, `s *= 2`, and `items += [4]` keep the type the value had.
-    if let Expression::Binary(left, _, _) = &assign.value {
-        if **left == target {
+    // `x += 1` and `s *= 2` keep the type the value had; `items += [4]`
+    // and `items = [4] + items` add items, each a write of its own.
+    if let Expression::Binary(left, op, right) = &assign.value {
+        let added = if **left == target {
+            Some(&**right)
+        } else if **right == target && *op == BinaryOp::Add {
+            Some(&**left)
+        } else {
+            None
+        };
+        if let Some(added) = added {
+            if *op == BinaryOp::Add {
+                record_added_items(writes, &target, added);
+            }
             return;
         }
     }
     record(writes, &target, 0, Some(&assign.value));
+}
+
+/// Records the items that `target + added` adds to the list at `target`:
+/// each item of a list literal, or an item of any type for a value only the
+/// running pack knows. A number or a text adds no item of another kind, and
+/// the list's own items or slices add none it doesn't hold.
+fn record_added_items(writes: &mut ContainerWrites, target: &Expression, added: &Expression) {
+    match added {
+        Expression::Array(items) => {
+            for item in items {
+                record(writes, target, 1, Some(item));
+            }
+        }
+        Expression::Number(_) | Expression::String(_) | Expression::Boolean(_) | Expression::None => {}
+        Expression::Slice(base, _, _) if **base == *target => {}
+        _ if added == target => {}
+        Expression::Binary(left, BinaryOp::Add, right) => {
+            record_added_items(writes, target, left);
+            record_added_items(writes, target, right);
+        }
+        _ => record(writes, target, 1, None),
+    }
 }
 
 /// The type `value` stores. A variable, an item, or a call depends on where
