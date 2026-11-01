@@ -33,6 +33,15 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
   `x == 9999999999` or `x >= 2.5`, is decided exactly. Number literals may
   have an exponent, as in Python: `1e3`,
   `1E3`, `2.5e-3`, and `1e+3`.
+- A fractional literal in a list or map is stored as a double. Forwarding
+  an item whose type is known only at runtime to a command parameter keeps
+  that precision; Minecraft may format `0.6` as `.6`. Integer arguments of
+  raw `scoreboard players set/add/remove`, `trigger set/add`, `return`,
+  `give`, `clear`, and `experience`/`xp add/set` commands use score integers
+  too, including through forwarding calls. A fractional literal passed to
+  one warns; a numeric storage item is rounded down when read. A quoted
+  argument such as `"15"` stays text. Command arguments that accept fractions,
+  such as sound pitch or title times, keep them.
 - Lists and maps live in storage. Subscripts work when the base resolves to a
   storage path. List and string indexes may be literals, constants, or runtime
   integers such as `items[i]`, and a negative index counts from the end;

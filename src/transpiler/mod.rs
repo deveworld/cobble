@@ -696,7 +696,7 @@ impl Transpiler {
                     .map_err(|error| error.with_location_if_missing(source_location.clone()))?;
 
                 self.forget_storage_copies(std::slice::from_ref(&processed_cmd));
-                processed.push(processed_cmd);
+                processed.extend(self.quoted_hover_commands(&clean_cmd, processed_cmd));
                 if let Some(ref mut commands) = self.current_function {
                     for command in processed {
                         let command_index = commands.len();

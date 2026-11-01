@@ -454,6 +454,10 @@ impl Transpiler {
                 self.functions
                     .params_used_as_values
                     .insert(func.name.clone(), used);
+                self.functions.params_in_integer_commands.insert(
+                    func.name.clone(),
+                    crate::transpiler::function_context::params_in_integer_commands(func),
+                );
                 passes.extend(
                     passed
                         .into_iter()
@@ -471,6 +475,26 @@ impl Transpiler {
         loop {
             let mut changed = false;
             for (function, param, callee, index) in &passes {
+                let integer = self
+                    .functions
+                    .params
+                    .get(callee)
+                    .and_then(|params| params.get(*index))
+                    .is_some_and(|callee_param| {
+                        self.functions
+                            .params_in_integer_commands
+                            .get(callee)
+                            .is_some_and(|used| used.contains(callee_param))
+                    });
+                if integer
+                    && self
+                        .functions
+                        .params_in_integer_commands
+                        .get_mut(function)
+                        .is_some_and(|set| set.insert(param.clone()))
+                {
+                    changed = true;
+                }
                 let used = match self.functions.params.get(callee) {
                     Some(callee_params) => callee_params.get(*index).is_none_or(|callee_param| {
                         self.functions

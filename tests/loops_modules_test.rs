@@ -588,6 +588,91 @@ fn a_fractional_argument_used_only_as_text_arrives_as_written() {
     }
 }
 
+#[test]
+fn fractional_storage_literals_keep_double_precision_when_forwarded() {
+    let source = r#"const P = 0.6
+def show(v):
+    /say show {v}
+def forward(items):
+    show(items[0])
+def main():
+    x = 1
+    y = [x, 0.6]
+    show(y[1])
+    forward([0.6])
+    forward([P])
+"#;
+    assert_eq!(said(source), vec!["show 0.6"; 3]);
+    let (_temp, output) = compile(source).unwrap();
+    let functions = common::mcsim::load_functions(&output);
+    let main = functions["main"].join("\n");
+    assert!(main.contains("0.6d"), "{main}");
+    assert!(!main.contains("0.6f"), "{main}");
+}
+
+#[test]
+fn fractional_arguments_in_raw_integer_commands_warn_and_run() {
+    for command in [
+        "/scoreboard players set raw temp {a}",
+        "/execute if entity @s run scoreboard players add raw temp {a}",
+        "/give @a stone {a}",
+        "/return {a}",
+    ] {
+        let source = format!(
+            "def use(a):\n    {command}\n\ndef forward(p):\n    use(p)\n\ndef main():\n    forward(1.5)\n"
+        );
+        let (ok, stderr) = cli_build(&source);
+        assert!(ok, "{stderr}");
+        assert!(
+            stderr.contains("warning[fractional-number]"),
+            "{source}\n{stderr}"
+        );
+        assert!(stderr.contains("1.5 is stored as 1"), "{stderr}");
+    }
+    assert_eq!(
+        said("raw = 0\ndef use(a):\n    /scoreboard players set raw temp {a}\n    /say after\n\ndef main():\n    use(1.5)\n    /say {raw}\n"),
+        vec!["after", "1"]
+    );
+    for command in [
+        "/title @a times {a} 20 10",
+        "/playsound minecraft:block.note_block.harp master @a ~ ~ ~ 1 {a}",
+    ] {
+        let source = format!("def use(a):\n    {command}\n\ndef main():\n    use(1.5)\n");
+        let (ok, stderr) = cli_build(&source);
+        assert!(ok, "{stderr}");
+        assert!(
+            !stderr.contains("warning[fractional-number]"),
+            "{source}\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn runtime_fractions_in_raw_integer_arguments_are_normalized_but_strings_stay_text() {
+    assert_eq!(
+        said(
+            r#"raw = 0
+def use(a):
+    /scoreboard players set raw temp {a}
+    /say {a}
+    return 7
+def forward(values):
+    use(values[0])
+def main():
+    forward([1.5])
+    /say {raw}
+    forward([-0.6])
+    /say {raw}
+    forward(["15"])
+    /say {raw}
+    x = use(2.5)
+    /say {raw} {x}
+"#
+        ),
+        vec!["1", "1", "-1", "-1", "15", "15", "2", "2 7"]
+    );
+}
+
 // --- Comparisons with numbers a score can't hold (Modules) ---
 
 #[test]

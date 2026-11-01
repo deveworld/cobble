@@ -21,6 +21,13 @@ pub struct SayMacroArgument {
     pub source: SayMacroSource,
 }
 
+/// A text command whose hover strings need escaped macro arguments.
+pub(in crate::transpiler) struct QuotedHoverMacro {
+    pub command: String,
+    /// The original parameter and its escaped argument's name.
+    pub arguments: Vec<(String, String)>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SayMacroSource {
     /// A score on `objective` (`temp` is this pack's variable objective).
@@ -86,6 +93,109 @@ fn macro_argument_names(text: &str) -> Vec<String> {
         rest = &after[end + 1..];
     }
     names
+}
+
+/// Hover entity names and item components are decoded when the command is
+/// read, before Minecraft resolves text components. They therefore need
+/// escaped macro text rather than an NBT text component.
+pub(in crate::transpiler) fn quoted_hover_macro(command: &str) -> Option<QuotedHoverMacro> {
+    let command = command.strip_prefix('$')?;
+    let start = text_command_start(command)?;
+    let (verb, target, action, message) = split_text_command(&command[start..]).ok()?;
+    let normalized;
+    let command = if let Some(json) = snbt_text::component_json(message.trim()) {
+        normalized = match action {
+            Some(action) => format!("{}{verb} {target} {action} {json}", &command[..start]),
+            None => format!("{}{verb} {target} {json}", &command[..start]),
+        };
+        normalized.as_str()
+    } else {
+        command
+    };
+    let names = macro_argument_names(command);
+    let mut arguments: Vec<(String, String)> = Vec::new();
+    let mut result = String::new();
+    let mut quotes = QuoteScan::default();
+    let mut cursor = 0;
+    for (at, _) in command.match_indices("$(") {
+        quotes.advance(command, at);
+        let Some(open) = quotes.open else { continue };
+        let path = key_path(&command[start..open]);
+        let Some(hover) = path.iter().rposition(|key| key == "hover_event") else {
+            continue;
+        };
+        if !path
+            .get(hover + 1)
+            .is_some_and(|key| matches!(key.as_str(), "name" | "components"))
+        {
+            continue;
+        }
+        let end = at + 2 + command[at + 2..].find(')')?;
+        let name = &command[at + 2..end];
+        if !names.iter().any(|known| known == name) {
+            continue;
+        }
+        let replacement = match arguments.iter().find(|(original, _)| original == name) {
+            Some((_, escaped)) => escaped.clone(),
+            None => {
+                let mut index = arguments.len();
+                let mut escaped = format!("_cobble_quoted_{index}");
+                while names.contains(&escaped)
+                    || arguments.iter().any(|(_, existing)| existing == &escaped)
+                {
+                    index += 1;
+                    escaped = format!("_cobble_quoted_{index}");
+                }
+                arguments.push((name.to_string(), escaped.clone()));
+                escaped
+            }
+        };
+        result.push_str(&command[cursor..at]);
+        result.push_str(&format!("$({replacement})"));
+        cursor = end + 1;
+    }
+    if arguments.is_empty() {
+        return None;
+    }
+    result.push_str(&command[cursor..]);
+    Some(QuotedHoverMacro {
+        command: format!("$return run {result}"),
+        arguments,
+    })
+}
+
+/// Parameters in whole integer arguments of raw commands. These uses must
+/// count as number reads too: passing `"0.6"` to `scoreboard players set`
+/// prevents the entire macro function from being instantiated.
+pub(in crate::transpiler) fn integer_parameters(command: &str) -> Vec<String> {
+    let command = command.trim_start_matches(['/', '$']);
+    let words = split_command_words(command, usize::MAX);
+    let mut first = 0;
+    while words.get(first) == Some(&"execute") {
+        let Some(run) = words[first + 1..].iter().position(|word| *word == "run") else {
+            return Vec::new();
+        };
+        first += run + 2;
+    }
+    let candidates: &[&str] = match &words[first..] {
+        ["scoreboard", "players", "set" | "add" | "remove", _, _, value, ..] => {
+            std::slice::from_ref(value)
+        }
+        ["return", value] => std::slice::from_ref(value),
+        ["trigger", _, "set" | "add", value] => std::slice::from_ref(value),
+        ["give", _, _, value] | ["clear", _, _, value] => std::slice::from_ref(value),
+        ["experience" | "xp", "add" | "set", _, value, ..] => std::slice::from_ref(value),
+        _ => &[],
+    };
+    candidates
+        .iter()
+        .filter_map(|word| {
+            word.strip_prefix('{')
+                .and_then(|s| s.strip_suffix('}'))
+                .or_else(|| word.strip_prefix("$(").and_then(|s| s.strip_suffix(')')))
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 /// Process Minecraft command strings with variable substitution

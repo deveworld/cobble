@@ -1004,14 +1004,32 @@ pub(in crate::transpiler) fn params_read_or_passed(
         walk(expr, &mut reads, &mut passes);
     }
     let is_param = |name: &str| function.params.iter().any(|param| param.name == name);
-    let used = function
+    let mut used: HashSet<String> = function
         .params
         .iter()
         .filter(|param| reads.contains(&param.name.as_str()))
         .map(|param| param.name.clone())
         .collect();
+    used.extend(params_in_integer_commands(function));
     passes.retain(|(name, _, _)| is_param(name));
     (used, passes)
+}
+
+/// Parameters whose raw command position requires a whole number. Unlike
+/// an arithmetic read, a fractional NBT value here would make Minecraft
+/// refuse to instantiate the function before any of its commands run.
+pub(in crate::transpiler) fn params_in_integer_commands(function: &FunctionDef) -> HashSet<String> {
+    let mut statements = Vec::new();
+    collect_statements(&function.body, &mut statements);
+    statements
+        .into_iter()
+        .filter_map(|statement| match statement {
+            Statement::MinecraftCommand(command) => Some(command),
+            _ => None,
+        })
+        .flat_map(|command| crate::transpiler::command_processor::integer_parameters(command))
+        .filter(|name| function.params.iter().any(|param| param.name == *name))
+        .collect()
 }
 
 fn collect_statement_expressions<'a>(body: &'a [Statement], out: &mut Vec<&'a Expression>) {

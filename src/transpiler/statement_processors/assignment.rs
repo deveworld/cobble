@@ -1489,7 +1489,9 @@ pub(in crate::transpiler) fn serialize_snbt(
             if n.fract() == 0.0 {
                 Ok(whole_number_snbt(*n))
             } else {
-                Ok(format!("{}f", n))
+                // The AST holds f64. A float tag would round a fraction
+                // before an item is forwarded to a macro parameter.
+                Ok(format!("{}d", n))
             }
         }
         Expression::String(s) => {

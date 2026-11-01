@@ -187,6 +187,18 @@ def return_from_match(value):
         case _:
             return 0
 
+def fraction_macro(value):
+    /data modify storage cobble:server_smoke fraction set value {value}
+
+def fraction_forward(values):
+    fraction_macro(values[0])
+
+def integer_macro(value):
+    /scoreboard players set fraction_integer temp {value}
+
+def integer_forward(values):
+    integer_macro(values[0])
+
 def probe():
     global counter
     global smoke_loop_flag
@@ -312,6 +324,18 @@ def probe():
     compound_base ^= pow_exp
     if compound_score == 1 and compound_base == 16:
         /say compound assignment ok
+
+    mixed_fractions = [compound_score, 0.6]
+    fraction_macro(mixed_fractions[1])
+    /execute if data storage cobble:server_smoke {fraction:0.6d} run say mixed fraction precision ok
+    fraction_forward([0.6])
+    /execute if data storage cobble:server_smoke {fraction:0.6d} run say forwarded fraction precision ok
+    integer_forward([1.5])
+    /execute if score fraction_integer temp matches 1 run say raw integer fraction ok
+    integer_forward([-0.6])
+    /execute if score fraction_integer temp matches -1 run say raw integer negative fraction ok
+    integer_forward(["15"])
+    /execute if score fraction_integer temp matches 15 run say raw integer text ok
 
     # `say` with a variable keeps say's own output: the sender prefix and
     # selectors shown as names.
@@ -582,6 +606,15 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
     wait_for_log(child, &log_path, "runtime json array ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "runtime power ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "compound assignment ok", COMMAND_TIMEOUT)?;
+    for message in [
+        "mixed fraction precision ok",
+        "forwarded fraction precision ok",
+        "raw integer fraction ok",
+        "raw integer negative fraction ok",
+        "raw integer text ok",
+    ] {
+        wait_for_log(child, &log_path, message, COMMAND_TIMEOUT)?;
+    }
     wait_for_log(
         child,
         &log_path,

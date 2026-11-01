@@ -171,7 +171,8 @@ impl Transpiler {
             symbols: &self.symbols,
         };
         let mut commands = processor.text_copy_commands(&command)?;
-        commands.push(processor.process_command_string(&command)?);
+        let processed = processor.process_command_string(&command)?;
+        commands.extend(self.quoted_hover_commands(&command, processed));
         self.push_current_commands(commands)
     }
 }

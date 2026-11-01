@@ -56,6 +56,17 @@ impl Transpiler {
                 metadata.retain(|index, _| *index < before);
             }
             argument_commands.extend(staged);
+            let integers = self.functions.integer_argument_commands(
+                func_name,
+                param_name,
+                &namespace,
+                &target_path,
+                arg,
+            );
+            if !integers.is_empty() {
+                self.data_pack.track_objective("temp");
+                argument_commands.extend(integers);
+            }
         }
         let commands = staging.wrap(
             &namespace,

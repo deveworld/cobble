@@ -175,11 +175,46 @@ pub(in crate::transpiler) struct FunctionTable {
     /// Parameters each function reads in an expression, as a number or a
     /// value, rather than only in command text.
     pub(in crate::transpiler) params_used_as_values: HashMap<String, HashSet<String>>,
+    /// Parameters placed in integer arguments of raw Minecraft commands,
+    /// also through calls that forward them unchanged.
+    pub(in crate::transpiler) params_in_integer_commands: HashMap<String, HashSet<String>>,
     /// Where each user function is defined.
     pub(in crate::transpiler) def_sources: HashMap<String, Option<SourceLocation>>,
 }
 
 impl FunctionTable {
+    /// Normalize numeric NBT arguments before a raw integer macro sees
+    /// them. A string such as `"15"` stays text, rather than becoming its
+    /// length. The caller tracks the `temp` objective when this is nonempty.
+    pub(in crate::transpiler) fn integer_argument_commands(
+        &self,
+        function: &str,
+        param: &str,
+        namespace: &str,
+        path: &str,
+        argument: &Expression,
+    ) -> Vec<String> {
+        // Literals were already converted (and warned) by number_argument;
+        // a quoted literal must keep the author's exact macro text.
+        if matches!(
+            argument,
+            Expression::Number(_) | Expression::String(_) | Expression::Boolean(_)
+        ) {
+            return Vec::new();
+        }
+        if !self
+            .params_in_integer_commands
+            .get(function)
+            .is_some_and(|params| params.contains(param))
+        {
+            return Vec::new();
+        }
+        vec![
+            format!("execute store success score #cobble_arg_numeric temp run data get storage {namespace}:global {path} 1"),
+            format!("execute if score #cobble_arg_numeric temp matches 1 store result storage {namespace}:global {path} int 1 run data get storage {namespace}:global {path} 1"),
+        ]
+    }
+
     /// The SNBT a number argument passes to `param` of `function`: a
     /// fraction, as text, to a parameter used only in command text, so it
     /// arrives as written, and otherwise the integer a score holds. The

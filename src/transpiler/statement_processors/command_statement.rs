@@ -5,6 +5,51 @@ use crate::transpiler::{
 };
 
 impl Transpiler {
+    /// A separate macro call lets us escape hover strings before Minecraft
+    /// instantiates the text command, while leaving `args` unchanged.
+    pub(in crate::transpiler) fn quoted_hover_commands(
+        &mut self,
+        original: &str,
+        command: String,
+    ) -> Vec<String> {
+        // Explicit macro syntax is the author's literal command text.
+        if original.contains("$(") {
+            return vec![command];
+        }
+        let Some(plan) = crate::transpiler::command_processor::quoted_hover_macro(&command) else {
+            return vec![command];
+        };
+        crate::transpiler::text_escape::add_functions(&mut self.data_pack);
+        let ns = self.data_pack.namespace.clone();
+        let id = self.next_temp_id();
+        let path = format!("_cobble_quoted_args_{id}");
+        let storage = format!("storage {ns}:global");
+        let mut commands = vec![format!(
+            "data modify {storage} {path} set from {storage} args"
+        )];
+        for (name, escaped) in plan.arguments {
+            commands.extend([
+                format!("data remove {storage} _cobble_esc.key"),
+                format!("data modify {storage} _cobble_esc.key set from {storage} args.{name}"),
+                format!(
+                    "function {ns}:{}",
+                    crate::transpiler::text_escape::ESCAPE_KEY
+                ),
+                format!(
+                    "data modify {storage} {path}.{escaped} set from {storage} _cobble_esc.done"
+                ),
+            ]);
+        }
+        let helper = format!("_cobble_hover_{id}");
+        self.add_generated_helper_function(
+            helper.clone(),
+            vec![plan.command],
+            GeneratedCommandKind::UserCommand,
+        );
+        commands.push(format!("function {ns}:{helper} with {storage} {path}"));
+        commands
+    }
+
     /// A macro line reads the arguments the function was called with, so
     /// after the function assigns a parameter, `$(name)` would still give the
     /// old value. Lines from `start_index` on that read a reassigned

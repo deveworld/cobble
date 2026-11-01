@@ -500,21 +500,58 @@ fn a_unicode_space_does_not_start_a_comment() {
 }
 
 #[test]
-fn show_entity_and_show_item_hover_fields_are_macro_text() {
-    let hover = function(
-        r#"def hover(note):
-    /tellraw @a {"text":"e","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,0,0,1],"name":{"text":"{note}"}}}
-    /tellraw @a {"text":"i","hover_event":{"action":"show_item","id":"minecraft:stone","components":{"minecraft:custom_name":"{note}"}}}
-def main():
-    hover("x")
-"#,
-        "hover",
-    );
-    assert_eq!(
-        hover,
-        "$tellraw @a {\"text\":\"e\",\"hover_event\":{\"action\":\"show_entity\",\"id\":\"minecraft:pig\",\"uuid\":[0,0,0,1],\"name\":{\"text\":\"$(note)\"}}}\n\
-         $tellraw @a {\"text\":\"i\",\"hover_event\":{\"action\":\"show_item\",\"id\":\"minecraft:stone\",\"components\":{\"minecraft:custom_name\":\"$(note)\"}}}"
-    );
+fn show_entity_and_show_item_hover_strings_keep_quotes_and_backslashes() {
+    for (component, pointer) in [
+        (
+            r#"{"text":"e","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,0,0,1],"name":"{note}"}}"#,
+            "/hover_event/name",
+        ),
+        (
+            r#"{text:"e",hover_event:{action:"show_entity",id:"minecraft:pig",uuid:[I;0,0,0,1],name:{text:"{note}"}}}"#,
+            "/hover_event/name/text",
+        ),
+        (
+            r#"{"text":"i","hover_event":{"action":"show_item","id":"minecraft:stone","components":{"minecraft:custom_name":"{note}"}}}"#,
+            "/hover_event/components/minecraft:custom_name",
+        ),
+    ] {
+        for note in ["plain", "say \"hi\"", "back\\slash", "", "한글 \\\"end\\"] {
+            let source = format!(
+                "def hover(note):\n    /tellraw @a {component}\ndef main():\n    hover({})\n",
+                serde_json::to_string(note).unwrap()
+            );
+            let mut sim = Sim::load(&source, &[]);
+            // Capture the macro's fully expanded component as NBT, before
+            // Minecraft renders it, so hover content is observable here.
+            let mut captured = false;
+            for (name, commands) in &mut sim.functions {
+                if name.starts_with("_cobble_hover_") {
+                    commands[0] = commands[0].replacen(
+                        "$return run tellraw @a ",
+                        "$data modify storage sim:global captured set value ",
+                        1,
+                    );
+                    captured = true;
+                }
+            }
+            assert!(captured, "{source}");
+            sim.call("main");
+            assert_eq!(
+                sim.storage["captured"]
+                    .pointer(pointer)
+                    .and_then(|v| v.as_str()),
+                Some(note),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_explicit_hover_macro_keeps_the_authors_text() {
+    let command = r#"$tellraw @a {"text":"h","hover_event":{"action":"show_item","id":"minecraft:stone","components":{"minecraft:custom_name":"$(note)"}}}"#;
+    let source = format!("def hover(note):\n    /{}\n", &command[1..]);
+    assert_eq!(function(&source, "hover"), command);
 }
 
 #[test]

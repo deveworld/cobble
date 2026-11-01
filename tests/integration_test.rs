@@ -837,7 +837,7 @@ def test():
         "scoreboard players operation #test.total cobble.vars += #test.value cobble.vars"
     ));
     assert!(body_content.contains(
-        "data modify storage cobble:global _say_args.value set from storage cobble:global locals.test.value"
+        "execute store result storage cobble:global _say_args.value int 1 run scoreboard players get #test.value cobble.vars"
     ));
     assert!(body_content.contains("scoreboard players add #for_list_index_"));
 }

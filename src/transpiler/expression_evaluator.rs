@@ -384,6 +384,17 @@ impl<'a> ExpressionEvaluator<'a> {
                 &target_path,
                 arg,
             )?);
+            let integers = self.functions.integer_argument_commands(
+                func_name,
+                param_name,
+                &namespace,
+                &target_path,
+                arg,
+            );
+            if !integers.is_empty() {
+                self.data_pack.track_objective("temp");
+                argument_commands.extend(integers);
+            }
         }
         Ok(staging.wrap(
             &namespace,
