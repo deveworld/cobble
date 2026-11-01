@@ -129,6 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- A key joined from text and a parameter, as in `b["a" + k]`, reads, writes,
+  and takes `+=` on the map field it names instead of being refused as a number.
 - An item added by `+=` or `+` can be read and written by key in any function,
   whatever its type.
 - A parameter key on a list or map Cobble knows is checked when the pack runs,

@@ -195,6 +195,24 @@ fn expect_kind_with_message<'a>(
 }
 
 #[test]
+fn joined_string_map_key_is_not_reported() {
+    // A key joined from a literal and a parameter is text; the map-key check
+    // must not infer it as a number from the masked source.
+    let source = r#"b = {"ab": 7}
+out = 0
+
+def f(k):
+    global out
+    out = b["a" + k]
+
+def main():
+    f("b")
+"#;
+    let diagnostics = analyze_source(source);
+    assert_no_kind(&diagnostics, "unsupported-storage-access");
+}
+
+#[test]
 fn datapack_tag_value_column_counts_chars_after_non_ascii_tag_name() {
     // The Korean tag name is 6 bytes but 2 chars; the flagged tag value after
     // it must be reported at its char column, not a byte-drifted one.

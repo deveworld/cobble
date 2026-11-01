@@ -2746,7 +2746,7 @@ fn unsupported_storage_access_in_expression(
     let masked = mask_non_code(expression);
 
     if let Some(diagnostic) =
-        unsupported_subscript_access(&masked, type_env, constant_env, imported)
+        unsupported_subscript_access(expression, &masked, type_env, constant_env, imported)
     {
         return Some(diagnostic);
     }
@@ -2755,6 +2755,7 @@ fn unsupported_storage_access_in_expression(
 }
 
 fn unsupported_subscript_access(
+    raw: &str,
     expression: &str,
     type_env: &HashMap<String, CobbleType>,
     constant_env: &HashMap<String, f64>,
@@ -2785,7 +2786,12 @@ fn unsupported_subscript_access(
             index += 1;
             continue;
         };
-        let index_expression = expression[index + 1..close_index].trim();
+        // The type of a key comes from the source text, where a string
+        // literal still starts with a quote; the masked slice only hides
+        // brackets and quotes from the structural scan.
+        let raw_index_start = raw_offset_from_masked(raw, expression, index + 1);
+        let raw_index_end = raw_offset_from_masked(raw, expression, close_index);
+        let index_expression_raw = raw[raw_index_start..raw_index_end].trim();
         // In `x.y[1]`, `y` is a field of `x`, whatever a variable `y` holds.
         let chain_root = storage_chain_root_before_subscript(expression, base_start);
         let base_variable = if chain_root.is_some() {
@@ -2874,13 +2880,13 @@ fn unsupported_subscript_access(
         }
 
         if base_type == CobbleType::Map {
-            if is_quoted_string_literal(index_expression) {
+            if is_quoted_string_literal(index_expression_raw) {
                 index = close_index + 1;
                 continue;
             }
 
             if let Some(index_type) =
-                infer_expression_type_for_diagnostics(index_expression, type_env)
+                infer_expression_type_for_diagnostics(index_expression_raw, type_env)
             {
                 if index_type != CobbleType::String && index_type != CobbleType::Unknown {
                     return Some(StorageAccessDiagnostic {
@@ -2894,7 +2900,7 @@ fn unsupported_subscript_access(
                 }
             }
 
-            if is_constant_storage_index(index_expression, constant_env) {
+            if is_constant_storage_index(index_expression_raw, constant_env) {
                 return Some(StorageAccessDiagnostic {
                     offset: index + 1,
                     message: "Storage-backed map keys must be strings, not numeric consts"
@@ -2909,7 +2915,7 @@ fn unsupported_subscript_access(
 
         if nested_storage_chain {
             if let Some(index_type) =
-                infer_expression_type_for_diagnostics(index_expression, type_env)
+                infer_expression_type_for_diagnostics(index_expression_raw, type_env)
             {
                 if !matches!(
                     index_type,
@@ -2929,11 +2935,11 @@ fn unsupported_subscript_access(
             continue;
         }
 
-        let is_static_index = is_literal_storage_index(index_expression)
-            || is_constant_storage_index(index_expression, constant_env);
+        let is_static_index = is_literal_storage_index(index_expression_raw)
+            || is_constant_storage_index(index_expression_raw, constant_env);
         if !is_static_index {
             if let Some(index_type) =
-                infer_expression_type_for_diagnostics(index_expression, type_env)
+                infer_expression_type_for_diagnostics(index_expression_raw, type_env)
             {
                 // A value of unknown type, such as a parameter, may be one.
                 if !matches!(index_type, CobbleType::Integer | CobbleType::Unknown) {

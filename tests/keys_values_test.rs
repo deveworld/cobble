@@ -643,8 +643,28 @@ def main():
     assert_eq!(storage(&sim, "out"), json!([7, 6, 4, 0]));
 }
 
-// --- Second check: augmented keys, pops, comparisons ---
+#[test]
+fn a_joined_string_key_reads_and_writes() {
+    let sim = run(r#"b = {"ab": 7, "ax": 1}
+t = [[{"kx": 3}]]
+out = [0, 0, 0, 0]
 
+def f(k, j):
+    out[0] = b["a" + k]
+    b["a" + k] = 9
+    out[1] = b["a" + k]
+    b["a" + k] += 1
+    out[2] = b["ab"]
+    out[3] = t[0][0]["k" + j]
+
+def main():
+    f("b", "x")
+"#);
+    assert_eq!(storage(&sim, "out"), json!([7, 9, 10, 3]));
+    assert_eq!(storage(&sim, "b"), json!({"ab": 10, "ax": 1}));
+}
+
+// --- Second check: augmented keys, pops, comparisons ---
 #[test]
 fn a_pop_in_an_augmented_key_runs_once() {
     let sim = run(r#"q = ["b", "a"]
