@@ -20,12 +20,12 @@ pub use python_compat::{
     python_compat_observed_constructs, python_compat_suggestion_for_keyword,
     python_compat_suggestion_for_kind, python_compat_supported_constructs,
 };
+pub(crate) use reporting::clean_transpiler_error_message;
 pub use reporting::{
     format_diagnostics, format_diagnostics_with_source, format_file_diagnostics,
     warning_diagnostics, DiagnosticSeverity, FileSourceDiagnostics, ParsedSourceFile,
     SourceDiagnostic,
 };
-pub(crate) use reporting::clean_transpiler_error_message;
 pub use text::{byte_offset_for_line_column, read_source_file};
 
 pub(crate) use text::mask_non_code;

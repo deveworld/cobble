@@ -447,21 +447,19 @@ fn compile_project(
     }
 
     // The resources a declaration names may be declared in a later file.
-    transpiler
-        .check_resource_references()
-        .map_err(|e| {
-            let message = clean_transpiler_error_message(&e.message, e.kind.slug());
-            match &e.location {
-                Some(location) => format!(
-                    "Transpilation failed at {}:{}:{}: {}",
-                    path_display_relative(&location.file, source_display_root),
-                    location.line,
-                    location.column,
-                    message
-                ),
-                None => format!("Transpilation failed: {}", message),
-            }
-        })?;
+    transpiler.check_resource_references().map_err(|e| {
+        let message = clean_transpiler_error_message(&e.message, e.kind.slug());
+        match &e.location {
+            Some(location) => format!(
+                "Transpilation failed at {}:{}:{}: {}",
+                path_display_relative(&location.file, source_display_root),
+                location.line,
+                location.column,
+                message
+            ),
+            None => format!("Transpilation failed: {}", message),
+        }
+    })?;
 
     Ok(transpiler)
 }
