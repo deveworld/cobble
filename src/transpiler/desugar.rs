@@ -1519,6 +1519,13 @@ impl Transpiler {
                     return Ok(call(helper, lowered_args));
                 }
                 if name == "str" {
+                    if lowered_args.len() != 1 {
+                        return Err(format!(
+                            "`str()` takes one value, but {} were given.",
+                            lowered_args.len()
+                        )
+                        .into());
+                    }
                     return self.helper_value("_cobble_str", lowered_args, CobbleType::String, out);
                 }
                 if name == "sorted" {

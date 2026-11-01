@@ -816,3 +816,36 @@ fn a_missing_read_at_module_level_still_prints() {
     );
     assert_eq!(lines, vec!["before", "got 0", "after"]);
 }
+
+#[test]
+fn a_text_key_picks_no_character_of_text() {
+    let lines = said(
+        r#"t = "hello"
+m = {"a": ["hello"]}
+
+def f(key):
+    s = t[key]
+    r = m.a[0][key]
+    /say [{s}] [{r}]
+
+def main():
+    f("ab")
+    f(1)
+"#,
+    );
+    assert_eq!(lines, vec!["[] []", "[e] [e]"]);
+}
+
+#[test]
+fn str_with_two_values_names_the_call() {
+    let error = Sim::try_load(
+        "tree = [[[{\"a\": 1}]]]\ns = \"a\"\n\ndef main():\n    x = 1\n    tree[0][0][0][str(s, s)] += 1\n",
+        &[],
+    )
+    .err()
+    .unwrap_or_default();
+    assert!(
+        error.contains("main.cbl:6:") && error.contains("`str()` takes one value"),
+        "{error}"
+    );
+}

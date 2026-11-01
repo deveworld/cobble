@@ -918,9 +918,27 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
                 "execute store result storage {namespace}:global {args_path}.end int 1 run scoreboard players get {end} temp"
             ),
             clear,
-            format!("function {namespace}:{helper} with storage {namespace}:global {args_path}"),
-            format!("data remove storage {namespace}:global {args_path}"),
         ]);
+        // A key that may be text, as a parameter, picks no character when it
+        // is text, as Python raises `TypeError` there.
+        let call =
+            format!("function {namespace}:{helper} with storage {namespace}:global {args_path}");
+        if self.storage_key_type(index) == CobbleType::Integer {
+            commands.push(call);
+        } else {
+            let key_kind = format!("#char_key_{id}");
+            commands.extend(self.runtime_key_commands(
+                &format!("{args_path}.key"),
+                index,
+                &key_kind,
+            )?);
+            commands.push(format!(
+                "execute if score {key_kind} temp matches 1 run {call}"
+            ));
+        }
+        commands.push(format!(
+            "data remove storage {namespace}:global {args_path}"
+        ));
         self.add_generated_helper_function(
             helper,
             vec![format!("${set_string} $(start) $(end)")],
