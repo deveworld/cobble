@@ -11,7 +11,7 @@ use crate::ast::{CobbleType, Expression};
 use crate::transpiler::container_writes;
 use crate::transpiler::data_pack::DataPack;
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
-use crate::transpiler::statement_processors::serialize_snbt;
+use crate::transpiler::statement_processors::{out_of_range_numbers, serialize_snbt};
 use crate::transpiler::symbols::Symbols;
 use crate::transpiler::text_escape;
 use crate::transpiler::{
@@ -1229,7 +1229,13 @@ impl<'a> StorageValueOps for ExpressionEvaluator<'a> {
     }
 
     fn storage_static_snbt(&self, expr: &Expression) -> Result<String, TranspileError> {
-        serialize_snbt(self.symbols, expr)
+        let snbt = serialize_snbt(self.symbols, expr)?;
+        for value in out_of_range_numbers(self.symbols, expr) {
+            if let Some(warning) = super::score_value_warning(value, self.source.clone()) {
+                super::record_warning(self.warnings, warning);
+            }
+        }
+        Ok(snbt)
     }
 }
 

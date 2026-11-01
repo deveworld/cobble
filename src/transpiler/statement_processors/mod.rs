@@ -13,6 +13,6 @@ mod loop_processor;
 mod match_processor;
 mod selector_processor;
 
-pub(in crate::transpiler) use assignment::serialize_snbt;
+pub(in crate::transpiler) use assignment::{out_of_range_numbers, serialize_snbt};
 pub(in crate::transpiler) use import_processor::ImportState;
 pub(in crate::transpiler) use loop_processor::UnrollState;

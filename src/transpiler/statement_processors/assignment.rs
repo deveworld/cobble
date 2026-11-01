@@ -1335,7 +1335,11 @@ impl Transpiler {
         &self,
         expr: &Expression,
     ) -> Result<String, TranspileError> {
-        serialize_snbt(&self.symbols, expr)
+        let snbt = serialize_snbt(&self.symbols, expr)?;
+        for value in out_of_range_numbers(&self.symbols, expr) {
+            self.warn_score_value(value);
+        }
+        Ok(snbt)
     }
 
     /// A map literal key as SNBT. Minecraft refuses an empty key.
@@ -1355,6 +1359,47 @@ impl Transpiler {
     }
 }
 
+/// The whole numbers in a list or map literal that a score can't hold.
+/// Cobble keeps every whole number as a score does, so each is stored
+/// clamped, and gets the warning `x = 3000000000` gets.
+pub(in crate::transpiler) fn out_of_range_numbers(
+    symbols: &Symbols,
+    expr: &Expression,
+) -> Vec<f64> {
+    fn collect(symbols: &Symbols, expr: &Expression, out: &mut Vec<f64>) {
+        let value = match expr {
+            Expression::Number(n) => *n,
+            Expression::Identifier(name) => match symbols.compile_time_constants.get(name) {
+                Some(value) => *value,
+                None => return,
+            },
+            Expression::Array(items) => {
+                items.iter().for_each(|item| collect(symbols, item, out));
+                return;
+            }
+            Expression::Map(entries) => {
+                entries
+                    .iter()
+                    .for_each(|(_, value)| collect(symbols, value, out));
+                return;
+            }
+            _ => return,
+        };
+        if value.fract() == 0.0 && (value > f64::from(i32::MAX) || value < f64::from(i32::MIN)) {
+            out.push(value);
+        }
+    }
+    let mut out = Vec::new();
+    collect(symbols, expr, &mut out);
+    out
+}
+
+/// A whole number as SNBT, clamped to a score's range as Cobble keeps every
+/// whole number (see [`out_of_range_numbers`]).
+fn whole_number_snbt(n: f64) -> String {
+    format!("{}", n as i32)
+}
+
 /// SNBT text for a literal or constant value.
 pub(in crate::transpiler) fn serialize_snbt(
     symbols: &Symbols,
@@ -1363,7 +1408,7 @@ pub(in crate::transpiler) fn serialize_snbt(
     match expr {
         Expression::Number(n) => {
             if n.fract() == 0.0 {
-                Ok(format!("{}", *n as i32))
+                Ok(whole_number_snbt(*n))
             } else {
                 Ok(format!("{}f", n))
             }
@@ -1406,7 +1451,13 @@ pub(in crate::transpiler) fn serialize_snbt(
         }
         Expression::Identifier(name) => {
             if let Some(val) = symbols.compile_time_constants.get(name) {
-                Ok(format!("{}", val))
+                // A const past a score's range would be refused by
+                // Minecraft written as is.
+                if val.fract() == 0.0 {
+                    Ok(whole_number_snbt(*val))
+                } else {
+                    Ok(format!("{}", val))
+                }
             } else {
                 Err(format!("Runtime variable '{}' cannot be serialized as static SNBT. Use the storage runtime materialization path or a compile-time constant.", name).into())
             }

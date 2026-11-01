@@ -380,3 +380,62 @@ fn arithmetic_in_resource_json_is_named_in_cobble_terms() {
         "xy"
     );
 }
+
+#[test]
+fn a_float_literal_of_a_whole_number_past_2_53_keeps_its_digits() {
+    // Bugs 58 and 71: Minecraft reads these as the longs they spell.
+    let tag = custom_data(
+        r#"{"a": 9007199254740993.0, "b": 9.007199254740993e15, "c": 3000000000.5, "d": 1e300}"#,
+    )
+    .unwrap();
+    assert_eq!(tag["a"].as_i64(), Some(9_007_199_254_740_993));
+    assert_eq!(tag["b"].as_i64(), Some(9_007_199_254_740_993));
+    assert_eq!(tag["c"].as_f64(), Some(3_000_000_000.5));
+    assert_eq!(tag["d"].as_f64(), Some(1e300));
+}
+
+#[test]
+fn numbers_a_score_cannot_hold_in_list_and_map_literals_warn() {
+    // Bugs 58 and 71: they were clamped without a word, and a const past a
+    // score's range was written as SNBT Minecraft refuses.
+    let temp = tempfile::TempDir::new().unwrap();
+    let file = temp.path().join("main.cbl");
+    fs::write(
+        &file,
+        "m = {\"big\": 3000000000}\nl = [3000000000]\nconst B = 3000000000\nn = {\"big\": B}\n\ndef go():\n    k = [1, -3000000000]\n    /say {k}\n",
+    )
+    .unwrap();
+    let output = cobble()
+        .args(["check", "--json"])
+        .arg(&file)
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let found: Vec<(String, u64)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic["kind"].as_str().unwrap().to_string(),
+                diagnostic["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let kind = "number-out-of-range".to_string();
+    assert_eq!(
+        found,
+        [
+            (kind.clone(), 1),
+            (kind.clone(), 2),
+            (kind.clone(), 4),
+            (kind, 7)
+        ],
+        "{report}"
+    );
+    let mut sim = Sim::load(
+        "const B = 3000000000\nn = {\"big\": B}\nl = [3000000000]\n\ndef go():\n    return n.big + l[0] - 2147483647\n",
+        &[],
+    );
+    assert_eq!(sim.call("go"), Some(2_147_483_647));
+}

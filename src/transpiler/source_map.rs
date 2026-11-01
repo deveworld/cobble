@@ -277,6 +277,12 @@ impl Transpiler {
             if literal.bytes().all(|byte| byte.is_ascii_digit()) {
                 let digits = literal.trim_start_matches('0');
                 let digits = if digits.is_empty() { "0" } else { digits };
+                if !integers.iter().any(|known| known == digits) {
+                    integers.push(digits.to_string());
+                }
+            } else if let Some(digits) = Self::exact_integer_digits(literal) {
+                // `9007199254740993.0` or `9.007199254740993e15` is that
+                // integer exactly, which an `f64` can't hold.
                 if !integers.contains(&digits) {
                     integers.push(digits);
                 }
@@ -293,6 +299,37 @@ impl Transpiler {
                 .map(|digits| format!("{sign}{digits}"))
                 .collect()),
         }
+    }
+
+    /// The digits of a float literal (`3.0e9`) whose exact value is a whole
+    /// number that fits in 64 bits, or `None`.
+    fn exact_integer_digits(literal: &str) -> Option<String> {
+        let (mantissa, exponent) = match literal.find(['e', 'E']) {
+            Some(index) => (&literal[..index], literal[index + 1..].parse::<i64>().ok()?),
+            None => (literal, 0),
+        };
+        let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+        if !(whole.bytes().chain(fraction.bytes())).all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let mut digits = format!("{whole}{fraction}");
+        let shift = exponent.checked_sub(i64::try_from(fraction.len()).ok()?)?;
+        if shift >= 0 {
+            if shift > 20 {
+                return None;
+            }
+            digits.push_str(&"0".repeat(shift as usize));
+        } else {
+            let drop = usize::try_from(-shift).ok()?;
+            if drop > digits.len() || !digits[digits.len() - drop..].bytes().all(|b| b == b'0') {
+                return None;
+            }
+            digits.truncate(digits.len() - drop);
+        }
+        let digits = digits.trim_start_matches('0');
+        let digits = if digits.is_empty() { "0" } else { digits };
+        digits.parse::<i64>().ok()?;
+        Some(digits.to_string())
     }
 
     /// The number literals of `text` outside strings, without their sign.
