@@ -73,7 +73,7 @@ impl Transpiler {
     /// has no value to take.
     fn fill_alias_constants(&self, selector_def: &SelectorDef) -> Result<String, TranspileError> {
         let mut filled = String::with_capacity(selector_def.selector.len());
-        for piece in placeholders::pieces(&selector_def.selector) {
+        for piece in placeholders::checked_pieces(&selector_def.selector)? {
             match piece {
                 Piece::Text { text, .. } => filled.push_str(&text),
                 Piece::Field { raw, name, .. } => {

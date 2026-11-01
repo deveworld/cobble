@@ -82,7 +82,9 @@ impl Transpiler {
             return Ok(selector.to_string());
         };
         if let Some(actual_selector) = self.symbols.selector_aliases.get(selector_name) {
-            return Ok(actual_selector.clone());
+            // The header's placeholders are read later, and the alias's
+            // escapes are read already.
+            return Ok(placeholders::escape_braces(actual_selector));
         }
         let variable = selector_name.split('[').next().unwrap_or("");
         if !matches!(variable, "a" | "e" | "p" | "r" | "s" | "n") {
@@ -624,8 +626,15 @@ impl Transpiler {
         &self,
         chain: &mut ExecuteChain,
     ) -> Result<(), TranspileError> {
-        let aliases = &self.symbols.selector_aliases;
-        chain.map_text(|text| expand_selector_aliases(text, aliases));
+        // An alias holds its text with escapes already read, so its braces
+        // are escaped again for the placeholder reading below.
+        let aliases: std::collections::HashMap<String, String> = self
+            .symbols
+            .selector_aliases
+            .iter()
+            .map(|(name, selector)| (name.clone(), placeholders::escape_braces(selector)))
+            .collect();
+        chain.map_text(|text| expand_selector_aliases(text, &aliases));
         let mut has_macro_params = chain.has_macro_params;
         let mut error = None;
         chain.map_text(|text| match self.fill_header_placeholders(text) {
@@ -650,7 +659,7 @@ impl Transpiler {
     fn fill_header_placeholders(&self, text: &str) -> Result<(String, bool), String> {
         let mut filled = String::with_capacity(text.len());
         let mut uses_params = false;
-        for piece in placeholders::pieces(text) {
+        for piece in placeholders::checked_pieces(text)? {
             let (raw, name) = match piece {
                 Piece::Text { text, .. } => {
                     filled.push_str(&text);

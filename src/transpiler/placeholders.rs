@@ -32,6 +32,55 @@ enum Open {
 
 /// The pieces of `text`, in order.
 pub(in crate::transpiler) fn pieces(text: &str) -> Vec<Piece<'_>> {
+    scan(text).0
+}
+
+/// The pieces of `text`, or an error when a single `}` closes a `{{`
+/// escape, as in `{{k}:1}`, which a Python format string refuses too.
+pub(in crate::transpiler) fn checked_pieces(text: &str) -> Result<Vec<Piece<'_>>, String> {
+    let (pieces, single_close) = scan(text);
+    match single_close {
+        None => Ok(pieces),
+        Some(_) => Err(format!(
+            "A single `}}` closes the `{{{{` escape in `{}`, which a Python format string refuses. \
+             Write `}}}}` for a literal brace: `{{{{{{name}}}}}}` is `{{`, the placeholder `name`, and `}}`.",
+            text.trim()
+        )),
+    }
+}
+
+/// The first `{name}` in a string of `json` whose name `is_runtime` says
+/// holds a value known only when a function runs, such as the text
+/// `text.plain(p)` writes for a parameter. A file can't hold one.
+pub(in crate::transpiler) fn runtime_placeholder_in_json(
+    json: &serde_json::Value,
+    is_runtime: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    match json {
+        serde_json::Value::String(text) => pieces(text).into_iter().find_map(|piece| match piece {
+            Piece::Field { raw, name, .. } if is_runtime(name) => Some(raw.to_string()),
+            _ => None,
+        }),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|item| runtime_placeholder_in_json(item, is_runtime)),
+        serde_json::Value::Object(object) => object
+            .values()
+            .find_map(|value| runtime_placeholder_in_json(value, is_runtime)),
+        _ => None,
+    }
+}
+
+/// `text` with each brace doubled, so the placeholder reading gives `text`
+/// back as it is.
+pub(in crate::transpiler) fn escape_braces(text: &str) -> String {
+    text.replace('{', "{{").replace('}', "}}")
+}
+
+/// The pieces of `text`, and the offset of the first single `}` that
+/// closes a `{{` escape.
+fn scan(text: &str) -> (Vec<Piece<'_>>, Option<usize>) {
+    let mut single_close = None;
     let bytes = text.as_bytes();
     let mut pieces: Vec<Piece<'_>> = Vec::new();
     let mut open: Vec<Open> = Vec::new();
@@ -111,7 +160,10 @@ pub(in crate::transpiler) fn pieces(text: &str) -> Vec<Piece<'_>> {
                     index += 2;
                     continue;
                 }
-                _ => {}
+                Some(Open::Escape) => {
+                    single_close.get_or_insert(index);
+                }
+                None => {}
             }
         }
         let ch = text[index..].chars().next().expect("index is on a char");
@@ -119,7 +171,7 @@ pub(in crate::transpiler) fn pieces(text: &str) -> Vec<Piece<'_>> {
         index += ch.len_utf8();
     }
     flush(&mut pieces, &mut decoded, text, text_start, text.len());
-    pieces
+    (pieces, single_close)
 }
 
 /// The byte offset of the `}` that ends a field starting at `open`, when
@@ -182,6 +234,27 @@ mod tests {
         assert_eq!(fields(r#"summon pig ~ ~ ~ {{Tags:["{n}"]}}"#), ["n"]);
         assert_eq!(decoded("say {{{x}}}"), "say {{x}}");
         assert_eq!(fields("say {{x}}"), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_single_close_inside_an_escape_is_refused() {
+        for text in [
+            "data merge storage a:c4 {{k}:1}",
+            "say {{a}",
+            "say {{a:{b:1}}",
+        ] {
+            assert!(checked_pieces(text).is_err(), "{text}");
+        }
+        for text in [
+            "data merge storage a:c4 {{{k}:1}}",
+            "say {{a}}}",
+            "say a}",
+            "say {{a:{b:1}}}",
+            r#"say {{"}"}}"#,
+        ] {
+            assert!(checked_pieces(text).is_ok(), "{text}");
+        }
+        assert_eq!(decoded(&escape_braces("{{a}} {b}")), "{{a}} {b}");
     }
 
     #[test]

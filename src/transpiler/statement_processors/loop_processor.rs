@@ -122,6 +122,13 @@ impl UnrollValue {
             Self::Boolean(value) => value.to_string(),
         }
     }
+
+    /// The value placed in command text, where placeholders are read
+    /// afterwards: its braces are escaped, so the text is shown as it is,
+    /// as a Python format string shows a value.
+    fn as_placed_text(&self) -> String {
+        placeholders::escape_braces(&self.as_command_text())
+    }
 }
 
 impl Transpiler {
@@ -1998,7 +2005,7 @@ fn substitute_statement(
         }
         Statement::Pass => Statement::Pass,
         Statement::MinecraftCommand(command) => Statement::MinecraftCommand(
-            replace_unroll_placeholder(command, target, &value.as_command_text()),
+            replace_unroll_placeholder(command, target, &value.as_placed_text()),
         ),
         Statement::Global(vars) => Statement::Global(vars.clone()),
         Statement::Execute(exec_block) => Statement::Execute(ExecuteBlock {
@@ -2014,7 +2021,7 @@ fn substitute_statement(
             selector: replace_unroll_placeholder(
                 &selector_def.selector,
                 target,
-                &value.as_command_text(),
+                &value.as_placed_text(),
             ),
         }),
         Statement::EntityDef(entity_def) => Statement::EntityDef(EntityDef {
@@ -2022,7 +2029,7 @@ fn substitute_statement(
             selector: replace_unroll_placeholder(
                 &entity_def.selector,
                 target,
-                &value.as_command_text(),
+                &value.as_placed_text(),
             ),
             nbt: substitute_expression(&entity_def.nbt, target, value)?,
         }),
@@ -2036,7 +2043,7 @@ fn substitute_execute_modifier(
     target: &str,
     value: &UnrollValue,
 ) -> Result<ExecuteModifier, TranspileError> {
-    let command_value = value.as_command_text();
+    let command_value = value.as_placed_text();
     let substituted = match modifier {
         ExecuteModifier::As(raw) => {
             ExecuteModifier::As(replace_unroll_placeholder(raw, target, &command_value))
