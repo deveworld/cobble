@@ -439,6 +439,7 @@ impl Transpiler {
         }
         self.module_loop_variables.extend(loop_variables);
         self.register_module_declarations(program);
+        let mut passes = Vec::new();
         for statement in &program.statements {
             if let Statement::Assignment(assign) = statement {
                 if assign.assigns_name() {
@@ -448,14 +449,49 @@ impl Transpiler {
             if let Statement::FunctionDef(func) = statement {
                 let param_names: Vec<String> = func.params.iter().map(|p| p.name.clone()).collect();
                 self.functions.params.insert(func.name.clone(), param_names);
-                self.functions.params_used_as_values.insert(
-                    func.name.clone(),
-                    crate::transpiler::function_context::params_read_in_expressions(func),
+                let (used, passed) =
+                    crate::transpiler::function_context::params_read_or_passed(func);
+                self.functions
+                    .params_used_as_values
+                    .insert(func.name.clone(), used);
+                passes.extend(
+                    passed
+                        .into_iter()
+                        .map(|(param, callee, index)| (func.name.clone(), param, callee, index)),
                 );
                 self.functions.returns.insert(
                     func.name.clone(),
                     Self::analyze_function_return_kind(&func.body),
                 );
+            }
+        }
+        // A parameter passed on whole to another function's parameter is
+        // used as a value when that one is, or when the callee isn't a
+        // function of the pack.
+        loop {
+            let mut changed = false;
+            for (function, param, callee, index) in &passes {
+                let used = match self.functions.params.get(callee) {
+                    Some(callee_params) => callee_params.get(*index).is_none_or(|callee_param| {
+                        self.functions
+                            .params_used_as_values
+                            .get(callee)
+                            .is_none_or(|used| used.contains(callee_param))
+                    }),
+                    None => true,
+                };
+                if used
+                    && self
+                        .functions
+                        .params_used_as_values
+                        .get_mut(function)
+                        .is_some_and(|set| set.insert(param.clone()))
+                {
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
             }
         }
     }

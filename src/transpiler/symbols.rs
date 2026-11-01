@@ -175,3 +175,27 @@ pub(in crate::transpiler) struct FunctionTable {
     /// Where each user function is defined.
     pub(in crate::transpiler) def_sources: HashMap<String, Option<SourceLocation>>,
 }
+
+impl FunctionTable {
+    /// The SNBT a number argument passes to `param` of `function`: a
+    /// fraction, as text, to a parameter used only in command text, so it
+    /// arrives as written, and otherwise the integer a score holds. The
+    /// second value tells whether the number loses its fraction or range.
+    pub(in crate::transpiler) fn number_argument(
+        &self,
+        function: &str,
+        param: &str,
+        value: f64,
+    ) -> (String, bool) {
+        let text_only = self
+            .params_used_as_values
+            .get(function)
+            .is_some_and(|used| !used.contains(param));
+        if value.fract() != 0.0 && value.is_finite() && text_only {
+            return (format!("\"{value}\""), false);
+        }
+        let exact =
+            value.fract() == 0.0 && value >= f64::from(i32::MIN) && value <= f64::from(i32::MAX);
+        ((value as i32).to_string(), !exact)
+    }
+}

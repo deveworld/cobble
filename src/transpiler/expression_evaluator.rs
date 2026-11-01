@@ -34,7 +34,7 @@ pub struct ExpressionEvaluator<'a> {
 }
 
 impl<'a> ExpressionEvaluator<'a> {
-    fn warn_score_value(&self, value: f64) {
+    pub(in crate::transpiler) fn warn_score_value(&self, value: f64) {
         if let Some(warning) = score_value_warning(value, self.source.clone()) {
             record_warning(self.warnings, warning);
         }
@@ -378,8 +378,12 @@ impl<'a> ExpressionEvaluator<'a> {
         let mut argument_commands = Vec::new();
         for (param_name, arg) in param_names.iter().zip(args.iter()) {
             let target_path = staging.argument_path(param_name);
-            argument_commands
-                .extend(self.function_argument_to_storage_commands(&target_path, arg)?);
+            argument_commands.extend(self.function_argument_to_storage_commands(
+                func_name,
+                param_name,
+                &target_path,
+                arg,
+            )?);
         }
         Ok(staging.wrap(
             &namespace,
@@ -394,10 +398,34 @@ impl<'a> ExpressionEvaluator<'a> {
 
     fn function_argument_to_storage_commands(
         &mut self,
+        func_name: &str,
+        param_name: &str,
         target_path: &str,
         arg: &Expression,
     ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.data_pack.namespace.clone();
+        // As a call statement passes it (see `call_argument_commands`).
+        let number = match arg {
+            Expression::Number(n) => Some(*n),
+            Expression::Identifier(name)
+                if !self.is_current_param(name)
+                    && !self.symbols.scoreboard_variables.contains(name)
+                    && !self.symbols.variable_storage_paths.contains_key(name) =>
+            {
+                self.symbols.compile_time_constants.get(name).copied()
+            }
+            Expression::Unary(..) => Transpiler::signed_number(arg),
+            _ => None,
+        };
+        if let Some(n) = number {
+            let (text, lossy) = self.functions.number_argument(func_name, param_name, n);
+            if lossy {
+                self.warn_score_value(n);
+            }
+            return Ok(vec![format!(
+                "data modify storage {namespace}:global {target_path} set value {text}"
+            )]);
+        }
         match arg {
             Expression::String(value) => {
                 let escaped = escape_quoted(value);
@@ -406,10 +434,6 @@ impl<'a> ExpressionEvaluator<'a> {
                     namespace, target_path, escaped
                 )])
             }
-            Expression::Number(value) => Ok(vec![format!(
-                "data modify storage {}:global {} set value {}",
-                namespace, target_path, *value as i32
-            )]),
             Expression::Boolean(value) => Ok(vec![format!(
                 "data modify storage {}:global {} set value {}",
                 namespace,
@@ -853,7 +877,28 @@ impl<'a> ExpressionEvaluator<'a> {
     /// in its literal, as `y[0]` after `y = [0.6, 2.5]`: the score keeps
     /// the integer part, as `x = 1.5` does.
     fn warn_fractional_item(&self, expr: &Expression) {
-        let Some((name, steps)) = crate::transpiler::container_writes::access_path(expr) else {
+        // A `const` index picks one item, as a literal does.
+        fn fold_indexes(expr: &Expression, constants: &dyn Fn(&str) -> Option<f64>) -> Expression {
+            match expr {
+                Expression::Attribute(base, field) => {
+                    Expression::Attribute(Box::new(fold_indexes(base, constants)), field.clone())
+                }
+                Expression::Subscript(base, index) => {
+                    let index = match &**index {
+                        Expression::Identifier(name) => {
+                            constants(name).map_or_else(|| (**index).clone(), Expression::Number)
+                        }
+                        _ => (**index).clone(),
+                    };
+                    Expression::Subscript(Box::new(fold_indexes(base, constants)), Box::new(index))
+                }
+                other => other.clone(),
+            }
+        }
+        let folded = fold_indexes(expr, &|name| {
+            self.symbols.compile_time_constants.get(name).copied()
+        });
+        let Some((name, steps)) = crate::transpiler::container_writes::access_path(&folded) else {
             return;
         };
         if self.is_storage_current_param(name) {
@@ -864,15 +909,30 @@ impl<'a> ExpressionEvaluator<'a> {
         }) else {
             return;
         };
+        // An index known only when the pack runs can pick any item.
+        let picked = steps.iter().all(|step| match step {
+            crate::transpiler::container_writes::Step::Item(index) => {
+                matches!(index, Expression::Number(_))
+            }
+            _ => true,
+        });
         let read = Transpiler::expression_source_key(expr);
+        // `data get` rounds a fraction down.
+        let message = if picked {
+            format!(
+                "Scores hold integers, so {read}, which holds {value}, is read as {}.",
+                value.floor() as i32
+            )
+        } else {
+            format!(
+                "Scores hold integers, so {read}, which can hold a fraction such as {value}, is read rounded down."
+            )
+        };
         record_warning(
             self.warnings,
             TranspileWarning {
                 kind: "fractional-number",
-                message: format!(
-                    "Scores hold integers, so {read}, which holds {value}, is read as {}.",
-                    value as i32
-                ),
+                message,
                 help: Some(format!(
                     "Store the number as text, as \"{value}\", to show it as written, or scale it to an integer."
                 )),

@@ -954,20 +954,64 @@ pub(in crate::transpiler) fn called_functions(body: &[Statement]) -> BTreeSet<St
 }
 
 /// Parameters of `function` that its body reads in an expression, such as
-/// `v + 1` or `other(v)`, rather than only in command text as `{v}`.
-pub(in crate::transpiler) fn params_read_in_expressions(function: &FunctionDef) -> HashSet<String> {
+/// `v + 1`, rather than only in command text as `{v}`, with a parameter passed on as a
+/// whole argument, as `show(p)`, left out: such a parameter is listed
+/// with the function it reaches and the argument's position instead.
+pub(in crate::transpiler) fn params_read_or_passed(
+    function: &FunctionDef,
+) -> (HashSet<String>, Vec<(String, String, usize)>) {
+    fn walk<'a>(
+        expr: &'a Expression,
+        reads: &mut Vec<&'a str>,
+        passes: &mut Vec<(String, String, usize)>,
+    ) {
+        if let Expression::Call(func, args) = expr {
+            if let Expression::Identifier(callee) = &**func {
+                for (index, arg) in args.iter().enumerate() {
+                    match arg {
+                        Expression::Identifier(name) => {
+                            passes.push((name.clone(), callee.clone(), index))
+                        }
+                        arg => walk(arg, reads, passes),
+                    }
+                }
+                return;
+            }
+        }
+        match expr {
+            Expression::Binary(left, _, right) => {
+                walk(left, reads, passes);
+                walk(right, reads, passes);
+            }
+            Expression::Unary(_, inner) => walk(inner, reads, passes),
+            Expression::Conditional(condition, value, otherwise) => {
+                walk(condition, reads, passes);
+                walk(value, reads, passes);
+                walk(otherwise, reads, passes);
+            }
+            Expression::Array(items) => items.iter().for_each(|item| walk(item, reads, passes)),
+            Expression::Map(entries) => entries
+                .iter()
+                .for_each(|(_, value)| walk(value, reads, passes)),
+            other => expression_reads(other, reads),
+        }
+    }
     let mut expressions = Vec::new();
     collect_statement_expressions(&function.body, &mut expressions);
     let mut reads = Vec::new();
+    let mut passes = Vec::new();
     for expr in expressions {
-        expression_reads(expr, &mut reads);
+        walk(expr, &mut reads, &mut passes);
     }
-    function
+    let is_param = |name: &str| function.params.iter().any(|param| param.name == name);
+    let used = function
         .params
         .iter()
         .filter(|param| reads.contains(&param.name.as_str()))
         .map(|param| param.name.clone())
-        .collect()
+        .collect();
+    passes.retain(|(name, _, _)| is_param(name));
+    (used, passes)
 }
 
 fn collect_statement_expressions<'a>(body: &'a [Statement], out: &mut Vec<&'a Expression>) {

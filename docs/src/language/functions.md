@@ -32,9 +32,11 @@ literal.
 
 A fractional number passed to a parameter that the function only uses in
 command text, as in `play_sound(0.6)` for `/playsound ... {pitch}`, arrives as
-written. When the function uses the parameter as a value, such as
-`pitch + 1`, the number is a score, so `1.5` is stored as `1` with the same
-`fractional-number` warning as `x = 1.5`.
+written. So does one the function passes on whole to such a parameter of
+another function, as `show(p)`, and so does a `const` or a negative number.
+When the function uses the parameter as a value, such as `pitch + 1` or
+`return pitch`, the number is a score, so `1.5` is stored as `1` with the same
+`fractional-number` warning as `x = 1.5`, at the line of the call.
 
 Parameter names must be unique. Default parameter values, `*args`, and
 `**kwargs` are not supported.

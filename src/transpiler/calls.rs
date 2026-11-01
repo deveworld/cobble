@@ -120,26 +120,31 @@ impl Transpiler {
                 namespace, target_path, holder, objective
             )]
         };
+        // A fractional number reaches a parameter used only in command text
+        // as written, which only text keeps (a stored double `0.6` prints as
+        // `.6`). A parameter used as a value is a score. So for a `const`
+        // and for a number the compiler works out, as `-(-0.6)`.
+        let number = match arg {
+            Expression::Number(n) => Some(*n),
+            Expression::Identifier(name)
+                if !self.symbols.scoreboard_variables.contains(name)
+                    && !self.symbols.variable_storage_paths.contains_key(name)
+                    && !self.is_current_macro_param(name) =>
+            {
+                self.symbols.compile_time_constants.get(name).copied()
+            }
+            Expression::Unary(..) | Expression::Binary(..) => self.try_eval_const(arg),
+            _ => None,
+        };
+        if let Some(n) = number {
+            let (text, lossy) = self.functions.number_argument(func_name, param_name, n);
+            if lossy {
+                self.warn_score_value(n);
+            }
+            return Ok(set_value(&text));
+        }
         match arg {
             Expression::String(s) => Ok(set_value(&format!("\"{}\"", escape_quoted(s)))),
-            // A fractional number reaches a parameter used only in command
-            // text as written, which only text keeps (a stored double
-            // `0.6` prints as `.6`). A parameter used as a value is a score.
-            Expression::Number(n)
-                if n.fract() != 0.0
-                    && n.is_finite()
-                    && self
-                        .functions
-                        .params_used_as_values
-                        .get(func_name)
-                        .is_some_and(|used| !used.contains(param_name)) =>
-            {
-                Ok(set_value(&format!("\"{n}\"")))
-            }
-            Expression::Number(n) => {
-                self.warn_score_value(*n);
-                Ok(set_value(&(*n as i32)))
-            }
             Expression::Boolean(b) => Ok(set_value(&i32::from(*b))),
             // A selector is passed as text.
             Expression::Identifier(var) if var.starts_with('@') => {

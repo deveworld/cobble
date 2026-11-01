@@ -460,7 +460,7 @@ impl Transpiler {
     }
 
     /// A number literal with any leading `-` and `+` applied, as in `-(2)`.
-    fn signed_number(expr: &Expression) -> Option<f64> {
+    pub(in crate::transpiler) fn signed_number(expr: &Expression) -> Option<f64> {
         match expr {
             Expression::Number(n) => Some(*n),
             Expression::Unary(UnaryOp::Neg, inner) => Self::signed_number(inner).map(|n| -n),

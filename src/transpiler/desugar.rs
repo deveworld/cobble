@@ -1236,11 +1236,15 @@ impl Transpiler {
                         Some(if *value { "True" } else { "False" }.to_string())
                     }
                     other => self.compile_time_text(other).or_else(|| {
-                        // Python writes a whole number without a point and
-                        // other numbers in its own way; fold only the first.
+                        // Python writes a whole number without a point, and
+                        // other numbers from 0.0001 up to 1e16 as their
+                        // shortest decimal, as Rust does; fold only those.
                         let value = self.try_eval_const(other)?;
-                        (value.fract() == 0.0 && value.abs() <= f64::from(i32::MAX))
-                            .then(|| format!("{}", value as i64))
+                        if value.fract() == 0.0 && value.abs() <= f64::from(i32::MAX) {
+                            return Some(format!("{}", value as i64));
+                        }
+                        (value.is_finite() && (1e-4..1e16).contains(&value.abs()))
+                            .then(|| format!("{value}"))
                     }),
                 }
             }
