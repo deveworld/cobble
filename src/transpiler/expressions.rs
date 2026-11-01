@@ -373,14 +373,7 @@ impl Transpiler {
                 Ok(serde_json::Value::Object(object))
             }
             Expression::Call(func, args) => {
-                // A resource is written when the pack is built, while a
-                // parameter only has a value when the function runs.
-                if let Some(param) = args.iter().find_map(|arg| self.parameter_in(arg)) {
-                    return Err(format!(
-                        "`{param}` is a parameter, but a resource is written when the pack is built, before any call gives it a value; write the text as a literal, or build the component in a command such as `/tellraw @a {{\"text\": \"{{{param}}}\"}}`"
-                    )
-                    .into());
-                }
+
                 if let Some(value) = self.item_component_helper_json(func, args)? {
                     Ok(value)
                 } else if let Some(value) = self.text_component_helper_json(func, args)? {
@@ -430,22 +423,6 @@ impl Transpiler {
                 Self::expression_source_key(expr)
             )
             .into()),
-        }
-    }
-
-    /// The first parameter of the running function that `expr` reads.
-    fn parameter_in(&self, expr: &Expression) -> Option<String> {
-        match expr {
-            Expression::Identifier(name) if self.current_context.is_param(name) => {
-                Some(name.clone())
-            }
-            Expression::Call(_, args) | Expression::Array(args) => {
-                args.iter().find_map(|arg| self.parameter_in(arg))
-            }
-            Expression::Map(entries) => entries
-                .iter()
-                .find_map(|(_, value)| self.parameter_in(value)),
-            _ => None,
         }
     }
 

@@ -311,7 +311,7 @@ def check():
         "error must not leak masked operand placeholders: {error}"
     );
     assert!(
-        error.contains(r#"Identifier("@s")"#),
+        error.contains("Got: `[@s]`"),
         "error should show the original operand spelling: {error}"
     );
 }
