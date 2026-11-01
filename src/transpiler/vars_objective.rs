@@ -5,13 +5,14 @@
 //! through [`map_command`], which rewrites `temp` to `<namespace>.vars` where a
 //! command expects an objective: `scoreboard` objective arguments, `execute`
 //! `if|unless score` and `store ... score` arguments, `trigger`,
-//! `scores={...}` selector filters and `scores:{...}` predicate maps, and
-//! score text components and number providers, also inside an item's
-//! components. A macro placeholder that stands for a word, as `$(op)` in
+//! `scores={...}` selector filters, the `scores` map of an `entity_scores`
+//! predicate, score text components and number providers, also inside an
+//! item's components, and the command of a `run_command` click event. A
+//! macro placeholder that stands for a word, as `$(op)` in
 //! `scoreboard players $(op) x temp 1`, leaves the objective where it is
-//! for every word the placeholder can be. Other text, such as chat messages
-//! or a fake player named `temp`, stays unchanged. Resource JSON, such as a
-//! predicate, goes through [`map_json`].
+//! for every word the placeholder can be. Other text, such as chat messages,
+//! a fake player named `temp`, or a `scores` key in `custom_data`, stays
+//! unchanged. Resource JSON, such as a predicate, goes through [`map_json`].
 
 use std::borrow::Cow;
 
@@ -29,17 +30,8 @@ pub fn map_command<'a>(command: &'a str, target: &str) -> Cow<'a, str> {
         return Cow::Borrowed(command);
     }
 
-    let tokens = tokenize(command);
     let mut replacements: Vec<(usize, usize)> = Vec::new();
-    collect_command(command, &tokens, 0, &mut replacements);
-
-    for &(start, end) in &tokens {
-        let token = &command[start..end];
-        if token.contains(['[', '{']) {
-            collect_scores_filters(token, start, &mut replacements);
-            collect_component_objectives(token, start, &mut replacements);
-        }
-    }
+    collect_all(command, 0, &mut replacements);
 
     if replacements.is_empty() {
         return Cow::Borrowed(command);
@@ -56,6 +48,29 @@ pub fn map_command<'a>(command: &'a str, target: &str) -> Cow<'a, str> {
     }
     mapped.push_str(&command[cursor..]);
     Cow::Owned(mapped)
+}
+
+/// Collects the spans of every `temp` objective in `command`, moved by
+/// `offset`.
+fn collect_all(command: &str, offset: usize, out: &mut Vec<(usize, usize)>) {
+    if !command.contains(SOURCE_OBJECTIVE) {
+        return;
+    }
+    let tokens = tokenize(command);
+    let mut found = Vec::new();
+    collect_command(command, &tokens, 0, &mut found);
+    for &(start, end) in &tokens {
+        let token = &command[start..end];
+        if token.contains(['[', '{']) {
+            collect_scores_filters(token, start, &mut found);
+            collect_snbt_objectives(token, start, &mut found);
+        }
+    }
+    out.extend(
+        found
+            .into_iter()
+            .map(|(start, end)| (start + offset, end + offset)),
+    );
 }
 
 /// Splits a command into whitespace-separated token spans, keeping brackets,
@@ -135,7 +150,12 @@ fn collect_command(
                         collect_command(command, tokens, index + 1, out);
                         return;
                     }
-                    "if" | "unless" if word(index + 1) == Some("score") => {
+                    // A placeholder before `score` stands for `if`,
+                    // `unless`, or `store result|success`, and each has the
+                    // objective third.
+                    _ if (matches!(token, "if" | "unless") || placeholder(index))
+                        && word(index + 1) == Some("score") =>
+                    {
                         objective(index + 3, out);
                         match word(index + 4) {
                             Some("matches") => index += 6,
@@ -191,6 +211,29 @@ fn collect_command(
             (Some("players"), Some("display")) => objective(first + 5, out),
             (Some("objectives"), Some("add" | "remove" | "modify")) => objective(first + 3, out),
             (Some("objectives"), Some("setdisplay")) => objective(first + 4, out),
+            // A placeholder for `players` or `objectives`: the subcommand
+            // after it tells where the objective is, when every word the
+            // placeholder can be puts one there.
+            (Some(_), Some(sub)) if placeholder(first + 1) => match sub {
+                "set" | "get" | "reset" | "enable" => {
+                    objective(first + 4, out);
+                }
+                "operation" => {
+                    objective(first + 4, out);
+                    objective(first + 7, out);
+                }
+                "display" => objective(first + 5, out),
+                // `players add|remove` name the objective fourth;
+                // `objectives add` has a criterion there, never `temp`.
+                "add" | "remove" => objective(first + 4, out),
+                "modify" => objective(first + 3, out),
+                "setdisplay" => objective(first + 4, out),
+                _ if placeholder(first + 2) => {
+                    objective(first + 4, out);
+                    objective(first + 7, out);
+                }
+                _ => {}
+            },
             _ => {}
         },
         _ => {}
@@ -204,22 +247,10 @@ fn is_placeholder_word(word: &str) -> bool {
         .is_some_and(|name| !name.is_empty() && !name.contains(['(', ')']))
 }
 
-/// Rewrites `temp` keys inside `scores={...}` selector filters and the
-/// `scores:{...}` map of an `entity_scores` predicate.
+/// Rewrites `temp` keys inside `scores={...}` selector filters.
 fn collect_scores_filters(token: &str, offset: usize, out: &mut Vec<(usize, usize)>) {
-    for (opener, separator) in [("scores={", b'='), ("scores:{", b':'), ("scores\":{", b':')] {
-        collect_scores_maps(token, offset, opener, separator, out);
-    }
-}
-
-fn collect_scores_maps(
-    token: &str,
-    offset: usize,
-    opener: &str,
-    separator: u8,
-    out: &mut Vec<(usize, usize)>,
-) {
     let bytes = token.as_bytes();
+    let opener = "scores={";
     let mut search = 0;
     while let Some(found) = token[search..].find(opener) {
         let key_start = search + found;
@@ -238,17 +269,10 @@ fn collect_scores_maps(
             match bytes[index] {
                 b'{' => depth += 1,
                 b'}' => depth -= 1,
-                byte if byte == separator && depth == 1 && !in_value => {
+                b'=' if depth == 1 && !in_value => {
                     let key = &token[entry_start..index];
-                    let trimmed = key.trim();
-                    let unquoted = trimmed
-                        .strip_prefix(['"', '\''])
-                        .and_then(|rest| rest.strip_suffix(['"', '\'']))
-                        .unwrap_or(trimmed);
-                    if unquoted == SOURCE_OBJECTIVE {
-                        let key_start = entry_start
-                            + (key.len() - key.trim_start().len())
-                            + (trimmed.len() - unquoted.len()) / 2;
+                    if key.trim() == SOURCE_OBJECTIVE {
+                        let key_start = entry_start + (key.len() - key.trim_start().len());
                         out.push((
                             offset + key_start,
                             offset + key_start + SOURCE_OBJECTIVE.len(),
@@ -268,21 +292,328 @@ fn collect_scores_maps(
     }
 }
 
+/// A value of SNBT or JSON text, with the byte spans the rewrite needs.
+enum Node {
+    Object(Vec<Entry>),
+    List(Vec<Node>),
+    /// A string or another scalar: `start..end` is its text without quotes.
+    Scalar {
+        start: usize,
+        end: usize,
+    },
+}
+
+struct Entry {
+    /// The key without quotes, and its span.
+    key: String,
+    key_start: usize,
+    key_end: usize,
+    value: Node,
+}
+
+/// Reads SNBT or JSON loosely: enough to know which key holds which value.
+/// Text it can't read gives `None` and is left alone.
+struct NodeParser<'a> {
+    text: &'a str,
+    pos: usize,
+    depth: usize,
+}
+
+impl NodeParser<'_> {
+    /// Deeper text is left alone rather than read with a deep stack.
+    const MAX_DEPTH: usize = 256;
+
+    fn byte(&self) -> Option<u8> {
+        self.text.as_bytes().get(self.pos).copied()
+    }
+
+    fn skip_space(&mut self) {
+        while self.byte().is_some_and(|byte| byte.is_ascii_whitespace()) {
+            self.pos += 1;
+        }
+    }
+
+    fn value(&mut self) -> Option<Node> {
+        self.skip_space();
+        match self.byte()? {
+            b'{' => self.nested(Self::object),
+            b'[' => self.nested(Self::list),
+            b'"' | b'\'' => {
+                let (start, end) = self.quoted()?;
+                Some(Node::Scalar { start, end })
+            }
+            _ => {
+                let start = self.pos;
+                while self.byte().is_some_and(|byte| {
+                    !matches!(byte, b',' | b'}' | b']') && !byte.is_ascii_whitespace()
+                }) {
+                    self.pos += 1;
+                }
+                (self.pos > start).then_some(Node::Scalar {
+                    start,
+                    end: self.pos,
+                })
+            }
+        }
+    }
+
+    fn nested(&mut self, read: fn(&mut Self) -> Option<Node>) -> Option<Node> {
+        if self.depth >= Self::MAX_DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let node = read(self);
+        self.depth -= 1;
+        node
+    }
+
+    /// The quoted string at `pos`, as the span inside its quotes.
+    fn quoted(&mut self) -> Option<(usize, usize)> {
+        let bytes = self.text.as_bytes();
+        let quote = self.byte()?;
+        let start = self.pos + 1;
+        let mut index = start;
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\\' => index += 2,
+                byte if byte == quote => {
+                    self.pos = index + 1;
+                    return Some((start, index));
+                }
+                _ => index += 1,
+            }
+        }
+        None
+    }
+
+    fn object(&mut self) -> Option<Node> {
+        self.pos += 1;
+        let mut entries = Vec::new();
+        loop {
+            self.skip_space();
+            let (key_start, key_end) = match self.byte()? {
+                b'}' => {
+                    self.pos += 1;
+                    return Some(Node::Object(entries));
+                }
+                b'"' | b'\'' => self.quoted()?,
+                _ => {
+                    let start = self.pos;
+                    while self.byte().is_some_and(|byte| {
+                        !matches!(byte, b':' | b',' | b'{' | b'}' | b'[' | b']' | b'"' | b'\'')
+                            && !byte.is_ascii_whitespace()
+                    }) {
+                        self.pos += 1;
+                    }
+                    if self.pos == start {
+                        return None;
+                    }
+                    (start, self.pos)
+                }
+            };
+            self.skip_space();
+            if self.byte()? != b':' {
+                return None;
+            }
+            self.pos += 1;
+            let value = self.value()?;
+            entries.push(Entry {
+                key: self.text[key_start..key_end].to_string(),
+                key_start,
+                key_end,
+                value,
+            });
+            self.skip_space();
+            match self.byte()? {
+                b',' => self.pos += 1,
+                b'}' => {}
+                _ => return None,
+            }
+        }
+    }
+
+    fn list(&mut self) -> Option<Node> {
+        self.pos += 1;
+        let mut items = Vec::new();
+        self.skip_space();
+        // A typed array: `[I; 1, 2]`.
+        if ["B;", "I;", "L;"]
+            .iter()
+            .any(|prefix| self.text[self.pos..].starts_with(prefix))
+        {
+            self.pos += 2;
+        }
+        loop {
+            self.skip_space();
+            if self.byte()? == b']' {
+                self.pos += 1;
+                return Some(Node::List(items));
+            }
+            items.push(self.value()?);
+            self.skip_space();
+            match self.byte()? {
+                b',' => self.pos += 1,
+                b']' => {}
+                _ => return None,
+            }
+        }
+    }
+}
+
+/// Rewrites `temp` where SNBT or JSON in `token` names an objective: the
+/// keys of an `entity_scores` predicate's `scores`, the `score` of a score
+/// number provider, the `objective` of a score text component, and the
+/// command of a `run_command` click event. Other data, such as a
+/// `custom_data` map with a `scores` key, stays as it is.
+fn collect_snbt_objectives(token: &str, offset: usize, out: &mut Vec<(usize, usize)>) {
+    let bytes = token.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(open) = quote {
+            if byte == b'\\' {
+                index += 1;
+            } else if byte == open {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' | b'\'' => quote = Some(byte),
+            b'{' => {
+                let mut parser = NodeParser {
+                    text: token,
+                    pos: index,
+                    depth: 0,
+                };
+                if let Some(node) = parser.value() {
+                    walk_node(token, &node, None, offset, out);
+                    index = parser.pos;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+}
+
+fn scalar_text<'a>(text: &'a str, node: &Node) -> Option<&'a str> {
+    match node {
+        Node::Scalar { start, end } => Some(&text[*start..*end]),
+        _ => None,
+    }
+}
+
+/// Whether `kind`, as a `type`, `condition`, or `action` value, is `name`.
+fn is_kind(kind: &str, name: &str) -> bool {
+    kind.strip_prefix("minecraft:").unwrap_or(kind) == name
+}
+
+fn walk_node(
+    text: &str,
+    node: &Node,
+    parent_key: Option<&str>,
+    offset: usize,
+    out: &mut Vec<(usize, usize)>,
+) {
+    match node {
+        Node::Object(entries) => {
+            let field = |name: &str| {
+                entries
+                    .iter()
+                    .find(|entry| entry.key == name)
+                    .and_then(|entry| scalar_text(text, &entry.value))
+            };
+            let is_type = |name: &str| {
+                ["type", "condition", "action"]
+                    .into_iter()
+                    .any(|key| field(key).is_some_and(|kind| is_kind(kind, name)))
+            };
+            let has = |name: &str| entries.iter().any(|entry| entry.key == name);
+            let entity_scores = is_type("entity_scores");
+            let score_provider = is_type("score") || has("target");
+            // A score text component: `{score:{name:...,objective:...}}`.
+            let score_component = parent_key == Some("score") && has("name");
+            let run_command = is_type("run_command");
+            for entry in entries {
+                let value = scalar_text(text, &entry.value);
+                match (entry.key.as_str(), &entry.value) {
+                    ("scores", Node::Object(scores)) if entity_scores => {
+                        for score in scores {
+                            if score.key == SOURCE_OBJECTIVE {
+                                out.push((offset + score.key_start, offset + score.key_end));
+                            }
+                        }
+                    }
+                    ("score", Node::Scalar { start, end })
+                        if score_provider && value == Some(SOURCE_OBJECTIVE) =>
+                    {
+                        out.push((offset + start, offset + end));
+                    }
+                    ("objective", Node::Scalar { start, end })
+                        if score_component && value == Some(SOURCE_OBJECTIVE) =>
+                    {
+                        out.push((offset + start, offset + end));
+                    }
+                    ("command", Node::Scalar { start, .. }) if run_command => {
+                        let command = value.unwrap_or_default();
+                        let slash = command.len() - command.trim_start_matches('/').len();
+                        collect_all(&command[slash..], offset + start + slash, out);
+                    }
+                    _ => {}
+                }
+                walk_node(text, &entry.value, Some(&entry.key), offset, out);
+            }
+        }
+        Node::List(items) => {
+            for item in items {
+                walk_node(text, item, None, offset, out);
+            }
+        }
+        Node::Scalar { .. } => {}
+    }
+}
+
 /// Rewrites `temp` in resource JSON as [`map_command`] does in commands:
 /// the `objective` of a score text component, the `score` of a score number
-/// provider, and the keys of a `scores` map.
+/// provider, the keys of an `entity_scores` predicate's `scores`, and the
+/// command of a `run_command` action.
 pub fn map_json(value: &mut serde_json::Value, target: &str) {
+    map_json_in(value, None, target);
+}
+
+fn map_json_in(value: &mut serde_json::Value, parent_key: Option<&str>, target: &str) {
     match value {
         serde_json::Value::Object(object) => {
+            let is_type = |name: &str| {
+                ["type", "condition", "action"].into_iter().any(|key| {
+                    object
+                        .get(key)
+                        .and_then(|kind| kind.as_str())
+                        .is_some_and(|kind| is_kind(kind, name))
+                })
+            };
+            let entity_scores = is_type("entity_scores");
+            let score_provider = is_type("score") || object.contains_key("target");
+            let run_command = is_type("run_command");
+            let score_component = parent_key == Some("score") && object.contains_key("name");
             for (key, field) in object.iter_mut() {
                 match (key.as_str(), &mut *field) {
-                    ("objective" | "score", serde_json::Value::String(name))
-                        if name == SOURCE_OBJECTIVE =>
+                    ("objective", serde_json::Value::String(name))
+                        if score_component && name == SOURCE_OBJECTIVE =>
+                    {
+                        *name = target.to_string();
+                    }
+                    ("score", serde_json::Value::String(name))
+                        if score_provider && name == SOURCE_OBJECTIVE =>
                     {
                         *name = target.to_string();
                     }
                     ("scores", serde_json::Value::Object(scores))
-                        if scores.contains_key(SOURCE_OBJECTIVE) =>
+                        if entity_scores && scores.contains_key(SOURCE_OBJECTIVE) =>
                     {
                         let mapped = std::mem::take(scores)
                             .into_iter()
@@ -296,73 +627,23 @@ pub fn map_json(value: &mut serde_json::Value, target: &str) {
                             .collect();
                         *scores = mapped;
                     }
+                    ("command", serde_json::Value::String(command)) if run_command => {
+                        let slash = command.len() - command.trim_start_matches('/').len();
+                        if let Cow::Owned(mapped) = map_command(&command[slash..], target) {
+                            *command = format!("{}{mapped}", &command[..slash]);
+                        }
+                    }
                     _ => {}
                 }
-                map_json(field, target);
+                map_json_in(field, Some(key), target);
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                map_json(item, target);
+                map_json_in(item, None, target);
             }
         }
         _ => {}
-    }
-}
-
-/// Rewrites `temp` values of `objective` keys in JSON or SNBT text components,
-/// and of `score` keys in score number providers.
-fn collect_component_objectives(token: &str, offset: usize, out: &mut Vec<(usize, usize)>) {
-    for key in ["objective", "score"] {
-        let mut search = 0;
-        while let Some(found) = token[search..].find(key) {
-            let key_start = search + found;
-            search = key_start + key.len();
-            let before = token[..key_start].chars().next_back();
-            if before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
-                continue;
-            }
-            let rest = &token[search..];
-            let mut cursor = 0;
-            if before == Some('"') {
-                if !rest.starts_with('"') {
-                    continue;
-                }
-                cursor += 1;
-            } else {
-                // An unquoted SNBT key follows `{` or `,`; anything else is text.
-                let previous = token[..key_start].trim_end().chars().next_back();
-                if !matches!(previous, Some('{' | ',')) {
-                    continue;
-                }
-            }
-            cursor += rest[cursor..].len() - rest[cursor..].trim_start().len();
-            if !rest[cursor..].starts_with(':') {
-                continue;
-            }
-            cursor += 1;
-            cursor += rest[cursor..].len() - rest[cursor..].trim_start().len();
-            let quote = rest[cursor..]
-                .chars()
-                .next()
-                .filter(|ch| *ch == '"' || *ch == '\'');
-            if quote.is_some() {
-                cursor += 1;
-            }
-            if !rest[cursor..].starts_with(SOURCE_OBJECTIVE) {
-                continue;
-            }
-            let value_end = cursor + SOURCE_OBJECTIVE.len();
-            let after = rest[value_end..].chars().next();
-            let closed = match quote {
-                Some(open) => after == Some(open),
-                None => !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_'),
-            };
-            if closed {
-                let start = offset + search + cursor;
-                out.push((start, start + SOURCE_OBJECTIVE.len()));
-            }
-        }
     }
 }
 
@@ -502,6 +783,76 @@ mod tests {
                 "text": {"score": {"name": "x", "objective": "pack.vars"}},
                 "name": "temp"
             })
+        );
+    }
+
+    #[test]
+    fn leaves_user_data_named_like_objectives_alone() {
+        for command in [
+            "data modify storage ns:a q set value {scores:{temp:36,wind:5}}",
+            "give @s stone[custom_data={scores:{temp:1}}]",
+            r#"give @s stone[custom_data={score:"temp"}]"#,
+            r#"give @s stone[custom_data={objective:"temp",score:{objective:temp}}]"#,
+            r#"data merge storage ns:a {"scores":{"temp":1},"score":"temp"}"#,
+            r#"tellraw @a {"text":"x","click_event":{"action":"suggest_command","command":"/trigger temp"}}"#,
+        ] {
+            assert_eq!(map(command), command);
+        }
+        let mut json = serde_json::json!({
+            "function": "minecraft:set_custom_data",
+            "tag": {"scores": {"temp": 1}, "score": "temp", "objective": "temp"}
+        });
+        let before = json.clone();
+        super::map_json(&mut json, "pack.vars");
+        assert_eq!(json, before);
+    }
+
+    #[test]
+    fn maps_number_providers_and_click_commands() {
+        assert_eq!(
+            map(
+                r#"item modify entity @s weapon {function:"set_count",count:{type:"minecraft:score",target:"this",score:"temp"}}"#
+            ),
+            r#"item modify entity @s weapon {function:"set_count",count:{type:"minecraft:score",target:"this",score:"pack.vars"}}"#
+        );
+        assert_eq!(
+            map(
+                r#"tellraw @a {"text":"x","click_event":{"action":"run_command","command":"/trigger temp set 1"}}"#
+            ),
+            r#"tellraw @a {"text":"x","click_event":{"action":"run_command","command":"/trigger pack.vars set 1"}}"#
+        );
+        let mut json = serde_json::json!({
+            "type": "minecraft:run_command", "command": "scoreboard players add @s temp 1"
+        });
+        super::map_json(&mut json, "pack.vars");
+        assert_eq!(json["command"], "scoreboard players add @s pack.vars 1");
+    }
+
+    #[test]
+    fn maps_the_objective_after_a_placeholder_for_a_subcommand() {
+        assert_eq!(
+            map("$execute $(m) score x temp matches 7 run say a"),
+            "$execute $(m) score x pack.vars matches 7 run say a"
+        );
+        assert_eq!(
+            map("$execute as @a $(m) score x temp matches 4 run say a"),
+            "$execute as @a $(m) score x pack.vars matches 4 run say a"
+        );
+        assert_eq!(
+            map("$execute if score x temp matches 4 $(m) score x temp matches 4 run say a"),
+            "$execute if score x pack.vars matches 4 $(m) score x pack.vars matches 4 run say a"
+        );
+        assert_eq!(
+            map("$execute store result storage ns:x temp int 1 $(m) score x temp matches 1 run say a"),
+            "$execute store result storage ns:x temp int 1 $(m) score x pack.vars matches 1 run say a"
+        );
+        assert_eq!(
+            map("$scoreboard $(group) $(op) coins temp 1"),
+            "$scoreboard $(group) $(op) coins pack.vars 1"
+        );
+        assert_eq!(
+            map("$scoreboard $(sub) get x temp"),
+            "$scoreboard $(sub) get x pack.vars"
         );
     }
 

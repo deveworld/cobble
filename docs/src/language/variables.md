@@ -48,11 +48,13 @@ rewrites `temp` to `<namespace>.vars` wherever a command expects an objective:
 `scoreboard` arguments, `if score` and `unless score`, `store result score`,
 `trigger`, `scores={...}` selector filters, the `scores` of an
 `entity_scores` predicate, score text components, also inside an item's
-components, and the `score` of a score number provider. Resource JSON from
-`datapack.*`, such as a predicate, is rewritten the same way. After a
-placeholder that stands for a word, as in `/scoreboard players {op} coins
-temp 1`, `temp` is rewritten where an objective stands for every word the
-placeholder can be.
+components, the `score` of a score number provider, and the command of a
+`run_command` click event. Resource JSON from `datapack.*`, such as a
+predicate, is rewritten the same way. After a placeholder that stands for a
+word, as in `/scoreboard players {op} coins temp 1` or `/execute {mode} score
+x temp matches 1 run ...`, `temp` is rewritten where an objective stands for
+every word the placeholder can be. Data that only looks like these, such as
+`{scores:{temp:1}}` in `custom_data` or in storage, stays as written.
 
 ```python
 def read_level():
