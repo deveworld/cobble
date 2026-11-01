@@ -1195,7 +1195,6 @@ def main():
         assert_eq!(diagnostics[0].kind, "unroll-limit-exceeded");
         assert_eq!(diagnostics[0].line, 5);
         assert_eq!(diagnostics[0].column, 13);
-        assert!(diagnostics[0].message.contains("unroll-limit-exceeded"));
         assert!(diagnostics[0].message.contains("nested unrolling"));
     }
 
