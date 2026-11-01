@@ -26,9 +26,12 @@ constructs and suggests a Cobble rewrite for unsupported ones; see
 
 ## Values And Expressions
 
-- Numbers are 32-bit integers. Floats are truncated, with a warning, and so
-  is a fractional item or field read as a number, as `y[0]` after
-  `y = [0.6, 2.5]`. Number literals may have an exponent, as in Python: `1e3`,
+- Numbers are 32-bit integers. Floats are truncated, with a warning. A
+  fractional item or field read as a number, as `y[0]` after
+  `y = [0.6, 2.5]`, is rounded down, as Minecraft's `data get` does, also
+  with a warning. A comparison with a number a score can't hold, such as
+  `x == 9999999999` or `x >= 2.5`, is decided exactly. Number literals may
+  have an exponent, as in Python: `1e3`,
   `1E3`, `2.5e-3`, and `1e+3`.
 - Lists and maps live in storage. Subscripts work when the base resolves to a
   storage path. List and string indexes may be literals, constants, or runtime

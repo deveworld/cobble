@@ -237,8 +237,9 @@ impl<'a> ConditionTranslator<'a> {
                     .to_string()
                     .into()),
             },
-            (Some((var_name, objective)), _, _, Some(value)) => {
-                self.score_vs_literal_condition(&var_name, &objective, op, value)
+            (Some((var_name, objective)), _, _, Some(_)) => {
+                let value = self.extract_literal_value(right).unwrap_or_default();
+                self.score_vs_number_condition(&var_name, &objective, op, value)
             }
             (_, Some((_var_name, _objective)), Some(_), _) => {
                 if let Some(reversed) = self.reverse_operator(op) {
@@ -257,6 +258,72 @@ impl<'a> ConditionTranslator<'a> {
                 .to_string()
                 .into()),
         }
+    }
+
+    /// The number a literal or a `const` holds, before a score would clamp
+    /// or cut it.
+    fn extract_literal_value(&self, expr: &Expression) -> Option<f64> {
+        match expr {
+            Expression::Number(n) => Some(*n),
+            Expression::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
+            Expression::Identifier(name) => self.symbols.compile_time_constants.get(name).copied(),
+            _ => None,
+        }
+    }
+
+    /// A score compared with a number, exactly: a score holds a 32-bit
+    /// integer, so `x == 9999999999` or `x == 2.5` is never true, and
+    /// `x >= 2.5` is `x >= 3`.
+    fn score_vs_number_condition(
+        &self,
+        var_name: &str,
+        objective: &str,
+        op: &BinaryOp,
+        value: f64,
+    ) -> Result<String, TranspileError> {
+        use BinaryOp::*;
+        let never = format!(
+            "score {var_name} {objective} matches 0 unless score {var_name} {objective} matches 0"
+        );
+        let always = format!("score {var_name} {objective} matches ..{}", i32::MAX);
+        let (min, max) = (f64::from(i32::MIN), f64::from(i32::MAX));
+        // The scores that pass, as `low..=high`.
+        let (low, high) = match op {
+            Eq | NotEq => {
+                let exact = value.fract() == 0.0 && (min..=max).contains(&value);
+                return Ok(match (op, exact) {
+                    (Eq, true) => format!("score {var_name} {objective} matches {}", value as i32),
+                    (NotEq, true) => {
+                        format!(
+                            "unless score {var_name} {objective} matches {}",
+                            value as i32
+                        )
+                    }
+                    (Eq, false) => never,
+                    _ => always,
+                });
+            }
+            Gt => (value.floor() + 1.0, max),
+            GtEq => (value.ceil(), max),
+            Lt => (min, value.ceil() - 1.0),
+            LtEq => (min, value.floor()),
+            _ => {
+                return Err("Unsupported operator for literal comparison"
+                    .to_string()
+                    .into());
+            }
+        };
+        if low.is_nan() || high.is_nan() || low > high || low > max || high < min {
+            return Ok(never);
+        }
+        let (low, high) = (low.max(min) as i32, high.min(max) as i32);
+        Ok(if low == i32::MIN && high == i32::MAX {
+            always
+        } else if low == i32::MIN {
+            format!("score {var_name} {objective} matches ..{high}")
+        } else {
+            format!("score {var_name} {objective} matches {low}..")
+        })
     }
 
     fn extract_literal(&self, expr: &Expression) -> Option<i32> {
@@ -342,60 +409,6 @@ impl<'a> ConditionTranslator<'a> {
             GtEq => Some(LtEq),
             _ => None,
         }
-    }
-
-    fn score_vs_literal_condition(
-        &self,
-        var_name: &str,
-        objective: &str,
-        op: &BinaryOp,
-        value: i32,
-    ) -> Result<String, TranspileError> {
-        use BinaryOp::*;
-
-        Ok(match op {
-            Eq => format!("score {} {} matches {}", var_name, objective, value),
-            NotEq => format!("unless score {} {} matches {}", var_name, objective, value),
-            Gt => {
-                // Handle boundary case: x > i32::MAX is always false
-                if value == i32::MAX {
-                    // Use a condition that's always false: check if score matches a value AND doesn't match it
-                    return Ok(format!(
-                        "score {} {} matches 0 unless score {} {} matches 0",
-                        var_name, objective, var_name, objective
-                    ));
-                }
-                format!(
-                    "score {} {} matches {}..",
-                    var_name,
-                    objective,
-                    value + 1 // Safe because we checked value != i32::MAX
-                )
-            }
-            GtEq => format!("score {} {} matches {}..", var_name, objective, value),
-            Lt => {
-                // Handle boundary case: x < i32::MIN is always false
-                if value == i32::MIN {
-                    // Use a condition that's always false
-                    return Ok(format!(
-                        "score {} {} matches 0 unless score {} {} matches 0",
-                        var_name, objective, var_name, objective
-                    ));
-                }
-                format!(
-                    "score {} {} matches ..{}",
-                    var_name,
-                    objective,
-                    value - 1 // Safe because we checked value != i32::MIN
-                )
-            }
-            LtEq => format!("score {} {} matches ..{}", var_name, objective, value),
-            _ => {
-                return Err("Unsupported operator for literal comparison"
-                    .to_string()
-                    .into());
-            }
-        })
     }
 
     fn literal_vs_literal_condition(
