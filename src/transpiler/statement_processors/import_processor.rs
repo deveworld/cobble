@@ -352,17 +352,79 @@ impl Transpiler {
                 _ => None,
             })
             .collect();
-        for &function in calls.keys() {
-            let mut seen = HashSet::new();
-            let mut pending: Vec<&str> = calls[function].iter().map(String::as_str).collect();
-            while let Some(callee) = pending.pop() {
-                if callee == function {
-                    self.functions.recursive.insert(function.to_string());
-                    break;
+        // A function can call itself when it calls itself directly or is in
+        // a cycle of calls: a strongly connected component of more than
+        // one function. Tarjan's algorithm finds them in linear time, where
+        // a search from each function took quadratic time on a long chain.
+        let names: Vec<&str> = calls.keys().copied().collect();
+        let index_of: HashMap<&str, usize> = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (*name, index))
+            .collect();
+        let edges: Vec<Vec<usize>> = names
+            .iter()
+            .map(|name| {
+                calls[name]
+                    .iter()
+                    .filter_map(|callee| index_of.get(callee.as_str()).copied())
+                    .collect()
+            })
+            .collect();
+        for (node, callees) in edges.iter().enumerate() {
+            if callees.contains(&node) {
+                self.functions.recursive.insert(names[node].to_string());
+            }
+        }
+        const UNSEEN: usize = usize::MAX;
+        let mut order = vec![UNSEEN; names.len()];
+        let mut low = vec![0; names.len()];
+        let mut on_stack = vec![false; names.len()];
+        let mut stack: Vec<usize> = Vec::new();
+        let mut next_order = 0;
+        for root in 0..names.len() {
+            if order[root] != UNSEEN {
+                continue;
+            }
+            // (node, index of the next callee to visit)
+            let mut work: Vec<(usize, usize)> = vec![(root, 0)];
+            order[root] = next_order;
+            low[root] = next_order;
+            next_order += 1;
+            stack.push(root);
+            on_stack[root] = true;
+            while let Some(&mut (node, ref mut next)) = work.last_mut() {
+                if let Some(&callee) = edges[node].get(*next) {
+                    *next += 1;
+                    if order[callee] == UNSEEN {
+                        order[callee] = next_order;
+                        low[callee] = next_order;
+                        next_order += 1;
+                        stack.push(callee);
+                        on_stack[callee] = true;
+                        work.push((callee, 0));
+                    } else if on_stack[callee] {
+                        low[node] = low[node].min(order[callee]);
+                    }
+                    continue;
                 }
-                if seen.insert(callee) {
-                    if let Some(next) = calls.get(callee) {
-                        pending.extend(next.iter().map(String::as_str));
+                work.pop();
+                if let Some(&(parent, _)) = work.last() {
+                    low[parent] = low[parent].min(low[node]);
+                }
+                if low[node] == order[node] {
+                    let mut component = Vec::new();
+                    while let Some(member) = stack.pop() {
+                        on_stack[member] = false;
+                        component.push(member);
+                        if member == node {
+                            break;
+                        }
+                    }
+                    if component.len() > 1 {
+                        for member in component {
+                            self.functions.recursive.insert(names[member].to_string());
+                        }
                     }
                 }
             }

@@ -464,3 +464,22 @@ def main():
     let main = sim.function_text("main");
     assert!(!main.contains("@s sim.vars"), "{main}");
 }
+
+#[test]
+fn a_long_chain_of_calls_builds_in_linear_time() {
+    // Note 15: finding the recursive functions searched the calls from
+    // each function, so a chain of 20,000 took half a minute in a release
+    // build. Mutual recursion inside the chain is still found.
+    let count = 10_000;
+    let mut source = String::from("def f0():\n    /say 0\n");
+    for i in 1..count {
+        source.push_str(&format!("def f{i}():\n    f{}()\n", i - 1));
+    }
+    let seconds = dry_build_seconds(&source);
+    assert!(seconds < 40.0, "took {seconds:.1} s");
+    let mut sim = Sim::load(
+        "def even(n):\n    if n == 0:\n        return 1\n    return odd(n - 1)\n\ndef odd(n):\n    if n == 0:\n        return 0\n    return even(n - 1)\n\ndef main():\n    return even(6) * 10 + odd(3)\n",
+        &[],
+    );
+    assert_eq!(sim.call("main"), Some(11));
+}
