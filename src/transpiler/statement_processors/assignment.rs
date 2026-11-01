@@ -53,6 +53,7 @@ impl Transpiler {
         target_expr: &Expression,
         value: &Expression,
     ) -> Result<Vec<String>, TranspileError> {
+        self.check_value_write(target_expr, value)?;
         let Some(path_plan) = self.resolve_storage_path_plan(target_expr) else {
             return Err(format!(
                 "Assignment target `{}` must resolve to a storage-backed value. \
@@ -88,6 +89,66 @@ impl Transpiler {
                 commands
             },
         )
+    }
+
+    /// Refuses writes Python refuses with `TypeError` that would otherwise
+    /// write a number over text, a list, or a map: arithmetic other than
+    /// joining and repeating on a field or an item that holds one.
+    fn check_value_write(
+        &self,
+        target_expr: &Expression,
+        value: &Expression,
+    ) -> Result<(), TranspileError> {
+        let target = Transpiler::expression_source_key(target_expr);
+        let Expression::Binary(left, op, right) = value else {
+            return Ok(());
+        };
+        if **left != *target_expr {
+            return Ok(());
+        }
+        let held = self.storage_read_type(target_expr);
+        if !matches!(
+            held,
+            CobbleType::String | CobbleType::List | CobbleType::Map
+        ) {
+            return Ok(());
+        }
+        let right_type = self.value_type(right);
+        let refused = match op {
+            BinaryOp::Add => {
+                held == CobbleType::Map
+                    || matches!(right_type, CobbleType::Integer | CobbleType::Boolean)
+            }
+            BinaryOp::Mul => {
+                held == CobbleType::Map
+                    || matches!(
+                        right_type,
+                        CobbleType::String | CobbleType::List | CobbleType::Map
+                    )
+            }
+            _ => true,
+        };
+        if !refused {
+            return Ok(());
+        }
+        let symbol = match op {
+            BinaryOp::Add => "+",
+            BinaryOp::Sub => "-",
+            BinaryOp::Mul => "*",
+            BinaryOp::Div => "/",
+            BinaryOp::Mod => "%",
+            BinaryOp::Pow => "**",
+            _ => "an operator",
+        };
+        let what = match held {
+            CobbleType::String => "text",
+            CobbleType::List => "a list",
+            _ => "a map",
+        };
+        Err(format!(
+            "`{target}` holds {what}, and `{symbol}=` doesn't work on {what} with this value (Python raises TypeError). Use `+` with {what} to join or `*` with a number to repeat, or store a number there first."
+        )
+        .into())
     }
 
     fn storage_compound_assignment_parts<'a>(

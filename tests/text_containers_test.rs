@@ -361,3 +361,139 @@ def go():
 "#);
     assert_eq!(said(&sim), ["before", "got 0", "[]", "after"]);
 }
+
+#[test]
+fn text_in_a_field_or_an_item_repeats() {
+    let sim = run(r#"
+m = {"s": "ab", "l": [1], "k": "ab"}
+items = ["cd", "ef"]
+a = {"s": "x"}
+
+def go():
+    m.s = 2 * m.s
+    items[0] = 2 * items[0]
+    m["k"] = 2 * m["k"]
+    t = items[1]
+    t *= 2
+    items[1] = t
+    w = m.l
+    w *= 2
+    m.l = w
+    a.s = a.s + a.s + "!"
+"#);
+    assert_eq!(
+        var(&sim, "m"),
+        json!({"s": "abab", "l": [1, 1], "k": "abab"})
+    );
+    assert_eq!(var(&sim, "items"), json!(["cdcd", "efef"]));
+    assert_eq!(var(&sim, "a"), json!({"s": "xx!"}));
+}
+
+#[test]
+fn text_set_while_the_pack_runs_repeats() {
+    let sim = run(r#"
+m = {}
+items = []
+r = ""
+
+def go():
+    global r
+    m.s = "ab"
+    m.s *= 2
+    items.append("cd")
+    items[0] *= 2
+    n = {}
+    n.t = "x"
+    n.t *= 3
+    r = n.t
+"#);
+    assert_eq!(var(&sim, "m"), json!({"s": "abab"}));
+    assert_eq!(var(&sim, "items"), json!(["cdcd"]));
+    assert_eq!(var(&sim, "r"), json!("xxx"));
+}
+
+#[test]
+fn a_parameter_repeats_or_multiplies_by_what_it_holds() {
+    let sim = run(r#"
+out = {"x": 0, "l": 0, "p": 0, "n": 0, "m": 0, "q": 0}
+rows = [{"s": "ab"}]
+r = ""
+
+def text(x):
+    x *= 2
+    out.x = x
+
+def item(x):
+    x[0] *= 2
+    out.l = x
+
+def field(p):
+    p.s *= 2
+    out.p = p
+
+def number(n):
+    n *= 3
+    out.n = n
+
+def numbers(m):
+    m[0] *= -2
+    out.m = m
+
+def items(q):
+    q *= 2
+    out.q = q
+
+def go():
+    global r
+    text("ab")
+    item(["cd"])
+    field({"s": "ab"})
+    number(7)
+    numbers([5])
+    items([1, 2])
+    for x in rows:
+        r = x.s * 2
+"#);
+    assert_eq!(
+        var(&sim, "out"),
+        json!({"x": "abab", "l": ["cdcd"], "p": {"s": "abab"}, "n": 21, "m": [-10], "q": [1, 2, 1, 2]})
+    );
+    assert_eq!(var(&sim, "r"), json!("abab"));
+}
+
+#[test]
+fn arithmetic_python_refuses_on_text_is_a_compile_error() {
+    for (body, needle) in [
+        ("m.s -= 1", "`m.s` holds text, and `-=`"),
+        ("m.s += 1", "`m.s` holds text, and `+=`"),
+        ("m.l += 1", "`m.l` holds a list, and `+=`"),
+        ("m.s *= m.s", "`m.s` holds text, and `*=`"),
+        ("m.s[1] = \"x\"", "can't be changed in place"),
+        ("t[0] += \"x\"", "can't be changed in place"),
+    ] {
+        let source =
+            format!("m = {{\"s\": \"ab\", \"l\": [1]}}\nt = \"hi\"\n\ndef go():\n    {body}\n");
+        let error = Sim::try_load(&source, &[])
+            .err()
+            .unwrap_or_else(|| panic!("`{body}` built"));
+        assert!(error.contains(needle), "`{body}`: {error}");
+        assert!(error.contains("main.cbl:5"), "`{body}`: {error}");
+    }
+}
+
+#[test]
+fn arithmetic_on_numbers_in_fields_and_items_still_works() {
+    let sim = run(r#"
+m = {"n": 5, "s": "ab"}
+l = [3]
+
+def go():
+    m.n -= 1
+    m.n *= 3
+    m.s += "c"
+    l[0] += 4
+    l[0] %= 4
+"#);
+    assert_eq!(var(&sim, "m"), json!({"n": 12, "s": "abc"}));
+    assert_eq!(var(&sim, "l"), json!([3]));
+}

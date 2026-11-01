@@ -74,6 +74,10 @@ pub(in crate::transpiler) fn sub_expressions(expr: &Expression) -> Vec<&Expressi
     }
 }
 
+fn is_number_type(value_type: &CobbleType) -> bool {
+    matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
+}
+
 fn is_arithmetic(op: &BinaryOp) -> bool {
     matches!(
         op,
@@ -211,6 +215,9 @@ impl Transpiler {
                 let holder = self.hidden_local(self.value_type(&assign.value));
                 out.push(self::assign(&holder, assign.value.clone()));
                 out.push(self::assign(&assign.target, Expression::Identifier(holder)));
+            }
+            Statement::Assignment(assign) if self.unknown_repeat(assign).is_some() => {
+                self.desugar_unknown_repeat(assign, &mut out)?
             }
             Statement::Assignment(assign)
                 if self.needs_lowering(&assign.value)
@@ -662,6 +669,87 @@ impl Transpiler {
         out.push(Statement::Assignment(Assignment {
             value,
             ..assignment.clone()
+        }));
+        Ok(())
+    }
+
+    /// How `target = value * count` repeats or multiplies when Cobble can't
+    /// tell what `value` holds, as for a parameter or a field written with
+    /// values of several types, and `count` is a number: the helper and the
+    /// type of its result. A target that holds text or a list decides, as
+    /// it can't hold a number; `x *= n` on such a value checks it when the
+    /// pack runs. `None` when the types decide it without this.
+    fn unknown_repeat(&self, assign: &Assignment) -> Option<(&'static str, CobbleType)> {
+        let Expression::Binary(left, BinaryOp::Mul, right) = &assign.value else {
+            return None;
+        };
+        let is_number = |expr: &Expression| {
+            matches!(
+                self.value_type(expr),
+                CobbleType::Integer | CobbleType::Boolean
+            )
+        };
+        let value = match (self.value_type(left), self.value_type(right)) {
+            (CobbleType::Unknown, _) if is_number(right) => &**left,
+            (_, CobbleType::Unknown) if is_number(left) => &**right,
+            _ => return None,
+        };
+        // Only a value read from storage can hold text or a list.
+        let stored = match value {
+            Expression::Identifier(name) => {
+                self.current_context.is_param(name)
+                    || self.symbols.variable_storage_paths.contains_key(name)
+            }
+            Expression::Subscript(..) | Expression::Attribute(..) => true,
+            _ => false,
+        };
+        if !stored {
+            return None;
+        }
+        let target = assign
+            .target_expr
+            .clone()
+            .unwrap_or_else(|| Expression::Identifier(assign.target.clone()));
+        let target_type = match &target {
+            Expression::Identifier(name) if !self.current_context.is_param(name) => self
+                .symbols
+                .variable_types
+                .get(name)
+                .cloned()
+                .unwrap_or(CobbleType::Unknown),
+            Expression::Identifier(_) => CobbleType::Unknown,
+            target => self.value_type(target),
+        };
+        match target_type {
+            CobbleType::String => Some(("_cobble_text_repeat", CobbleType::String)),
+            CobbleType::List => Some(("_cobble_list_repeat", CobbleType::List)),
+            CobbleType::Unknown if *value == target => Some(("_cobble_mul", CobbleType::Unknown)),
+            _ => None,
+        }
+    }
+
+    /// Lowers an assignment [`Self::unknown_repeat`] accepts.
+    fn desugar_unknown_repeat(
+        &mut self,
+        assign: &Assignment,
+        out: &mut Vec<Statement>,
+    ) -> Result<(), TranspileError> {
+        let Some((helper, value_type)) = self.unknown_repeat(assign) else {
+            unreachable!("checked by the caller");
+        };
+        let Expression::Binary(left, _, right) = &assign.value else {
+            unreachable!("checked by unknown_repeat");
+        };
+        let (value, count) = if is_number_type(&self.value_type(right)) {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        let args = self.lower_values(&[(**value).clone(), (**count).clone()], out)?;
+        let held = self.helper_value(helper, args, value_type, out)?;
+        out.push(Statement::Assignment(Assignment {
+            value: held,
+            ..assign.clone()
         }));
         Ok(())
     }

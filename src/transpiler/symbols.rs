@@ -1,5 +1,5 @@
 use crate::ast::{CobbleType, EntityDef, Expression};
-use crate::transpiler::container_writes::ContainerWrites;
+use crate::transpiler::container_writes::{ContainerWrites, RootValues};
 use crate::transpiler::scoped::{Mark, ScopedMap, ScopedSet};
 use crate::transpiler::{FunctionReturnKind, SourceLocation};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -40,6 +40,9 @@ pub(in crate::transpiler) struct Symbols {
     /// What the program writes into lists and maps, collected before any
     /// statement is lowered (see `container_writes.rs`).
     pub(in crate::transpiler) container_writes: ContainerWrites,
+    /// What the program assigns to each name as a whole, collected with
+    /// `container_writes`.
+    pub(in crate::transpiler) root_values: RootValues,
     /// Minecraft conditions of a mixed condition (`entity @a and f()`),
     /// keyed by the identifier that stands for each while the rest is
     /// translated as Python (see `mask_minecraft_conditions`).

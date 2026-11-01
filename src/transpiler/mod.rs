@@ -452,6 +452,7 @@ impl Transpiler {
             &program.statements,
             &mut self.symbols.container_writes,
         );
+        container_writes::collect_root_values(&program.statements, &mut self.symbols.root_values);
         // A loop over a list that calls a function, which may rebind the
         // list, needs every rebind of it to tell the loop.
         let modules: Vec<&str> = program

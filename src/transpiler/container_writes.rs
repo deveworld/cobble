@@ -192,6 +192,10 @@ fn record_assignment(assign: &Assignment, writes: &mut ContainerWrites) {
             return;
         }
     }
+    // `s = 2 * s` and `x = x` keep the type too.
+    if keeps_type(&assign.value, &target) {
+        return;
+    }
     record(writes, &target, 0, Some(&assign.value));
 }
 
@@ -220,10 +224,170 @@ fn record_added_items(writes: &mut ContainerWrites, target: &Expression, added: 
     }
 }
 
+/// Whether assigning `value` to `target` keeps the type `target` had: an
+/// operation on `target` itself, as `x += 1`, `s *= 2`, or `s = 2 * s`.
+fn keeps_type(value: &Expression, target: &Expression) -> bool {
+    match value {
+        Expression::Binary(left, op, right) => {
+            **left == *target || (matches!(op, BinaryOp::Add | BinaryOp::Mul) && **right == *target)
+        }
+        _ => false,
+    }
+}
+
+/// Every value the program assigns to each name as a whole, `None` for one
+/// it can't see, as a parameter, a loop variable, or a name unpacked.
+pub(in crate::transpiler) type RootValues = HashMap<String, Vec<Option<Expression>>>;
+
+/// Records the whole-name assignments of `statements` and of the
+/// statements inside them, function bodies included.
+pub(in crate::transpiler) fn collect_root_values(statements: &[Statement], roots: &mut RootValues) {
+    let unseen = |name: &str, roots: &mut RootValues| {
+        roots.entry(name.to_string()).or_default().push(None);
+    };
+    for statement in statements {
+        match statement {
+            Statement::Assignment(assign) if assign.assigns_name() => roots
+                .entry(assign.target.clone())
+                .or_default()
+                .push(Some(assign.value.clone())),
+            Statement::MultiAssign(multi) => {
+                for target in &multi.targets {
+                    if let Expression::Identifier(name) = target {
+                        unseen(name, roots);
+                    }
+                }
+            }
+            Statement::FunctionDef(func) => {
+                for param in &func.params {
+                    unseen(&param.name, roots);
+                }
+                collect_root_values(&func.body, roots);
+            }
+            Statement::If(if_stmt) => {
+                collect_root_values(&if_stmt.then_branch, roots);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_root_values(branch, roots);
+                }
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_root_values(branch, roots);
+                }
+            }
+            Statement::For(for_loop) => {
+                unseen(&for_loop.target, roots);
+                if let Some(index) = &for_loop.index {
+                    unseen(index, roots);
+                }
+                collect_root_values(&for_loop.body, roots);
+            }
+            Statement::While(while_loop) => collect_root_values(&while_loop.body, roots),
+            Statement::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    collect_root_values(&case.body, roots);
+                }
+            }
+            Statement::Execute(block) => collect_root_values(&block.body, roots),
+            _ => {}
+        }
+    }
+}
+
+/// The type of the variable `name` where it is written back into the place
+/// `root` and `steps` name: the type its assignments give it, leaving out
+/// copies of that place and operations on `name` itself, which keep the
+/// type the place has, `place`. `Unknown` when an assignment can give
+/// anything.
+pub(in crate::transpiler) fn copy_type(
+    roots: &RootValues,
+    name: &str,
+    root: &str,
+    steps: &[Step<'_>],
+    place: &CobbleType,
+) -> CobbleType {
+    let Some(values) = roots.get(name) else {
+        return CobbleType::Unknown;
+    };
+    let itself = Expression::Identifier(name.to_string());
+    let mut found: Option<CobbleType> = None;
+    for value in values {
+        let Some(value) = value else {
+            return CobbleType::Unknown;
+        };
+        if keeps_type(value, &itself) {
+            continue;
+        }
+        let copies_place = access_path(value).is_some_and(|(read_root, read_steps)| {
+            read_root == root
+                && read_steps.len() == steps.len()
+                && read_steps
+                    .iter()
+                    .zip(steps)
+                    .all(|(read, step)| same_step(*read, *step))
+        });
+        if copies_place {
+            continue;
+        }
+        let value_type = match written_type(value) {
+            CobbleType::Boolean => CobbleType::Integer,
+            other => other,
+        };
+        if value_type == CobbleType::Unknown || found.as_ref().is_some_and(|t| *t != value_type) {
+            return CobbleType::Unknown;
+        }
+        found = Some(value_type);
+    }
+    found.unwrap_or_else(|| place.clone())
+}
+
+/// Whether two steps always pick the same field or item: the same field,
+/// or the same literal index.
+fn same_step(first: Step<'_>, second: Step<'_>) -> bool {
+    match (first.field(), second.field()) {
+        (Some(first), Some(second)) => first == second,
+        (None, None) => match (first, second) {
+            (Step::Item(Expression::Number(a)), Step::Item(Expression::Number(b))) => a == b,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Whether the literal `value` has nothing at the end of `steps`: an item of
+/// an empty list, or a field a map literal doesn't have. Only writes then
+/// tell what is there.
+pub(in crate::transpiler) fn literal_lacks(value: &Expression, steps: &[Step<'_>]) -> bool {
+    let Some((step, rest)) = steps.split_first() else {
+        return false;
+    };
+    match (value, step) {
+        (Expression::Array(items), Step::Item(_)) => {
+            items.is_empty() || items.iter().all(|item| literal_lacks(item, rest))
+        }
+        (Expression::Map(entries), step) => match step.field() {
+            Some(field) => entries
+                .iter()
+                .find(|(key, _)| *key == field)
+                .is_none_or(|(_, value)| literal_lacks(value, rest)),
+            None => {
+                entries.is_empty() || entries.iter().all(|(_, value)| literal_lacks(value, rest))
+            }
+        },
+        _ => false,
+    }
+}
+
 /// The type `value` stores. A variable, an item, or a call depends on where
 /// the write is, so it gives `Unknown`.
 fn written_type(value: &Expression) -> CobbleType {
     match value {
+        // `+` and `*` with text or a list join or repeat it.
+        Expression::Binary(left, BinaryOp::Add | BinaryOp::Mul, right) => {
+            match (written_type(left), written_type(right)) {
+                (CobbleType::String, _) | (_, CobbleType::String) => CobbleType::String,
+                (CobbleType::List, _) | (_, CobbleType::List) => CobbleType::List,
+                _ => CobbleType::Integer,
+            }
+        }
         // Booleans, arithmetic, and comparisons store numbers.
         Expression::Number(_)
         | Expression::Boolean(_)
@@ -287,14 +451,16 @@ pub(in crate::transpiler) fn read_type(
     name: &str,
     steps: &[Step<'_>],
     literal: CobbleType,
+    lacks: bool,
+    variable: &dyn Fn(&str, &[Step<'_>], &CobbleType) -> CobbleType,
 ) -> CobbleType {
     let Some(written) = writes.get(name) else {
         return literal;
     };
     let fields: Vec<Option<String>> = steps.iter().map(|step| step.field()).collect();
-    let differs = written.iter().any(|write| {
+    let mut types = written.iter().filter_map(|write| {
         if write.path.len() > fields.len() {
-            return false;
+            return None;
         }
         let reaches = write
             .path
@@ -302,15 +468,53 @@ pub(in crate::transpiler) fn read_type(
             .zip(&fields)
             .all(|(written, read)| written.is_none() || read.is_none() || written == read);
         if !reaches {
-            return false;
+            return None;
         }
-        let written = match &write.value {
-            Some(value) => literal_type(value, &steps[write.path.len()..], &written_type),
+        let rest = &steps[write.path.len()..];
+        // A literal with nothing there, as `m = {}`, writes nothing there.
+        if lacks
+            && write
+                .value
+                .as_ref()
+                .is_some_and(|value| literal_lacks(value, rest))
+        {
+            return None;
+        }
+        Some(match &write.value {
+            // A variable written there, as `cfg.s = t`, has the type it
+            // holds where it is written.
+            Some(Expression::Identifier(source)) => {
+                let place = if rest.is_empty() {
+                    literal.clone()
+                } else {
+                    CobbleType::Unknown
+                };
+                match variable(source, &steps[..write.path.len()], &place) {
+                    whole if rest.is_empty() => whole,
+                    // Every further index of text gives a character.
+                    CobbleType::String if rest.iter().all(|step| matches!(step, Step::Item(_))) => {
+                        CobbleType::String
+                    }
+                    _ => CobbleType::Unknown,
+                }
+            }
+            Some(value) => literal_type(value, rest, &written_type),
             None => CobbleType::Unknown,
-        };
-        written != literal
+        })
     });
-    if differs {
+    // Nothing in the literal, as an item of `[]`: the writes decide when
+    // they agree.
+    if lacks && literal == CobbleType::Unknown {
+        let Some(first) = types.next() else {
+            return literal;
+        };
+        return if types.all(|other| other == first) {
+            first
+        } else {
+            CobbleType::Unknown
+        };
+    }
+    if types.any(|written| written != literal) {
         CobbleType::Unknown
     } else {
         literal

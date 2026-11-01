@@ -93,6 +93,10 @@ pub(in crate::transpiler) trait StoragePathOps {
             Expression::Binary(..) | Expression::Unary(..) => CobbleType::Integer,
             _ => CobbleType::Unknown,
         };
+        let lacks = symbols
+            .variables
+            .get(name)
+            .is_some_and(|value| container_writes::literal_lacks(value, &steps));
         let literal = match symbols.variables.get(name) {
             // A copy of another variable, an item, or a field, as the
             // holders of unpacking and `pop` are, has its literal.
@@ -117,7 +121,20 @@ pub(in crate::transpiler) trait StoragePathOps {
             }
             _ => literal,
         };
-        container_writes::read_type(&symbols.container_writes, name, &steps, literal)
+        let variable = |source: &str, at: &[container_writes::Step<'_>], place: &CobbleType| {
+            if symbols.compile_time_constants.contains_key(source) {
+                return CobbleType::Integer;
+            }
+            container_writes::copy_type(&symbols.root_values, source, name, at, place)
+        };
+        container_writes::read_type(
+            &symbols.container_writes,
+            name,
+            &steps,
+            literal,
+            lacks,
+            &variable,
+        )
     }
 
     /// The type of the value `index` gives as a subscript key: `String`,
