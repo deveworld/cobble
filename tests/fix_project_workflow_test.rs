@@ -451,3 +451,27 @@ fn a_byte_order_mark_at_the_start_of_a_file_is_ignored() {
     assert!(!output.status.success());
     assert!(!text(&output).contains('\u{feff}'), "{}", text(&output));
 }
+
+#[test]
+fn a_byte_order_mark_past_the_start_is_shown_as_its_code_point() {
+    let temp_dir = TempDir::new().unwrap();
+    let project = write_project(temp_dir.path());
+    for source in [
+        "\u{feff}\u{feff}def hello():\n    /say hi\n",
+        "def hello():\n    x = 1\u{feff}\n",
+    ] {
+        fs::write(project.join("src/main.cbl"), source).unwrap();
+        let output = cobble()
+            .current_dir(&project)
+            .args(["build", "-q"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let text = text(&output);
+        let message = text
+            .lines()
+            .find(|line| line.contains("Unexpected character"))
+            .unwrap_or_default();
+        assert!(message.ends_with("Unexpected character: U+FEFF"), "{text}");
+    }
+}

@@ -154,3 +154,16 @@ fn tokenizer_paren_underflow_does_not_swallow_rest_of_file() {
         "each line must still emit its Newline after a stray ')': {tokens:?}"
     );
 }
+
+#[test]
+fn a_long_line_of_words_tokenizes_in_linear_time() {
+    // Each name used to walk back over every earlier token on its line.
+    let source = format!("def f():\n    /say {}\n", vec!["a"; 200_000].join(" "));
+    let start = std::time::Instant::now();
+    cobble::parser::tokenize(&source).unwrap();
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(20),
+        "{:?}",
+        start.elapsed()
+    );
+}

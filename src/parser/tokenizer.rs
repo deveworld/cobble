@@ -618,7 +618,10 @@ fn tokenize_line(
                 } else {
                     ""
                 };
-                return Err(tokenizer.error_at(start, format!("Unexpected character: {ch}{hint}")));
+                return Err(tokenizer.error_at(
+                    start,
+                    format!("Unexpected character: {}{hint}", visible_char(ch)),
+                ));
             }
         }
     }
@@ -887,7 +890,13 @@ impl LineTokenizer<'_> {
         // A colon followed by an identifier is a namespace separator, except
         // in a subscript, where it separates the bounds of `items[i:j]`.
         let line = self.line;
-        let in_subscript = self.in_subscript();
+        // Looking back for the bracket costs a walk over the line's tokens,
+        // so only do it when a `:` could join the name.
+        let colon_follows = line[start..]
+            .chars()
+            .take_while(|&ch| ch.is_alphanumeric() || ch == '_' || ch == ':')
+            .any(|ch| ch == ':');
+        let in_subscript = colon_follows && self.in_subscript();
         let mut ident = String::new();
         let end = self.take_while(&mut ident, start, |index, ch| {
             ch.is_alphanumeric()
@@ -1152,6 +1161,29 @@ fn ends_block_header(text: &str) -> bool {
 
 fn is_score_holder_char(ch: char) -> bool {
     ch.is_alphanumeric() || matches!(ch, '_' | '-' | '.' | '+')
+}
+
+/// A character as an error message shows it: one that can't be seen, such
+/// as a byte order mark, a zero-width space, or a control character, as
+/// its code point.
+fn visible_char(ch: char) -> String {
+    let invisible = ch.is_control()
+        || ch.is_whitespace()
+        || matches!(
+            ch,
+            '\u{00AD}'
+                | '\u{034F}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{FEFF}'
+        );
+    if invisible {
+        format!("U+{:04X}", ch as u32)
+    } else {
+        ch.to_string()
+    }
 }
 
 fn column_from_byte(line: &str, byte_index: usize, column_offset: usize) -> usize {
