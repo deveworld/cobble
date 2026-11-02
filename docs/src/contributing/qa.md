@@ -27,7 +27,16 @@ COBBLE_DIFF_SEED=1000 COBBLE_DIFF_CASES=5000 cargo test --locked --test differen
 Failures report a seed and a reduced reproducer. Defaults are seed `1` and
 300 cases. Set `COBBLE_DIFF_SHRINK=0` to keep the original failing program.
 
-For intended generated-output changes, update snapshots and review the diff:
+Tests are grouped by feature. Extend an existing case when it already covers
+the failure; add a separate test for a distinct behavior or boundary. Prefer
+executed results over temporary register names or helper numbering.
+
+Snapshots cover small, stable export contracts: resource-only output,
+function-tag merging, and validated manifest metadata. Full example packs
+are built, validated, and inspected by `example_fixtures_test`; their generated
+runtime helpers are not checked into snapshots.
+
+For intended export-format changes, update snapshots and review the diff:
 
 ```bash
 INSTA_UPDATE=always cargo test --locked --test generated_snapshots_test

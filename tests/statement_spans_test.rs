@@ -18,13 +18,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Diagnostics-migration corpus (session workspace). The vendored subset in
-/// `tests/fixtures/span_corpus`, the in-repo `examples/` tree, and the
-/// `tests/fixtures/projects` QA fixtures are always swept, so the sweep stays meaningful when this directory is absent;
-/// override with `COBBLE_SPAN_TREE_CORPUS` to sweep a relocated full corpus
-/// in addition.
-const DIAGMIG_CORPUS_DIR: &str = "/tmp/claude-1000/-home-world-coding-cobble/9633a053-dd4f-446b-bea5-ef21aa9633ec/scratchpad/diagmig/corpus";
-
 /// Vendored, always-present subset of the diagnostics-migration corpus:
 /// plain `.cbl` sources covering every [`StatementSpanKind`] and the tricky
 /// shapes (if/elif/else, match cases, multiline datapack calls, CRLF,
@@ -151,12 +144,10 @@ fn every_parseable_fixture_yields_an_aligned_statement_span_tree() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     collect_cbl_files(&repo_root.join("examples"), &mut files);
     collect_cbl_files(&repo_root.join("tests/fixtures/projects"), &mut files);
-    // Swept in addition when present: the full session corpus (or any
-    // directory named by COBBLE_SPAN_TREE_CORPUS).
-    let corpus = std::env::var("COBBLE_SPAN_TREE_CORPUS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DIAGMIG_CORPUS_DIR));
-    collect_cbl_files(&corpus, &mut files);
+    // Extra corpora are opt-in; normal runs use only repository fixtures.
+    if let Some(corpus) = std::env::var_os("COBBLE_SPAN_TREE_CORPUS") {
+        collect_cbl_files(Path::new(&corpus), &mut files);
+    }
     files.sort();
     files.dedup();
 

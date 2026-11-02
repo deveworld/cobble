@@ -463,102 +463,6 @@ def test():
 }
 
 #[test]
-fn test_simple_assignment() {
-    let source = r#"
-def test():
-    x = 10
-    y = 20
-    z = x + y
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains("scoreboard players set #test.x cobble.vars 10"));
-    assert!(content.contains("scoreboard players set #test.y cobble.vars 20"));
-    assert!(
-        content.contains("scoreboard players operation #test.z cobble.vars = #test.x cobble.vars")
-    );
-    assert!(
-        content.contains("scoreboard players operation #test.z cobble.vars += #test.y cobble.vars")
-    );
-}
-
-#[test]
-fn test_if_statement() {
-    let source = r#"
-def test():
-    x = 5
-    if x == 5:
-        /say equal
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains("scoreboard players set #test.x cobble.vars 5"));
-    assert!(content.contains("execute if score #test.x cobble.vars matches 5 run say equal"));
-}
-
-#[test]
-fn test_while_loop() {
-    let source = r#"
-def test():
-    i = 0
-    while i < 5:
-        /say counting
-        i = i + 1
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    // Check main function
-    let main_content = read_function(&output_dir, "test");
-    assert!(main_content.contains("scoreboard players set #test.i cobble.vars 0"));
-    assert!(main_content.contains("function cobble:while_temp_"));
-
-    // Check that while_body function exists (new behavior)
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("while_body_"))
-        .collect();
-
-    assert!(!body_files.is_empty(), "No while_body function generated");
-
-    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
-    assert!(body_content.contains("say counting"));
-    assert!(body_content.contains("scoreboard players add #test.i cobble.vars 1"));
-
-    // Check while loop function calls body conditionally
-    let while_content = read_first_function_with_prefix(&output_dir, "while_temp_");
-    assert!(while_content.contains(
-        "execute if score #test.i cobble.vars matches ..4 run function cobble:while_body"
-    ));
-    // The body ends by starting the next iteration, so the condition is
-    // checked once per iteration.
-    assert!(!while_content.contains("run function cobble:while_temp_"));
-    assert!(body_content.contains("function cobble:while_temp_"));
-}
-
-#[test]
-fn test_for_loop() {
-    let source = r#"
-def test():
-    for i in range(3):
-        /say hello
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    // Literal range loops are unrolled directly into the containing function.
-    let main_content = read_function(&output_dir, "test");
-    assert_eq!(main_content.matches("say hello").count(), 3);
-    assert!(!main_content.contains("loop_counter"));
-    assert!(!main_content.contains("loop_temp_"));
-}
-
-#[test]
 fn test_dynamic_for_range_stop_lowers_to_runtime_loop() {
     let source = r#"
 def test():
@@ -982,90 +886,6 @@ def test():
 }
 
 #[test]
-fn test_scoreboard_objectives() {
-    let source = r#"
-def test():
-    x = 10
-    y = 20
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    // Check that objectives are created in init function
-    let init_content = read_function(&output_dir, "_cobble_init");
-    assert!(init_content.contains("scoreboard objectives add cobble.vars dummy"));
-}
-
-#[test]
-fn test_minecraft_command() {
-    let source = r#"
-def test():
-    /say Hello World
-    /tellraw @a {"text":"Test"}
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains("say Hello World"));
-    assert!(content.contains("tellraw @a {\"text\":\"Test\"}"));
-}
-
-#[test]
-fn test_user_function_call() {
-    let source = r#"
-def helper():
-    /say from helper
-
-def main():
-    helper()
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    // Check that main calls helper
-    let main_content = read_function(&output_dir, "main");
-    assert!(main_content.contains("function cobble:helper"));
-
-    // Check that helper exists
-    let helper_content = read_function(&output_dir, "helper");
-    assert!(helper_content.contains("say from helper"));
-}
-
-#[test]
-fn test_single_line_docstring() {
-    let source = r#"
-def test():
-    """This is a single-line docstring"""
-    /say Hello
-    /say World
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Both commands should be present
-    assert!(content.contains("say Hello"));
-    assert!(content.contains("say World"));
-}
-
-#[test]
-fn test_multi_line_docstring() {
-    let source = r#"
-def test():
-    """This is a multi-line
-    docstring that spans
-    multiple lines"""
-    /say After docstring
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains("say After docstring"));
-}
-
-#[test]
 fn test_execute_as_at() {
     let source = r#"
 def test():
@@ -1091,31 +911,6 @@ def test():
     let content = read_function(&output_dir, "test");
 
     assert!(content.contains("execute as @s at @s run say Hello"));
-}
-
-#[test]
-fn test_for_loop_with_arithmetic() {
-    let source = r#"
-def test():
-    total = 0
-    for i in range(5):
-        total = total + i
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    let main_content = read_function(&output_dir, "test");
-    assert!(main_content.contains("scoreboard players set #test.total cobble.vars 0"));
-    for value in 0..5 {
-        assert!(
-            main_content.contains(&format!(
-                "scoreboard players add #test.total cobble.vars {value}"
-            )),
-            "{}",
-            main_content
-        );
-    }
-    assert!(!main_content.contains("loop_counter"));
 }
 
 #[test]
@@ -1286,58 +1081,6 @@ def test():
         "Should reference string via nbt storage path: {}",
         content
     );
-}
-
-#[test]
-fn test_boolean_and_operator() {
-    let source = r#"
-def test():
-    x = 5
-    y = 10
-    if x > 0 and y < 15:
-        /say Both conditions true!
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should chain conditions with "if ... if ..."
-    assert!(content.contains("execute if score #test.x cobble.vars matches 1.. if score #test.y cobble.vars matches ..14 run say Both conditions true!"));
-}
-
-#[test]
-fn test_boolean_not_operator() {
-    let source = r#"
-def test():
-    x = 5
-    if not x == 10:
-        /say Not equal to 10!
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should use "unless" for negation
-    assert!(content
-        .contains("execute unless score #test.x cobble.vars matches 10 run say Not equal to 10!"));
-}
-
-#[test]
-fn test_complex_boolean_expression() {
-    let source = r#"
-def test():
-    a = 10
-    b = 20
-    c = 30
-    if a > 5 and b < 25 and not c == 40:
-        /say Complex condition works!
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should chain multiple conditions
-    assert!(content.contains("execute if score #test.a cobble.vars matches 6.. if score #test.b cobble.vars matches ..24 unless score #test.c cobble.vars matches 40 run say Complex condition works!"));
 }
 
 #[test]
@@ -1574,24 +1317,6 @@ def test():
 
     // Should handle >=, <=, and != correctly
     assert!(content.contains("execute if score #test.a cobble.vars matches 5.. if score #test.b cobble.vars matches ..20 unless score #test.c cobble.vars matches 30 run say All conditions met!"));
-}
-
-#[test]
-fn test_double_negative_not_not() {
-    let source = r#"
-def test():
-    x = 5
-    if not not x == 5:
-        /say Double negative!
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Double negative should cancel out (unless unless -> if)
-    assert!(
-        content.contains("execute if score #test.x cobble.vars matches 5 run say Double negative!")
-    );
 }
 
 #[test]
@@ -2031,22 +1756,6 @@ def test():
 }
 
 #[test]
-fn test_const_declaration() {
-    let source = r#"
-def test():
-    const MAX_HEALTH = 100
-    health = MAX_HEALTH
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Constant should be inlined at compile time
-    assert!(content.contains("scoreboard players set #test.health cobble.vars 100"));
-    assert!(!content.contains("MAX_HEALTH cobble.vars"));
-}
-
-#[test]
 fn test_match_literal() {
     let source = r#"
 def test():
@@ -2280,24 +1989,6 @@ def test():
 }
 
 #[test]
-fn test_parameterless_function_call() {
-    let source = r#"
-def helper():
-    /say Helper called
-
-def main():
-    helper()
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    let main_content = read_function(&output_dir, "main");
-    // Should NOT have "with storage" for parameterless function
-    assert!(main_content.contains("function cobble:helper"));
-    assert!(!main_content.contains("with storage"));
-}
-
-#[test]
 fn test_multiple_if_in_execute_block() {
     let source = r#"
 def test():
@@ -2386,32 +2077,6 @@ def test():
 }
 
 #[test]
-fn test_power_operator_simple() {
-    // Test that basic power operator works
-    let source = r#"
-def test():
-    x = 2
-    result = x ^ 3
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should have #power_base and multiplications (# prefix for internal fake players)
-    assert!(content.contains("#power_base"));
-
-    // For x^3, we need 2 multiplications (x * x * x = x * (x * x))
-    let mult_count = content
-        .matches("scoreboard players operation #test.result cobble.vars *= #power_base cobble.vars")
-        .count();
-    assert_eq!(
-        mult_count, 2,
-        "Expected 2 multiplications for x^3, found {}",
-        mult_count
-    );
-}
-
-#[test]
 fn test_asat_with_multi_entity_selector() {
     // Regression test for asat bug: should use @s not the selector
     let source = r#"
@@ -2433,57 +2098,6 @@ def test():
     assert!(
         !content.contains("at @e[type=armor_stand]"),
         "asat incorrectly generated 'at @e[type=armor_stand]' instead of 'at @s'"
-    );
-}
-
-#[test]
-fn test_power_operator_zero_exponent() {
-    // Test that x^0 = 1
-    let source = r#"
-def test():
-    x = 5
-    result = x ^ 0
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // x^0 should set result to 1
-    assert!(content.contains("scoreboard players set #test.x cobble.vars 5"));
-    assert!(
-        content.contains("scoreboard players set #test.result cobble.vars 1"),
-        "x^0 should set result to 1, but command not found in: {}",
-        content
-    );
-
-    // Should NOT have any multiplication operations for x^0
-    assert!(
-        !content.contains("power_base"),
-        "x^0 should not use power_base"
-    );
-    assert!(
-        !content.contains("*="),
-        "x^0 should not have any multiplication"
-    );
-}
-
-#[test]
-fn test_power_operator_assignment_zero_exponent() {
-    // Test that x^0 = 1 works in assignment form
-    let source = r#"
-def test():
-    base = 10
-    result = base ^ 0
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // base^0 should set result to 1
-    assert!(content.contains("scoreboard players set #test.base cobble.vars 10"));
-    assert!(
-        content.contains("scoreboard players set #test.result cobble.vars 1"),
-        "base^0 should set result to 1"
     );
 }
 
@@ -3285,32 +2899,6 @@ def test():
 // REGRESSION TESTS FOR BUG FIXES
 
 #[test]
-fn test_boolean_literal_only() {
-    // Regression test for Bug #2: Boolean literals without variables
-    // should still set up the #true_const/#false_const scores
-    let source = r#"
-def test():
-    if True:
-        /say true branch
-    if False:
-        /say false branch
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    // Check that the boolean constants are initialized
-    let init_content = read_function(&output_dir, "_cobble_init");
-    assert!(init_content.contains("scoreboard objectives add cobble.vars dummy"));
-    assert!(init_content.contains("scoreboard players set #true_const cobble.vars 1"));
-    assert!(init_content.contains("scoreboard players set #false_const cobble.vars 0"));
-
-    // Check that conditions read the constants with an exact match
-    let test_content = read_function(&output_dir, "test");
-    assert!(test_content.contains("score #true_const cobble.vars matches 1"));
-    assert!(test_content.contains("score #false_const cobble.vars matches 1"));
-}
-
-#[test]
 fn test_loop_variable_scope_isolation() {
     // Regression test for Bug #3: Loop variables should not pollute outer scope
     let source = r#"
@@ -3447,42 +3035,6 @@ def test():
     );
     assert!(
         content.contains("scoreboard players set #test.result cobble.vars 2"),
-        "{content}"
-    );
-    assert!(!content.contains("loop_"), "{content}");
-}
-
-#[test]
-fn test_nested_loops_with_arithmetic() {
-    // Test that nested loop variables work correctly in arithmetic expressions
-    let source = r#"
-def test():
-    for i in range(2):
-        for j in range(2):
-            result = i + j
-"#;
-    let mut sim = Sim::load(source, &["Alex"]);
-    sim.set_command_budget(20_000_000);
-    sim.call("test");
-    assert_eq!(sim.var("#test.result"), 2);
-}
-
-#[test]
-fn test_triple_nested_loops() {
-    // Test that triple nested loops work correctly
-    let source = r#"
-def test():
-    for i in range(2):
-        for j in range(2):
-            for k in range(2):
-                /say Triple loop works
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-    assert_eq!(
-        content.matches("say Triple loop works").count(),
-        8,
         "{content}"
     );
     assert!(!content.contains("loop_"), "{content}");
@@ -3719,44 +3271,6 @@ def test():
     let err = result.unwrap_err();
     assert!(err.contains("Power exponent too large"));
     assert!(err.contains("500 > 100"));
-}
-
-#[test]
-fn test_regression_power_exponent_within_limit() {
-    // Verify that power exponents within the limit (<=100) still work
-    let source = r#"
-def test():
-    base = 2
-    result = base ^ 10
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should generate multiplication commands
-    assert!(content.contains("power_base"));
-    assert!(content.contains("*="));
-}
-
-#[test]
-fn test_regression_boundary_condition_gt_max() {
-    // Regression test for BUG #5: x > i32::MAX should be always false
-    // Previously: Used saturating_add which caused incorrect condition
-    let source = r#"
-def test():
-    max_val = 2147483647
-    if max_val > 2147483647:
-        x = 1
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should generate an always-false condition
-    // Uses "matches 0 unless matches 0" pattern
-    assert!(content.contains(
-        "if score #test.max_val cobble.vars matches 0 unless score #test.max_val cobble.vars matches 0"
-    ));
 }
 
 #[test]
@@ -4010,80 +3524,6 @@ def test():
 }
 
 #[test]
-fn test_regression_boundary_condition_lt_min() {
-    // Regression test for BUG #5: x < i32::MIN should be always false
-    let source = r#"
-def test():
-    min_val = -2147483648
-    if min_val < -2147483648:
-        x = 1
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should generate an always-false condition
-    assert!(content.contains(
-        "if score #test.min_val cobble.vars matches 0 unless score #test.min_val cobble.vars matches 0"
-    ));
-}
-
-#[test]
-fn test_regression_boundary_condition_gte_max() {
-    // Regression test for BUG #5: x >= i32::MAX should work correctly
-    let source = r#"
-def test():
-    max_val = 2147483647
-    if max_val >= 2147483647:
-        x = 1
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should generate correct condition (matches 2147483647..)
-    assert!(content.contains("if score #test.max_val cobble.vars matches 2147483647.."));
-}
-
-#[test]
-fn test_regression_boundary_condition_lte_min() {
-    // Regression test for BUG #5: x <= i32::MIN should work correctly
-    let source = r#"
-def test():
-    min_val = -2147483648
-    if min_val <= -2147483648:
-        x = 1
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should generate correct condition (matches ..-2147483648)
-    assert!(content.contains("if score #test.min_val cobble.vars matches ..-2147483648"));
-}
-
-#[test]
-fn test_regression_normal_comparisons_still_work() {
-    // Ensure normal comparisons (not at boundaries) still work correctly
-    let source = r#"
-def test():
-    a = 10
-    if a > 5:
-        b = 1
-    if a < 20:
-        c = 1
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // a > 5 should be "matches 6.."
-    assert!(content.contains("if score #test.a cobble.vars matches 6.."));
-    // a < 20 should be "matches ..19"
-    assert!(content.contains("if score #test.a cobble.vars matches ..19"));
-}
-
-#[test]
 fn test_const_initialization_in_scoreboard() {
     // Test that const variables are compile-time only and NOT written to scoreboard
     let source = r#"
@@ -4248,56 +3688,6 @@ stdlib.addEventListener(event.LOAD, on_load)
 // ============================================================================
 
 #[test]
-fn test_return_statement_compiles_to_minecraft_return() {
-    let source = r#"
-def test():
-    x = 1
-    /say Before return
-    return x
-    /say After return should not execute
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains("return run scoreboard players get #return_value_"));
-    assert!(content.contains("say After return should not execute"));
-}
-
-#[test]
-fn test_return_no_value_compiles_to_zero_return() {
-    let source = r#"
-def test():
-    /say Hello
-    return
-    /say Unreachable
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains("return 0"));
-}
-
-#[test]
-fn test_function_call_assignment_uses_return_value() {
-    let source = r#"
-def helper():
-    return 42
-
-def test():
-    x = helper()
-    if x == 42:
-        /say function call assignment ok
-"#;
-    let mut sim = Sim::load(source, &["Alex"]);
-    sim.set_command_budget(20_000_000);
-    sim.call("test");
-    assert_eq!(sim.var("#test.x"), 42);
-    assert_eq!(sim.log, ["Server: function call assignment ok"]);
-}
-
-#[test]
 fn test_attribute_assignment_error() {
     // Test that attribute access in assignments errors properly
     let source = r#"
@@ -4373,38 +3763,65 @@ def test():
 }
 
 #[test]
-fn test_boolean_assignment_still_works() {
-    // Regression test: Boolean assignments should still work (used in command substitution)
-    let source = r#"
-def test():
+fn basic_program_executes_assignments_control_flow_calls_and_commands() {
+    let mut sim = Sim::load(
+        r#"def helper():
+    /say helper
+
+def main():
+    const LIMIT = 3
     enabled = True
     disabled = False
-    /tellraw @a {"text":f"Enabled: {enabled}, Disabled: {disabled}"}
-"#;
+    x = 10
+    y = 20
+    total = x + y
+    if enabled and not disabled and total == 30:
+        /say sum {total}
+    if False:
+        /say wrong
+    for i in range(LIMIT):
+        total += i
+    while total < 35:
+        total += 1
+    helper()
+    asat @a:
+        /say context
+    /say flags {enabled} {disabled}
+"#,
+        &["Alex"],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("#main.total"), 35);
+    assert_eq!(
+        sim.log,
+        [
+            "Server: sum 30",
+            "Server: helper",
+            "Alex: context",
+            "Server: flags 1 0"
+        ]
+    );
+}
 
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Booleans are stored as scoreboard values and displayed via score components
-    assert!(
-        content.contains("scoreboard players set #test.enabled cobble.vars 1"),
-        "Boolean true should be set to 1: {}",
-        content
+#[test]
+fn nested_loops_keep_each_binding_in_arithmetic() {
+    let mut sim = Sim::load(
+        "def main():\n    total = 0\n    for i in range(2):\n        for j in range(2):\n            for k in range(2):\n                total += i + j + k\n                /say {i} {j} {k}\n",
+        &[],
     );
-    assert!(
-        content.contains("scoreboard players set #test.disabled cobble.vars 0"),
-        "Boolean false should be set to 0: {}",
-        content
-    );
-    // Tellraw should use score components for boolean variables
-    assert!(
-        content.contains("tellraw @a"),
-        "Should generate tellraw command: {}",
-        content
-    );
-    assert!(
-        content.contains("score") && content.contains("enabled"),
-        "Should use score component for boolean: {}",
-        content
+    sim.call("main");
+    assert_eq!(sim.var("#main.total"), 12);
+    assert_eq!(
+        sim.log,
+        [
+            "Server: 0 0 0",
+            "Server: 0 0 1",
+            "Server: 0 1 0",
+            "Server: 0 1 1",
+            "Server: 1 0 0",
+            "Server: 1 0 1",
+            "Server: 1 1 0",
+            "Server: 1 1 1"
+        ]
     );
 }

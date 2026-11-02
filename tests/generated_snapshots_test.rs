@@ -1,34 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use serde_json::Value;
 use tempfile::TempDir;
 use walkdir::WalkDir;
-
-static CWD_LOCK: Mutex<()> = Mutex::new(());
-
-struct CurrentDirGuard {
-    previous: PathBuf,
-}
-
-impl CurrentDirGuard {
-    fn push(path: &Path) -> Self {
-        let previous = std::env::current_dir().unwrap();
-        std::env::set_current_dir(path).unwrap();
-        Self { previous }
-    }
-}
-
-impl Drop for CurrentDirGuard {
-    fn drop(&mut self) {
-        std::env::set_current_dir(&self.previous).unwrap();
-    }
-}
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
 
 fn commands_json_fixture(temp_dir: &Path, validate: bool) -> PathBuf {
     let commands_json = temp_dir.join("commands-fixture.json");
@@ -74,33 +49,6 @@ fn commands_json_fixture(temp_dir: &Path, validate: bool) -> PathBuf {
         .unwrap();
     }
     commands_json
-}
-
-fn build_project_fixture(project: &str, validate: bool) -> (TempDir, PathBuf) {
-    let _lock = CWD_LOCK.lock().unwrap();
-    let project_dir = repo_root().join(project);
-    let temp_dir = TempDir::new().unwrap();
-    let output_dir = temp_dir.path().join("output");
-    let commands_json = commands_json_fixture(temp_dir.path(), validate);
-
-    let _guard = CurrentDirGuard::push(&project_dir);
-    cobble::commands::build::build(cobble::commands::build::BuildOptions {
-        input: None,
-        output: Some(output_dir.clone()),
-        namespace: None,
-        pack_format: None,
-        description: None,
-        verbose: false,
-        quiet: true,
-        zip: false,
-        experimental_resource_pack: false,
-        validate,
-        dry_run: false,
-        commands_json,
-    })
-    .unwrap();
-
-    (temp_dir, output_dir)
 }
 
 fn build_source_fixture(source: &str, namespace: &str, validate: bool) -> (TempDir, PathBuf) {
@@ -184,84 +132,6 @@ fn normalized_file_content(relative_path: &str, file: &Path) -> String {
     }
 
     content.replace("\r\n", "\n")
-}
-
-#[test]
-fn snapshot_26_smoke_generated_pack_tree() {
-    let (_temp, output_dir) = build_project_fixture("tests/fixtures/projects/26_smoke", false);
-    insta::assert_snapshot!(
-        "snapshot_26_smoke_generated_pack_tree",
-        datapack_tree_snapshot(&output_dir)
-    );
-}
-
-#[test]
-fn snapshot_26_feature_matrix_generated_pack_tree() {
-    let (_temp, output_dir) =
-        build_project_fixture("tests/fixtures/projects/26_feature_matrix", false);
-    insta::assert_snapshot!(
-        "snapshot_26_feature_matrix_generated_pack_tree",
-        datapack_tree_snapshot(&output_dir)
-    );
-}
-
-#[test]
-fn snapshot_resource_authoring_generated_pack_tree() {
-    let (_temp, output_dir) =
-        build_project_fixture("tests/fixtures/projects/resource_authoring", false);
-    insta::assert_snapshot!(
-        "snapshot_resource_authoring_generated_pack_tree",
-        datapack_tree_snapshot(&output_dir)
-    );
-}
-
-#[test]
-fn snapshot_stdlib_v2_generated_pack_tree() {
-    let (_temp, output_dir) = build_project_fixture("tests/fixtures/projects/stdlib_v2", false);
-    insta::assert_snapshot!(
-        "snapshot_stdlib_v2_generated_pack_tree",
-        datapack_tree_snapshot(&output_dir)
-    );
-}
-
-#[test]
-fn snapshot_stdlib_v3_generated_pack_tree() {
-    let (_temp, output_dir) = build_project_fixture("tests/fixtures/projects/stdlib_v3", false);
-    insta::assert_snapshot!(
-        "snapshot_stdlib_v3_generated_pack_tree",
-        datapack_tree_snapshot(&output_dir)
-    );
-}
-
-#[test]
-fn snapshot_resource_pack_generated_pack_tree() {
-    let (_temp, output_dir) = build_project_fixture("tests/fixtures/projects/resource_pack", false);
-    insta::assert_snapshot!(
-        "snapshot_resource_pack_generated_pack_tree",
-        datapack_tree_snapshot(&output_dir)
-    );
-}
-
-#[test]
-fn snapshot_unrolling_generated_pack_tree() {
-    let (_temp, output_dir) = build_project_fixture("tests/fixtures/projects/unrolling", false);
-    insta::assert_snapshot!(
-        "snapshot_unrolling_generated_pack_tree",
-        datapack_tree_snapshot(&output_dir)
-    );
-}
-
-#[test]
-fn snapshot_inventory_generated_pack_tree() {
-    let (_temp, output_dir) = build_source_fixture(
-        &fs::read_to_string(repo_root().join("tests/fixtures/projects/inventory.cbl")).unwrap(),
-        "inventory_snapshot",
-        false,
-    );
-    insta::assert_snapshot!(
-        "snapshot_inventory_generated_pack_tree",
-        datapack_tree_snapshot(&output_dir)
-    );
 }
 
 #[test]

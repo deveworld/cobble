@@ -293,3 +293,48 @@ fn a_raw_command_keeps_trailing_unicode_spaces() {
         .expect("say helper");
     assert!(helper.starts_with("$say hi $(x)\u{a0}\n"), "{helper:?}");
 }
+
+#[test]
+fn multiline_docstring_bodies_are_not_compiled() {
+    let (_temp, output_dir) = compile(
+        r#""""Module doc with `backticks`.
+
+/kill @e
+"""
+
+def main():
+    """Body doc.
+
+    x = undefined_value + 1
+    /kill @e
+    helper("@a")
+    """
+    /say real
+
+def helper(player, message):
+    pass
+"#,
+    )
+    .unwrap_or_else(|error| panic!("build failed: {error}"));
+    let functions = load_functions(&output_dir);
+    assert_eq!(functions["main"], ["say real"]);
+    assert!(functions
+        .values()
+        .flatten()
+        .all(|command| !command.contains("kill")));
+}
+
+#[test]
+fn tokenizer_errors_report_their_location() {
+    let error = cobble::parser::tokenize_spanned_located("def f():\n    x = 1 + `\n").unwrap_err();
+    assert!(error.message.contains("Unexpected character"), "{error}");
+    assert_eq!((error.span.line, error.span.column), (2, 13));
+
+    let error = cobble::parser::tokenize_spanned_located("def f():\n    \"\"\"open\n    /say\n")
+        .unwrap_err();
+    assert!(
+        error.message.contains("Unterminated triple-quoted string"),
+        "{error}"
+    );
+    assert_eq!((error.span.line, error.span.column), (2, 5));
+}

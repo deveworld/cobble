@@ -420,21 +420,6 @@ fn constant_folding_matches_runtime_overflow() {
 }
 
 #[test]
-fn nested_math_calls_keep_their_arguments() {
-    let mut sim = Sim::load(
-        r#"from stdlib import math
-
-def main():
-    a = -8
-    root = math.sqrt(1 + math.abs(a))
-"#,
-        &[],
-    );
-    sim.call("main");
-    assert_eq!(sim.var("#main.root"), 3);
-}
-
-#[test]
 fn smallest_int_constant_wraps_like_the_scoreboard() {
     let mut sim = Sim::load(
         r#"const LOW = -2147483648

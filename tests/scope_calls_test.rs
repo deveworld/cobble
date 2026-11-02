@@ -515,3 +515,154 @@ fn input_below_the_nesting_limit_builds() {
     let (ok, stderr) = cli_build(&nested, &[]);
     assert!(ok, "{}", &stderr[..stderr.len().min(500)]);
 }
+
+#[test]
+fn comparing_two_parameters_lowers_both_sides() {
+    let mut sim = Sim::load(
+        r#"
+def check(actual, expected):
+    if actual == expected:
+        /say same
+    else:
+        /say different
+
+def main():
+    check(3, 3)
+    check(3, 4)
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.log, ["Server: same", "Server: different"]);
+}
+
+#[test]
+fn value_and_empty_returns_skip_unreachable_commands() {
+    let mut sim = Sim::load(
+        r#"def value():
+    /say before
+    return 42
+    /say wrong
+
+def empty():
+    /say empty
+    return
+    /say wrong
+
+def main():
+    x = value()
+    y = empty()
+"#,
+        &[],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("#main.x"), 42);
+    assert_eq!(sim.var("#main.y"), 0);
+    assert_eq!(sim.log, ["Server: before", "Server: empty"]);
+}
+
+#[test]
+fn pass_only_function_has_no_prologue_and_no_init() {
+    let (_temp, output_dir) = compile(
+        r#"
+def noop():
+    pass
+"#,
+    )
+    .unwrap();
+
+    let body = common::mcsim::load_functions(&output_dir)["noop"].join("\n");
+    assert_eq!(body.trim(), "", "pass-only function body should be empty");
+    assert!(
+        !output_dir
+            .join("data/sim/function/_cobble_init.mcfunction")
+            .exists(),
+        "pass-only pack must not generate _cobble_init"
+    );
+}
+
+#[test]
+fn a_single_compound_branch_finishes_after_changing_its_condition_variable() {
+    let mut sim = Sim::load(
+        "def main():\n    x = 2\n    if x > 1:\n        as @a at @s:\n            x = 0\n            /say done\n",
+        &["Alex", "Bo"],
+    );
+    sim.call("main");
+    assert_eq!(sim.var("#main.x"), 0);
+    assert_eq!(sim.log, ["Alex: done", "Bo: done"]);
+}
+
+#[test]
+fn match_on_storage_string_scrutinee_errors() {
+    let error = compile(
+        r#"
+def main():
+    name = "a"
+    match name:
+        case 1:
+            /say one
+        case _:
+            /say other
+"#,
+    )
+    .unwrap_err();
+
+    assert!(
+        error.contains("Cannot match on 'name'"),
+        "unexpected error: {error}"
+    );
+    assert!(error.contains("match only supports integer scoreboard values"));
+}
+
+#[test]
+fn string_list_loop_target_arithmetic_errors() {
+    let error = compile(
+        r#"
+def main():
+    names = ["a", "bb", "ccc"]
+    total = 0
+    for v in names:
+        total = total + v
+"#,
+    )
+    .unwrap_err();
+
+    assert!(
+        error.contains("Variable 'v' holds a storage-backed string"),
+        "unexpected error: {error}"
+    );
+
+    // Integer literal-array loops keep compiling.
+    compile(
+        r#"
+def main():
+    nums = [1, 2, 3]
+    total = 0
+    for w in nums:
+        total = total + w
+"#,
+    )
+    .expect("integer list loop must keep compiling");
+}
+
+#[test]
+fn unknown_identifier_call_argument_errors_in_library_path() {
+    // Bypass the CLI text diagnostics (which catch this earlier as
+    // `undefined-variable`) and hit the transpiler directly, the way a
+    // library consumer would.
+    let program =
+        cobble::parser::parse("def greet(who):\n    /say hi\n\ndef main():\n    greet(stranger)\n")
+            .map_err(|errors| errors.join("\n"))
+            .expect("parse succeeds");
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let mut transpiler =
+        cobble::transpiler::Transpiler::new("cobble".to_string(), temp_dir.path().join("output"));
+    let error = transpiler.transpile(&program).unwrap_err().to_string();
+
+    assert!(
+        error.contains("Unknown identifier 'stranger' passed as argument to function 'greet'"),
+        "unexpected error: {error}"
+    );
+    assert!(error.contains("quote it (\"stranger\")"));
+}

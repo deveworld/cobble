@@ -60,45 +60,6 @@ def main():
 }
 
 #[test]
-fn formatting_fractional_parameter_keeps_plain_decimal() {
-    let mut sim = Sim::load(
-        r#"def check(value):
-    if entity @a and f"{value}" == "0.6":
-        /say precise
-def main():
-    check(0.6)
-"#,
-        &["Alex"],
-    );
-    sim.set_command_budget(20_000_000);
-    sim.call("main");
-    assert_eq!(sim.log, ["Server: precise"], "storage: {}", sim.storage);
-}
-
-#[test]
-fn entity_context_remains_intact_after_numeric_storage_lowering() {
-    let mut sim = Sim::load(
-        r#"def check(flag):
-    if entity @s[tag=missing]:
-        /say first
-    elif entity @s[tag={flag}]:
-        /say tagged
-def main():
-    /tag @a add chosen
-    as @a:
-        check("chosen")
-        if entity @s[tag=chosen]:
-            /say context
-        else:
-            /say wrong
-"#,
-        &["Alex"],
-    );
-    sim.call("main");
-    assert_eq!(sim.log, ["Alex: tagged", "Alex: context"]);
-}
-
-#[test]
 fn float_and_double_fields_lists_and_numeric_builtins_preserve_types() {
     let mut sim = Sim::load(
         r#"def main():
