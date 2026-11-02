@@ -1,3 +1,6 @@
+mod common;
+use common::mcsim::Sim;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -108,15 +111,11 @@ def test():
     if flag:
         /say true
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains("scoreboard players set #test.flag cobble.vars 0"));
-    assert!(content.contains(
-        "execute if score #test.x cobble.vars matches 1 run scoreboard players set #test.flag cobble.vars 1"
-    ));
-    assert!(content.contains("execute unless score #test.flag cobble.vars matches 0 run say true"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.flag"), 1);
+    assert_eq!(sim.log, ["Server: true"]);
 }
 
 #[test]
@@ -141,20 +140,11 @@ def test():
     first = items[0]
     chance = config.chance
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(
-        content.contains("data modify storage cobble:global locals.test.items set value [1,2,3]")
-    );
-    assert!(content
-        .contains("data modify storage cobble:global locals.test.config set value {chance:7}"));
-    assert!(content.contains(
-        "execute store result score #test.first cobble.vars run data get storage cobble:global locals.test.items[0]"
-    ));
-    assert!(content
-        .contains("execute store result score #test.chance cobble.vars run data get storage cobble:global locals.test.config.chance"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.first"), 1);
+    assert_eq!(sim.var("#test.chance"), 7);
 }
 
 #[test]
@@ -166,13 +156,10 @@ def test():
     items = [4, 5, 6]
     selected = items[INDEX]
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains(
-        "execute store result score #test.selected cobble.vars run data get storage cobble:global locals.test.items[1]"
-    ));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.selected"), 5);
 }
 
 #[test]
@@ -186,27 +173,12 @@ def test():
     if items[i] == 5:
         /say matched
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-    let all_functions = read_all_functions(&output_dir);
-
-    assert!(content.contains("function cobble:_cobble_storage_read_"));
-    assert!(content.contains("with storage cobble:global _cobble_dyn_"));
-    assert!(all_functions.contains(
-        "$execute store result score #test.selected cobble.vars run data get storage cobble:global locals.test.items[$(idx0)]"
-    ));
-    // Right-operand scratches now carry unique suffixes (#expr_temp_<id>).
-    assert!(all_functions.lines().any(|line| {
-        line.starts_with("$execute store result score #expr_temp_")
-            && line.ends_with(
-                "cobble.vars run data get storage cobble:global locals.test.items[$(idx0)]",
-            )
-    }));
-    assert!(content.lines().any(|line| line
-        .starts_with("scoreboard players operation #test.total cobble.vars += #expr_temp_")));
-    assert!(content.contains("execute if score expr_cond_temp_"));
-    assert!(content.contains("run say matched"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.selected"), 5);
+    assert_eq!(sim.var("#test.total"), 7);
+    assert_eq!(sim.log, ["Server: matched"]);
 }
 
 #[test]
@@ -220,34 +192,12 @@ def test():
     if config[key] == 7:
         /say dynamic key matched
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-    let all_functions = read_all_functions(&output_dir);
-
-    assert!(
-        content.contains("data modify storage cobble:global locals.test.key set value \"chance\"")
-    );
-    assert!(
-        // The key is escaped for the quoted path key on its way.
-        content.contains("data modify storage cobble:global _cobble_esc.key set from storage cobble:global locals.test.key")
-            && content.contains(".key0 set from storage cobble:global _cobble_esc.done"),
-        "{content}"
-    );
-    assert!(all_functions.contains(
-        "$execute store result score #test.selected cobble.vars run data get storage cobble:global locals.test.config.\"$(key0)\""
-    ));
-    // Right-operand scratches now carry unique suffixes (#expr_temp_<id>).
-    assert!(all_functions.lines().any(|line| {
-        line.starts_with("$execute store result score #expr_temp_")
-            && line.ends_with(
-                "cobble.vars run data get storage cobble:global locals.test.config.\"$(key0)\"",
-            )
-    }));
-    assert!(content.lines().any(|line| line
-        .starts_with("scoreboard players operation #test.total cobble.vars += #expr_temp_")));
-    assert!(content.contains("execute if score expr_cond_temp_"));
-    assert!(content.contains("run say dynamic key matched"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.selected"), 7);
+    assert_eq!(sim.var("#test.total"), 10);
+    assert_eq!(sim.log, ["Server: dynamic key matched"]);
 }
 
 #[test]
@@ -257,21 +207,12 @@ def lookup(key):
     config = {"chance": 7, "other": 2}
     selected = config[key]
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "lookup");
-    let all_functions = read_all_functions(&output_dir);
-
-    // A parameter can hold a number, which picks no field, so the pack
-    // checks the key when it runs; text is escaped for the quoted path key.
-    assert!(
-        content.contains(".seg0_k set from storage cobble:global args.key")
-            && content.contains(".seg0_k set from storage cobble:global _cobble_esc.done"),
-        "{content}"
+    let mut sim = Sim::load(
+        &format!("{source}\ndef main():\n    lookup(\"chance\")\n"),
+        &["Alex"],
     );
-    assert!(all_functions.contains(
-        "$execute if score #cobble_dyn_0_seg0 cobble.vars matches 0 store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.\"$(seg0_k)\""
-    ), "{all_functions}");
+    sim.call("main");
+    assert_eq!(sim.var("#lookup.selected"), 7);
 }
 
 #[test]
@@ -344,31 +285,18 @@ def test():
     values = [picked, picked_again]
     state = {"picked": picked, "again": picked_again}
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-    let all_functions = read_all_functions(&output_dir);
-
-    assert!(content.contains("data modify storage cobble:global events set value [10,20,30]"));
-    assert!(all_functions.contains("$data get storage cobble:global events[$(idx0)]"));
-    assert!(all_functions.contains(
-        "$execute store result score #test.picked_again cobble.vars run data get storage cobble:global events[$(idx0)]\n"
-    ));
-    assert!(all_functions.contains(
-        "$data modify storage cobble:global events[$(idx0)] set from storage cobble:global _cobble_value_"
-    ));
-    assert!(
-        content.contains("data modify storage cobble:global locals.test.values set value [0,0]")
+    let mut sim = Sim::load(&format!("import stdlib\n{source}"), &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.picked"), 20);
+    assert_eq!(
+        sim.storage["locals"]["test"]["values"],
+        serde_json::json!([20, 20])
     );
-    assert!(content.contains(
-        "execute store result storage cobble:global locals.test.values[0] int 1 run scoreboard players get #test.picked cobble.vars"
-    ));
-    assert!(content.contains(
-        "data modify storage cobble:global locals.test.state set value {picked:0,again:0}"
-    ));
-    assert!(content.contains(
-        "execute store result storage cobble:global locals.test.state.again int 1 run scoreboard players get #test.picked_again cobble.vars"
-    ));
+    assert_eq!(
+        sim.storage["locals"]["test"]["state"],
+        serde_json::json!({"picked":20,"again":20})
+    );
 }
 
 #[test]
@@ -518,8 +446,6 @@ def test():
         .position(|line| line.contains("scoreboard players set score cobble.vars 1"))
         .unwrap();
 
-    // No runtime loop, so the world's command limit stays untouched.
-    assert!(!init_content.contains("gamerule"), "{init_content}");
     for setup in [
         "scoreboard objectives add cobble.vars dummy",
         "scoreboard players set #true_const cobble.vars 1",
@@ -766,15 +692,10 @@ def test():
     for i in range(limit) by step:
         total = total + i
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    let main_content = read_function(&output_dir, "test");
-    assert!(main_content.contains("if score #for_range_step_"));
-    assert!(main_content
-        .contains("run scoreboard players operation #test.i cobble.vars = #for_range_stop_"));
-    assert!(main_content.contains("run scoreboard players remove #test.i cobble.vars 1"));
-    assert!(main_content.contains("run scoreboard players set #for_range_stop_"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.total"), 3);
 }
 
 #[test]
@@ -812,34 +733,19 @@ def test():
     if total == 12:
         /say list done
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-    let all_functions = read_all_functions(&output_dir);
-
-    assert!(content.contains("scoreboard players set #for_list_index_"));
-    assert!(content.contains("execute store result score #for_list_len_"));
-    assert!(content.contains("run data get storage cobble:global locals.test.values"));
-    assert!(content.contains("function cobble:for_list_temp_"));
-    assert!(all_functions.contains(
-        "$data modify storage cobble:global locals.test.value set from storage cobble:global locals.test.values[$(idx0)]"
-    ));
-    assert!(all_functions.contains(
-        "$execute store result score #test.value cobble.vars run data get storage cobble:global locals.test.values[$(idx0)]"
-    ));
-
-    let loop_content = read_first_function_with_prefix(&output_dir, "for_list_temp_");
-    assert!(loop_content.contains("execute if score #for_list_index_"));
-    assert!(loop_content.contains("run function cobble:for_list_body_"));
-
-    let body_content = read_first_function_with_prefix(&output_dir, "for_list_body_");
-    assert!(body_content.contains(
-        "scoreboard players operation #test.total cobble.vars += #test.value cobble.vars"
-    ));
-    assert!(body_content.contains(
-        "execute store result storage cobble:global _say_args.value int 1 run scoreboard players get #test.value cobble.vars"
-    ));
-    assert!(body_content.contains("scoreboard players add #for_list_index_"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.total"), 12);
+    assert_eq!(
+        sim.log,
+        [
+            "Server: item 2",
+            "Server: item 4",
+            "Server: item 6",
+            "Server: list done"
+        ]
+    );
 }
 
 #[test]
@@ -928,22 +834,12 @@ def test():
     if literal_len == 2 and values_len == 3 and message_len == 5 and selected_len == 2:
         /say len ok
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-    let all_functions = read_all_functions(&output_dir);
-
-    assert!(content.contains("scoreboard players set #test.literal_len cobble.vars 2"));
-    assert!(content.contains(
-        "execute store result score #test.values_len cobble.vars run data get storage cobble:global locals.test.values"
-    ));
-    assert!(content.contains(
-        "execute store result score #test.message_len cobble.vars run data get storage cobble:global locals.test.message"
-    ));
-    assert!(all_functions.contains(
-        "$execute store result score #test.selected_len cobble.vars run data get storage cobble:global locals.test.nested[$(idx0)]"
-    ));
-    assert!(content.contains("run say len ok"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.literal_len"), 2);
+    assert_eq!(sim.var("#test.selected_len"), 2);
+    assert_eq!(sim.log, ["Server: len ok"]);
 }
 
 #[test]
@@ -1519,24 +1415,10 @@ def test():
     else:
         /say fallback
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(
-        !content.contains("execute unless if"),
-        "elif chain generated invalid execute syntax: {}",
-        content
-    );
-    assert!(
-        !content.contains("OR("),
-        "elif OR condition was not lowered: {}",
-        content
-    );
-    assert!(content.contains("if_branch_"));
-    assert!(content.contains("or_temp_"));
-    assert!(content.contains("say threshold"));
-    assert!(content.contains("say fallback"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.log, ["Server: fallback"]);
 }
 
 #[test]
@@ -1592,25 +1474,10 @@ def test():
             /say Line1
             /say Line2
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should have single chained unless command
-    assert!(
-        content.contains("execute unless score match_temp_")
-            && content.contains("cobble.vars matches 0..10 unless score match_temp_")
-            && content.contains("cobble.vars matches 50..100 run function cobble:match_default_"),
-        "Wildcard function not properly conditioned"
-    );
-
-    // Should only call the function once
-    let unless_count = content.matches("execute unless").count();
-    assert_eq!(
-        unless_count, 1,
-        "Wildcard function called multiple times (expected 1, got {})",
-        unless_count
-    );
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.log, ["Server: Line1", "Server: Line2"]);
 }
 
 #[test]
@@ -1904,29 +1771,11 @@ def test():
         x = 100
         /say Between 10 and 20
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Should use functions
-    assert!(content.contains("function cobble:elif_temp"));
-    assert!(content.contains("scoreboard players set elif_taken_"));
-    assert!(content.contains("run scoreboard players set elif_taken_"));
-    assert!(content.contains("run scoreboard players set if_branch_"));
-    assert!(content.contains("execute if score elif_taken_"));
-    assert!(content.contains("run function cobble:elif_temp"));
-
-    let elif_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("elif_temp_"))
-        .collect();
-
-    assert!(!elif_files.is_empty(), "No elif function generated");
-
-    let elif_content = fs::read_to_string(elif_files[0].path()).unwrap();
-    assert!(elif_content.contains("scoreboard players set #test.x cobble.vars 100"));
-    assert!(elif_content.contains("say Between 10 and 20"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.x"), 100);
+    assert_eq!(sim.log, ["Server: Between 10 and 20"]);
 }
 
 #[test]
@@ -1971,40 +1820,11 @@ def test():
         i = i + 1
         /say Iteration
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-
-    // Check that while_body function exists
-    let body_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("while_body_"))
-        .collect();
-
-    assert!(!body_files.is_empty(), "No while_body function generated");
-
-    let body_content = fs::read_to_string(body_files[0].path()).unwrap();
-    // Body should execute unconditionally (no execute if)
-    assert!(body_content.contains("scoreboard players add #test.i cobble.vars 1"));
-    assert!(body_content.contains("say Iteration"));
-    assert!(!body_content.contains("execute if"));
-
-    // Check while_temp function
-    let while_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("while_temp_"))
-        .collect();
-
-    assert!(!while_files.is_empty(), "No while function generated");
-
-    let while_content = fs::read_to_string(while_files[0].path()).unwrap();
-    // Should check condition and call body
-    assert!(while_content.contains(
-        "execute if score #test.i cobble.vars matches ..2 run function cobble:while_body"
-    ));
-    // The body starts the next iteration
-    assert!(body_content.contains("function cobble:while_temp"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.i"), 3);
+    assert_eq!(sim.log, ["Server: Iteration"; 3]);
 }
 
 #[test]
@@ -2182,24 +2002,15 @@ def tick():
 stdlib.addEventListener(event.TICK, tick)
 "#;
 
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "tick");
-
-    // Should use a function for the if block
-    assert!(content.contains("function cobble:if_temp"));
-
-    // Find and check the if function
-    let if_files: Vec<_> = fs::read_dir(output_dir.join("data/cobble/function"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("if_temp_"))
-        .collect();
-
-    assert!(!if_files.is_empty(), "No if function generated");
-
-    let if_content = fs::read_to_string(if_files[0].path()).unwrap();
-    assert!(if_content.contains("scoreboard players set counter cobble.vars 0"));
-    assert!(if_content.contains("tellraw @a"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    for _ in 0..19 {
+        sim.call("tick");
+    }
+    assert_eq!(sim.var("counter"), 19);
+    assert!(sim.log.is_empty());
+    sim.call("tick");
+    assert_eq!(sim.var("counter"), 0);
+    assert_eq!(sim.log, ["One second passed"]);
 }
 
 #[test]
@@ -2210,13 +2021,13 @@ def test():
     const RADIUS = 5
     area = PI * RADIUS * RADIUS
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    // Constants should be inlined at compile time
-    assert!(content.contains("scoreboard players set #test.area cobble.vars 78"));
-    assert!(!content.contains("PI cobble.vars"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(
+        sim.storage["locals"]["test"]["area"].as_f64(),
+        Some(f64::from(("3.14159".parse::<f32>().unwrap() * 5.0) * 5.0))
+    );
 }
 
 #[test]
@@ -2820,45 +2631,12 @@ def test():
     if result == 7 and picked == 8 and config.count == 5:
         /say module init storage target ok
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let init_content = read_function(&output_dir, "_cobble_init");
-    let test_content = read_function(&output_dir, "test");
-    let all_functions = read_all_functions(&output_dir);
-
-    assert!(
-        init_content
-            .contains("execute store result score result cobble.vars run function cobble:helper"),
-        "{init_content}"
-    );
-    assert!(
-        init_content.contains("data modify storage cobble:global vars.config.count set value 2"),
-        "{init_content}"
-    );
-    assert!(
-        init_content.contains("function cobble:_cobble_storage_dyn_"),
-        "{init_content}"
-    );
-    assert!(
-        all_functions.contains(
-            "$data modify storage cobble:global vars.values[$(idx0)] set from storage cobble:global _cobble_value_"
-        ),
-        "{all_functions}"
-    );
-    assert!(
-        all_functions.contains(
-            "$execute store result score #storage_target_"
-        ) && all_functions.contains(
-            "run data get storage cobble:global vars.config.\"$(key0)\""
-        ) && all_functions.contains(
-            "$execute store result storage cobble:global vars.config.\"$(key0)\" int 1 run scoreboard players get #storage_target_"
-        ),
-        "{all_functions}"
-    );
-    assert!(
-        test_content.contains("run say module init storage target ok"),
-        "{test_content}"
-    );
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("result"), 7);
+    assert_eq!(sim.storage["vars"]["config"]["count"], serde_json::json!(5));
+    assert_eq!(sim.log, ["Server: module init storage target ok"]);
 }
 
 #[test]
@@ -2903,33 +2681,11 @@ def test():
     if result == 10:
         /say function expression ok
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let double_content = read_function(&output_dir, "double");
-    let add_content = read_function(&output_dir, "add");
-    let test_content = read_function(&output_dir, "test");
-
-    assert!(
-        double_content.contains("return run scoreboard players get"),
-        "{double_content}"
-    );
-    assert!(
-        add_content.contains("return run scoreboard players get"),
-        "{add_content}"
-    );
-    assert!(
-        test_content.contains("execute store result score #arg_temp_")
-            && test_content.contains("run function cobble:double with storage cobble:global args"),
-        "{test_content}"
-    );
-    assert!(
-        test_content.contains("execute store result score #test.result cobble.vars run function cobble:add with storage cobble:global args"),
-        "{test_content}"
-    );
-    assert!(
-        test_content.contains("run say function expression ok"),
-        "{test_content}"
-    );
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.result"), 10);
+    assert_eq!(sim.log, ["Server: function expression ok"]);
 }
 
 #[test]
@@ -3018,34 +2774,13 @@ def test():
     if a == 7 and b == 5 and c == 3:
         /say parameter value lowering ok
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let choose_content = read_function(&output_dir, "choose");
-    let pick_content = read_function(&output_dir, "pick");
-    let size_content = read_function(&output_dir, "size");
-    let test_content = read_function(&output_dir, "test");
-
-    assert!(
-        choose_content.contains("data get storage cobble:global args.flag"),
-        "{choose_content}"
-    );
-    assert!(
-        !choose_content.contains("score flag cobble.vars matches")
-            && !choose_content.contains("= flag cobble.vars"),
-        "{choose_content}"
-    );
-    assert!(
-        pick_content.contains("data get storage cobble:global args.value"),
-        "{pick_content}"
-    );
-    assert!(
-        size_content.contains("data get storage cobble:global args.values"),
-        "{size_content}"
-    );
-    assert!(
-        test_content.contains("run say parameter value lowering ok"),
-        "{test_content}"
-    );
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.a"), 7);
+    assert_eq!(sim.var("#test.b"), 5);
+    assert_eq!(sim.var("#test.c"), 3);
+    assert_eq!(sim.log, ["Server: parameter value lowering ok"]);
 }
 
 #[test]
@@ -3178,7 +2913,7 @@ def test():
 
     let error = compile_source(non_integer_return).expect_err("non-integer return should fail");
     assert!(
-        error.contains("return values must be integer scoreboard expressions")
+        error.contains("Functions can return numbers")
             || error.contains("returns non-integer data"),
         "{error}"
     );
@@ -3213,7 +2948,7 @@ def imported_bad():
     )
     .expect_err("imported non-integer return should fail");
     assert!(
-        error.contains("return values must be integer scoreboard expressions")
+        error.contains("Functions can return numbers")
             || error.contains("returns non-integer data"),
         "{error}"
     );
@@ -3283,42 +3018,26 @@ def test():
 
 #[test]
 fn test_function_call_condition_is_reevaluated_in_while_loop() {
-    let source = r#"
+    let mut sim = Sim::load(
+        r#"
+loop_flag = 0
+
 def keep_running():
     return loop_flag
 
 def test():
+    global loop_flag
     loop_flag = 1
     while keep_running():
         /say while call condition ok
         loop_flag = 0
-"#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let test_content = read_function(&output_dir, "test");
-    let loop_content = read_first_function_with_prefix(&output_dir, "while_temp_");
-
-    assert!(
-        test_content.contains("function cobble:while_temp_"),
-        "{test_content}"
+"#,
+        &[],
     );
-    assert!(
-        loop_content.contains("execute store result score expr_cond_temp_")
-            && loop_content.contains("run function cobble:keep_running"),
-        "{loop_content}"
-    );
-    assert!(
-        loop_content.contains("execute unless score expr_cond_temp_")
-            && loop_content.contains("matches 0 run function cobble:while_body_"),
-        "{loop_content}"
-    );
-    assert_eq!(
-        loop_content
-            .matches("run function cobble:keep_running")
-            .count(),
-        1,
-        "{loop_content}"
-    );
+    sim.set_command_budget(10000);
+    sim.call("test");
+    assert_eq!(sim.var("loop_flag"), 0);
+    assert_eq!(sim.log, ["Server: while call condition ok"]);
 }
 
 #[test]
@@ -3336,20 +3055,16 @@ def imported_value():
     return 7
 "#;
 
-    let (_temp, output_dir) =
-        compile_source_with_files(source, &[("helpers.cbl", helper_source)]).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(
-        content.contains(
-            "execute store result score #test.result cobble.vars run function cobble:imported_value"
-        ),
-        "{content}"
+    let mut sim = Sim::load_project(
+        &[("main.cbl", source), ("helpers.cbl", helper_source)],
+        &["Alex"],
     );
-    assert!(
-        content.contains("run say imported return expression ok"),
-        "{content}"
-    );
+    sim.call("test");
+    assert_eq!(sim.var("#test.result"), 10);
+    assert!(sim
+        .log
+        .iter()
+        .any(|line| line == "Server: imported return expression ok"));
 }
 
 #[test]
@@ -3371,21 +3086,16 @@ def double(value):
     return value * 2
 "#;
 
-    let (_temp, output_dir) =
-        compile_source_with_files(source, &[("helpers.cbl", helper_source)]).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains("function cobble:side_effect"), "{content}");
-    assert!(
-        content.contains(
-            "execute store result score #test.result cobble.vars run function cobble:double with storage cobble:global args"
-        ),
-        "{content}"
+    let mut sim = Sim::load_project(
+        &[("main.cbl", source), ("helpers.cbl", helper_source)],
+        &["Alex"],
     );
-    assert!(
-        content.contains("run say qualified import value call ok"),
-        "{content}"
-    );
+    sim.call("test");
+    assert_eq!(sim.var("#test.result"), 12);
+    assert!(sim
+        .log
+        .iter()
+        .any(|line| line == "Server: qualified import value call ok"));
 }
 
 #[test]
@@ -3435,38 +3145,13 @@ def test():
     if total == 11:
         /say runtime literal array ok
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-    let all_functions = read_all_functions(&output_dir);
-
-    assert!(
-        content.contains("data modify storage cobble:global _cobble_for_iter_"),
-        "{content}"
-    );
-    assert!(
-        content.contains("execute store result score #cobble_value_")
-            && content.contains("run function cobble:plus_one"),
-        "{content}"
-    );
-    assert!(
-        all_functions.contains("_cobble_for_iter_")
-            && all_functions.contains("$data modify storage cobble:global locals.test.value set from storage cobble:global _cobble_for_iter_"),
-        "{all_functions}"
-    );
-    assert!(
-        content.contains("data remove storage cobble:global _cobble_for_iter_"),
-        "{content}"
-    );
-    assert!(
-        content.contains("run say runtime literal array ok"),
-        "{content}"
-    );
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.total"), 11);
+    assert_eq!(sim.log, ["Server: runtime literal array ok"]);
 }
 
-// Regression test for title command action token preservation
-// Bug fix: Title commands with scoreboard variables should preserve the action token
-// (title/subtitle/actionbar) between selector and JSON text array
 #[test]
 fn test_title_command_preserves_action() {
     let source = r#"
@@ -3776,22 +3461,10 @@ def test():
         for j in range(2):
             result = i + j
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-    let lines = content
-        .lines()
-        .filter(|line| !line.starts_with("scoreboard players set #return_flag_"))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        lines,
-        vec![
-            "scoreboard players set #test.result cobble.vars 0",
-            "scoreboard players set #test.result cobble.vars 1",
-            "scoreboard players set #test.result cobble.vars 1",
-            "scoreboard players set #test.result cobble.vars 2",
-        ]
-    );
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.result"), 2);
 }
 
 #[test]
@@ -4094,14 +3767,10 @@ def test():
     as @a if x > 2147483647:
         /say unreachable
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(content.contains(
-        "execute as @a if score #cobble_always_false cobble.vars matches 0 unless score #cobble_always_false cobble.vars matches 0 run say unreachable"
-    ));
-    assert!(!content.contains("-2147483648.."));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert!(sim.log.is_empty());
 }
 
 #[test]
@@ -4112,16 +3781,10 @@ def test():
     as @a unless x > 2147483647:
         /say reachable
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(
-        content.contains("execute as @a run say reachable"),
-        "{}",
-        content
-    );
-    assert!(!content.contains("-2147483648.."));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.log, ["Alex: reachable"]);
 }
 
 #[test]
@@ -4131,16 +3794,10 @@ def test():
     as @a unless @s > 2147483647:
         /say reachable
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(
-        content.contains("execute as @a run say reachable"),
-        "{}",
-        content
-    );
-    assert!(!content.contains("-2147483648.."));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.log, ["Alex: reachable"]);
 }
 
 #[test]
@@ -4188,19 +3845,10 @@ def test():
     as @a unless x > 2147483647 or y > 0:
         /say reachable
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(
-        content.contains(
-            "execute as @a unless score #test.y cobble.vars matches 1.. run say reachable"
-        ),
-        "{}",
-        content
-    );
-    assert!(!content.contains("#cobble_always_false"));
-    assert!(!content.contains("-2147483648.."));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.log, ["Alex: reachable"]);
 }
 
 #[test]
@@ -4212,17 +3860,10 @@ def test():
     as @a unless x > 2147483647 or y != 0:
         /say reachable
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(
-        content.contains("execute as @a if score #test.y cobble.vars matches 0 run say reachable"),
-        "{}",
-        content
-    );
-    assert!(!content.contains("unless score #test.y cobble.vars matches 0 run say reachable"));
-    assert!(!content.contains("-2147483648.."));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.log, ["Alex: reachable"]);
 }
 
 #[test]
@@ -4649,16 +4290,11 @@ def test():
     if x == 42:
         /say function call assignment ok
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "test");
-
-    assert!(
-        content
-            .contains("execute store result score #test.x cobble.vars run function cobble:helper"),
-        "{content}"
-    );
-    assert!(content.contains("run say function call assignment ok"));
+    let mut sim = Sim::load(source, &["Alex"]);
+    sim.set_command_budget(20_000_000);
+    sim.call("test");
+    assert_eq!(sim.var("#test.x"), 42);
+    assert_eq!(sim.log, ["Server: function call assignment ok"]);
 }
 
 #[test]

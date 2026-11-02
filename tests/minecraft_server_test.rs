@@ -181,6 +181,27 @@ def init():
     /stopwatch create cobble:server_smoke
     /stopwatch query cobble:server_smoke 1.0
 
+def numeric_twice(value):
+    return value + value
+
+def numeric_probe():
+    single = 0.6 + 0.2
+    wide = double(0.1) + double(0.2)
+    doubled = numeric_twice(wide)
+    root = math.sqrt(double(2))
+    boundary = double(16777216) + double(1)
+    rounded = float(16777216) + 1
+    floor = double(-5) // 2
+    remainder = -5.5 % 2
+    absolute_zero = abs(double(-0.0))
+    /execute if data storage cobble_server_smoke:global locals.numeric_probe{single:0.8f,wide:0.30000000000000004d,doubled:0.6000000000000001d,root:1.4142135623730951d,boundary:16777217.0d,rounded:16777216.0f,floor:-3.0d,remainder:0.5f,absolute_zero:0.0d} run say numeric values ok
+    if wide > double(0.3) and wide < double(0.31):
+        /say numeric comparisons ok
+    zero = 0.0
+    invalid_single = single / zero
+    invalid_wide = double(1) / double(zero)
+    /execute if data storage cobble_server_smoke:global locals.numeric_probe{invalid_single:0.0f,invalid_wide:0.0d} run say numeric invalid guards ok
+
 def ready_value(value):
     return value
 
@@ -365,9 +386,11 @@ def probe():
 
     mixed_fractions = [compound_score, 0.6]
     fraction_macro(mixed_fractions[1])
-    /execute if data storage cobble:server_smoke {fraction:0.6d} run say mixed fraction precision ok
+    /data modify storage cobble:server_smoke fraction_roundtrip set compute default float {type:"minecraft:storage",storage:"cobble:server_smoke",path:"fraction"}
+    /execute if data storage cobble:server_smoke {fraction_roundtrip:0.6f} run say mixed fraction precision ok
     fraction_forward([0.6])
-    /execute if data storage cobble:server_smoke {fraction:0.6d} run say forwarded fraction precision ok
+    /data modify storage cobble:server_smoke fraction_roundtrip set compute default float {type:"minecraft:storage",storage:"cobble:server_smoke",path:"fraction"}
+    /execute if data storage cobble:server_smoke {fraction_roundtrip:0.6f} run say forwarded fraction precision ok
     integer_forward([1.5])
     /execute if score fraction_integer temp matches 1 run say raw integer fraction ok
     integer_forward([-0.6])
@@ -592,6 +615,15 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         )?;
     }
 
+    send_command(child, &format!("function {NAMESPACE}:numeric_probe"))?;
+    for expected in [
+        "numeric values ok",
+        "numeric comparisons ok",
+        "numeric invalid guards ok",
+    ] {
+        wait_for_log(child, &log_path, expected, COMMAND_TIMEOUT)?;
+    }
+
     send_command(child, &format!("function {NAMESPACE}:probe"))?;
     wait_for_log(
         child,
@@ -705,9 +737,8 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         send_command(child, &format!("function {namespace}:bump"))?;
     }
     for (namespace, step) in ISOLATION_PACKS {
-        let objective = format!("{namespace}.vars");
-        expect_score(child, &log_path, "round", &objective, step)?;
-        expect_score(child, &log_path, "visits", &objective, step)?;
+        expect_variable(child, &log_path, namespace, "round", step)?;
+        expect_variable(child, &log_path, namespace, "visits", step)?;
     }
 
     send_command(child, "reload")?;
@@ -716,9 +747,8 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
     // After `/reload`, plain module variables are back at 0 and `persist`
     // variables keep their values.
     for (namespace, step) in ISOLATION_PACKS {
-        let objective = format!("{namespace}.vars");
-        expect_score(child, &log_path, "round", &objective, 0)?;
-        expect_score(child, &log_path, "visits", &objective, step)?;
+        expect_variable(child, &log_path, namespace, "round", 0)?;
+        expect_variable(child, &log_path, namespace, "visits", step)?;
     }
 
     send_command(child, "data get storage cobble:server_smoke status")?;
@@ -789,28 +819,23 @@ fn logged_score(log: &str, holder: &str, objective: &str) -> Result<usize, Strin
         .ok_or_else(|| format!("no `{holder}` score on `{objective}` in the server log"))
 }
 
-/// Queries one score and fails unless the server reports `expected`.
-fn expect_score(
+/// Reads canonical storage; integer score registers may be stale after a call.
+fn expect_variable(
     child: &mut Child,
     log_path: &Path,
-    holder: &str,
-    objective: &str,
+    namespace: &str,
+    name: &str,
     expected: usize,
 ) -> Result<(), String> {
-    let needle = format!("{holder} has ");
+    let needle = format!("canonical {namespace}.{name}={expected}");
     let before = read_log(log_path).matches(&needle).count();
     send_command(
         child,
-        &format!("scoreboard players get {holder} {objective}"),
+        &format!(
+            "execute if data storage {namespace}:global vars{{{name}:{expected}}} run say {needle}"
+        ),
     )?;
-    wait_for_log_count(child, log_path, &needle, before + 1, COMMAND_TIMEOUT)?;
-    let actual = logged_score(&read_log(log_path), holder, objective)?;
-    if actual != expected {
-        return Err(format!(
-            "{holder} on {objective} is {actual}, expected {expected}"
-        ));
-    }
-    Ok(())
+    wait_for_log_count(child, log_path, &needle, before + 1, COMMAND_TIMEOUT)
 }
 
 fn send_command(child: &mut Child, command: &str) -> Result<(), String> {

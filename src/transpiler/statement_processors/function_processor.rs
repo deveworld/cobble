@@ -2,6 +2,7 @@ use crate::ast::{CobbleType, Expression, FunctionDef, IfStatement, Statement};
 use crate::fs_safety::MAX_FILE_NAME_BYTES;
 use crate::transpiler::function_context::unbound_local_message;
 use crate::transpiler::score_holders::{rename_holders, written_holders};
+use crate::transpiler::storage_paths::StorageValueOps;
 use crate::transpiler::{
     FunctionContext, FunctionReturnKind, GeneratedCommand, GeneratedCommandKind, ReturnContext,
     SourceLocation, TranspileError, TranspileErrorKind, Transpiler,
@@ -175,6 +176,11 @@ impl Transpiler {
         self.current_function_metadata = Some(HashMap::new());
         self.current_function_name = Some(function_name.to_string());
         let return_kind = Self::analyze_function_return_kind(&func.body);
+        if self.uses_storage_numbers() && return_kind != FunctionReturnKind::None {
+            self.functions
+                .numeric_returns
+                .insert(function_name.to_string());
+        }
         // Only functions that actually contain a `return` statement need the
         // return-flag protocol. Everything else skips the prologue and the
         // `temp` objective so simple packs stay free of `_cobble_init`.
@@ -230,6 +236,11 @@ impl Transpiler {
         let return_context = self.current_return.clone();
         if let Some(mut commands) = self.current_function.take() {
             let mut metadata = self.current_function_metadata.take().unwrap_or_default();
+            if self.uses_storage_numbers() {
+                if let Some(context) = &return_context {
+                    commands.push(format!("execute unless score {} temp matches 1 run data modify storage {}:global _cobble_return set value 0", context.flag_score, self.data_pack.namespace));
+                }
+            }
             if recursive {
                 self.route_returns_through_exit(
                     function_name,
@@ -268,6 +279,9 @@ impl Transpiler {
 
         // Restore previous context. Lowering the body can add hidden locals.
         let locals = self.current_context.locals.clone();
+        for local in &locals {
+            self.bind_scalar_storage(local);
+        }
         self.current_function = previous_function;
         self.current_function_metadata = previous_metadata;
         self.current_context = previous_context;
@@ -637,6 +651,61 @@ impl Transpiler {
 
         let mut commands = Vec::new();
         let context = self.current_return.clone();
+        if self.uses_storage_numbers() {
+            let value = expr.cloned().unwrap_or(Expression::Number(0.0));
+            if matches!(
+                self.value_type(&value),
+                CobbleType::String | CobbleType::List | CobbleType::Map
+            ) {
+                return Err("Functions can return numbers; use a module variable or storage for other values.".into());
+            }
+            let result = context
+                .as_ref()
+                .map(|context| context.value_score.clone())
+                .unwrap_or_else(|| format!("#return_value_{}", self.next_temp_id()));
+            self.data_pack.track_objective("temp");
+            if self.may_hold_float(&value) || matches!(value, Expression::Identifier(_)) {
+                commands.extend(self.numeric_value_commands("_cobble_return", &value)?);
+                commands.push(format!("execute store result score {result} temp run data get storage {}:global _cobble_return 1", self.data_pack.namespace));
+            } else {
+                commands.extend(self.evaluate_expression_to_target(&value, &result)?);
+                commands.push(format!("execute store result storage {}:global _cobble_return int 1 run scoreboard players get {result} temp", self.data_pack.namespace));
+            }
+            if let Some(context) = &context {
+                commands.push(format!(
+                    "scoreboard players set {} temp 1",
+                    context.flag_score
+                ));
+            }
+            commands.push(format!("return run scoreboard players get {result} temp"));
+            self.extend_current_function(commands);
+            return Ok(());
+        }
+        if self.in_prelude
+            && self
+                .current_function_name
+                .as_deref()
+                .and_then(crate::transpiler::desugar::software_result_type)
+                .is_some()
+        {
+            if let Some(expr) = expr {
+                commands
+                    .extend(self.storage_value_commands(crate::transpiler::desugar::RESULT, expr)?);
+            }
+            if let Some(context) = &context {
+                commands.push(format!(
+                    "scoreboard players set {} temp 1",
+                    context.flag_score
+                ));
+                commands.push(format!(
+                    "scoreboard players set {} temp 0",
+                    context.value_score
+                ));
+            }
+            commands.push("return 0".to_string());
+            self.extend_current_function(commands);
+            return Ok(());
+        }
         if let Some(expr) = expr {
             match self.infer_type(expr) {
                 CobbleType::String | CobbleType::List | CobbleType::Map => {

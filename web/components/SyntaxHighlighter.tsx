@@ -27,6 +27,9 @@ const keywords = new Set([
 ]);
 
 const helpers = new Set([
+  "int",
+  "float",
+  "double",
   "datapack",
   "event",
   "range",

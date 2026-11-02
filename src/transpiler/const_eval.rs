@@ -74,7 +74,7 @@ pub(in crate::transpiler) fn fold_score_operation(
         BinaryOp::Add => Some(left.wrapping_add(right)),
         BinaryOp::Sub => Some(left.wrapping_sub(right)),
         BinaryOp::Mul => Some(left.wrapping_mul(right)),
-        BinaryOp::Div => (right != 0).then(|| floor_div_i32(left, right)),
+        BinaryOp::Div | BinaryOp::FloorDiv => (right != 0).then(|| floor_div_i32(left, right)),
         BinaryOp::Mod => {
             (right != 0).then(|| left.wrapping_sub(floor_div_i32(left, right).wrapping_mul(right)))
         }
@@ -105,6 +105,7 @@ impl Transpiler {
                         | BinaryOp::Sub
                         | BinaryOp::Mul
                         | BinaryOp::Div
+                        | BinaryOp::FloorDiv
                         | BinaryOp::Mod
                         | BinaryOp::Pow
                 ) {
@@ -118,7 +119,7 @@ impl Transpiler {
                     BinaryOp::Add => Some(left_val + right_val),
                     BinaryOp::Sub => Some(left_val - right_val),
                     BinaryOp::Mul => Some(left_val * right_val),
-                    BinaryOp::Div => const_div(left_val, right_val),
+                    BinaryOp::Div | BinaryOp::FloorDiv => const_div(left_val, right_val),
                     BinaryOp::Mod => const_mod(left_val, right_val),
                     BinaryOp::Pow => {
                         let base = left_val as i32;

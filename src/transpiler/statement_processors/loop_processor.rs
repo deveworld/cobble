@@ -1614,7 +1614,6 @@ impl Transpiler {
             base_path,
             &Expression::Identifier(index_var.to_string()),
         )?);
-        commands.push(format!("scoreboard players set {} temp 0", target));
         commands.push(format!(
             "execute store result score {} temp run data get storage {}:global {}",
             target, namespace, target_path
@@ -1636,10 +1635,9 @@ impl Transpiler {
                     "$data modify storage {}:global {} set from storage {}:global {}",
                     namespace, target_path, namespace, path
                 ),
-                format!("scoreboard players set {} temp 0", target),
                 format!(
-                    "$execute store result score {} temp run data get storage {}:global {}",
-                    target, namespace, path
+                    "execute store result score {} temp run data get storage {}:global {}",
+                    target, namespace, target_path
                 ),
             ]
         })
@@ -1940,6 +1938,7 @@ impl Transpiler {
         self.symbols
             .variable_types
             .insert(name.to_string(), CobbleType::Integer);
+        self.bind_scalar_storage(name);
     }
 
     fn bind_runtime_storage_loop_value(&mut self, name: &str, element_type: CobbleType) {
@@ -1960,6 +1959,7 @@ impl Transpiler {
         self.symbols
             .variable_types
             .insert(name.to_string(), element_type);
+        self.bind_scalar_storage(name);
     }
 
     /// Best-effort element type for a runtime list loop target. A literal

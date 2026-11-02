@@ -52,6 +52,28 @@ impl Transpiler {
         match expr {
             Expression::Number(n) => Ok(*n),
             Expression::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
+            Expression::Call(func, args)
+                if matches!(&**func, Expression::Identifier(name) if matches!(name.as_str(), "_cobble_float" | "float" | "double" | "int") && !self.functions.params.contains_key(name))
+                    && (args.len() == 1
+                        || matches!(&**func, Expression::Identifier(name) if name == "_cobble_float")
+                            && args.len() == 2) =>
+            {
+                let value = self.evaluate_const_expr(&args[0])?;
+                let Expression::Identifier(name) = &**func else {
+                    unreachable!()
+                };
+                Ok(match name.as_str() {
+                    "double" => value,
+                    "int" => f64::from(value as i32),
+                    "_cobble_float" if args.len() == 2 => {
+                        let Expression::String(text) = &args[1] else {
+                            return Err("Invalid internal float literal.".into());
+                        };
+                        f64::from(text.parse::<f32>().map_err(|_| "Invalid float literal.")?)
+                    }
+                    _ => f64::from(value as f32),
+                })
+            }
             Expression::Identifier(name) => {
                 // Look up in compile-time constants
                 self.symbols
@@ -76,11 +98,12 @@ impl Transpiler {
                     // `const HALF = 1 / 2`), so `/` is real division here, like
                     // Python's `/`. Integer semantics apply where an expression
                     // is computed into a score (see `const_div`).
-                    BinaryOp::Div => {
+                    BinaryOp::Div | BinaryOp::FloorDiv => {
                         if right_val == 0.0 {
                             Err("Division by zero in const expression".into())
                         } else {
-                            Ok(left_val / right_val)
+                            let result = left_val / right_val;
+                            Ok(if matches!(op, BinaryOp::FloorDiv) { result.floor() } else { result })
                         }
                     }
                     // Floor modulus, matching runtime `%=` (and Python's `%`).

@@ -82,6 +82,5 @@ cobble watch --link
   the project namespace, such as `my_datapack:on_load`.
 - **Changes do not appear.** Check that the build went to the world you have
   open, then `/reload`.
-- **Variables look wrong.** Cobble keeps numeric variables on the
-  `<namespace>.vars` objective:
-  `/scoreboard players get <name> my_datapack.vars`.
+- **Variables look wrong.** Read a module variable with
+  `/data get storage my_datapack:global vars.<name>`.

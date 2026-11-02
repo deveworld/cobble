@@ -1309,6 +1309,10 @@ pub(crate) const NON_MODULE_BUILTIN_SYMBOLS: &[&str] = &[
     "sorted",
     "str",
     "_cobble_format",
+    "_cobble_float",
+    "float",
+    "double",
+    "int",
     "sum",
 ];
 
@@ -1480,7 +1484,18 @@ pub(super) fn is_list_method(name: &str) -> bool {
 fn is_allowed_value_function_call(name: &str) -> bool {
     matches!(
         name,
-        "len" | "abs" | "max" | "min" | "sorted" | "str" | "_cobble_format" | "sum"
+        "len"
+            | "abs"
+            | "max"
+            | "min"
+            | "sorted"
+            | "str"
+            | "_cobble_format"
+            | "_cobble_float"
+            | "float"
+            | "double"
+            | "int"
+            | "sum"
     ) || math_value_function_arity(name).is_some()
 }
 

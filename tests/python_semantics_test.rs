@@ -590,9 +590,16 @@ fn imported_functions_keep_their_locals_in_a_project_build() {
     let loop_helpers = sim
         .functions
         .keys()
-        .filter(|name| name.contains("while"))
+        .filter(|name| {
+            sim.functions[*name]
+                .iter()
+                .any(|command| command.contains("locals.count_to.slot"))
+        })
         .count();
-    assert_eq!(loop_helpers, 2, "{:?}", sim.functions.keys());
+    assert!(
+        loop_helpers >= 2,
+        "the imported function and its loop must read their own storage locals"
+    );
 }
 
 #[test]

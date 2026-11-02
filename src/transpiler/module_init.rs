@@ -621,6 +621,9 @@ impl Transpiler {
         }
         match value {
             Expression::String(_) => true,
+            Expression::Call(func, args) if matches!(&**func, Expression::Identifier(name) if matches!(name.as_str(), "float" | "double" | "int" | "_cobble_float") && !self.functions.params.contains_key(name)) => {
+                !args.is_empty() && self.is_persist_initializer(&args[0])
+            }
             Expression::Array(items) => items.iter().all(|item| self.is_persist_initializer(item)),
             Expression::Map(entries) => entries
                 .iter()
@@ -654,6 +657,21 @@ impl Transpiler {
         var_name: &str,
         value: &Expression,
     ) -> Result<Vec<String>, TranspileError> {
+        if !self.in_prelude
+            && matches!(
+                self.symbols.variable_types.get(var_name),
+                Some(
+                    CobbleType::Integer
+                        | CobbleType::Float
+                        | CobbleType::Double
+                        | CobbleType::Boolean
+                )
+            )
+            && !Self::is_runtime_condition_expression(value)
+            && self.may_hold_float(value)
+        {
+            return self.numeric_value_commands(&format!("vars.{var_name}"), value);
+        }
         if let Some(const_value) = self.try_eval_const(value) {
             let truncated = const_value as i32;
             self.warn_score_value(const_value);

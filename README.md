@@ -65,7 +65,7 @@ walks through these steps in more detail.
 
 - Python-like syntax with functions, modules, and control flow.
 - Minecraft commands with `{placeholders}` and build-time validation.
-- Typed variables backed by scoreboards and storage.
+- Storage-backed variables, with 32-bit integers and floats plus 64-bit doubles.
 - Load/tick events, data pack resources, and a standard library.
 - CLI tools for formatting, watch mode, diagnostics, and ZIP builds.
 

@@ -135,7 +135,7 @@ impl Transpiler {
             BinaryOp::Add => "+",
             BinaryOp::Sub => "-",
             BinaryOp::Mul => "*",
-            BinaryOp::Div => "/",
+            BinaryOp::Div | BinaryOp::FloorDiv => "/",
             BinaryOp::Mod => "%",
             BinaryOp::Pow => "**",
             _ => "an operator",
@@ -170,6 +170,9 @@ impl Transpiler {
         op: &BinaryOp,
         right: &Expression,
     ) -> Result<Vec<String>, TranspileError> {
+        if self.uses_storage_numbers() {
+            return self.numeric_compound_storage(path_plan, op, right);
+        }
         let id = self.next_temp_id();
         let namespace = self.data_pack.namespace.clone();
         let target_score = format!("#storage_target_{}", id);
@@ -210,7 +213,7 @@ impl Transpiler {
             BinaryOp::Add => "+=",
             BinaryOp::Sub => "-=",
             BinaryOp::Mul => "*=",
-            BinaryOp::Div => "/=",
+            BinaryOp::Div | BinaryOp::FloorDiv => "/=",
             BinaryOp::Mod => "%=",
             _ => {
                 return Err(
@@ -417,6 +420,8 @@ impl Transpiler {
             .variable_types
             .insert(assign.target.clone(), value_type);
 
+        self.bind_scalar_storage(&assign.target);
+
         // Store the variable value for later use
         self.symbols
             .variables
@@ -430,6 +435,32 @@ impl Transpiler {
                 .remove(&assign.target);
             self.symbols.late_module_declarations.remove(&assign.target);
             self.defer_module_level_assignment(assign);
+            return Ok(());
+        }
+
+        if self.uses_storage_numbers()
+            && !assign.target.starts_with('#')
+            && matches!(
+                self.symbols.variable_types.get(&assign.target),
+                Some(
+                    CobbleType::Integer
+                        | CobbleType::Float
+                        | CobbleType::Double
+                        | CobbleType::Boolean
+                )
+            )
+            && self.may_hold_float(&assign.value)
+            && !Self::is_runtime_condition_expression(&assign.value)
+        {
+            let path = self.variable_storage_path(&assign.target);
+            self.real_variables.insert(path.clone());
+            let commands = self.numeric_value_commands(&path, &assign.value)?;
+            self.symbols
+                .variable_storage_paths
+                .insert(assign.target.clone(), path);
+            self.symbols.scoreboard_variables.remove(&assign.target);
+            self.symbols.variable_objectives.remove(&assign.target);
+            self.extend_current_function(commands);
             return Ok(());
         }
 
@@ -659,6 +690,17 @@ impl Transpiler {
     /// written there and every later read of the parameter sees it.
     fn process_parameter_assignment(&mut self, assign: &Assignment) -> Result<(), TranspileError> {
         let path = format!("args.{}", assign.target);
+        if self.uses_storage_numbers()
+            && matches!(
+                self.assigned_value_type(&assign.value),
+                CobbleType::Integer | CobbleType::Float | CobbleType::Double | CobbleType::Boolean
+            )
+            && !Self::is_runtime_condition_expression(&assign.value)
+        {
+            let commands = self.numeric_value_commands(&path, &assign.value)?;
+            self.extend_current_function(commands);
+            return Ok(());
+        }
         let namespace = self.data_pack.namespace.clone();
         let storage_source = match &assign.value {
             Expression::Identifier(name) if self.current_context.is_param(name) => {
@@ -807,6 +849,25 @@ impl Transpiler {
     /// Records whether the module variable `assign` binds lives in storage,
     /// in a score, or in both. Its type must already be recorded.
     pub(in crate::transpiler) fn register_module_variable_backing(&mut self, assign: &Assignment) {
+        self.bind_scalar_storage(&assign.target);
+        if self.uses_storage_numbers()
+            && matches!(
+                self.symbols.variable_types.get(&assign.target),
+                Some(
+                    CobbleType::Integer
+                        | CobbleType::Float
+                        | CobbleType::Double
+                        | CobbleType::Boolean
+                )
+            )
+            && self.may_hold_float(&assign.value)
+        {
+            self.symbols
+                .variable_storage_paths
+                .insert(assign.target.clone(), format!("vars.{}", assign.target));
+            self.data_pack.track_objective("temp");
+            return;
+        }
         // Strings, lists, and maps live in storage: literals, copies of
         // such variables, and characters of strings.
         let storage = matches!(
@@ -1250,10 +1311,10 @@ impl Transpiler {
         let lhs = self.score_operand(left);
         let rhs = self.score_operand(right);
 
-        if matches!(op, BinaryOp::Div | BinaryOp::Mod)
+        if matches!(op, BinaryOp::Div | BinaryOp::FloorDiv | BinaryOp::Mod)
             && matches!(rhs, ScoreOperand::Constant { value: 0, .. })
         {
-            let (name, symbol) = if matches!(op, BinaryOp::Div) {
+            let (name, symbol) = if matches!(op, BinaryOp::Div | BinaryOp::FloorDiv) {
                 ("Division", "/")
             } else {
                 ("Modulo", "%")
@@ -1362,7 +1423,7 @@ impl Transpiler {
             BinaryOp::Sub if value < 0 => vec![add()],
             BinaryOp::Sub => vec![remove()],
             BinaryOp::Mul => through_holder("#multiplier", "*="),
-            BinaryOp::Div => through_holder("#divisor", "/="),
+            BinaryOp::Div | BinaryOp::FloorDiv => through_holder("#divisor", "/="),
             BinaryOp::Mod => through_holder("#modulus", "%="),
             _ => Vec::new(),
         }
@@ -1488,13 +1549,28 @@ pub(in crate::transpiler) fn serialize_snbt(
     expr: &Expression,
 ) -> Result<String, TranspileError> {
     match expr {
+        Expression::Call(func, args)
+            if matches!(&**func, Expression::Identifier(name) if name == "_cobble_float")
+                && !args.is_empty() =>
+        {
+            let value = if let Some(Expression::String(text)) = args.get(1) {
+                text.parse::<f32>().map_err(|_| "Invalid float literal.")?
+            } else {
+                super::super::numbers::numeric_literal(&args[0])
+                    .ok_or("Invalid float literal.")? as f32
+            };
+            if !value.is_finite() {
+                return Err("The value does not fit in a finite float.".into());
+            }
+            Ok(format!("{value:e}f"))
+        }
         Expression::Number(n) => {
             if n.fract() == 0.0 {
                 Ok(whole_number_snbt(*n))
             } else {
-                // The AST holds f64. A float tag would round a fraction
-                // before an item is forwarded to a macro parameter.
-                Ok(format!("{}d", n))
+                let value = *n as f32;
+                if !value.is_finite() { return Err("The value does not fit in a finite float.".into()); }
+                Ok(format!("{value:e}f"))
             }
         }
         Expression::String(s) => {
@@ -1537,7 +1613,11 @@ pub(in crate::transpiler) fn serialize_snbt(
             if let Some(val) = symbols.compile_time_constants.get(name) {
                 // A const past a score's range would be refused by
                 // Minecraft written as is.
-                if val.fract() == 0.0 {
+                if symbols.variable_types.get(name) == Some(&CobbleType::Double) {
+                    Ok(format!("{val:e}d"))
+                } else if symbols.variable_types.get(name) == Some(&CobbleType::Float) {
+                    Ok(format!("{:e}f", *val as f32))
+                } else if val.fract() == 0.0 {
                     Ok(whole_number_snbt(*val))
                 } else {
                     Ok(format!("{}", val))
@@ -1585,7 +1665,7 @@ fn score_operation(op: &BinaryOp) -> Option<&'static str> {
         BinaryOp::Add => Some("+="),
         BinaryOp::Sub => Some("-="),
         BinaryOp::Mul => Some("*="),
-        BinaryOp::Div => Some("/="),
+        BinaryOp::Div | BinaryOp::FloorDiv => Some("/="),
         BinaryOp::Mod => Some("%="),
         _ => None,
     }

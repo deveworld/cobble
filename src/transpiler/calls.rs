@@ -113,6 +113,12 @@ impl Transpiler {
         target_path: &str,
         arg: &Expression,
     ) -> Result<Vec<String>, TranspileError> {
+        if self.uses_storage_numbers()
+            && (super::numbers::numeric_computation(arg)
+                || matches!(arg, Expression::Identifier(name) if self.symbols.compile_time_constants.contains_key(name) && matches!(self.symbols.variable_types.get(name), Some(CobbleType::Float | CobbleType::Double)) && !self.functions.params_used_as_values.get(func_name).is_some_and(|used| !used.contains(param_name))))
+        {
+            return self.numeric_value_commands(target_path, arg);
+        }
         let namespace = self.data_pack.namespace.clone();
         let set_value = |value: &dyn std::fmt::Display| {
             vec![format!(
@@ -217,7 +223,7 @@ impl Transpiler {
                 Ok(commands)
             }
             Expression::Subscript(..) | Expression::Attribute(..)
-                if self.storage_read_type(arg) != CobbleType::Integer
+                if (self.uses_storage_numbers() || self.storage_read_type(arg) != CobbleType::Integer)
                     && self.resolve_storage_path_plan(arg).is_some() =>
             {
                 let empty = match self.storage_read_type(arg) {

@@ -767,7 +767,10 @@ def ext():
     .unwrap();
     let functions = load_functions(&output_dir);
     let ext = functions["ext"].join("\n");
-    assert!(ext.starts_with("$tellraw @a "), "{ext}");
+    assert!(
+        ext.lines().any(|line| line.starts_with("$tellraw @a ")),
+        "{ext}"
+    );
     assert!(!ext.contains("_say_args"), "{ext}");
 }
 

@@ -490,7 +490,7 @@ fn compound_assignment<'a>(
         just(&Token::Slash)
             .then(just(&Token::Slash))
             .then_ignore(just(&Token::Equals))
-            .to(BinaryOp::Div),
+            .to(BinaryOp::FloorDiv),
         just(&Token::Plus)
             .then_ignore(just(&Token::Equals))
             .to(BinaryOp::Add),
@@ -1238,7 +1238,25 @@ fn atom<'a>(
             Ok(value)
         }),
         select_ref! {
-            Token::Number(n) => Expression::Number(n.parse().unwrap_or(0.0)),
+            Token::Number(n) => {
+                let value: f64 = n.parse().unwrap_or(0.0);
+                let single = n.parse::<f32>().unwrap_or(0.0);
+                let rounds_twice = single.to_bits() != (value as f32).to_bits();
+                if n.contains(['.', 'e', 'E']) && (value.fract() == 0.0 || rounds_twice) {
+                    let mut args = vec![Expression::Number(value)];
+                    // Preserve the original decimal only when going through f64
+                    // would change binary32's correctly rounded literal value.
+                    if rounds_twice {
+                        args.push(Expression::String(n.clone()));
+                    }
+                    Expression::Call(
+                        Box::new(Expression::Identifier("_cobble_float".to_string())),
+                        args,
+                    )
+                } else {
+                    Expression::Number(value)
+                }
+            },
             Token::String(s) => Expression::String(s.clone()),
             Token::True_ => Expression::Boolean(true),
             Token::False_ => Expression::Boolean(false),
@@ -1379,7 +1397,7 @@ fn arithmetic_expression<'a>(
             just(&Token::Star).to(BinaryOp::Mul),
             just(&Token::Slash)
                 .then(just(&Token::Slash))
-                .to(BinaryOp::Div),
+                .to(BinaryOp::FloorDiv),
             just(&Token::Slash).to(BinaryOp::Div),
             just(&Token::Percent).to(BinaryOp::Mod),
         ))

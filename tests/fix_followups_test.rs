@@ -302,7 +302,7 @@ fn cli_build(source: &str) -> (bool, String) {
 }
 
 #[test]
-fn a_fractional_item_read_into_a_score_warns() {
+fn fractional_items_and_fields_are_forwarded_without_integer_truncation() {
     let (ok, stderr) = cli_build(
         r#"y = [0.6, 2.5]
 cfg = {"rate": 1.5, "n": 2}
@@ -319,14 +319,7 @@ def main():
 "#,
     );
     assert!(ok, "{stderr}");
-    for expected in [
-        "main.cbl:8:5: warning[fractional-number] Scores hold integers, so y[0], which holds 0.6, is read as 0.",
-        "main.cbl:9:5: warning[fractional-number] Scores hold integers, so cfg.rate, which holds 1.5, is read as 1.",
-        "main.cbl:11:5: warning[fractional-number] Scores hold integers, so y[1], which holds 2.5, is read as 2.",
-    ] {
-        assert!(stderr.contains(expected), "{expected}\n{stderr}");
-    }
-    assert_eq!(stderr.matches("warning[").count(), 3, "{stderr}");
+    assert!(!stderr.contains("warning[fractional-number]"), "{stderr}");
 }
 
 // --- A module variable of a file compiled later ---

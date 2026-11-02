@@ -72,6 +72,7 @@ impl Transpiler {
     /// first, so a function of a file compiled earlier can't read them as
     /// scores.
     pub fn record_module_variables(&mut self, path: &Path, program: &Program) {
+        self.record_potential_real_globals(program);
         let file = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         for (name, kind) in storage_module_variables(program) {
             self.imports
@@ -458,6 +459,12 @@ impl Transpiler {
                         .insert(func.name.clone(), variant);
                 }
                 self.functions.params.insert(func.name.clone(), param_names);
+                if !self.in_prelude
+                    && Self::analyze_function_return_kind(&func.body)
+                        != super::super::types::FunctionReturnKind::None
+                {
+                    self.functions.numeric_returns.insert(func.name.clone());
+                }
                 let (used, passed) =
                     crate::transpiler::function_context::params_read_or_passed(func);
                 self.functions

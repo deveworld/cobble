@@ -746,7 +746,7 @@ impl Transpiler {
     /// The key a statement's source text is found by: its tokens, written
     /// the way [`Self::statement_source_key`] writes the parsed statement.
     /// Spellings the parser reads alike key alike: grouping parentheses,
-    /// a trailing comma, `**` for `^`, and `//` for `/`.
+    /// a trailing comma and `**` for `^`.
     pub(crate) fn source_line_key(source: &str) -> String {
         use crate::parser::Token;
         let Ok(tokens) = crate::parser::tokenize(source) else {
@@ -793,7 +793,7 @@ impl Transpiler {
                     index += 1;
                 }
                 Token::Slash if next == Some(&Token::Slash) => {
-                    key.push('/');
+                    key.push_str("//");
                     index += 1;
                 }
                 // `0.50` and `1.0` are the numbers `0.5` and `1`, the way
@@ -966,6 +966,12 @@ impl Transpiler {
                     Self::expression_source_key(expr)
                 )
             }
+            Expression::Call(func, args)
+                if matches!(&**func, Expression::Identifier(name) if name == "_cobble_float")
+                    && !args.is_empty() =>
+            {
+                Self::expression_source_key(&args[0])
+            }
             Expression::Call(func, args) => {
                 let args = args
                     .iter()
@@ -1009,6 +1015,7 @@ impl Transpiler {
             BinaryOp::Sub => "-",
             BinaryOp::Mul => "*",
             BinaryOp::Div => "/",
+            BinaryOp::FloorDiv => "//",
             BinaryOp::Mod => "%",
             BinaryOp::Pow => "^",
             BinaryOp::Eq => "==",

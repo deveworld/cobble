@@ -23,6 +23,8 @@ The default migration route is 0.10 to 0.11.
 Add `f` to strings that should interpolate values:
 
 ```python
+wave = 3
+
 # Before
 /title @a title {"text": "Wave {wave}"}
 
@@ -49,15 +51,16 @@ def add_point():
 ```
 
 The migration report flags affected functions. Raw commands outside Cobble
-that read locals need the generated holder `#<function>.<name>`; see
+read locals from `<namespace>:global locals.<function>.<name>`; see
 [Calling Convention](reference/calling-convention.md).
 
-### Per-Pack Variable Objective
+### Variable Storage And Numeric Types
 
-Cobble scores now use `<namespace>.vars` instead of the shared `temp`,
-`math`, and `__internal__` objectives. Keep using `temp` in Cobble source;
-the compiler rewrites it. Update command blocks, other packs, and commands
-in chat that access the old objectives.
+Variables now live in `<namespace>:global` storage, under `vars.<name>` or
+`locals.<function>.<name>`. Integer calculation registers use
+`<namespace>.vars`. Keep using `temp` in Cobble source; the compiler
+synchronizes source variables with storage. Update external commands to
+read and write the storage paths in [Calling Convention](reference/calling-convention.md).
 
 Existing scores are not migrated automatically. Module variables still reset
 on load; `persist` initializes a value only when unset:
@@ -65,6 +68,10 @@ on load; `persist` initializes a value only when unset:
 ```python
 persist best_time = 0
 ```
+
+Decimal and exponent literals now use float32. Use `double(value)` for
+software float64 calculations or `int(value)` to truncate toward zero.
+See [Arithmetic](language/arithmetic.md) for promotion rules and limits.
 
 ### Other Output Changes
 

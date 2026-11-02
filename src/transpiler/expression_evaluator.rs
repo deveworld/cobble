@@ -31,6 +31,9 @@ pub struct ExpressionEvaluator<'a> {
     /// arguments on the call stack.
     pub(in crate::transpiler) caller_recursive: bool,
     pub(in crate::transpiler) warnings: &'a RefCell<Vec<TranspileWarning>>,
+    pub(in crate::transpiler) numeric_scope: Option<String>,
+    pub(in crate::transpiler) numeric_locals: Vec<String>,
+    pub(in crate::transpiler) numeric_backend: bool,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
@@ -50,7 +53,10 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    fn resolve_user_function_call_name<'b>(&'b self, func: &'b Expression) -> Option<&'b str> {
+    pub(in crate::transpiler) fn resolve_user_function_call_name<'b>(
+        &'b self,
+        func: &'b Expression,
+    ) -> Option<&'b str> {
         match func {
             Expression::Identifier(name) if self.functions.params.contains_key(name) => {
                 Some(name.as_str())
@@ -196,7 +202,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     /// A string's scoreboard mirror only holds its length, so evaluating it
     /// as a score value is always a bug.
-    fn reject_string_score_operand(&self, var: &str) -> Result<(), TranspileError> {
+    pub(in crate::transpiler) fn reject_string_score_operand(
+        &self,
+        var: &str,
+    ) -> Result<(), TranspileError> {
         if self.symbols.variable_storage_paths.contains_key(var)
             && matches!(
                 self.symbols.variable_types.get(var),
@@ -421,6 +430,36 @@ impl<'a> ExpressionEvaluator<'a> {
         arg: &Expression,
     ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.data_pack.namespace.clone();
+        if self.numeric_backend
+            && matches!(arg, Expression::Identifier(name) if self.symbols.compile_time_constants.contains_key(name) && matches!(self.symbols.variable_types.get(name), Some(CobbleType::Float | CobbleType::Double)) && !self.functions.params_used_as_values.get(func_name).is_some_and(|used| !used.contains(param_name)))
+        {
+            return self.numeric_value_commands(target_path, arg);
+        }
+        if self.numeric_backend
+            && matches!(
+                arg,
+                Expression::Binary(..) | Expression::Call(..) | Expression::Unary(..)
+            )
+            && !matches!(
+                arg,
+                Expression::Binary(
+                    _,
+                    BinaryOp::Eq
+                        | BinaryOp::NotEq
+                        | BinaryOp::Lt
+                        | BinaryOp::LtEq
+                        | BinaryOp::Gt
+                        | BinaryOp::GtEq
+                        | BinaryOp::And
+                        | BinaryOp::Or
+                        | BinaryOp::In
+                        | BinaryOp::NotIn,
+                    _
+                )
+            )
+        {
+            return self.numeric_value_commands(target_path, arg);
+        }
         // As a call statement passes it (see `call_argument_commands`).
         let number = match arg {
             Expression::Number(n) => Some(*n),
@@ -506,7 +545,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 self.unknown_base_item_commands(target_path, base, index)
             }
             Expression::Subscript(..) | Expression::Attribute(..)
-                if self.storage_read_type(arg) != CobbleType::Integer
+                if (self.numeric_backend || self.storage_read_type(arg) != CobbleType::Integer)
                     && self.resolve_storage_path_plan(arg).is_some() =>
             {
                 let plan = self.resolve_storage_path_plan(arg).expect("checked above");
@@ -638,7 +677,7 @@ impl<'a> ExpressionEvaluator<'a> {
         )])
     }
 
-    fn call_to_target(
+    pub(in crate::transpiler) fn call_to_target(
         &mut self,
         func: &Expression,
         args: &[Expression],
@@ -981,7 +1020,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 let value = *n as i32;
                 // Check for division and modulo by zero at compile time
                 match op {
-                    BinaryOp::Div if value == 0 => {
+                    BinaryOp::Div | BinaryOp::FloorDiv if value == 0 => {
                         return Err(format!(
                             "Division by zero in expression: dividing by {}",
                             value
@@ -1067,7 +1106,7 @@ impl<'a> ExpressionEvaluator<'a> {
         if let Some(const_value) = self.symbols.compile_time_constants.get(var) {
             let value = *const_value as i32;
             match op {
-                BinaryOp::Div if value == 0 => {
+                BinaryOp::Div | BinaryOp::FloorDiv if value == 0 => {
                     return Err("Division by zero in expression".to_string().into());
                 }
                 BinaryOp::Mod if value == 0 => {
@@ -1127,10 +1166,10 @@ impl<'a> ExpressionEvaluator<'a> {
                     if value < 0 { -value } else { value }
                 ));
             }
-            BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            BinaryOp::Mul | BinaryOp::Div | BinaryOp::FloorDiv | BinaryOp::Mod => {
                 let (holder, operation) = match op {
                     BinaryOp::Mul => ("#multiplier", "*="),
-                    BinaryOp::Div => ("#divisor", "/="),
+                    BinaryOp::Div | BinaryOp::FloorDiv => ("#divisor", "/="),
                     _ => ("#modulus", "%="),
                 };
                 commands.push(format!("scoreboard players set {} temp {}", holder, value));
@@ -1196,7 +1235,7 @@ impl<'a> ExpressionEvaluator<'a> {
             BinaryOp::Add => "+=",
             BinaryOp::Sub => "-=",
             BinaryOp::Mul => "*=",
-            BinaryOp::Div => "/=",
+            BinaryOp::Div | BinaryOp::FloorDiv => "/=",
             BinaryOp::Mod => "%=",
             BinaryOp::Pow => {
                 self.apply_runtime_power_to_target(

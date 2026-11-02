@@ -12,6 +12,10 @@ impl Transpiler {
         target: &str,
     ) -> Result<Vec<String>, TranspileError> {
         let caller_recursive = self.in_recursive_function();
+        let numeric_backend = self.uses_storage_numbers();
+        if numeric_backend {
+            self.prepare_numeric_expression(expr)?;
+        }
         let mut evaluator = ExpressionEvaluator {
             data_pack: &mut self.data_pack,
             symbols: &self.symbols,
@@ -21,6 +25,9 @@ impl Transpiler {
             source: self.current_statement_source.clone(),
             caller_recursive,
             warnings: &self.warnings,
+            numeric_scope: self.current_function_name.clone(),
+            numeric_locals: self.current_context.locals.to_vec(),
+            numeric_backend,
         };
         evaluator.evaluate_expression_to_target(expr, target)
     }
@@ -360,6 +367,12 @@ impl Transpiler {
         }
         match expr {
             Expression::Number(n) => self.json_number(*n),
+            Expression::Call(func, args) if matches!(&**func, Expression::Identifier(name) if name == "_cobble_float") && !args.is_empty() => self.expr_to_json_value(&args[0]),
+            Expression::Unary(UnaryOp::Neg | UnaryOp::Pos, inner) if matches!(&**inner, Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "_cobble_float")) => {
+                let mut value = super::numbers::numeric_literal(inner).ok_or("Invalid number literal")?;
+                if matches!(expr, Expression::Unary(UnaryOp::Neg, _)) { value = -value; }
+                self.json_number(value)
+            },
             Expression::Unary(UnaryOp::Neg | UnaryOp::Pos, _)
                 if Self::signed_number(expr).is_some() =>
             {

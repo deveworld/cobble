@@ -8,6 +8,9 @@
 //! - the consolidated storage-path machinery emits stable dynamic-path
 //!   commands
 
+mod common;
+use common::mcsim::Sim;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -45,23 +48,6 @@ fn read_function(output_dir: &Path, function_name: &str) -> String {
         .join(format!("{}.mcfunction", function_name));
     fs::read_to_string(&function_path)
         .unwrap_or_else(|e| panic!("cannot read {}: {}", function_path.display(), e))
-}
-
-fn read_all_functions(output_dir: &Path) -> String {
-    let function_dir = output_dir.join("data/cobble/function");
-    let mut combined = String::new();
-    let mut entries: Vec<_> = fs::read_dir(&function_dir)
-        .unwrap_or_else(|e| panic!("cannot read {}: {}", function_dir.display(), e))
-        .map(|entry| entry.unwrap().path())
-        .collect();
-    entries.sort();
-    for path in entries {
-        if path.extension().is_some_and(|ext| ext == "mcfunction") {
-            combined.push_str(&fs::read_to_string(&path).unwrap());
-            combined.push('\n');
-        }
-    }
-    combined
 }
 
 #[test]
@@ -248,28 +234,15 @@ def lookup(key):
     selected = config[key]
     config["chance"] = 9
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "lookup");
-    let all_functions = read_all_functions(&output_dir);
-
-    assert!(
-        content
-            .contains("data modify storage cobble:global locals.lookup.config.chance set value 9"),
-        "{content}"
+    let mut sim = Sim::load(
+        &format!("{source}\ndef main():\n    lookup(\"chance\")\n"),
+        &[],
     );
-    assert!(
-        // The key is checked when the pack runs, as a parameter can hold a
-        // number, and text is escaped for the quoted path key on its way.
-        content.contains(".seg0_k set from storage cobble:global args.key")
-            && content.contains(".seg0_k set from storage cobble:global _cobble_esc.done"),
-        "{content}"
-    );
-    assert!(
-        all_functions.contains(
-            "$execute if score #cobble_dyn_0_seg0 cobble.vars matches 0 store result score #lookup.selected cobble.vars run data get storage cobble:global locals.lookup.config.\"$(seg0_k)\""
-        ),
-        "{all_functions}"
+    sim.call("main");
+    assert_eq!(sim.var("#lookup.selected"), 7);
+    assert_eq!(
+        sim.storage["locals"]["lookup"]["config"]["chance"],
+        serde_json::json!(9)
     );
 }
 
@@ -295,53 +268,10 @@ def main():
     while k * 2 < n:
         k = k + 1
 "#;
-    let (_dir, output) = compile_source(source).expect("compile");
-
-    // Temp ids pin the allocation order: the range loop allocates its stop
-    // var (0) before the loop/body helpers (1, 2); the list loop allocates
-    // index/len (3, 4), its type guard (5), helpers (6, 7), then the dynamic
-    // item path (8); `while` allocates its loop helper (9) BEFORE lowering
-    // the condition (10), then the body helper (11).
-    let main = read_function(&output, "main");
-    assert!(main.contains("function cobble:for_range_temp_1"));
-    assert!(main.contains("function cobble:for_list_temp_6"));
-    assert!(main.contains("function cobble:while_temp_9"));
-
-    let range_loop = read_function(&output, "for_range_temp_1");
-    assert_eq!(
-        range_loop,
-        "execute if score #main.i cobble.vars < #for_range_stop_0 cobble.vars run function cobble:for_range_body_2\n"
-    );
-    assert!(
-        read_function(&output, "for_range_body_2").ends_with("function cobble:for_range_temp_1\n")
-    );
-
-    // Each pass reads the list's length again, as Python does.
-    let list_loop = read_function(&output, "for_list_temp_6");
-    assert_eq!(
-        list_loop,
-        "execute store result score #for_list_len_4 cobble.vars run data get storage cobble:global vars.values\n\
-         execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_body_7\n"
-    );
-
-    let while_loop = read_function(&output, "while_temp_9");
-    assert_eq!(
-        while_loop,
-        "scoreboard players operation expr_cond_temp_10 cobble.vars = #main.k cobble.vars\n\
-         scoreboard players set #multiplier cobble.vars 2\n\
-         scoreboard players operation expr_cond_temp_10 cobble.vars *= #multiplier cobble.vars\n\
-         execute if score expr_cond_temp_10 cobble.vars < #main.n cobble.vars run function cobble:while_body_11\n"
-    );
-    assert!(read_function(&output, "while_body_11").ends_with("function cobble:while_temp_9\n"));
-
-    let list_body = read_function(&output, "for_list_body_7");
-    assert!(list_body.starts_with("data remove storage cobble:global _cobble_dyn_8\n"));
-    assert!(list_body.contains(
-        "function cobble:_cobble_storage_dyn_8 with storage cobble:global _cobble_dyn_8"
-    ));
-    assert!(list_body.ends_with(
-        "scoreboard players add #for_list_index_3 cobble.vars 1\nfunction cobble:for_list_temp_6\n"
-    ));
+    let mut sim = Sim::load(source, &[]);
+    sim.call("main");
+    assert_eq!(sim.var("total"), 21);
+    assert_eq!(sim.var("#main.k"), 3);
 }
 
 #[test]
@@ -364,21 +294,14 @@ def check():
     copy = items
     b = x
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "check");
+    let mut sim = Sim::load(source, &[]);
+    sim.call("check");
+    for (name, expected) in [("folded", 1), ("flag", 1), ("x", 11), ("y", -4), ("b", 11)] {
+        assert_eq!(sim.var(&format!("#check.{name}")), expected);
+    }
     assert_eq!(
-        content,
-        "scoreboard players set #check.folded cobble.vars 1\n\
-         scoreboard players set #check.x cobble.vars 10\n\
-         scoreboard players set #check.flag cobble.vars 0\n\
-         execute if score #check.x cobble.vars matches 6.. run scoreboard players set #check.flag cobble.vars 1\n\
-         scoreboard players add #check.x cobble.vars 1\n\
-         scoreboard players set #check.y cobble.vars 7\n\
-         scoreboard players operation #check.y cobble.vars -= #check.x cobble.vars\n\
-         data modify storage cobble:global locals.check.items set value [1,2]\n\
-         data modify storage cobble:global locals.check.copy set from storage cobble:global locals.check.items\n\
-         scoreboard players operation #check.b cobble.vars = #check.x cobble.vars\n"
+        sim.storage["locals"]["check"]["copy"],
+        serde_json::json!([1, 2])
     );
 }
 
@@ -392,18 +315,10 @@ def take(p):
     q = p
     z = (p + 1) * 2
 "#;
-
-    let (_temp, output_dir) = compile_source(source).unwrap();
-    let content = read_function(&output_dir, "take");
-    assert_eq!(
-        content,
-        "data modify storage cobble:global locals.take.q set from storage cobble:global args.p\n\
-         execute store result score #take.q cobble.vars run data get storage cobble:global locals.take.q\n\
-         execute store result score #take.z cobble.vars run data get storage cobble:global args.p\n\
-         scoreboard players add #take.z cobble.vars 1\n\
-         scoreboard players set #multiplier cobble.vars 2\n\
-         scoreboard players operation #take.z cobble.vars *= #multiplier cobble.vars\n"
-    );
+    let mut sim = Sim::load(&format!("{source}\ndef main():\n    take(2)\n"), &[]);
+    sim.call("main");
+    assert_eq!(sim.var("#take.q"), 2);
+    assert_eq!(sim.var("#take.z"), 6);
 }
 
 #[test]

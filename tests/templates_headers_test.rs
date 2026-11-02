@@ -365,7 +365,9 @@ def main():
          $title @a[tag=x, limit=1] actionbar {\"text\":\"$(msg)\"}"
     );
     assert!(
-        text("shown").starts_with("tellraw @a[name=\"a b\"] {"),
+        text("shown")
+            .lines()
+            .any(|line| line.starts_with("tellraw @a[name=\"a b\"] {")),
         "{}",
         text("shown")
     );
@@ -492,10 +494,10 @@ def main():
     );
     sim.call("main");
     assert_eq!(sim.var("coins"), 2);
-    assert_eq!(
-        sim.function_text("bump"),
-        "$scoreboard players $(op) coins sim.vars 1"
-    );
+    assert!(sim
+        .function_text("bump")
+        .lines()
+        .any(|line| line == "$scoreboard players $(op) coins sim.vars 1"));
 
     let (_temp, output_dir) = compile(
         r##"
@@ -575,10 +577,8 @@ def main():
 "#,
         "main",
     );
-    assert_eq!(
-        main,
-        "execute as @a if entity @s[tag=a] if score x sim.vars matches 4.. run say joined"
-    );
+    assert!(main.lines().any(|line| line
+        == "execute as @a if entity @s[tag=a] if score x sim.vars matches 4.. run say joined"));
 }
 
 #[test]

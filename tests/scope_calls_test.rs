@@ -444,24 +444,18 @@ def test():
     sim.call("test");
     assert_eq!(
         sim.log,
-        vec!["Server: show 0.6", "Server: show -1.5", "Server: num 2"]
+        vec!["Server: show 0.6", "Server: show -1.5", "Server: num 2.5"]
     );
 }
 
 #[test]
-fn fractional_literal_used_as_a_number_warns() {
+fn fractional_literal_used_as_a_number_keeps_its_fraction() {
     let (ok, stderr) = cli_build(
         "def num(v):\n    w = v + 1\n    /say {w}\n\ndef test():\n    num(1.5)\n    num(2)\n",
         &[],
     );
     assert!(ok, "{stderr}");
-    assert!(
-        stderr.contains(
-            "main.cbl:6:5: warning[fractional-number] Scores hold integers, so 1.5 is stored as 1."
-        ),
-        "{stderr}"
-    );
-    assert_eq!(stderr.matches("warning[").count(), 1, "{stderr}");
+    assert!(!stderr.contains("warning[fractional-number]"), "{stderr}");
 }
 
 #[test]

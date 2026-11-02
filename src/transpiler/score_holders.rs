@@ -81,7 +81,7 @@ pub(in crate::transpiler) fn rename_holders<'a>(
 
 /// Splits a command into whitespace-separated token spans, keeping brackets,
 /// braces, and quoted strings inside one token.
-fn tokenize(command: &str) -> Vec<(usize, usize)> {
+pub(in crate::transpiler) fn tokenize(command: &str) -> Vec<(usize, usize)> {
     let mut tokens = Vec::new();
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
@@ -201,6 +201,12 @@ fn collect_command(
                 holder(first + 3, true, out);
                 // `><` swaps, so it writes both sides.
                 holder(first + 6, word(first + 5) == Some("><"), out);
+            }
+            Some(operation) if operation.contains("$(") => {
+                // A native macro chooses its subcommand at runtime. Refresh
+                // and synchronize every possible written source holder.
+                holder(first + 3, true, out);
+                holder(first + 6, true, out);
             }
             _ => {}
         },

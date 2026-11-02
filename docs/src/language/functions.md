@@ -29,23 +29,23 @@ Arguments are copied, so changing a list parameter leaves the caller's list
 unchanged. Default arguments, `*args`, and `**kwargs` are not supported.
 
 Fractions passed only to command text or f-strings keep their precision.
-Parameters used in arithmetic or returned as numbers use scoreboard integers.
+Arithmetic and return values preserve integer, float, and double values.
 
 ## Calling Functions
 
-Calls can forward arguments to other functions and return integer values:
+Calls can forward arguments to other functions and return numeric values:
 
 ```python
-def double(value):
+def twice(value):
     return value * 2
 
 def reward(amount):
-    return double(amount) + 1
+    return twice(amount) + 1
 ```
 
 `return` ends the enclosing function, including inside a loop or execute
 block. A returned condition gives `1` or `0`. Use a module variable or
-storage for non-integer results.
+storage for strings, lists, and maps.
 
 Calls also work in conditions:
 

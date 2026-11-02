@@ -68,14 +68,15 @@ impl Transpiler {
         branch_var: &str,
     ) -> Result<String, TranspileError> {
         let not_taken = format!("unless score {} temp matches 1", branch_var);
-        let (execute_args, setup) = if ExpressionEvaluator::calls_user_code(condition) {
-            let (args, setup) = self.capture_commands_with_result(|transpiler| {
-                transpiler.lower_condition_to_execute_args(condition)
-            })?;
-            (args, Some(setup))
-        } else {
-            (self.lower_condition_to_execute_args(condition)?, None)
-        };
+        let (execute_args, setup) =
+            if !self.in_prelude || ExpressionEvaluator::calls_user_code(condition) {
+                let (args, setup) = self.capture_commands_with_result(|transpiler| {
+                    transpiler.lower_condition_to_execute_args(condition)
+                })?;
+                (args, Some(setup))
+            } else {
+                (self.lower_condition_to_execute_args(condition)?, None)
+            };
         let taken = format!("elif_taken_{}", self.next_temp_id());
         let set_taken = format!("scoreboard players set {} temp 1", taken);
         let mut commands = vec![format!("scoreboard players set {} temp 0", taken)];

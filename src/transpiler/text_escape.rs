@@ -498,7 +498,7 @@ fn functions(ns: &str) -> Vec<(String, Vec<String>)> {
                 format!("execute store success score #esc_n temp run data get {global} args.value 1"),
                 format!(
                     "execute if score #esc_n temp matches 1 run {} with {global} args",
-                    call("_cobble_esc_paste_value")
+                    call("_cobble_esc_number_text")
                 ),
                 format!(
                     "execute if score #esc_d temp matches 0 run {} with {global} args",
@@ -508,6 +508,16 @@ fn functions(ns: &str) -> Vec<(String, Vec<String>)> {
                     "execute unless data {global} _cobble_result run data modify {global} _cobble_result set value \"\""
                 ),
             ],
+        ),
+        (
+            "_cobble_esc_number_text",
+            {
+                let mut commands = vec![format!("data modify {esc}.suffix set string {global} args.value -1")];
+                for suffix in ["f", "d", "b", "s", "L"] {
+                    commands.push(format!("execute if data {esc}{{suffix:\"{suffix}\"}} run data modify {global} _cobble_result set string {global} args.value 0 -1"));
+                }
+                commands
+            },
         ),
         (
             ESCAPE_KEY,

@@ -75,12 +75,11 @@ def announce():
 ```
 
 Constants cannot be reassigned. Division in a constant declaration can
-produce a fraction for command arguments; numeric variables still use
-[integer arithmetic](arithmetic.md).
+produce a fraction. See [Arithmetic](arithmetic.md) for numeric types.
 
 ## The `temp` Objective In Raw Commands
 
-Use `temp` to access Cobble's variable scores from raw commands:
+Use `temp` to read or update integer variables from raw commands:
 
 ```python
 def read_level():
@@ -90,6 +89,7 @@ def read_level():
 ```
 
 Cobble rewrites `temp` to `<namespace>.vars` and resolves local variable
-names automatically. Outside Cobble source, use the generated names. See
+names automatically and synchronizes these commands with storage. Outside
+Cobble source, read or write the storage value directly. See
 [Calling Convention](../reference/calling-convention.md) when integrating
 with command blocks or another pack.

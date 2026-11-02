@@ -598,7 +598,7 @@ def test():
         5,
     );
     assert_entry(
-        "function source_map:_cobble_math_sqrt",
+        "function source_map:_cobble_numeric_sqrt",
         GeneratedCommandKind::ControlFlow,
         11,
         5,
@@ -1015,28 +1015,21 @@ def h(a, b):
     assert_eq!(line_of("data/sim/predicate/p.json", 1), Some(2));
     assert_eq!(line_of("data/sim/tags/function/t.json", 1), Some(3));
     assert_eq!(line_of("data/sim/loot_table/l.json", 1), Some(4));
-    for (line, source) in [
-        (1, 8),
-        (2, 9),
-        (3, 10),
-        (4, 11),
-        (5, 12),
-        (6, 13),
-        (7, 14),
-        (8, 15),
-        (9, 16),
+    for (function, expected) in [
+        ("alpha", vec![8, 9, 10, 11, 12, 13, 14, 15, 16]),
+        ("beta", vec![18, 19, 20, 21]),
     ] {
+        let path = format!("data/sim/function/{function}.mcfunction");
+        let mut source_lines: Vec<_> = lines
+            .iter()
+            .filter(|(generated, _, _)| generated == &path)
+            .map(|(_, _, source)| *source)
+            .collect();
+        source_lines.dedup();
         assert_eq!(
-            line_of("data/sim/function/alpha.mcfunction", line),
-            Some(source),
-            "alpha line {line}"
-        );
-    }
-    for (line, source) in [(1, 18), (2, 19), (3, 20), (4, 21)] {
-        assert_eq!(
-            line_of("data/sim/function/beta.mcfunction", line),
-            Some(source),
-            "beta line {line}"
+            source_lines,
+            expected.into_iter().map(Some).collect::<Vec<_>>(),
+            "{function}"
         );
     }
 }

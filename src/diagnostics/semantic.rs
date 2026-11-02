@@ -3537,7 +3537,10 @@ fn infer_expression_type_for_diagnostics(
         match builtin.name.as_str() {
             "sorted" => return Some(CobbleType::List),
             "str" | "_cobble_format" => return Some(CobbleType::String),
-            "abs" | "max" | "min" | "sum" => return Some(CobbleType::Integer),
+            "float" | "_cobble_float" => return Some(CobbleType::Float),
+            "double" => return Some(CobbleType::Double),
+            "int" => return Some(CobbleType::Integer),
+            "abs" | "max" | "min" | "sum" => return Some(CobbleType::Unknown),
             _ => {}
         }
     }
@@ -3559,7 +3562,11 @@ fn infer_expression_type_for_diagnostics(
         }
     }
     if is_numeric_literal(expression) {
-        return Some(CobbleType::Integer);
+        return Some(if expression.contains(['.', 'e', 'E']) {
+            CobbleType::Float
+        } else {
+            CobbleType::Integer
+        });
     }
     if is_simple_module_name(expression) {
         return type_env.get(expression).cloned();
@@ -3606,6 +3613,50 @@ fn infer_expression_type_for_diagnostics(
                 });
         if holds_values {
             return Some(CobbleType::Unknown);
+        }
+        fn numeric_type(expr: &Expression, types: &HashMap<String, CobbleType>) -> CobbleType {
+            match expr {
+                Expression::Number(value) => {
+                    if value.fract() == 0.0 {
+                        CobbleType::Integer
+                    } else {
+                        CobbleType::Float
+                    }
+                }
+                Expression::Boolean(_) => CobbleType::Boolean,
+                Expression::Identifier(name) => {
+                    types.get(name).cloned().unwrap_or(CobbleType::Unknown)
+                }
+                Expression::Unary(_, value) => numeric_type(value, types),
+                Expression::Call(func, _) => match &**func {
+                    Expression::Identifier(name) => match name.as_str() {
+                        "float" | "_cobble_float" => CobbleType::Float,
+                        "double" => CobbleType::Double,
+                        "int" | "len" => CobbleType::Integer,
+                        _ => CobbleType::Unknown,
+                    },
+                    _ => CobbleType::Unknown,
+                },
+                Expression::Binary(left, _, right) => {
+                    let left = numeric_type(left, types);
+                    let right = numeric_type(right, types);
+                    if left == CobbleType::Double || right == CobbleType::Double {
+                        CobbleType::Double
+                    } else if left == CobbleType::Float || right == CobbleType::Float {
+                        CobbleType::Float
+                    } else if left == CobbleType::Unknown || right == CobbleType::Unknown {
+                        CobbleType::Unknown
+                    } else {
+                        CobbleType::Integer
+                    }
+                }
+                _ => CobbleType::Unknown,
+            }
+        }
+        if let Ok(program) = crate::parser::parse(&format!("_type_hint = {expression}\n")) {
+            if let Some(Statement::Assignment(assignment)) = program.statements.first() {
+                return Some(numeric_type(&assignment.value, type_env));
+            }
         }
         return Some(CobbleType::Integer);
     }

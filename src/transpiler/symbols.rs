@@ -167,6 +167,8 @@ pub(in crate::transpiler) struct FunctionTable {
     pub(in crate::transpiler) params: HashMap<String, Vec<String>>,
     /// Whether each function can be used as a value.
     pub(in crate::transpiler) returns: HashMap<String, FunctionReturnKind>,
+    /// Functions that also return their full numeric value in storage.
+    pub(in crate::transpiler) numeric_returns: HashSet<String>,
     /// `module.func` calls of imported modules, mapped to `func`.
     pub(in crate::transpiler) qualified_aliases: HashMap<String, String>,
     /// Functions that can call themselves, directly or through other
@@ -240,6 +242,15 @@ impl FunctionTable {
             .is_some_and(|used| !used.contains(param));
         if value.fract() != 0.0 && value.is_finite() && text_only {
             return (format!("\"{value}\""), false);
+        }
+        if value.fract() != 0.0
+            && value.is_finite()
+            && !self
+                .params_in_integer_commands
+                .get(function)
+                .is_some_and(|params| params.contains(param))
+        {
+            return (format!("{:e}f", value as f32), false);
         }
         let exact =
             value.fract() == 0.0 && value >= f64::from(i32::MIN) && value <= f64::from(i32::MAX);

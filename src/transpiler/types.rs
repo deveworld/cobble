@@ -13,7 +13,13 @@ impl Transpiler {
         use crate::ast::CobbleType;
 
         match expr {
-            Expression::Number(_) => CobbleType::Integer,
+            Expression::Number(number) => {
+                if number.fract() == 0.0 {
+                    CobbleType::Integer
+                } else {
+                    CobbleType::Float
+                }
+            }
             Expression::Boolean(_) => CobbleType::Boolean,
             Expression::String(_) => CobbleType::String,
             Expression::Array(_) => CobbleType::List,
@@ -29,8 +35,8 @@ impl Transpiler {
             Expression::Binary(left, op, right) => {
                 use crate::ast::BinaryOp;
 
-                let _left_type = self.infer_type(left);
-                let _right_type = self.infer_type(right);
+                let left_type = self.infer_type(left);
+                let right_type = self.infer_type(right);
 
                 match op {
                     // Arithmetic operations return integers
@@ -38,8 +44,18 @@ impl Transpiler {
                     | BinaryOp::Sub
                     | BinaryOp::Mul
                     | BinaryOp::Div
+                    | BinaryOp::FloorDiv
                     | BinaryOp::Mod
-                    | BinaryOp::Pow => CobbleType::Integer,
+                    | BinaryOp::Pow => {
+                        if left_type == CobbleType::Double || right_type == CobbleType::Double {
+                            CobbleType::Double
+                        } else if left_type == CobbleType::Float || right_type == CobbleType::Float
+                        {
+                            CobbleType::Float
+                        } else {
+                            CobbleType::Integer
+                        }
+                    }
 
                     // Comparison operations return booleans
                     BinaryOp::Eq
@@ -55,13 +71,25 @@ impl Transpiler {
                     BinaryOp::And | BinaryOp::Or => CobbleType::Boolean,
                 }
             }
-            Expression::Unary(op, _) => {
+            Expression::Unary(op, inner) => {
                 use crate::ast::UnaryOp;
 
                 match op {
                     UnaryOp::Not => CobbleType::Boolean,
-                    UnaryOp::Neg | UnaryOp::Pos => CobbleType::Integer,
+                    UnaryOp::Neg | UnaryOp::Pos => match self.infer_type(inner) {
+                        CobbleType::Boolean => CobbleType::Integer,
+                        kind => kind,
+                    },
                 }
+            }
+            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if matches!(name.as_str(), "float" | "_cobble_float") && !self.functions.params.contains_key(name)) => {
+                CobbleType::Float
+            }
+            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "double" && !self.functions.params.contains_key(name)) => {
+                CobbleType::Double
+            }
+            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "int" && !self.functions.params.contains_key(name)) => {
+                CobbleType::Integer
             }
             Expression::Call(func, _)
                 if matches!(&**func, Expression::Identifier(name)
@@ -177,7 +205,13 @@ impl Transpiler {
         if let Some(existing_type) = self.symbols.variable_types.get(var_name) {
             // A hidden local can hold `1 if a else b > 2`.
             let numbers = |value_type: &CobbleType| {
-                matches!(value_type, CobbleType::Integer | CobbleType::Boolean)
+                matches!(
+                    value_type,
+                    CobbleType::Integer
+                        | CobbleType::Boolean
+                        | CobbleType::Float
+                        | CobbleType::Double
+                )
             };
             let hidden_number = var_name.starts_with("_cobble_hold_")
                 && numbers(existing_type)

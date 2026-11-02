@@ -117,6 +117,7 @@ pub struct Sim {
     /// simulator panics instead of treating it as an unset score.
     pub objectives: HashSet<String>,
     pub storage: Value,
+    storage_types: Value,
     /// Chat output: `say` lines as `<executor>: <message>`, `tellraw` lines as
     /// rendered plain text.
     pub log: Vec<String>,
@@ -153,13 +154,14 @@ impl Sim {
         Ok(Self::from_output(&output_dir, players))
     }
 
-    fn from_output(output_dir: &Path, players: &[&str]) -> Sim {
+    pub fn from_output(output_dir: &Path, players: &[&str]) -> Sim {
         let mut sim = Sim {
             functions: load_functions(output_dir),
             players: players.iter().map(|p| p.to_string()).collect(),
             scores: HashMap::new(),
             objectives: HashSet::new(),
             storage: Value::Object(Map::new()),
+            storage_types: Value::Object(Map::new()),
             log: Vec::new(),
             tags: HashMap::new(),
             load_tag: read_tag(output_dir, "load"),
@@ -182,6 +184,10 @@ impl Sim {
     /// Run a function by name with no executor and return its result.
     pub fn call(&mut self, name: &str) -> Option<i32> {
         self.run_function(name, &Context { executor: None }, None)
+    }
+
+    pub fn set_command_budget(&mut self, budget: usize) {
+        self.budget = budget;
     }
 
     /// Run a function by name with inline macro arguments, as
@@ -224,7 +230,20 @@ impl Sim {
     }
 
     pub fn var(&self, name: &str) -> i32 {
-        self.score(name, "sim.vars")
+        let value = if let Some((function, local)) =
+            name.strip_prefix('#').and_then(|name| name.split_once('.'))
+        {
+            self.storage
+                .get("locals")
+                .and_then(|locals| locals.get(function))
+                .and_then(|locals| locals.get(local))
+        } else {
+            self.storage.get("vars").and_then(|vars| vars.get(name))
+        };
+        value
+            .and_then(Value::as_i64)
+            .map(|value| value as i32)
+            .unwrap_or_else(|| self.score(name, "sim.vars"))
     }
 
     pub fn try_score(&self, holder: &str, objective: &str) -> Option<i32> {
@@ -246,6 +265,17 @@ impl Sim {
         context: &Context,
         macro_args: Option<&Value>,
     ) -> Option<i32> {
+        let types = macro_args.map(default_types);
+        self.run_typed_function(name, context, macro_args, types.as_ref())
+    }
+
+    fn run_typed_function(
+        &mut self,
+        name: &str,
+        context: &Context,
+        macro_args: Option<&Value>,
+        macro_types: Option<&Value>,
+    ) -> Option<i32> {
         let commands = self
             .functions
             .get(name)
@@ -265,7 +295,7 @@ impl Sim {
                     let args = macro_args.unwrap_or_else(|| {
                         panic!("macro line in `{name}` run without arguments: {command}")
                     });
-                    let line = expand_macro(macro_line, args)?;
+                    let line = expand_macro(macro_line, args, macro_types)?;
                     // Minecraft parses every filled line before the
                     // function runs, so a storage path it refuses in one of
                     // them fails the whole call, earlier lines included.
@@ -323,17 +353,24 @@ impl Sim {
     fn eval(&mut self, command: &str, context: &Context) -> Option<i32> {
         let command = command.trim_start();
         if let Some(rest) = command.strip_prefix("function ") {
-            let (target, args) = match rest.split_once(" with storage ") {
+            let (target, args, types) = match rest.split_once(" with storage ") {
                 Some((target, storage)) => {
                     let (_, path) = storage.split_once(' ').expect("storage path");
                     // Arguments from a missing path fail the command.
                     let args = self.storage_get(path)?.clone();
-                    (target, Some(args))
+                    (target, Some(args), Some(self.types_at(path)))
                 }
-                None => (rest, None),
+                None => match rest.split_once(' ') {
+                    Some((target, inline)) => (
+                        target,
+                        Some(parse_snbt(inline).expect("inline macro arguments")),
+                        Some(snbt_types(inline)),
+                    ),
+                    None => (rest, None, None),
+                },
             };
             let name = target.trim().split_once(':').expect("qualified function").1;
-            return self.run_function(name, context, args.as_ref());
+            return self.run_typed_function(name, context, args.as_ref(), types.as_ref());
         }
         if let Some(rest) = command.strip_prefix("scoreboard players ") {
             return self.exec_scoreboard(rest, context);
@@ -461,7 +498,18 @@ impl Sim {
                         let tokens: Vec<&str> = after.splitn(3, ' ').collect();
                         assert_eq!(tokens[0], "storage", "only storage data conditions: {rest}");
                         let (path, after_path) = split_path(tokens[2]);
-                        let present = self.storage_get(path).is_some();
+                        let present = if let Some((base, pattern)) = path.split_once('{') {
+                            let pattern =
+                                parse_snbt(&format!("{{{pattern}")).expect("NBT predicate");
+                            let value = if base.is_empty() {
+                                Some(&self.storage)
+                            } else {
+                                self.storage_get(base)
+                            };
+                            value.is_some_and(|value| nbt_subset(value, &pattern))
+                        } else {
+                            self.storage_get(path).is_some()
+                        };
                         if present == negate {
                             contexts.clear();
                         }
@@ -524,6 +572,7 @@ impl Sim {
                             let tokens: Vec<&str> = after_path.splitn(3, ' ').collect();
                             stores.push(Store::Storage {
                                 path: path.to_string(),
+                                kind: tokens[0].chars().next().unwrap().to_string(),
                                 scale: tokens[1].parse().expect("store scale"),
                                 success,
                             });
@@ -556,9 +605,16 @@ impl Sim {
                 let holder = self.holder(holder, ctx);
                 self.scores.insert((holder, objective.clone()), value);
             }
-            Store::Storage { path, scale, .. } => {
-                let scaled = (value as f64 * scale) as i64;
-                let _ = self.storage_set(path, Value::from(scaled));
+            Store::Storage {
+                path, scale, kind, ..
+            } => {
+                let scaled = value as f64 * scale;
+                let number = match kind.as_str() {
+                    "f" => Value::from(f64::from(scaled as f32)),
+                    "d" => Value::from(scaled),
+                    _ => Value::from(scaled as i64),
+                };
+                let _ = self.storage_set_typed(path, number, Value::String(kind.clone()));
             }
         }
     }
@@ -664,13 +720,18 @@ impl Sim {
                 Some(("insert", source)) => {
                     let (index, source) = source.split_once(' ').expect("insert index");
                     let index: usize = index.parse().expect("insert index");
-                    let value = if let Some(snbt) = source.strip_prefix("value ") {
-                        self.read_snbt(snbt.trim())?
+                    let (value, types) = if let Some(snbt) = source.strip_prefix("value ") {
+                        (self.read_snbt(snbt.trim())?, snbt_types(snbt.trim()))
                     } else {
                         let source = source.strip_prefix("from storage ").expect("insert source");
                         let (_, source_path) = source.split_once(' ').expect("source path");
-                        self.storage_get(split_path(source_path.trim()).0)?.clone()
+                        let source_path = split_path(source_path.trim()).0;
+                        (
+                            self.storage_get(source_path)?.clone(),
+                            self.types_at(source_path),
+                        )
                     };
+                    let mut tags = self.types_at(path).as_array().cloned().unwrap_or_default();
                     let mut list = match self.storage_get(path) {
                         Some(Value::Array(items)) => items.clone(),
                         _ => Vec::new(),
@@ -679,12 +740,23 @@ impl Sim {
                         return None;
                     }
                     list.insert(index, value);
-                    return self.storage_set(path, Value::Array(list)).then_some(1);
+                    tags.insert(index, types);
+                    return self
+                        .storage_set_typed(path, Value::Array(list), Value::Array(tags))
+                        .then_some(1);
                 }
                 _ => panic!("unsupported data modify: {rest}"),
             };
+            let mut types = Value::Null;
             let value = if let Some(snbt) = source.strip_prefix("value ") {
-                self.read_snbt(snbt.trim())?
+                let value = self.read_snbt(snbt.trim())?;
+                types = snbt_types(snbt.trim());
+                value
+            } else if let Some(provider) = source.strip_prefix("compute default float ") {
+                let provider = self.read_snbt(provider)?;
+                let result = self.compute_float(&provider)?;
+                types = Value::String("f".into());
+                Value::from(f64::from(result))
             } else if let Some(items) = source
                 .strip_prefix("from storage ")
                 .and_then(|source| source.trim().strip_suffix("[]"))
@@ -698,12 +770,23 @@ impl Sim {
                     Some(Value::Array(existing)) => existing.clone(),
                     _ => Vec::new(),
                 };
+                let mut tags = self.types_at(path).as_array().cloned().unwrap_or_default();
+                tags.extend(
+                    self.types_at(source_path)
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default(),
+                );
                 list.extend(items);
-                return self.storage_set(path, Value::Array(list)).then_some(1);
+                return self
+                    .storage_set_typed(path, Value::Array(list), Value::Array(tags))
+                    .then_some(1);
             } else if let Some(source) = source.strip_prefix("from storage ") {
                 let (_, source_path) = source.split_once(' ').expect("source path");
                 // Copying from a missing path fails the command.
-                self.storage_get(split_path(source_path.trim()).0)?.clone()
+                let source_path = split_path(source_path.trim()).0;
+                types = self.types_at(source_path);
+                self.storage_get(source_path)?.clone()
             } else if let Some(source) = source.strip_prefix("string storage ") {
                 let (_, source) = source.split_once(' ').expect("source path");
                 let (source_path, offsets) = split_path(source);
@@ -719,7 +802,7 @@ impl Sim {
                 let text = match self.storage_get(source_path)? {
                     Value::String(text) => text.clone(),
                     Value::Array(_) | Value::Object(_) => return None,
-                    other => other.to_string(),
+                    _ => self.numeric_text(source_path)?,
                 };
                 let chars: Vec<char> = text.chars().collect();
                 let len = chars.len() as i64;
@@ -740,16 +823,21 @@ impl Sim {
                     Some(_) => panic!("append to non-list at {path}"),
                     None => Vec::new(),
                 };
+                let mut tags = self.types_at(path).as_array().cloned().unwrap_or_default();
+                tags.push(types);
                 list.push(value);
-                if !self.storage_set(path, Value::Array(list)) {
+                if !self.storage_set_typed(path, Value::Array(list), Value::Array(tags)) {
                     return None;
                 }
             } else {
                 // `set` fails when the value is already there.
-                if self.storage_get(path) == Some(&value) {
+                if self
+                    .storage_get(path)
+                    .is_some_and(|old| nbt_equal(old, &self.types_at(path), &value, &types))
+                {
                     return None;
                 }
-                if !self.storage_set(path, value) {
+                if !self.storage_set_typed(path, value, types) {
                     return None;
                 }
             }
@@ -785,6 +873,73 @@ impl Sim {
             });
         }
         panic!("unsupported data command: data {rest}");
+    }
+
+    fn compute_float(&self, provider: &Value) -> Option<f32> {
+        if let Some(value) = provider.as_f64() {
+            return Some(value as f32);
+        }
+        let kind = provider["type"].as_str()?.strip_prefix("minecraft:")?;
+        let input = || self.compute_float(&provider["input"]);
+        let left = || self.compute_float(&provider["left"]);
+        let right = || self.compute_float(&provider["right"]);
+        let value = match kind {
+            "constant" => provider["value"].as_f64()? as f32,
+            "storage" => self.storage_get(provider["path"].as_str()?)?.as_f64()? as f32,
+            "from_int" => {
+                let int = &provider["input"];
+                if let Some(value) = int.as_i64() {
+                    value as f32
+                } else if int["type"] == "minecraft:storage" {
+                    self.storage_get(int["path"].as_str()?)?.as_i64()? as f32
+                } else {
+                    panic!("unsupported integer provider {int}");
+                }
+            }
+            "add" => provider["inputs"]
+                .as_array()?
+                .iter()
+                .try_fold(0.0f32, |a, v| Some(a + self.compute_float(v)?))?,
+            "mul" => provider["inputs"]
+                .as_array()?
+                .iter()
+                .try_fold(1.0f32, |a, v| Some(a * self.compute_float(v)?))?,
+            "sub" => left()? - right()?,
+            "div" => left()? / right()?,
+            "mod" => left()? % right()?,
+            "pow" => self
+                .compute_float(&provider["base"])?
+                .powf(self.compute_float(&provider["exponent"])?),
+            "floor" => input()?.floor(),
+            "ceil" => input()?.ceil(),
+            "abs" => input()?.abs(),
+            "negate" => -input()?,
+            "sqrt" => input()?.sqrt(),
+            _ => panic!("unsupported float provider {provider}"),
+        };
+        value.is_finite().then_some(value)
+    }
+
+    fn types_at(&self, path: &str) -> Value {
+        Self::tree_get(&self.storage_types, path)
+            .cloned()
+            .unwrap_or_else(|| {
+                self.storage_get(path)
+                    .map(default_types)
+                    .unwrap_or(Value::Null)
+            })
+    }
+
+    fn numeric_text(&self, path: &str) -> Option<String> {
+        let value = self.storage_get(path)?;
+        let number = value.as_f64()?;
+        let kind = self.types_at(path);
+        Some(match kind.as_str().unwrap_or("i") {
+            "f" => format!("{:?}f", number as f32),
+            "d" => format!("{number:?}d"),
+            "i" => value.to_string(),
+            suffix => format!("{value}{suffix}"),
+        })
     }
 
     fn holder(&self, holder: &str, ctx: &Context) -> String {
@@ -868,7 +1023,11 @@ impl Sim {
     }
 
     fn storage_get(&self, path: &str) -> Option<&Value> {
-        let mut current = &self.storage;
+        Self::tree_get(&self.storage, path)
+    }
+
+    fn tree_get<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+        let mut current = root;
         for segment in parse_path(path)? {
             current = match segment {
                 Segment::Key(key) => current.get(&key)?,
@@ -890,10 +1049,23 @@ impl Sim {
     /// Minecraft, a key under a value that isn't a compound and an index
     /// under one that isn't a list match nothing, and the command fails.
     fn storage_set(&mut self, path: &str, value: Value) -> bool {
+        let types = default_types(&value);
+        self.storage_set_typed(path, value, types)
+    }
+
+    fn storage_set_typed(&mut self, path: &str, value: Value, types: Value) -> bool {
+        if !Self::tree_set(&mut self.storage, path, value) {
+            return false;
+        }
+        assert!(Self::tree_set(&mut self.storage_types, path, types));
+        true
+    }
+
+    fn tree_set(root: &mut Value, path: &str, value: Value) -> bool {
         let Some(segments) = parse_path(path) else {
             return false;
         };
-        let mut current = &mut self.storage;
+        let mut current = root;
         for (position, segment) in segments.iter().enumerate() {
             let last = position + 1 == segments.len();
             current = match segment {
@@ -932,6 +1104,11 @@ impl Sim {
     }
 
     fn storage_remove(&mut self, path: &str) {
+        Self::tree_remove(&mut self.storage, path);
+        Self::tree_remove(&mut self.storage_types, path);
+    }
+
+    fn tree_remove(root: &mut Value, path: &str) {
         let Some(mut segments) = parse_path(path) else {
             return;
         };
@@ -948,7 +1125,7 @@ impl Sim {
                 .ok()
                 .filter(|index| *index < items_len)
         };
-        let mut current = &mut self.storage;
+        let mut current = root;
         for segment in segments {
             current = match segment {
                 Segment::Key(key) => match current.get_mut(&key) {
@@ -990,6 +1167,7 @@ enum Store {
     Storage {
         path: String,
         scale: f64,
+        kind: String,
         success: bool,
     },
 }
@@ -1080,12 +1258,69 @@ fn parse_path(path: &str) -> Option<Vec<Segment>> {
 fn parse_snbt(text: &str) -> Result<Value, String> {
     let chars: Vec<char> = text.chars().collect();
     let mut position = 0;
-    let value = parse_snbt_value(&chars, &mut position)?;
+    let value = parse_snbt_value(&chars, &mut position, false)?;
     skip_spaces(&chars, &mut position);
     if position != chars.len() {
         return Err(format!("trailing SNBT input in {text}"));
     }
     Ok(value)
+}
+
+fn nbt_equal(left: &Value, left_types: &Value, right: &Value, right_types: &Value) -> bool {
+    if left_types != right_types {
+        return false;
+    }
+    match (left, right) {
+        (Value::Number(a), Value::Number(b)) if matches!(left_types.as_str(), Some("f" | "d")) => {
+            a.as_f64().unwrap().to_bits() == b.as_f64().unwrap().to_bits()
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b)
+                    .enumerate()
+                    .all(|(i, (a, b))| nbt_equal(a, &left_types[i], b, &right_types[i]))
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter().all(|(key, a)| {
+                    b.get(key)
+                        .is_some_and(|b| nbt_equal(a, &left_types[key], b, &right_types[key]))
+                })
+        }
+        _ => left == right,
+    }
+}
+
+fn nbt_subset(value: &Value, pattern: &Value) -> bool {
+    match (value, pattern) {
+        (Value::Object(value), Value::Object(pattern)) => pattern
+            .iter()
+            .all(|(key, item)| value.get(key).is_some_and(|v| nbt_subset(v, item))),
+        (Value::Array(value), Value::Array(pattern)) => pattern
+            .iter()
+            .all(|item| value.iter().any(|v| nbt_subset(v, item))),
+        (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
+        _ => value == pattern,
+    }
+}
+
+fn snbt_types(text: &str) -> Value {
+    parse_snbt_value(&text.chars().collect::<Vec<_>>(), &mut 0, true).expect("valid SNBT types")
+}
+
+fn default_types(value: &Value) -> Value {
+    match value {
+        Value::Number(n) => Value::String(if n.is_i64() || n.is_u64() { "i" } else { "d" }.into()),
+        Value::Bool(_) => Value::String("b".into()),
+        Value::Array(items) => Value::Array(items.iter().map(default_types).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), default_types(v)))
+                .collect(),
+        ),
+        _ => Value::Null,
+    }
 }
 
 fn char_at(chars: &[char], position: usize) -> Result<char, String> {
@@ -1127,7 +1362,7 @@ fn snbt_escape(chars: &[char], position: &mut usize) -> Result<char, String> {
     }
 }
 
-fn parse_snbt_value(chars: &[char], position: &mut usize) -> Result<Value, String> {
+fn parse_snbt_value(chars: &[char], position: &mut usize, types: bool) -> Result<Value, String> {
     skip_spaces(chars, position);
     Ok(match char_at(chars, *position)? {
         '"' | '\'' => {
@@ -1146,7 +1381,11 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Result<Value, Strin
                     text.push(ch);
                 }
             }
-            Value::String(text)
+            if types {
+                Value::Null
+            } else {
+                Value::String(text)
+            }
         }
         '[' => {
             *position += 1;
@@ -1157,7 +1396,7 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Result<Value, Strin
                     *position += 1;
                     break;
                 }
-                items.push(parse_snbt_value(chars, position)?);
+                items.push(parse_snbt_value(chars, position, types)?);
                 skip_spaces(chars, position);
                 if char_at(chars, *position)? == ',' {
                     *position += 1;
@@ -1174,7 +1413,7 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Result<Value, Strin
                     *position += 1;
                     break;
                 }
-                let key = match parse_snbt_value(chars, position)? {
+                let key = match parse_snbt_value(chars, position, false)? {
                     // Minecraft 26.3 refuses an empty key.
                     Value::String(key) if key.is_empty() => {
                         return Err("SNBT compound key is empty".to_string())
@@ -1187,7 +1426,7 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Result<Value, Strin
                     return Err("SNBT compound key without `:`".to_string());
                 }
                 *position += 1;
-                let value = parse_snbt_value(chars, position)?;
+                let value = parse_snbt_value(chars, position, types)?;
                 map.insert(key, value);
                 skip_spaces(chars, position);
                 if char_at(chars, *position)? == ',' {
@@ -1203,11 +1442,33 @@ fn parse_snbt_value(chars: &[char], position: &mut usize) -> Result<Value, Strin
                 *position += 1;
             }
             let token = token.trim();
+            if types {
+                let suffix = token.chars().last().unwrap_or('i').to_ascii_lowercase();
+                let numeric =
+                    token.trim_end_matches(['b', 's', 'l', 'f', 'd', 'B', 'S', 'L', 'F', 'D']);
+                return Ok(if numeric.parse::<f64>().is_ok() {
+                    Value::String(if "bslfd".contains(suffix) {
+                        suffix.to_string()
+                    } else if token.contains(['.', 'e', 'E']) {
+                        "d".into()
+                    } else {
+                        "i".into()
+                    })
+                } else if matches!(token, "true" | "false") {
+                    Value::String("b".into())
+                } else {
+                    Value::Null
+                });
+            }
             let numeric = token.trim_end_matches(['b', 's', 'l', 'B', 'S', 'L']);
             if let Ok(int) = numeric.parse::<i64>() {
                 Value::from(int)
             } else if let Ok(float) = token.trim_end_matches(['d', 'f', 'D', 'F']).parse::<f64>() {
-                Value::from(float)
+                Value::from(if token.ends_with(['f', 'F']) {
+                    f64::from(float as f32)
+                } else {
+                    float
+                })
             } else if token == "true" {
                 Value::from(1)
             } else if token == "false" {
@@ -1234,7 +1495,7 @@ fn skip_spaces(chars: &[char], position: &mut usize) {
 /// The line with each `$(key)` filled in, or `None` when an argument is
 /// missing. A string goes in as it is, so the command reads its backslashes
 /// and quotes again.
-fn expand_macro(line: &str, args: &Value) -> Option<String> {
+fn expand_macro(line: &str, args: &Value, types: Option<&Value>) -> Option<String> {
     let mut result = String::new();
     let mut rest = line;
     while let Some(start) = rest.find("$(") {
@@ -1243,6 +1504,14 @@ fn expand_macro(line: &str, args: &Value) -> Option<String> {
         let key = &rest[start + 2..end];
         match args.get(key)? {
             Value::String(text) => result.push_str(text),
+            Value::Number(value)
+                if types
+                    .and_then(|types| types.get(key))
+                    .and_then(Value::as_str)
+                    == Some("f") =>
+            {
+                result.push_str(&(value.as_f64()? as f32).to_string())
+            }
             other => result.push_str(&other.to_string()),
         }
         rest = &rest[end + 1..];

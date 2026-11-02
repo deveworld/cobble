@@ -231,7 +231,7 @@ fn exponent_literals_work_in_resource_json_and_code() {
         r#"
 x = 1e3
 y = 2E+2
-z = 0
+z = 0.0
 
 def main():
     global z
@@ -239,10 +239,10 @@ def main():
 "#,
         &[],
     );
-    assert_eq!(sim.var("x"), 1000);
-    assert_eq!(sim.var("y"), 200);
+    assert_eq!(sim.storage["vars"]["x"].as_f64(), Some(1000.0));
+    assert_eq!(sim.storage["vars"]["y"].as_f64(), Some(200.0));
     sim.call("main");
-    assert_eq!(sim.var("z"), 1050);
+    assert_eq!(sim.storage["vars"]["z"].as_f64(), Some(1050.0));
 }
 
 #[test]

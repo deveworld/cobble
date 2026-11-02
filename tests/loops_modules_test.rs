@@ -519,54 +519,36 @@ fn a_warning_for_a_module_value_points_at_its_line() {
             "x = 1\n\ndef f():\n    y = (9999999999)\n",
             "main.cbl:4:5: warning[number-out-of-range]",
         ),
-        (
-            "x = 1\npersist b = 2.5\n",
-            "main.cbl:2:1: warning[fractional-number]",
-        ),
-        (
-            "x = 1\n\ndef f():\n    z = (2.5)\n",
-            "main.cbl:4:5: warning[fractional-number]",
-        ),
+        ("x = 1\npersist b = 2.5\n", ""),
+        ("x = 1\n\ndef f():\n    z = (2.5)\n", ""),
     ] {
         let (ok, stderr) = cli_build(source);
         assert!(ok, "{stderr}");
-        assert!(stderr.contains(expected), "{source}\n{stderr}");
+        if expected.is_empty() {
+            assert!(!stderr.contains("warning[fractional-number]"), "{stderr}");
+        } else {
+            assert!(stderr.contains(expected), "{source}\n{stderr}");
+        }
     }
 }
 
 // --- A fractional argument (bug 32) ---
 
 #[test]
-fn a_fractional_argument_used_as_a_number_warns_at_the_call() {
-    for (source, expected) in [
-        (
-            "def v(a):\n    return a * 2\n\ndef main():\n    out = v(0.6)\n",
-            "main.cbl:5:5: warning[fractional-number]",
-        ),
-        (
-            "def v(a):\n    x = a + 1\n    return x\n\ndef main():\n    out = v(1.5)\n",
-            "main.cbl:6:5: warning[fractional-number]",
-        ),
-        (
-            "const P = 0.6\n\ndef add(a):\n    x = a + 1\n\ndef main():\n    add(P)\n",
-            "main.cbl:7:5: warning[fractional-number]",
-        ),
-        (
-            "def add(a):\n    x = a + 1\n\ndef main():\n    add(-(-0.6))\n",
-            "main.cbl:5:5: warning[fractional-number]",
-        ),
-        (
-            "y = [-0.6]\n\ndef show(a):\n    /say show {a}\n\ndef main():\n    show(y[0])\n",
-            "is read as -1",
-        ),
-        (
-            "const I = 1\ny = [0.6, 2.5]\n\ndef show(a):\n    /say show {a}\n\ndef main():\n    show(y[I])\n",
-            "which holds 2.5, is read as 2",
-        ),
+fn fractional_numeric_arguments_keep_their_values_without_truncation_warnings() {
+    for source in [
+        "def v(a):\n    return a * 2\n\ndef main():\n    out = v(0.6)\n",
+        "def v(a):\n    x = a + 1\n    return x\n\ndef main():\n    out = v(1.5)\n",
+        "const P = 0.6\ndef add(a):\n    x = a + 1\ndef main():\n    add(P)\n",
+        "def add(a):\n    x = a + 1\ndef main():\n    add(-(-0.6))\n",
+        "y = [-0.6]\ndef show(a):\n    /say show {a}\ndef main():\n    show(y[0])\n",
     ] {
         let (ok, stderr) = cli_build(source);
         assert!(ok, "{stderr}");
-        assert!(stderr.contains(expected), "{source}\n{stderr}");
+        assert!(
+            !stderr.contains("warning[fractional-number]"),
+            "{source}\n{stderr}"
+        );
     }
 }
 
@@ -589,7 +571,7 @@ fn a_fractional_argument_used_only_as_text_arrives_as_written() {
 }
 
 #[test]
-fn fractional_storage_literals_keep_double_precision_when_forwarded() {
+fn fractional_storage_literals_keep_float_precision_when_forwarded() {
     let source = r#"const P = 0.6
 def show(v):
     /say show {v}
@@ -606,8 +588,8 @@ def main():
     let (_temp, output) = compile(source).unwrap();
     let functions = common::mcsim::load_functions(&output);
     let main = functions["main"].join("\n");
-    assert!(main.contains("0.6d"), "{main}");
-    assert!(!main.contains("0.6f"), "{main}");
+    assert!(main.contains("6e-1f"), "{main}");
+    assert!(!main.contains("0.6d"), "{main}");
 }
 
 #[test]
@@ -684,9 +666,9 @@ fn a_comparison_with_a_number_a_score_cant_hold_is_exact() {
         ("x < 9999999999", "yes"),
         ("x > -9999999999", "yes"),
         ("x >= 9999999999", "no"),
-        ("x == 2147483647.5", "no"),
-        ("x >= 2147483646.5", "yes"),
-        ("x <= 2147483646.5", "no"),
+        ("x == double(2147483647.5)", "no"),
+        ("x >= double(2147483646.5)", "yes"),
+        ("x <= double(2147483646.5)", "no"),
         ("9999999999 > x", "yes"),
     ] {
         let source = format!(

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[test]
-fn variables_live_on_the_pack_objective() {
+fn variables_live_in_the_packs_canonical_storage() {
     let mut sim = Sim::load(
         r#"
 round = 3
@@ -21,7 +21,7 @@ def next_round():
         &[],
     );
     sim.call("next_round");
-    assert_eq!(sim.score("round", "sim.vars"), 7);
+    assert_eq!(sim.var("round"), 7);
     assert!(sim.try_score("round", "temp").is_none());
     assert!(sim
         .function_text("_cobble_init")
@@ -68,8 +68,8 @@ fn two_packs_with_the_same_variable_names_use_separate_objectives() {
     let beta_init = read(&beta.1, "beta", "_cobble_init");
     assert!(alpha_init.contains("scoreboard players set round alpha.vars 1"));
     assert!(beta_init.contains("scoreboard players set round beta.vars 1"));
-    assert!(read(&alpha.1, "alpha", "bump").contains("scoreboard players add round alpha.vars 1"));
-    assert!(read(&beta.1, "beta", "bump").contains("scoreboard players add round beta.vars 1"));
+    assert!(read(&alpha.1, "alpha", "bump").contains("data modify storage alpha:global vars.round"));
+    assert!(read(&beta.1, "beta", "bump").contains("data modify storage beta:global vars.round"));
 }
 
 #[test]

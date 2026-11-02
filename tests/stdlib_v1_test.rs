@@ -1,3 +1,4 @@
+mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -385,25 +386,14 @@ def use_math():
     ));
 
     let content = read_function(&output_dir, "use_math");
-    assert!(content.contains("scoreboard players set #math_input stdlib_v1.vars 100"));
-    assert!(content.contains("function stdlib_v1:_cobble_math_sqrt"));
-    assert!(content.contains(
-        "scoreboard players operation #use_math.root stdlib_v1.vars = #math_result stdlib_v1.vars"
-    ));
-    // Binary math arguments are staged into unique scratches and copied into
-    // the shared helper inputs right before the call.
-    assert!(content.contains("scoreboard players set #math_arg_0 stdlib_v1.vars 3"));
-    assert!(content.contains("scoreboard players set #math_arg_1 stdlib_v1.vars 4"));
-    assert!(content.contains(
-        "scoreboard players operation #math_input stdlib_v1.vars = #math_arg_0 stdlib_v1.vars"
-    ));
-    assert!(content.contains(
-        "scoreboard players operation #math_input2 stdlib_v1.vars = #math_arg_1 stdlib_v1.vars"
-    ));
-    assert!(content.contains("function stdlib_v1:_cobble_math_min"));
-    assert!(content.contains(
-        "scoreboard players operation #use_math.lower stdlib_v1.vars = #math_result stdlib_v1.vars"
-    ));
+    assert!(content.contains("function stdlib_v1:_cobble_numeric_sqrt"));
+    let mut sim = common::mcsim::Sim::load(
+        "def use_math():\n    root = math.sqrt(100)\n    lower = math.min(3, 4)\n",
+        &[],
+    );
+    sim.call("use_math");
+    assert_eq!(sim.var("#use_math.root"), 10);
+    assert_eq!(sim.var("#use_math.lower"), 3);
 }
 
 #[test]

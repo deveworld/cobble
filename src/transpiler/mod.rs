@@ -13,6 +13,8 @@ mod expressions;
 mod function_context;
 mod intrinsics;
 mod module_init;
+mod numbers;
+mod numeric_runtime;
 mod placeholders;
 pub(crate) mod resource_format;
 mod resource_references;
@@ -23,6 +25,7 @@ mod source_map;
 mod statement_processors;
 mod stdlib_modules;
 mod storage_paths;
+mod storage_variables;
 mod symbols;
 mod text_escape;
 mod types;
@@ -106,11 +109,14 @@ pub struct Transpiler {
     current_statement_source: Option<SourceLocation>,
     temp_counter: u32,
     symbols: Symbols,
+    storage_variables: storage_variables::StorageVariables,
     functions: FunctionTable,
     /// Module-level assignments in source order, replayed in `_cobble_init`.
     module_level_vars: Vec<ModuleLevelAssignment>,
     /// Prelude helpers already in the pack.
+    real_variables: HashSet<String>,
     prelude_compiled: HashSet<String>,
+    prelude_sources: HashMap<&'static str, crate::ast::Program>,
     /// Whether the statements being lowered come from the prelude, so they
     /// have no source lines of their own.
     in_prelude: bool,
@@ -292,9 +298,12 @@ impl Transpiler {
             current_statement_source: None,
             temp_counter: 0,
             symbols: Symbols::default(),
+            storage_variables: storage_variables::StorageVariables::default(),
             functions: FunctionTable::default(),
             module_level_vars: Vec::new(),
+            real_variables: HashSet::new(),
             prelude_compiled: HashSet::new(),
+            prelude_sources: HashMap::new(),
             in_prelude: false,
             imports: ImportState::default(),
             source_locations: SourceLocations::default(),
@@ -365,10 +374,15 @@ impl Transpiler {
     }
 
     pub fn transpile(&mut self, program: &Program) -> Result<(), TranspileError> {
+        self.storage_variables.restore(&mut self.data_pack);
         let result = self.transpile_program(program);
         // Tags merged by the file's declarations reach `json_resources`.
         let flushed = self.data_pack.flush_tags().map_err(TranspileError::from);
-        result.and(flushed)
+        let result = result.and(flushed);
+        if result.is_ok() {
+            self.storage_variables.lower(&mut self.data_pack);
+        }
+        result
     }
 
     fn transpile_program(&mut self, program: &Program) -> Result<(), TranspileError> {
@@ -389,6 +403,7 @@ impl Transpiler {
 
         // Before the imports, which read the file's writes too.
         self.record_container_writes(program);
+        self.record_potential_real_globals(program);
         self.hold_later_variables(program);
         self.process_imports(program)?;
 
@@ -728,6 +743,9 @@ impl Transpiler {
                     .process_command_string(&clean_cmd)
                     .map_err(|error| error.with_location_if_missing(source_location.clone()))?;
 
+                if !processed.is_empty() {
+                    self.data_pack.track_objective("temp");
+                }
                 self.forget_storage_copies(std::slice::from_ref(&processed_cmd));
                 processed.extend(self.quoted_hover_commands(&clean_cmd, processed_cmd));
                 if let Some(ref mut commands) = self.current_function {

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Native float32 arithmetic and software float64 arithmetic, with `int()`,
+  `float()`, and `double()` conversions. Numeric values retain their precision
+  through function calls, containers, comparisons, and formatting.
 - Explicit f-strings in commands and expressions: `f"Wave {wave}"`,
   `f'...'`, and `F"..."` insert named values, with `{{` and `}}` for literal
   braces. Whole `tellraw` and `title` messages need no JSON wrapper.
@@ -75,6 +78,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"required": False`.
 
 ### Changed
+- Variables, including integers, use canonical NBT storage. Scores are integer
+  calculation registers; external commands should use the documented storage
+  paths. Decimal and exponent literals now default to float32.
 - Quoted strings keep braces literally; interpolation requires an `f`
   prefix, including inside JSON/SNBT components and text helper arguments.
   Unquoted command arguments such as `/tp {player} {x} {y} {z}` are unchanged.

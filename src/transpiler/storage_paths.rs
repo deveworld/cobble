@@ -81,6 +81,7 @@ pub(in crate::transpiler) trait StoragePathOps {
             return CobbleType::Unknown;
         }
         let value_type = |value: &Expression| match value {
+            Expression::Number(value) if value.fract() != 0.0 => CobbleType::Float,
             Expression::Number(_) | Expression::Boolean(_) => CobbleType::Integer,
             Expression::String(_) => CobbleType::String,
             Expression::Array(_) => CobbleType::List,
@@ -90,7 +91,7 @@ pub(in crate::transpiler) trait StoragePathOps {
                 Some(known) => known.clone(),
                 None => CobbleType::Unknown,
             },
-            Expression::Binary(..) | Expression::Unary(..) => CobbleType::Integer,
+            Expression::Binary(..) | Expression::Unary(..) => CobbleType::Unknown,
             _ => CobbleType::Unknown,
         };
         let lacks = symbols
@@ -155,10 +156,18 @@ pub(in crate::transpiler) trait StoragePathOps {
         let symbols = self.storage_symbols();
         match index {
             Expression::String(_) => CobbleType::String,
+            Expression::Number(value) if value.fract() != 0.0 => CobbleType::Float,
             Expression::Number(_) | Expression::Boolean(_) => CobbleType::Integer,
+            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "_cobble_float") => {
+                CobbleType::Float
+            }
             Expression::Identifier(name) => {
                 if symbols.compile_time_constants.contains_key(name) {
-                    return CobbleType::Integer;
+                    return symbols
+                        .variable_types
+                        .get(name)
+                        .cloned()
+                        .unwrap_or(CobbleType::Integer);
                 }
                 if self.is_storage_current_param(name) {
                     return CobbleType::Unknown;
@@ -223,6 +232,12 @@ pub(in crate::transpiler) trait StoragePathOps {
         if let Expression::Subscript(base, index) = expr {
             if matches!(&**index, Expression::String(key) if key.is_empty()) {
                 return Err(EMPTY_KEY_ERROR.into());
+            }
+            if matches!(
+                self.storage_key_type(index),
+                CobbleType::Float | CobbleType::Double
+            ) {
+                return Err("List and string indexes must be integers; use int(value) to convert a real number. Map keys must be text.".into());
             }
             if self.storage_key_type(index) == CobbleType::String
                 && self.storage_expr_type(base) == Some(CobbleType::List)
@@ -376,6 +391,11 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
     fn storage_scoreboard_objective(&self, name: &str) -> Option<&str>;
     /// Static SNBT serialization for literal/const expressions.
     fn storage_static_snbt(&self, expr: &Expression) -> Result<String, TranspileError>;
+    fn storage_numeric_value(
+        &mut self,
+        path: &str,
+        expr: &Expression,
+    ) -> Option<Result<Vec<String>, TranspileError>>;
 
     /// Commands that fill the macro arguments of `plan`'s path at
     /// `_cobble_dyn_<id>`, and that path. A key whose kind the running pack
@@ -456,6 +476,15 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
                 "execute store success score {kind_score} temp run data modify storage {namespace}:global {base}_t set from storage {namespace}:global {base}_k"
             ),
         ]);
+        let suffix_path = format!("{base}_suffix");
+        commands.push(format!("execute if score {kind_score} temp matches 1 run data modify storage {namespace}:global {suffix_path} set string storage {namespace}:global {base}_k -1"));
+        let (parent, key) = suffix_path
+            .rsplit_once('.')
+            .unwrap_or(("", suffix_path.as_str()));
+        for suffix in ["f", "d"] {
+            commands.push(format!("execute if score {kind_score} temp matches 1 if data storage {namespace}:global {parent}{{{key}:\"{suffix}\"}} run scoreboard players set {kind_score} temp -1"));
+        }
+        commands.push(format!("execute if score {kind_score} temp matches -1 run tellraw @a {{\"text\":\"List and string indexes must be integers.\",\"color\":\"red\"}}"));
         // As text, the key goes in a quoted path key; a number stays as it is.
         commands.push(format!(
             "data modify storage {namespace}:global {} set from storage {namespace}:global {base}_k",
@@ -1149,6 +1178,9 @@ pub(in crate::transpiler) trait StorageValueOps: StoragePathOps {
         expr: &Expression,
         missing: Option<&'static str>,
     ) -> Result<Vec<String>, TranspileError> {
+        if let Some(result) = self.storage_numeric_value(target_path, expr) {
+            return result;
+        }
         let namespace = self.storage_data_pack().namespace.clone();
         match expr {
             Expression::Identifier(name) => {
@@ -1295,6 +1327,15 @@ pub(in crate::transpiler) fn path_key_needs_macro(key: &str) -> bool {
 }
 
 impl StorageValueOps for Transpiler {
+    fn storage_numeric_value(
+        &mut self,
+        path: &str,
+        expr: &Expression,
+    ) -> Option<Result<Vec<String>, TranspileError>> {
+        (self.uses_storage_numbers() && super::numbers::numeric_computation(expr))
+            .then(|| self.numeric_value_commands(path, expr))
+    }
+
     fn storage_next_temp_id(&mut self) -> u32 {
         self.next_temp_id()
     }
@@ -1343,6 +1384,15 @@ impl StoragePathOps for Transpiler {
 }
 
 impl<'a> StorageValueOps for ExpressionEvaluator<'a> {
+    fn storage_numeric_value(
+        &mut self,
+        path: &str,
+        expr: &Expression,
+    ) -> Option<Result<Vec<String>, TranspileError>> {
+        (self.numeric_backend && super::numbers::numeric_computation(expr))
+            .then(|| self.numeric_value_commands(path, expr))
+    }
+
     fn storage_next_temp_id(&mut self) -> u32 {
         self.next_temp_id()
     }

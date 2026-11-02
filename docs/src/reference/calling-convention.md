@@ -5,14 +5,15 @@ or reading variables from generated output. The examples use `mypack`.
 
 ## Local And Module Variables
 
-Numbers and booleans use the objective `mypack.vars`. Strings, lists, and
-maps use the storage `mypack:global`:
+All variables use the storage `mypack:global`. The `mypack.vars` objective
+contains temporary integer registers and supports raw `temp` commands in
+Cobble source:
 
-| Value | Score holder | Storage path |
-| --- | --- | --- |
-| Module variable `score` | `score` | `vars.score` |
-| Local `score` in `tick` | `#tick.score` | `locals.tick.score` |
-| Parameter `amount` | — | `args.amount` |
+| Value | Storage path |
+| --- | --- |
+| Module variable `score` | `vars.score` |
+| Local `score` in `tick` | `locals.tick.score` |
+| Parameter `amount` | `args.amount` |
 
 Use module variables for data other packs need to read. Compiler scratch
 scores and paths beginning with `_` are internal.
@@ -35,10 +36,10 @@ def read_level():
         /scoreboard players get @s lvl
 ```
 
-Outside Cobble, use the generated holder and objective:
+Outside Cobble, access the canonical storage value:
 
 ```mcfunction
-scoreboard players get #read_level.level mypack.vars
+data get storage mypack:global locals.read_level.level
 ```
 
 ## Arguments
@@ -48,26 +49,29 @@ another pack, set `args` and use `with storage`:
 
 ```mcfunction
 data modify storage mypack:global args set value {amount:3}
-function mypack:double with storage mypack:global args
+function mypack:twice with storage mypack:global args
 ```
 
 This works with a Cobble function such as:
 
 ```python
-def double(amount):
+def twice(amount):
     return amount * 2
 ```
 
-An inline `/function mypack:double {amount:3}` fills Minecraft macro fields
+An inline `/function mypack:twice {amount:3}` fills Minecraft macro fields
 but does not set the storage used by Cobble expressions. Prefer a Cobble
 wrapper for text arguments that need escaping or for nested calls.
 
 ## Return Values
 
-Cobble functions return integers. Other packs can capture the result with:
+Cobble calls preserve the complete numeric result in `mypack:global
+_cobble_return`. Read or copy it immediately after the call to retain a float
+or double. Minecraft's command result remains a rounded-down integer for
+`execute store` compatibility:
 
 ```mcfunction
-execute store result score result points run function mypack:double with storage mypack:global args
+execute store result score result points run function mypack:twice with storage mypack:global args
 ```
 
 A Cobble `return` inside a loop or execute block still ends the enclosing
@@ -82,5 +86,5 @@ in recursive functions; use Cobble's `return`.
 
 ## Reserved Storage Paths
 
-Do not write compiler-managed paths such as `call_stack`, `frames`, or paths
-beginning with `_`. Access `vars`, `locals`, and `args` only as described above.
+Except for reading `_cobble_return` after a call, do not access internal paths
+such as `call_stack`, `frames`, or paths beginning with `_`. Access `vars`, `locals`, and `args` only as described above.

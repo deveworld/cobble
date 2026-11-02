@@ -113,7 +113,10 @@ def tick():
     let tick = read_function(&output_dir, "tick");
     let condition_lines = tick
         .lines()
-        .filter(|line| line.starts_with("execute if score #tick.x cobble.vars"))
+        .filter(|line| {
+            line.starts_with("execute if score #tick.x cobble.vars")
+                && line.contains("run function")
+        })
         .count();
     assert_eq!(
         condition_lines, 1,

@@ -376,7 +376,7 @@ impl<'a> ConditionTranslator<'a> {
             .cloned()
             .unwrap_or(CobbleType::Unknown);
         match var_type {
-            CobbleType::Integer | CobbleType::Boolean | CobbleType::Unknown => None,
+            CobbleType::Integer | CobbleType::Float | CobbleType::Double | CobbleType::Boolean | CobbleType::Unknown => None,
             CobbleType::String | CobbleType::List | CobbleType::Map => Some(format!(
                 "Variable '{}' is storage-backed ({}) and cannot be used in a scoreboard condition; compare integers or use a score variable",
                 name,

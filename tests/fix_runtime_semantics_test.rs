@@ -503,8 +503,11 @@ def compute():
         &[],
     );
     sim.call("compute");
-    assert_eq!(sim.var("#compute.area"), 314);
-    assert_eq!(sim.var("#compute.half"), 0);
+    assert_eq!(
+        sim.storage["locals"]["compute"]["area"].as_f64(),
+        Some(f64::from(("3.14159".parse::<f32>().unwrap() * 10.0) * 10.0))
+    );
+    assert_eq!(sim.storage["locals"]["compute"]["half"].as_f64(), Some(0.0));
 }
 
 #[test]
@@ -821,5 +824,5 @@ def f():
     );
     sim.call("f");
     assert_eq!(sim.log, vec!["Server: 0.5"]);
-    assert_eq!(sim.var("#f.whole"), 0);
+    assert_eq!(sim.storage["locals"]["f"]["whole"].as_f64(), Some(0.5));
 }

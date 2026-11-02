@@ -7,20 +7,19 @@ the differences to keep in mind when porting code.
 
 | Area | Cobble behavior |
 | --- | --- |
-| Numbers | Signed 32-bit integers. Fractional score assignments warn and truncate; overflow wraps. |
-| Division | `/` and `//` both round down. `^` and `**` both mean power. |
+| Numbers | Signed 32-bit integers, 32-bit floats, and explicit 64-bit doubles. Integer overflow wraps. |
+| Division | Integer `/` rounds down; real `/` divides. `//` rounds down. `^` and `**` both mean power. |
 | Lists and maps | Assignment and function arguments copy values rather than sharing an object. |
 | Map keys | Non-empty strings only. |
-| Function results | Integers only; conditions return `1` or `0`. |
+| Function results | Numbers only; conditions return `1` or `0`. |
 | Text indexing | Runtime positions count UTF-16 units; an emoji may occupy two positions. |
 | Missing values | Missing items and fields give `0`, or an empty value when the type is known, rather than raising an exception. |
 | Searching | `index()` returns `-1` when no item matches. |
 | Sorting | `sort()` and `sorted()` order numbers. |
 | Execution | Calls and loop iterations run in the same game tick. |
 
-Numeric values used only as command arguments can keep fractions. Once a
-value enters scoreboard arithmetic, it uses integer rules. Numeric reads
-from storage round down.
+All variables use storage. Numeric expressions preserve real values;
+explicit raw scoreboard commands still use Minecraft's integer rules.
 
 A function assignment creates a local unless declared `global`. Imported
 files share names rather than providing separate Python module objects;
@@ -41,7 +40,7 @@ These forms are supported:
 | Slices | `text[1:3]`, `items[-2:]` |
 | Joining and repeating | `"Hello " + name`, `items + [4]`, `"-" * n` |
 | List methods | `append`, `extend`, `insert`, `pop`, `remove`, `index`, `count`, `sort`, `reverse`, `clear` |
-| Builtins | `abs`, `min`, `max`, `sum`, `sorted`, `str`, `len` |
+| Builtins | `int`, `float`, `double`, `abs`, `min`, `max`, `sum`, `sorted`, `str`, `len` |
 | Iteration | `for i, item in enumerate(items):`, `for ch in text:` |
 | Text matching | `case "sword":` |
 

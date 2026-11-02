@@ -35,6 +35,8 @@ pub struct Import {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CobbleType {
     Integer, // i32 - stored in scoreboard
+    Float,   // IEEE 754 binary32, stored as an NBT float
+    Double,  // IEEE 754 binary64, stored as an NBT double
     Boolean, // bool - stored as 0/1 in scoreboard
     String,  // String - only in function params/macros
     List,    // List/Array - stored in storage
@@ -47,6 +49,8 @@ impl CobbleType {
     pub fn name(&self) -> &str {
         match self {
             CobbleType::Integer => "integer",
+            CobbleType::Float => "float",
+            CobbleType::Double => "double",
             CobbleType::Boolean => "boolean",
             CobbleType::String => "string",
             CobbleType::List => "list",
@@ -249,6 +253,7 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    FloorDiv,
     Mod,
     Pow,
 

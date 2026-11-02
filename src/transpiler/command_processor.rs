@@ -616,6 +616,13 @@ impl<'a> CommandProcessor<'a> {
                 format!("data modify storage {storage} {TEXT_COPY}.{name} set string storage {storage} {path}"),
                 format!("execute unless data storage {storage} {TEXT_COPY}.{name} run data modify storage {storage} {SNBT_COPY}.{name} set from storage {storage} {path}"),
             ]);
+            commands.extend([
+                format!("execute store success score #text_numeric temp run data get storage {storage} {path} 1"),
+                format!("execute if score #text_numeric temp matches 1 run data modify storage {storage} _text_suffix set string storage {storage} {path} -1"),
+            ]);
+            for suffix in ["f", "d", "b", "s", "L"] {
+                commands.push(format!("execute if score #text_numeric temp matches 1 if data storage {storage} {{_text_suffix:\"{suffix}\"}} run data modify storage {storage} {TEXT_COPY}.{name} set string storage {storage} {path} 0 -1"));
+            }
         }
         Ok(commands)
     }

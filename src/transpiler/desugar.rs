@@ -9,7 +9,7 @@
 //! other local.
 
 use crate::ast::{
-    Assignment, BinaryOp, CobbleType, Expression, ForLoop, FunctionDef, IfStatement, MatchPattern,
+    Assignment, BinaryOp, CobbleType, Expression, ForLoop, IfStatement, MatchPattern,
     MatchStatement, MultiAssign, Statement, UnaryOp, WhileLoop,
 };
 use crate::transpiler::expression_evaluator::ExpressionEvaluator;
@@ -18,6 +18,40 @@ use crate::transpiler::storage_paths::{StoragePathOps, StorageValueOps};
 use crate::transpiler::{TranspileError, Transpiler};
 
 const PRELUDE: &str = include_str!("prelude.cbl");
+const BIGINT_PRELUDE: &str = include_str!("bigint_prelude.cbl");
+const DOUBLE_PRELUDE: &str = include_str!("double_prelude.cbl");
+
+pub(in crate::transpiler) fn software_result_type(name: &str) -> Option<CobbleType> {
+    match name {
+        "_cobble_big_trim"
+        | "_cobble_big_from_int"
+        | "_cobble_big_add"
+        | "_cobble_big_sub"
+        | "_cobble_big_mul_small"
+        | "_cobble_big_mul"
+        | "_cobble_big_shl"
+        | "_cobble_big_shr"
+        | "_cobble_big_from_decimal"
+        | "_cobble_big_sqrt"
+        | "_cobble_big_pow10" => Some(CobbleType::List),
+        "_cobble_big_div_small" | "_cobble_big_divmod" => Some(CobbleType::Map),
+        "_cobble_big_to_decimal" => Some(CobbleType::String),
+        "_cobble_soft_round"
+        | "_cobble_soft_parse"
+        | "_cobble_soft_add"
+        | "_cobble_soft_sub"
+        | "_cobble_soft_mul"
+        | "_cobble_soft_div"
+        | "_cobble_soft_sqrt"
+        | "_cobble_soft_floor_div"
+        | "_cobble_soft_mod"
+        | "_cobble_soft_pow"
+        | "_cobble_soft_decode" => Some(CobbleType::Map),
+        "_cobble_soft_decimal" | "_cobble_soft_get_text" => Some(CobbleType::String),
+        "_cobble_soft_emit" => Some(CobbleType::Double),
+        _ => None,
+    }
+}
 
 type LoweredValue = Result<Expression, TranspileError>;
 
@@ -101,6 +135,7 @@ fn is_arithmetic(op: &BinaryOp) -> bool {
             | BinaryOp::Sub
             | BinaryOp::Mul
             | BinaryOp::Div
+            | BinaryOp::FloorDiv
             | BinaryOp::Mod
             | BinaryOp::Pow
     )
@@ -190,6 +225,15 @@ impl Transpiler {
     ) -> Result<Option<Vec<Statement>>, TranspileError> {
         let mut out = Vec::new();
         match statement {
+            // Calls emitted by helper_value already have lowered arguments.
+            // Lowering their discarded result again would emit the same call.
+            Statement::Expression(Expression::Call(func, args))
+                if matches!(&**func, Expression::Identifier(name)
+                    if software_result_type(name).is_some() && self.functions.params.contains_key(name))
+                    && !args.iter().any(|arg| self.needs_lowering(arg)) =>
+            {
+                return Ok(None)
+            }
             // A `datapack.*` resource is JSON worked out when the pack is
             // built, so its values stay as written.
             Statement::Expression(Expression::Call(func, _))
@@ -377,6 +421,14 @@ impl Transpiler {
     fn is_python_call(&self, func: &Expression) -> bool {
         match func {
             Expression::Identifier(name) => {
+                if software_result_type(name).is_some() {
+                    return true;
+                }
+                if (name.starts_with("_cobble_big_") || name.starts_with("_cobble_soft_"))
+                    && !self.functions.params.contains_key(name)
+                {
+                    return true;
+                }
                 matches!(name.as_str(), "sum" | "str" | "_cobble_format" | "sorted")
                     && self.is_builtin_name(name)
             }
@@ -475,7 +527,7 @@ impl Transpiler {
     fn is_number_value(&self, expr: &Expression) -> bool {
         matches!(
             self.value_type(expr),
-            CobbleType::Integer | CobbleType::Boolean
+            CobbleType::Integer | CobbleType::Float | CobbleType::Double | CobbleType::Boolean
         )
     }
 
@@ -528,7 +580,7 @@ impl Transpiler {
                 match (self.value_type(left), self.value_type(right)) {
                     (CobbleType::String, _) | (_, CobbleType::String) => CobbleType::String,
                     (CobbleType::List, _) | (_, CobbleType::List) => CobbleType::List,
-                    _ => CobbleType::Integer,
+                    _ => self.infer_type(expr),
                 }
             }
             Expression::Call(func, _)
@@ -1816,6 +1868,21 @@ impl Transpiler {
         args: &[Expression],
         out: &mut Vec<Statement>,
     ) -> Result<Expression, TranspileError> {
+        if let Expression::Identifier(name) = func {
+            if let Some(kind) = software_result_type(name) {
+                let args = self.lower_values(args, out)?;
+                return self.helper_value(name, args, kind, out);
+            }
+            if (name.starts_with("_cobble_big_") || name.starts_with("_cobble_soft_"))
+                && !self.functions.params.contains_key(name)
+            {
+                self.require_prelude(name)?;
+                return Ok(Expression::Call(
+                    Box::new(func.clone()),
+                    self.lower_values(args, out)?,
+                ));
+            }
+        }
         // The list a method works on, as `b[k + "x"]` in
         // `b[k + "x"].append(3)`, with its keys lowered first.
         let lowered_func;
@@ -1977,6 +2044,15 @@ impl Transpiler {
         value_type: CobbleType,
         out: &mut Vec<Statement>,
     ) -> Result<Expression, TranspileError> {
+        let helper = if !self.in_prelude {
+            match helper {
+                "_cobble_add" => "_cobble_value_add",
+                "_cobble_mul" => "_cobble_value_mul",
+                _ => helper,
+            }
+        } else {
+            helper
+        };
         self.require_prelude(helper)?;
         out.push(Statement::Expression(call(helper, args)));
         let holder = self.hidden_local(value_type.clone());
@@ -2018,22 +2094,49 @@ impl Transpiler {
         if !self.prelude_compiled.insert(name.to_string()) {
             return Ok(());
         }
-        let source = PRELUDE.replace("NS", &self.data_pack.namespace);
-        let program = crate::parser::parse(&source)
-            .map_err(|errors| format!("The prelude doesn't parse: {}", errors.join("; ")))?;
-        let helper: Option<FunctionDef> =
-            program
-                .statements
-                .into_iter()
-                .find_map(|statement| match statement {
-                    Statement::FunctionDef(func) if func.name == name => Some(func),
-                    _ => None,
-                });
+        let template = if name.starts_with("_cobble_big_") {
+            BIGINT_PRELUDE
+        } else if name.starts_with("_cobble_soft_") || name.starts_with("_cobble_numeric_double_") {
+            DOUBLE_PRELUDE
+        } else {
+            PRELUDE
+        };
+        let key = match name {
+            "_cobble_value_add" => "value_add",
+            "_cobble_value_mul" => "value_mul",
+            _ if name.starts_with("_cobble_big_") => "big",
+            _ if name.starts_with("_cobble_soft_")
+                || name.starts_with("_cobble_numeric_double_") =>
+            {
+                "double"
+            }
+            _ => "base",
+        };
+        if !self.prelude_sources.contains_key(key) {
+            let source = template.replace("NS", &self.data_pack.namespace);
+            let source = match name {
+                "_cobble_value_add" => source.replace("_cobble_add", "_cobble_value_add"),
+                "_cobble_value_mul" => source.replace("_cobble_mul", "_cobble_value_mul"),
+                _ => source,
+            };
+            let program = crate::parser::parse(&source)
+                .map_err(|errors| format!("The prelude doesn't parse: {}", errors.join("; ")))?;
+            self.prelude_sources.insert(key, program);
+        }
+        let helper = self.prelude_sources[key]
+            .statements
+            .iter()
+            .find_map(|statement| match statement {
+                Statement::FunctionDef(function) if function.name == name => Some(function.clone()),
+                _ => None,
+            });
         let Some(helper) = helper else {
             return Err(format!("The prelude has no helper `{name}`.").into());
         };
         for callee in called_functions(&helper.body) {
-            if callee.starts_with("_cobble_") {
+            if callee.starts_with("_cobble_")
+                && !matches!(callee.as_str(), "_cobble_format" | "_cobble_float")
+            {
                 self.require_prelude(&callee)?;
             }
         }

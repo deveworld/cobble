@@ -3122,8 +3122,14 @@ fn run_cobble(program: &Program) -> Result<Outcome, String> {
         .into_iter()
         .map(|(_, name, score)| {
             let value = if score {
-                sim.try_score(&name, "sim.vars")
-                    .map_or(Value::Missing, |v| Value::Int(v.into()))
+                let stored = sim.storage.get("vars").and_then(|vars| vars.get(&name));
+                stored.map_or_else(
+                    || {
+                        sim.try_score(&name, "sim.vars")
+                            .map_or(Value::Missing, |v| Value::Int(v.into()))
+                    },
+                    |value| Value::from_json(Some(value)),
+                )
             } else {
                 Value::from_json(sim.storage.get("vars").and_then(|vars| vars.get(&name)))
             };

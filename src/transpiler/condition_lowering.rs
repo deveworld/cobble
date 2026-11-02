@@ -222,7 +222,10 @@ impl Transpiler {
                 .get(name)
                 .is_some_and(|raw| raw.trim_start().starts_with("function ")),
             Expression::Binary(left, _, right) => {
-                self.condition_runs_user_code(left) || self.condition_runs_user_code(right)
+                (self.uses_storage_numbers()
+                    && (self.may_hold_float(left) || self.may_hold_float(right)))
+                    || self.condition_runs_user_code(left)
+                    || self.condition_runs_user_code(right)
             }
             Expression::Unary(_, inner) => self.condition_runs_user_code(inner),
             _ => ExpressionEvaluator::calls_user_code(condition),
@@ -255,6 +258,14 @@ impl Transpiler {
                         | BinaryOp::Gt
                         | BinaryOp::GtEq
                 );
+
+                if is_comparison
+                    && (self.may_hold_float(left) || self.may_hold_float(right))
+                    && self.condition_uses_numeric_storage(left)
+                    && self.condition_uses_numeric_storage(right)
+                {
+                    return self.numeric_condition_value(left, Some((op, right)));
+                }
 
                 if matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
                     && self.compares_stored_values(left, right)
@@ -320,7 +331,11 @@ impl Transpiler {
                         }
                         _ => {
                             // Arithmetic expressions in condition position use numeric truthiness.
-                            self.lower_condition_value_to_temp(condition)
+                            if self.condition_uses_numeric_storage(condition) {
+                                self.numeric_condition_value(condition, None)
+                            } else {
+                                self.lower_condition_value_to_temp(condition)
+                            }
                         }
                     }
                 }
@@ -330,12 +345,23 @@ impl Transpiler {
                 Ok(Expression::Unary(UnaryOp::Not, Box::new(new_expr)))
             }
             // `-x` in condition position is a number, true when it is not 0.
+            Expression::Unary(..) if self.condition_uses_numeric_storage(condition) => {
+                self.numeric_condition_value(condition, None)
+            }
             Expression::Unary(..) => self.lower_condition_value_to_temp(condition),
             // A number literal is true when it is not 0, like a variable.
             Expression::Number(value) => {
                 self.warn_score_value(*value);
                 self.data_pack.track_boolean_constants();
-                Ok(Expression::Boolean(*value as i32 != 0))
+                Ok(Expression::Boolean(*value != 0.0))
+            }
+            expr @ (Expression::Identifier(_)
+            | Expression::Call(..)
+            | Expression::Subscript(..)
+            | Expression::Attribute(..))
+                if self.condition_uses_numeric_storage(expr) && self.may_hold_float(expr) =>
+            {
+                self.numeric_condition_value(expr, None)
             }
             // Text, a list, or a map is true when it isn't empty.
             Expression::Identifier(name)
@@ -718,6 +744,7 @@ impl Transpiler {
             return Ok(None);
         };
 
+        let helpers_mark = self.data_pack.created_functions.len();
         let (translated, mut capture) = self
             .capture_preprocessed_condition(&expr)
             .map_err(|error| Self::restore_condition_operand_tokens(error, &operand_tokens))?;
@@ -729,6 +756,18 @@ impl Transpiler {
             }
             for generated in capture.metadata.values_mut() {
                 generated.text = generated.text.replace(placeholder, original);
+            }
+            for helper in &self.data_pack.created_functions[helpers_mark..] {
+                if let Some(commands) = self.data_pack.functions.get_mut(helper) {
+                    for command in commands {
+                        *command = command.replace(placeholder, original);
+                    }
+                }
+                if let Some(metadata) = self.data_pack.command_metadata.get_mut(helper) {
+                    for generated in metadata.values_mut() {
+                        generated.text = generated.text.replace(placeholder, original);
+                    }
+                }
             }
         }
         Ok(Some((translated, capture)))

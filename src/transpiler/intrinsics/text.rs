@@ -243,6 +243,9 @@ impl Transpiler {
         };
         let mut commands = processor.template_copy_commands(&command)?;
         let processed = processor.process_template_string(&command)?;
+        if !commands.is_empty() {
+            self.data_pack.track_objective("temp");
+        }
         commands.extend(self.quoted_hover_commands(&command, processed));
         self.push_current_commands(commands)
     }

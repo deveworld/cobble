@@ -17,17 +17,19 @@ lines without a continuation character.
 
 | Type | Example |
 | --- | --- |
-| Number | `score = 10` |
+| Integer | `score = 10` |
+| Float | `speed = 0.25` |
+| Double | `precise = double(0.1)` |
 | Boolean | `ready = True` |
 | String | `name = "Alex"` |
 | List | `items = ["diamond", "emerald"]` |
 | Map | `config = {"count": 3}` |
 
-Numbers are signed 32-bit scoreboard integers (`-2147483648` to `2147483647`).
-Fractional assignments are truncated and out-of-range literals are clamped,
-with a warning. Booleans use `0` and `1`.
+Integers are signed 32-bit values. Decimal and exponent literals use 32-bit
+`float`; `double(value)` requests 64-bit precision. See [Arithmetic](arithmetic.md)
+for conversions and mixed calculations. Booleans use `0` and `1`.
 
-Strings, lists, and maps are stored in Minecraft storage. `None` is available
+All variables live in Minecraft storage. `None` is available
 in JSON resource declarations as `null`; it cannot be stored in NBT or used
 as a number.
 

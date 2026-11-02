@@ -126,14 +126,12 @@ def main():
 "#,
     )
     .unwrap_or_else(|error| panic!("build failed: {error}"));
-    assert_eq!(
-        load_functions(&output_dir)["main"],
-        [
-            "scoreboard players set #main.reach sim.vars 0",
-            "execute if score #main.reach sim.vars matches 0 run scoreboard players set #main.reach sim.vars 1",
-            "execute if score #main.reach sim.vars matches 1 run scoreboard players set #main.reach sim.vars 2",
-            "execute if score #main.reach sim.vars matches 2 run scoreboard players set #main.reach sim.vars 3",
-        ]
+    let mut sim = Sim::from_output(&output_dir, &[]);
+    sim.call("main");
+    assert_eq!(sim.var("#main.reach"), 3);
+    assert!(
+        !sim.function_text("main").contains("expr_cond_temp"),
+        "literal operands should be folded before condition codegen"
     );
 }
 
