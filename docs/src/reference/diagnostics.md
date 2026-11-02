@@ -60,11 +60,20 @@ lists them under Diagnostics.
 
 ## Kinds Listed Elsewhere
 
-- Loop kinds such as `unroll-limit-exceeded`: [For Loops](../language/control-flow.md#for-loops).
 - `missing-stdlib-module`: [Standard Library Modules](../stdlib/modules.md).
 - `datapack-resource-format`: [Data Pack Resources](../stdlib/datapack-resources.md).
 - `resource-pack-*` kinds: [Resource Packs](../stdlib/resource-packs.md#diagnostics).
-- `temp-objective-reference`, `say-variable-text`, `load-function-tag`,
-  `function-tag-order`, `brace-escape`, `entity-template-tag`, and
-  `item-model-definition` in `cobble migrate`:
-  [Upgrading](../upgrading.md#010-to-011).
+- Migration notes: [Upgrading](../upgrading.md).
+
+## Compiler Limits
+
+| Construct | Limit |
+| --- | --- |
+| One expanded `for` loop | 1,024 iterations; warning above 256 |
+| Nested expansions | 65,536 aggregate iterations and generated commands per outer expansion |
+| Statement nesting | 1,000 levels, counting blocks, brackets, and operators |
+| Fields in one f-string | 256, also subject to expression nesting limits |
+
+Loop expansion failures use `unroll-limit-exceeded`. Reduce the expansion or
+use runtime bounds. Runtime loops still run within one tick; see
+[While Loops](../language/control-flow.md#while-loops).

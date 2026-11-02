@@ -1,161 +1,72 @@
 # Differences From Python
 
-Cobble borrows Python's look, but programs run as Minecraft commands. Values
-are scoreboard integers or storage entries, and every function is a
-`.mcfunction` file.
-
-## Not Supported
-
-These fail with a diagnostic before compilation:
-
-- classes, decorators, `try`/`except`/`finally`, `with`, `lambda`, `yield`,
-  `async`, `await`, `break`, `continue`, `raise`, `assert`, `del`, and
-  `nonlocal`;
-- default parameter values, duplicate parameter names, `*args`, and `**kwargs`;
-- list and dict comprehensions;
-- `for ... else`, and `for` over the keys of a map;
-- a slice with a step, such as `items[::2]`;
-- dotted or relative imports, import aliases, and `import a, b`;
-- a statement that nests more than 1000 levels deep, counting blocks,
-  brackets, and operators, such as a chain of 1000 `and`s or a JSON value
-  nested 1000 levels deep.
-
-`cobble check --experimental-python-compat` lists the supported Python-like
-constructs and suggests a Cobble rewrite for unsupported ones; see
-[Experimental Features](../reference/experimental.md).
+Cobble uses Python-like syntax, but runs as Minecraft commands. These are
+the differences to keep in mind when porting code.
 
 ## Values And Expressions
 
-- Numbers are 32-bit integers. Floats are truncated, with a warning. A
-  fractional item or field read as a number, as `y[0]` after
-  `y = [0.6, 2.5]`, is rounded down, as Minecraft's `data get` does, also
-  with a warning. A comparison with a number a score can't hold, such as
-  `x == 9999999999` or `x >= 2.5`, is decided exactly. Number literals may
-  have an exponent, as in Python: `1e3`,
-  `1E3`, `2.5e-3`, and `1e+3`.
-- A fractional literal in a list or map is stored as a double. Forwarding
-  an item whose type is known only at runtime to a command parameter keeps
-  that precision; Minecraft may format `0.6` as `.6`. Integer arguments of
-  raw `scoreboard players set/add/remove`, `trigger set/add`, `return`,
-  `give`, `clear`, and `experience`/`xp add/set` commands use score integers
-  too, including through forwarding calls. A fractional literal passed to
-  one warns; a numeric storage item is rounded down when read. A quoted
-  argument such as `"15"` stays text. Command arguments that accept fractions,
-  such as sound pitch or title times, keep them.
-- Lists and maps live in storage. Subscripts work when the base resolves to a
-  storage path. List and string indexes may be literals, constants, or runtime
-  integers such as `items[i]`, and a negative index counts from the end;
-  `name[i]` of a string is a one-character string. Map keys may be
-  attributes, string literals, or runtime strings such as `config[key]` or
-  `config[names[0]]`. A key can hold any text, such as spaces, dots, colons,
-  quotes, backslashes, and line breaks, as in `prices["minecraft:diamond"]`,
-  but it can't be empty: Minecraft refuses an empty key in a path and in a
-  map. An empty literal key, as in `config[""]` or `{"": 1}`, is a compile
-  error. An empty runtime key stores nothing, reads as a missing key, and
-  shows `<file>:<line>: a map key can't be empty` in chat; `"" in config` is
-  False.
-- At any depth, as in `grid[r][c]`, the key's type decides: text picks a
-  field of a map, and a number an item of a list or a character of text.
-  When Cobble can't tell the key's type, as for a parameter, the pack checks
-  when it runs whether the key holds text or a number, even for a list or a
-  map Cobble knows. A number is never a map key, so `5 in {"5": 1}` is
-  false, as in Python, and reading `m[k]` with a number `k` gives 0 and
-  writing it changes nothing; text picks no item of a list the same way.
-  These are compile errors, where Python raises `TypeError`: a text key of a
-  value Cobble knows is a list, as `rows[0]["k"]` after `rows = [[1, 2]]`; a
-  list or a map as a key; an item of a number; setting a character of text,
-  as `s[0] = "x"`; and setting a field of a list or of text.
-- A list or map is a value: assigning it to another variable or passing it to
-  a function copies it, so a change through one name doesn't show through the
-  other.
-- An item of a list or a field of a map keeps its type when you assign it or
-  pass it on, at any depth and through unpacking and `pop()`: `name =
-  names[1]` holds a string when `names` holds strings, and `a, b = names`
-  gives two strings.
-  When Cobble can't tell the type, as for a parameter or an item that the
-  program also sets to a value of another type, the value is kept as text and
-  as a number.
-- Functions return integers only. Use storage or a module variable for other
-  results. `return x > 3` and other conditions return 1 or 0.
-- `/` and `//` are both floor division, and `^` and `**` are both power.
-- `+` joins text and lists when Cobble can tell that one side is text or a
-  list. When it can't tell for either side, as for slices or items of a
-  parameter, the pack checks when it runs: text and lists join and numbers
-  add. `*` repeats text and lists the same way, as in `p * 2` for a
-  parameter `p`. Two parameters add and multiply as numbers, so write
-  `str(a) + b` to join them, unless the sum is joined with text or assigned
-  to a variable, a field, or an item that holds text, where they join.
-- A number is never equal to text, a list, or a map, as in Python, even when
-  the other side is a parameter: `1 == m` is false for `m = [1]`.
-- An item added by `+=`, `+`, or `append` can have another type than the
-  items the list started with, as `rows += [{"k": 3}]` after
-  `rows = [[1, 2]]`; a read of it, in any function, checks its type when the
-  pack runs.
-- Conditional expressions and operand choices keep the selected value's
-  type, even when the alternatives differ: `x = "ready" if flag else [1, 2]`,
-  `value = given or {"k": 3}`, and `out.append([] and work())` are supported.
-  Only the selected branch or needed operand runs. These values can be
-  copied, indexed, put in containers, or passed to another function. A variable
-  already declared with a known type still requires assignments of that type;
-  use a new name for a choice whose alternatives have different types.
-- Where Cobble can't tell what a value holds, `x += y`, `x *= n`, and
-  `len(x * n)` check it when the pack runs, even for parameters: text and a
-  list join or repeat, and a number adds or multiplies. `r = x * n` repeats
-  when `r` holds text or a list.
-- `-=`, `/=`, or `+=` with a number on a field or an item that holds text, a
-  list, or a map is a compile error, where Python raises `TypeError`.
-- Text joined, repeated, or passed to `str()` while the pack runs keeps every
-  character, `"` and `\` included.
-- In `items[f()]`, a list that `f` changes in place shows the change, as in
-  Python, and so does one that `f` replaces, where Python keeps the old list.
-- `sort()` and `sorted()` order numbers. `index()` gives -1 when there is
-  nothing to find, where Python raises an error.
-- Reading an item or a field that isn't there, and `pop()` on an empty list,
-  give 0, or empty text, an empty list, or an empty map when Cobble knows the
-  value is one, where Python raises an error. A character past the end of
-  text, as `word[7]` of `"hello"`, is empty text. The variable never keeps the
-  value it had before. Passed to a function, as in `show(config.nick)`, such
-  a read gives the same empty value, and the function still runs.
-- Text positions count UTF-16 units, so an emoji is two long in a running pack.
-- A bare expression such as `score + 1` produces no command and is rejected.
-  Use an assignment, a call, a raw command, or `pass`.
-- `for` loops iterate `range(...)`, literal arrays, storage-backed lists, and
-  text.
-- A name a function assigns is local to it unless the function declares it
-  `global`. Reading a local before assigning it is a compile error instead of
-  an `UnboundLocalError` at run time; see
-  [Calling Convention](../reference/calling-convention.md#reads-before-assignment).
-- Recursive functions work, and every call runs in the same game tick.
-- `while` loops and runtime `for` loops compile to functions that call
-  themselves, and every iteration runs in the same game tick.
+| Area | Cobble behavior |
+| --- | --- |
+| Numbers | Signed 32-bit integers. Fractional score assignments warn and truncate; overflow wraps. |
+| Division | `/` and `//` both round down. `^` and `**` both mean power. |
+| Lists and maps | Assignment and function arguments copy values rather than sharing an object. |
+| Map keys | Non-empty strings only. |
+| Function results | Integers only; conditions return `1` or `0`. |
+| Text indexing | Runtime positions count UTF-16 units; an emoji may occupy two positions. |
+| Missing values | Missing items and fields give `0`, or an empty value when the type is known, rather than raising an exception. |
+| Searching | `index()` returns `-1` when no item matches. |
+| Sorting | `sort()` and `sorted()` order numbers. |
+| Execution | Calls and loop iterations run in the same game tick. |
+
+Numeric values used only as command arguments can keep fractions. Once a
+value enters scoreboard arithmetic, it uses integer rules. Numeric reads
+from storage round down.
+
+A function assignment creates a local unless declared `global`. Imported
+files share names rather than providing separate Python module objects;
+see [Modules And Imports](modules.md).
 
 ## Python Forms
 
-These work as in Python on numbers, text, lists, and maps:
+These forms are supported:
 
 | Form | Example |
 | --- | --- |
-| Comparing text, lists, and maps | `if name == "Steve":`, `if a != [1, 2]:` |
-| Membership | `if x in items:`, `"key" not in config`, `"ell" in text` |
-| Truth of text, lists, and maps | `if items:`, `while queue:` |
-| Conditional expression | `x = 1 if ready else 2` |
-| Chained comparison | `if 0 < x <= 10:` |
-| Multiple assignment | `a, b = b, a`, `x, y = pair`, `a[0], a[1] = a[1], a[0]` |
-| `and` and `or` giving an operand | `name = given or "anon"` |
-| Slices | `text[1:3]`, `items[-2:]`, `items[:n]` |
-| Joining and repeating | `"a" + name`, `items + [4]`, `[0] * 9`, `"-" * n` |
+| Equality and membership | `name == "Alex"`, `item in items`, `"key" not in config` |
+| Truth of containers | `if items:`, `while queue:` |
+| Conditional expression | `value = "ready" if flag else [1, 2]` |
+| Operand choices | `name = given or "anon"` |
+| Chained comparison | `0 < score <= 10` |
+| Multiple assignment | `a, b = b, a`, `x, y = pair` |
+| Slices | `text[1:3]`, `items[-2:]` |
+| Joining and repeating | `"Hello " + name`, `items + [4]`, `"-" * n` |
 | List methods | `append`, `extend`, `insert`, `pop`, `remove`, `index`, `count`, `sort`, `reverse`, `clear` |
 | Builtins | `abs`, `min`, `max`, `sum`, `sorted`, `str`, `len` |
-| Loops | `for i, item in enumerate(items):`, `for ch in text:` |
-| `match` on text | `case "sword":` |
+| Iteration | `for i, item in enumerate(items):`, `for ch in text:` |
+| Text matching | `case "sword":` |
 
-`min` and `max` take several numbers or one list, and `sum` takes a list. A
-function you define with one of these names replaces it. Forms that need a loop compile to helper
-functions in the pack, named `_cobble_...`, and only the ones a pack uses are
-added. A value that takes commands to compute can't initialize a module
-variable; assign it inside a function.
+Conditional expressions and `and` / `or` evaluate only the chosen branch or
+needed operand. A new variable can hold alternatives of different types;
+an existing variable with a known type still requires that type.
+
+When both operands are untyped parameters, `+` and `*` use numeric
+arithmetic. Use `str(a) + b` to request text joining.
+
+## Not Supported
+
+- Classes, decorators, exceptions, context managers, lambdas, generators,
+  and async code.
+- `break`, `continue`, `for ... else`, comprehensions, and iteration over map keys.
+- Default arguments, `*args`, and `**kwargs`.
+- Slice steps such as `items[::2]`, and assignment to string characters.
+- Import aliases, wildcard imports, and dotted or relative module names.
+- General Python f-string expressions or format specifiers; see
+  [Strings](basics.md#strings).
+
+`cobble check --experimental-python-compat` reports unsupported constructs
+and suggests rewrites where available.
 
 ## Browser Compiler
 
-The browser compiler at `/try` compiles one in-memory file. Check projects
-with local imports using the CLI, which resolves files from disk.
+The [browser compiler](https://deveworld.github.io/cobble/try/) accepts one
+file. Use the CLI for projects with local imports.

@@ -2,143 +2,77 @@
 
 ## Blocks And Comments
 
-Cobble uses indentation-based blocks after `:` and needs no braces or
-semicolons. Unexpected indentation and dedents that do not match a previous
-block level are reported as diagnostics before parsing. Lines starting with `/`
-are Minecraft commands; see [Minecraft Commands](commands.md).
+Use indentation for blocks, `#` for comments, and `/` for Minecraft commands:
 
 ```python
-# A comment runs to the end of the line.
-
-def my_function():
-    """
-    A docstring describes the function.
-    It can span multiple lines.
-    """
+def greet():
+    """Greet every player."""
     /say Hello, world!
 ```
 
-In a block header, a `#` that starts a name before the closing `:` is part of
-the header, so fake players and tags work there. A `#` after the `:` starts a
-comment:
-
-```python
-def check():
-    if score #round game matches 3:  # the last round
-        /say Final round
-```
+Block headers end with `:`. Expressions inside brackets can span multiple
+lines without a continuation character.
 
 ## Data Types
 
-### Numbers
-```python
-score = 10
-health = 100
-```
+| Type | Example |
+| --- | --- |
+| Number | `score = 10` |
+| Boolean | `ready = True` |
+| String | `name = "Alex"` |
+| List | `items = ["diamond", "emerald"]` |
+| Map | `config = {"count": 3}` |
 
-Numbers are internally stored as Minecraft scoreboard values.
+Numbers are signed 32-bit scoreboard integers (`-2147483648` to `2147483647`).
+Fractional assignments are truncated and out-of-range literals are clamped,
+with a warning. Booleans use `0` and `1`.
 
-### Strings
-```python
-message = "Hello, world!"
-```
+Strings, lists, and maps are stored in Minecraft storage. `None` is available
+in JSON resource declarations as `null`; it cannot be stored in NBT or used
+as a number.
 
-Strings take the escapes Python takes: `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, and
-`\uXXXX`, such as `\u00a7` for `§`. A backslash before any other character
-stays in the string. Generated commands keep the escapes, so a `\n` reaches
-storage and text components as a line break.
+## Strings
 
-Ordinary strings keep braces literally. Add `f` to insert named values:
+Single and double quotes work, with escapes such as `\n`, `\t`, `\\`, `\"`,
+and `\u00a7`. Add `f` to insert named values:
 
 ```python
 wave = 3
-label = f"Wave {wave}"   # "Wave 3"
-literal = "Wave {wave}"  # "Wave {wave}"
+label = f"Wave {wave}"   # Wave 3
+literal = "Wave {wave}"  # Wave {wave}
 ```
 
-`f"..."`, `f'...'`, and uppercase `F` are supported. Fields use names such
-as `{wave}`; expressions, conversions (`!r`), format specifiers (`:02`), and
-multiline f-strings are not supported. Write `{{` and `}}` for literal braces
-inside an f-string. A stored f-string accepts text and numbers, with at most
-256 fields. A list or map can be displayed directly in a command f-string as
-SNBT (see [Minecraft Commands](commands.md#json-and-snbt-text)).
+F-strings support `{name}` fields and `{{` / `}}` for literal braces. Fields
+cannot contain expressions, conversions, or format specifiers. Multiline
+f-strings are not supported. A stored f-string formats text and numbers;
+[command text](commands.md#json-and-snbt-text) can also display lists and maps.
 
-### Booleans
+## Lists And Maps
+
 ```python
-is_active = True
-is_disabled = False
+items = ["diamond", "emerald"]
+config = {"count": 3, "label": "Rewards"}
+first = items[0]
+last = items[-1]
+count = config.count
+label = config["label"]
+size = len(items)
 ```
 
-Booleans are stored as integers in Minecraft scoreboards (0 for False, 1 for True).
-
-### Lists, Maps, and None
-```python
-from stdlib import datapack
-
-items = ["minecraft:diamond", "minecraft:emerald"]
-config = {"chance": 1, "note": "missing"}
-first_item = items[0]
-chance = config.chance
-
-datapack.predicate("maybe", {
-    "type": "minecraft:random_chance",
-    "chance": 1,
-    "comment": None
-})
-```
-
-Lists and maps are storage-backed values. Cobble supports attribute and
-subscript access when the base value resolves to a storage path, including
-literal or constant subscript segments, runtime integer list/string indexes, and
-runtime string map keys. Arbitrary Python-style indexing is not a general
-runtime feature yet.
-
-`len(value)` returns the length of literal arrays, maps, and strings, as well as
-storage-backed list, map, and string values. Storage-backed lengths compile to a
-Minecraft `data get storage ...` result stored in a scoreboard integer.
-
-`None` is supported where Cobble serializes data pack JSON resources and is
-emitted as JSON `null`. It has no scoreboard value, so keep it out of numeric
-and boolean expressions. Minecraft NBT/SNBT storage has no null type, so
-storage literals reject `None`; use an explicit sentinel value for storage.
+Lists and strings use integer indexes; maps use non-empty string keys.
+Indexes and keys may be variables. Slices such as `items[1:3]` and
+`name[:2]` are supported, without a step.
 
 ## Type System
 
-A variable's type is inferred from its first assignment and stays fixed after
-that:
+A variable with a known type keeps that type:
 
 ```python
-x = 5        # integer
-y = True     # boolean
-name = "Bob" # string
-
-x = 20       # OK: still an integer
-x = True     # error: x is an integer
+score = 5
+score = 20     # OK
+score = "ten"  # type-mismatch
 ```
 
-Assigning a value of another type is a `type-mismatch` error:
-
-```text
-Error: type-mismatch: Type mismatch for variable 'x'.
-   ╭─[ main.cbl:6:1 ]
-   │
- 6 │ x = True
-   │ ┬
-   │ ╰── Type mismatch for variable 'x'.
-   │
-   │ Note: Variable was previously defined as type: integer
-   │       Cannot reassign to type: boolean
-   │       Use a different variable name or keep all assignments to 'x' the same type.
-───╯
-```
-
-## Numeric Range And Precision
-
-Numbers are scoreboard integers, so they range from `-2147483648` to
-`2147483647`. A float literal is truncated to an integer and a literal outside
-the range is clamped, each with a [warning](../reference/diagnostics.md#warnings):
-
-```python
-pi = 3.14159       # warning: truncated to 3
-huge = 9999999999  # warning: clamped to 2147483647
-```
+Use a new variable for a value of another type. See
+[Differences From Python](python.md) for copying, missing values, and other
+behavior that differs from Python.

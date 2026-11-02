@@ -1,97 +1,58 @@
 # Arithmetic
 
-Numeric variables are scoreboard integers. Arithmetic compiles to
-`scoreboard players operation` commands on the pack's `<namespace>.vars`
-objective.
+Numeric variables use signed 32-bit integer arithmetic:
 
 ```python
 def calculate():
     a = 10
     b = 3
-
     total = a + b        # 13
-    diff = a - b         # 7
+    difference = a - b   # 7
     product = a * b      # 30
     quotient = a / b     # 3
     remainder = a % b    # 1
     power = b ^ 3        # 27
-
-    mixed = a + b * 2 - a / 5   # 14, standard precedence
-
-    a += 1               # same as a = a + 1
-    a -= 1
-    a *= 2
-    a /= 2
-    a %= 3
-    b ^= 2
+    a += 1
+    b *= 2
 ```
+
+`**` also means power, and `//` also means integer division. Compound
+assignments such as `+=`, `-=`, `*=`, `/=`, and `%=` work on variables,
+list items, and map fields.
 
 ## Precedence
 
-From highest to lowest:
-
-1. `^` (power), right to left
-2. `*`, `/`, `%`, left to right
-3. `+`, `-`, left to right
-4. `==`, `!=`, `<`, `<=`, `>`, `>=`
-
-## How Expressions Compile
-
-- Constant operands go through helper fake players such as `#multiplier`,
-  `#divisor`, and `#modulus`, because `scoreboard players operation` only
-  takes scores.
-- Intermediate results use fake players such as `#expr_temp_<n>`.
-- A power with a constant exponent is expanded at compile time: `x ^ 3`
-  becomes `x * x * x`.
-- A power with a runtime exponent calls a generated helper function. A
-  negative runtime exponent gives `0`, since scores cannot hold fractions.
-- Compound assignment works on variables and storage-backed targets.
-  `x += y` compiles as `x = x + y`.
-- Expressions made only of constants are folded at compile time, with the
-  same 32-bit arithmetic as the scoreboard: a result past ±2,147,483,647 wraps
-  around, so `100000 * 100000 / 100000` gives 14100 whether it is folded or
-  computed from variables.
-- An assignment runs after its whole right side. In `result = 1 + bonus()`, a
-  `bonus` function that changes `result` doesn't affect the sum.
+From highest to lowest: power (`^`, `**`), multiplication and division
+(`*`, `/`, `//`, `%`), addition and subtraction (`+`, `-`), then comparisons.
+Power groups right to left; the other arithmetic operators group left to
+right. Use parentheses to make grouping explicit.
 
 ## Integer Division And Modulo
 
-`/` and `%` follow Minecraft's scoreboard `/=` and `%=`: division rounds
-toward negative infinity, and modulo is a floor modulus whose sign follows the
-divisor. Constant folding uses the same rules, so a folded expression and the
-same expression computed from variables agree:
+Division rounds down, including for negative numbers. The remainder has the
+same sign as the divisor:
 
 ```python
 a = -7 / 2      # -4
 b = -7 % 3      # 2
-c = 1 / 3 * 3   # 0, each step is integer arithmetic
+c = 1 / 3 * 3   # 0
 ```
 
-`const` declarations are compile-time values that raw commands may substitute,
-so `/` in a `const` declaration is real division: `const HALF = 1 / 2`
-substitutes `0.5` into `{HALF}`. `%` is the same floor modulus there. Storing
-a fractional constant in a score truncates it, with a precision warning.
-
-Comparisons keep a numeric literal's full value when it never enters a score:
-`0.5 > 0` is true, and an integer score compared with `2.5` uses that exact
-threshold. Assigning `2.5` to a numeric variable still stores `2` and warns.
+In a `const` declaration, division can produce a fraction:
+`const HALF = 1 / 2` inserts `0.5` into a command's `{HALF}` argument.
+Assigning that value to a numeric variable truncates it, with a warning.
+Arithmetic overflow wraps as it does on Minecraft scoreboards.
 
 ## Division By Zero
 
-Dividing by a constant zero is a compile error:
-
-```text
-Division by zero in constant expression: 10 / 0
-```
-
-A divisor that is only known at runtime is not checked. Minecraft rejects the
-operation, the command fails, and the target keeps the left operand's value,
-so `10 / b` with `b = 0` leaves `10`. Check the divisor first:
+A constant zero divisor is a compile error. Guard runtime divisors yourself:
 
 ```python
 def share(total, players):
     if players != 0:
-        each = total / players
-    else:
-        each = 0
+        return total / players
+    return 0
 ```
+
+An unguarded division by runtime zero fails the Minecraft operation and
+leaves the left operand unchanged.

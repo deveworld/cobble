@@ -20,16 +20,9 @@ def admin_command():
     /tellraw @Admin {"text":"Admin message"}
 ```
 
-Cobble replaces each alias at compile time, matching whole names only, in raw
-commands, in `selector` text components such as `{"selector":"@Admin"}`, and
-in execute-block targets and conditions. Aliases are shared by every file in a
-project, so define each one once.
-
-An `@Name` that is neither an alias nor a vanilla selector is a compile error,
-because Minecraft can't load a function with such a command. Chat text in
-`say`, `msg`, and the other message commands is left as it is. An alias can't
-take more arguments: instead of `@Boss[distance=..8]`, write the whole
-selector or define another alias.
+Use aliases in raw commands, selector text components, and execute blocks.
+Aliases are shared across the project. They cannot take extra filters:
+define a second alias instead of writing `@Boss[distance=..8]`.
 
 ## Entity Templates
 
@@ -57,17 +50,9 @@ def spawn_shop():
         create @ShopKeeper
 ```
 
-`create @ShopKeeper` compiles to a `summon` at the current execute position:
+`create @ShopKeeper` summons the entity at the current position. Every
+template needs a `type=`; its positive `tag=` filters become entity tags.
+Other filters are not applied to the new entity. The payload uses Cobble
+map and list literals.
 
-```mcfunction
-execute as @a[tag=spawn_shop] at @s run summon minecraft:villager ~ ~ ~ {VillagerData:{...},CustomName:{...},PersistenceRequired:1b,NoAI:1b,Tags:["shop_keeper"]}
-```
-
-The payload uses Cobble map and list literals and is written as SNBT. The
-entity type comes from the selector's `type=` argument, so give every template
-one. Each `tag=` argument is added to the entity's `Tags`, after any tags the
-payload lists, so the alias matches the entities it creates. Negated tags
-(`tag=!name`) and other selector arguments, such as `name=` or `scores=`, are
-not applied to the new entity.
-`create @Name` must name a template defined in the project, and template names
-share the project-wide name set with functions and selector aliases.
+Template names are shared across the project, like functions and aliases.
