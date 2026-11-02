@@ -251,3 +251,68 @@ def main():
         json!(["no", 9, [5], "text", "text"])
     );
 }
+
+#[test]
+fn an_integer_and_boolean_choice_assigns_to_a_fresh_name() {
+    // Both branches are scores, but the two branch assignments must not be
+    // type-checked against each other: the running pack picks one.
+    let sim = run(r#"out = []
+def choose(c):
+    x = 7 if c else (c > 0)
+    out.append(x)
+def main():
+    choose(1)
+    choose(0)
+"#);
+    assert_eq!(sim.storage["vars"]["out"], json!([7, 0]));
+}
+
+#[test]
+fn a_for_loop_refuses_a_choice_that_is_not_a_list_at_run_time() {
+    // A value of unknown type may be a map or a number, which `for` can't
+    // walk. It shows a refusal naming the source line and runs no pass,
+    // instead of walking a map's size with an empty item.
+    let mut sim = Sim::load(
+        r#"out = []
+def over_list(c):
+    x = [1, 2] if c else {"a": 1}
+    for item in x:
+        out.append(item)
+def over_map(c):
+    y = [1] if c else {"a": 1, "b": 2}
+    for item in y:
+        out.append(item)
+def over_number(c):
+    z = [1] if c else 3
+    for item in z:
+        out.append(item)
+def over_text():
+    t = "ab"
+    for ch in t:
+        out.append(ch)
+def main():
+    over_list(1)
+    over_map(0)
+    over_number(0)
+    over_text()
+"#,
+        &["Alex"],
+    );
+    sim.call("main");
+    assert_eq!(sim.storage["vars"]["out"], json!([1, 2, "a", "b"]));
+    let messages: Vec<&str> = sim
+        .log
+        .iter()
+        .map(String::as_str)
+        .filter(|line| line.contains("a for loop needs a list or text"))
+        .collect();
+    assert_eq!(messages.len(), 2, "one refusal per bad loop: {messages:?}");
+    assert!(
+        messages[0].contains(":8:"),
+        "names the source line: {messages:?}"
+    );
+    assert!(
+        messages[1].contains(":12:"),
+        "names the source line: {messages:?}"
+    );
+}

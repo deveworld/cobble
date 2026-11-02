@@ -535,8 +535,10 @@ impl Transpiler {
     fn common_type(&self, left: &Expression, right: &Expression) -> CobbleType {
         match (self.value_type(left), self.value_type(right)) {
             (left, right) if left == right => left,
-            (CobbleType::Integer, CobbleType::Boolean)
-            | (CobbleType::Boolean, CobbleType::Integer) => CobbleType::Integer,
+            // A number and a boolean are both scores, but a fresh name holding
+            // either is a choice the running pack decides, like any other
+            // unlike pair; the two branch assignments would otherwise be
+            // type-checked against each other.
             _ => CobbleType::Unknown,
         }
     }

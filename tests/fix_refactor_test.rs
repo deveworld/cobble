@@ -299,13 +299,13 @@ def main():
 
     // Temp ids pin the allocation order: the range loop allocates its stop
     // var (0) before the loop/body helpers (1, 2); the list loop allocates
-    // index/len (3, 4), helpers (5, 6), then the dynamic item path (7);
-    // `while` allocates its loop helper (8) BEFORE lowering the condition
-    // (9), then the body helper (10).
+    // index/len (3, 4), its type guard (5), helpers (6, 7), then the dynamic
+    // item path (8); `while` allocates its loop helper (9) BEFORE lowering
+    // the condition (10), then the body helper (11).
     let main = read_function(&output, "main");
     assert!(main.contains("function cobble:for_range_temp_1"));
-    assert!(main.contains("function cobble:for_list_temp_5"));
-    assert!(main.contains("function cobble:while_temp_8"));
+    assert!(main.contains("function cobble:for_list_temp_6"));
+    assert!(main.contains("function cobble:while_temp_9"));
 
     let range_loop = read_function(&output, "for_range_temp_1");
     assert_eq!(
@@ -317,30 +317,30 @@ def main():
     );
 
     // Each pass reads the list's length again, as Python does.
-    let list_loop = read_function(&output, "for_list_temp_5");
+    let list_loop = read_function(&output, "for_list_temp_6");
     assert_eq!(
         list_loop,
         "execute store result score #for_list_len_4 cobble.vars run data get storage cobble:global vars.values\n\
-         execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_body_6\n"
+         execute if score #for_list_index_3 cobble.vars < #for_list_len_4 cobble.vars run function cobble:for_list_body_7\n"
     );
 
-    let while_loop = read_function(&output, "while_temp_8");
+    let while_loop = read_function(&output, "while_temp_9");
     assert_eq!(
         while_loop,
-        "scoreboard players operation expr_cond_temp_9 cobble.vars = #main.k cobble.vars\n\
+        "scoreboard players operation expr_cond_temp_10 cobble.vars = #main.k cobble.vars\n\
          scoreboard players set #multiplier cobble.vars 2\n\
-         scoreboard players operation expr_cond_temp_9 cobble.vars *= #multiplier cobble.vars\n\
-         execute if score expr_cond_temp_9 cobble.vars < #main.n cobble.vars run function cobble:while_body_10\n"
+         scoreboard players operation expr_cond_temp_10 cobble.vars *= #multiplier cobble.vars\n\
+         execute if score expr_cond_temp_10 cobble.vars < #main.n cobble.vars run function cobble:while_body_11\n"
     );
-    assert!(read_function(&output, "while_body_10").ends_with("function cobble:while_temp_8\n"));
+    assert!(read_function(&output, "while_body_11").ends_with("function cobble:while_temp_9\n"));
 
-    let list_body = read_function(&output, "for_list_body_6");
-    assert!(list_body.starts_with("data remove storage cobble:global _cobble_dyn_7\n"));
+    let list_body = read_function(&output, "for_list_body_7");
+    assert!(list_body.starts_with("data remove storage cobble:global _cobble_dyn_8\n"));
     assert!(list_body.contains(
-        "function cobble:_cobble_storage_dyn_7 with storage cobble:global _cobble_dyn_7"
+        "function cobble:_cobble_storage_dyn_8 with storage cobble:global _cobble_dyn_8"
     ));
     assert!(list_body.ends_with(
-        "scoreboard players add #for_list_index_3 cobble.vars 1\nfunction cobble:for_list_temp_5\n"
+        "scoreboard players add #for_list_index_3 cobble.vars 1\nfunction cobble:for_list_temp_6\n"
     ));
 }
 

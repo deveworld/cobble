@@ -131,6 +131,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- A fresh name assigned a choice of a number and a comparison, as
+  `x = 7 if c else c > 0`, keeps the selected value instead of failing as if the
+  two branches were reassignments of one type.
+- A runtime `for` whose value turns out to be a map or a number shows
+  `a for loop needs a list or text` with the source line and runs no pass,
+  instead of walking the map's size with an empty item.
 - A transpile error no longer repeats its kind as `error[kind]: kind: ...`, and
   `cobble build` drops the internal `source-key:` and `location:` trailers from
   the message.

@@ -924,6 +924,9 @@ impl Transpiler {
                 init_commands.push(format!("scoreboard players set {} temp 0", index_var));
                 init_commands
                     .extend(transpiler.runtime_storage_list_len_commands(&walked_plan, &len_var)?);
+                init_commands.extend(
+                    transpiler.runtime_list_type_guard(&walked_plan, &len_var)?,
+                );
                 match (&step, &step_var) {
                     (RuntimeRangeStep::Static(step), _) if *step < 0 => {
                         init_commands.push(format!(
@@ -1490,6 +1493,73 @@ impl Transpiler {
                 ),
             ]
         })
+    }
+
+    /// Refuses, in chat, a loop value that is neither a list nor text. A
+    /// value whose type only the pack knows, as a parameter or a choice of
+    /// unlike alternatives, may hold a map or a number, which `for` can't
+    /// walk: `path[]` is true for a non-empty list, and the text copy keeps
+    /// a string's characters (a number turns into its digits, which are
+    /// shorter than the value unless it has one digit). The loop then runs
+    /// zero passes instead of showing empty items.
+    fn runtime_list_type_guard(
+        &mut self,
+        list_plan: &StoragePathPlan,
+        len_var: &str,
+    ) -> Result<Vec<String>, TranspileError> {
+        let namespace = self.data_pack.namespace.clone();
+        let id = self.next_temp_id();
+        let string_score = format!("#for_string_{id}");
+        let copy_len = format!("#for_copy_len_{id}");
+        let copy_path = format!("_cobble_for_copy_{id}");
+        let refusal = match &self.current_statement_source {
+            Some(source) => {
+                let file = source.file.file_name().map_or_else(
+                    || source.file.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                format!(
+                    "{file}:{}: a for loop needs a list or text, and this value is neither",
+                    source.line
+                )
+            }
+            None => "a for loop needs a list or text, and this value is neither".to_string(),
+        };
+        let escaped = crate::transpiler::escape_quoted(&refusal);
+        let build = |path: &str| {
+            // A helper for a dynamic path is a macro function: only a line
+            // that names a placeholder may start with `$`.
+            let line = |text: String| {
+                if text.contains("$(") {
+                    format!("${text}")
+                } else {
+                    text
+                }
+            };
+            vec![
+                line(format!("scoreboard players set {string_score} temp 1")),
+                line(format!(
+                    "execute if score {len_var} temp matches 1.. unless data storage {namespace}:global {path}[] store success score {string_score} temp run data modify storage {namespace}:global {copy_path} set string storage {namespace}:global {path}"
+                )),
+                line(format!(
+                    "execute if data storage {namespace}:global {copy_path} if score {len_var} temp matches 1.. unless data storage {namespace}:global {path}[] store result score {copy_len} temp run data get storage {namespace}:global {copy_path}"
+                )),
+                line(format!(
+                    "execute if data storage {namespace}:global {copy_path} if score {len_var} temp matches 1.. unless data storage {namespace}:global {path}[] unless score {copy_len} temp = {len_var} temp run scoreboard players set {string_score} temp 0"
+                )),
+                line(format!(
+                    "execute if score {string_score} temp matches 0 run tellraw @a {{\"text\":\"{escaped}\",\"color\":\"red\"}}"
+                )),
+                line(format!(
+                    "execute if score {string_score} temp matches 0 run scoreboard players set {len_var} temp 0"
+                )),
+                line(format!("data remove storage {namespace}:global {copy_path}")),
+            ]
+        };
+        if let Some(path) = list_plan.as_static() {
+            return Ok(build(path));
+        }
+        self.dynamic_storage_command(list_plan, GeneratedCommandKind::ControlFlow, build)
     }
 
     /// The storage path of a loop's iterable when it is a parameter, or a
