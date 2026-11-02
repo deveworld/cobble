@@ -14,7 +14,7 @@ def setup_scoreboards():
     bossbar.set_players("matrix", "@a")
 
 def announce(message):
-    /tellraw @a {"text":"{message}","color":"light_purple"}
+    /tellraw @a {"text":f"{message}","color":"light_purple"}
 
 def give_kit(player, item, count):
     /give {player} minecraft:{item} {count}

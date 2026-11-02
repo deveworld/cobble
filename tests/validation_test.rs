@@ -136,7 +136,7 @@ fn test_validate_function_calls() {
     let errors = compile_and_validate(
         r#"
 def greet(player, msg):
-    /tellraw {player} {"text":"{msg}"}
+    /tellraw {player} {"text":f"{msg}"}
 
 def test():
     greet("@a", "Hello")
@@ -372,7 +372,7 @@ def game_tick():
         /say tick {i}
 
 def greet(player, msg):
-    /tellraw {player} {"text":"{msg}"}
+    /tellraw {player} {"text":f"{msg}"}
 
 def use_greet():
     greet("@a", "Welcome")

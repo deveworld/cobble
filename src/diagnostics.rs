@@ -1308,6 +1308,7 @@ pub(crate) const NON_MODULE_BUILTIN_SYMBOLS: &[&str] = &[
     "min",
     "sorted",
     "str",
+    "_cobble_format",
     "sum",
 ];
 
@@ -1479,7 +1480,7 @@ pub(super) fn is_list_method(name: &str) -> bool {
 fn is_allowed_value_function_call(name: &str) -> bool {
     matches!(
         name,
-        "len" | "abs" | "max" | "min" | "sorted" | "str" | "sum"
+        "len" | "abs" | "max" | "min" | "sorted" | "str" | "_cobble_format" | "sum"
     ) || math_value_function_arity(name).is_some()
 }
 
@@ -2371,7 +2372,7 @@ def helper(player, message):
         let diagnostics = analyze_source(
             r#"
 def main(player):
-    /tellraw {player} {"text":"{message}"}
+    /tellraw {player} {"text":f"{message}"}
 "#,
         );
 
@@ -2459,7 +2460,7 @@ score = 1
 def main(player):
     message = "ready"
     for i in range(3):
-        /tellraw {player} {"text":"Score {score} {message} {i}"}
+        /tellraw {player} {"text":f"Score {score} {message} {i}"}
 "#,
         );
 
@@ -2503,7 +2504,7 @@ def main():
         let diagnostics = analyze_source(
             r#"
 def main():
-    /tellraw @a {"text":"literal {{name}}", "color":"gold"}
+    /tellraw @a {"text":f"literal {{name}}", "color":"gold"}
     /tellraw @a {"text":"literal {"}
     /data merge entity @s {}
     /data merge entity @s {Tags:["foo"]}
@@ -2579,7 +2580,7 @@ def main():
     greet("@a")
 
 def greet(player, message):
-    /tellraw {player} {"text":"{message}"}
+    /tellraw {player} {"text":f"{message}"}
 "#,
         );
 
@@ -3247,7 +3248,7 @@ def main():
         std::fs::write(&main, "import helper\n\ndef main():\n    greet(\"@a\")\n").unwrap();
         std::fs::write(
             &helper,
-            "def greet(player, message):\n    /tellraw {player} {\"text\":\"{message}\"}\n",
+            "def greet(player, message):\n    /tellraw {player} {\"text\":f\"{message}\"}\n",
         )
         .unwrap();
 

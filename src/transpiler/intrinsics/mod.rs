@@ -157,7 +157,7 @@ impl Transpiler {
         expr: &Expression,
         label: &str,
     ) -> Result<String, TranspileError> {
-        let component = self.expr_to_text_component(expr)?;
+        let component = self.expr_to_text_component(&text::protect_literal_strings(expr))?;
         self.fill_helper_placeholders(&component, label)
     }
 

@@ -122,7 +122,7 @@ def first_join():
     player_number = 0
     store result score player_number temp:
         /scoreboard players get #players lobby_data
-    /tellraw @a ["",{"selector":"@s","color":"gold"},{"text":" joined for the first time! Welcome, player #{player_number}.","color":"yellow"}]
+    /tellraw @a ["",{"selector":"@s","color":"gold"},{"text":f" joined for the first time! Welcome, player #{player_number}.","color":"yellow"}]
     text.subtitle("@s", text.colored("Press Esc for the server menu", "gray"))
     text.title("@s", text.colored("Welcome!", "gold"))
     /playsound minecraft:ui.toast.challenge_complete master @s

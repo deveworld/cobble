@@ -109,7 +109,7 @@ fn a_whole_text_parameter_is_macro_text_in_a_wrapper() {
     /tellraw @a {msg}
     /tellraw @a note: {msg}
 def quoted(msg):
-    /tellraw @a {"text":"{msg}"}
+    /tellraw @a {"text":f"{msg}"}
 def bar(msg):
     /title @a actionbar {msg}
 def raw(msg):

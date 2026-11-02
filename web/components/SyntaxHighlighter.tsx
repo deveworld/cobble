@@ -74,7 +74,7 @@ const minecraftCommands = new Set([
 ]);
 
 const tokenPattern =
-  /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|#[^\n]*|@[a-z](?:\[[^\]\n]*\])?|\/?[A-Za-z_][A-Za-z0-9_.:-]*|\b\d+(?:\.\d+)?|\.\.|[{}\[\]():,=+\-*<>/])/g;
+  /([fF]?"(?:\\.|[^"\\])*"|[fF]?'(?:\\.|[^'\\])*'|#[^\n]*|@[a-z](?:\[[^\]\n]*\])?|\/?[A-Za-z_][A-Za-z0-9_.:-]*|\b\d+(?:\.\d+)?|\.\.|[{}\[\]():,=+\-*<>/])/g;
 
 type CodeBlockProps = {
   code: string;
@@ -203,10 +203,7 @@ function classifyToken(
 }
 
 function isQuoted(token: string) {
-  return (
-    (token.startsWith("\"") && token.endsWith("\"")) ||
-    (token.startsWith("'") && token.endsWith("'"))
-  );
+  return /^[fF]?["']/.test(token);
 }
 
 function isJsonKey(code: string, end: number) {

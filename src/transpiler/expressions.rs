@@ -350,6 +350,14 @@ impl Transpiler {
         &self,
         expr: &Expression,
     ) -> Result<serde_json::Value, TranspileError> {
+        if let Some(text) = self.compile_time_text(expr) {
+            return Ok(serde_json::Value::String(text));
+        }
+        if matches!(expr, Expression::Binary(..)) && super::desugar::has_format_field(expr) {
+            return Ok(serde_json::Value::String(
+                self.expr_to_shown_text(expr, "formatted text")?,
+            ));
+        }
         match expr {
             Expression::Number(n) => self.json_number(*n),
             Expression::Unary(UnaryOp::Neg | UnaryOp::Pos, _)

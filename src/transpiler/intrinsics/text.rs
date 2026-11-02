@@ -1,6 +1,35 @@
-use crate::ast::Expression;
+use crate::ast::{BinaryOp, Expression};
 use crate::transpiler::command_processor::CommandProcessor;
 use crate::transpiler::{TranspileError, Transpiler};
+
+/// Literal strings remain literal when a generated command reads its
+/// internal placeholders. Formatted fields are conversion calls in the AST,
+/// so protecting literal chunks doesn't protect the fields they produce.
+pub(in crate::transpiler) fn protect_literal_strings(expr: &Expression) -> Expression {
+    let protect = |value: &Expression| Box::new(protect_literal_strings(value));
+    match expr {
+        Expression::String(text) => {
+            Expression::String(crate::transpiler::placeholders::escape_braces(text))
+        }
+        Expression::Array(values) => {
+            Expression::Array(values.iter().map(protect_literal_strings).collect())
+        }
+        Expression::Map(entries) => Expression::Map(
+            entries
+                .iter()
+                .map(|(key, value)| (key.clone(), protect_literal_strings(value)))
+                .collect(),
+        ),
+        Expression::Binary(left, op, right) => {
+            Expression::Binary(protect(left), op.clone(), protect(right))
+        }
+        Expression::Call(func, args) => Expression::Call(
+            func.clone(),
+            args.iter().map(protect_literal_strings).collect(),
+        ),
+        other => other.clone(),
+    }
+}
 
 pub(in crate::transpiler) fn validate_text_color(color: &str) -> Result<(), TranspileError> {
     const NAMED_COLORS: &[&str] = &[
@@ -56,18 +85,59 @@ impl Transpiler {
             Expression::Identifier(name) if self.current_context.is_param(name) => {
                 Ok(serde_json::json!({ "text": format!("{{{name}}}") }))
             }
+            Expression::Identifier(name)
+                if self.symbols.variable_storage_paths.contains_key(name)
+                    || self.symbols.scoreboard_variables.contains(name) =>
+            {
+                Ok(serde_json::json!({ "text": format!("{{{name}}}") }))
+            }
+            Expression::Binary(..)
+                if crate::transpiler::desugar::has_format_field(expr)
+                    || self.compile_time_text(expr).is_some() =>
+            {
+                Ok(serde_json::json!({"text": self.expr_to_shown_text(expr, "text component")?}))
+            }
             _ => self.expr_to_json_value(expr),
         }
     }
 
-    /// The text of a component: a string keeps its `{name}` placeholders,
-    /// and a parameter becomes one, so the command shows them as text
-    /// components as a raw `tellraw` does.
-    fn expr_to_shown_text(&self, expr: &Expression, label: &str) -> Result<String, TranspileError> {
+    /// Internal component template text. Literal source strings have their
+    /// braces protected by `protect_literal_strings`; formatted fields and
+    /// parameters become placeholders for the command processor.
+    pub(in crate::transpiler) fn expr_to_shown_text(
+        &self,
+        expr: &Expression,
+        label: &str,
+    ) -> Result<String, TranspileError> {
         match expr {
             Expression::String(s) => Ok(s.clone()),
             Expression::Identifier(name) if self.current_context.is_param(name) => {
                 Ok(format!("{{{name}}}"))
+            }
+            Expression::Identifier(name)
+                if self.symbols.variable_storage_paths.contains_key(name)
+                    || self.symbols.scoreboard_variables.contains(name) =>
+            {
+                Ok(format!("{{{name}}}"))
+            }
+            Expression::Binary(left, BinaryOp::Add, right)
+                if crate::transpiler::desugar::has_format_field(expr)
+                    || self.compile_time_text(expr).is_some() =>
+            {
+                Ok(self.expr_to_shown_text(left, label)?
+                    + &self.expr_to_shown_text(right, label)?)
+            }
+            Expression::Call(func, args)
+                if matches!(&**func, Expression::Identifier(name) if name == "_cobble_format")
+                    && args.len() == 1 =>
+            {
+                if let Some(text) = self.compile_time_text(expr) {
+                    return Ok(text);
+                }
+                match &args[0] {
+                    Expression::Identifier(name) => Ok(format!("{{{name}}}")),
+                    _ => Err("An f-string field needs a name.".into()),
+                }
             }
             _ => self.expr_to_plain_arg(expr, label),
         }
@@ -156,7 +226,7 @@ impl Transpiler {
         let target = crate::transpiler::placeholders::escape_braces(
             &self.expr_to_selector_arg(&args[0], "text target")?,
         );
-        let component = self.expr_to_text_component(&args[1])?;
+        let component = self.expr_to_text_component(&protect_literal_strings(&args[1]))?;
         let command = match method {
             "tellraw" => format!("tellraw {} {}", target, component),
             "title" | "subtitle" | "actionbar" => {
@@ -171,8 +241,8 @@ impl Transpiler {
             safe_plain_text: self.current_context.safe_plain_text,
             symbols: &self.symbols,
         };
-        let mut commands = processor.text_copy_commands(&command)?;
-        let processed = processor.process_command_string(&command)?;
+        let mut commands = processor.template_copy_commands(&command)?;
+        let processed = processor.process_template_string(&command)?;
         commands.extend(self.quoted_hover_commands(&command, processed));
         self.push_current_commands(commands)
     }

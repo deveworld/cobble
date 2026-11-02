@@ -309,6 +309,12 @@ pub(crate) fn mask_non_code(line: &str) -> String {
 
         match ch {
             '"' | '\'' => {
+                if crate::parser::strings::command_quote_start(line, index)
+                    .is_some_and(|start| start < index)
+                {
+                    output.pop();
+                    output.push(' ');
+                }
                 quote = Some(ch);
                 output.push('_');
             }

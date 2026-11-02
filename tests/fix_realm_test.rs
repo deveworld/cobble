@@ -52,13 +52,13 @@ title = "Boss"
 count = 3
 
 def show(name):
-    /tellraw @a "Hello {name}"
+    /tellraw @a f"Hello {name}"
 
 def main():
     /tellraw @a "Plain"
-    /tellraw @a "Fight {title} {count}"
-    /tellraw @a 'Single {title}'
-    /tellraw @a "A \"quoted\" {title}"
+    /tellraw @a f"Fight {title} {count}"
+    /tellraw @a f'Single {title}'
+    /tellraw @a f"A \"quoted\" {title}"
     show("Steve")
     show("say \"hi\"")
 "#,
@@ -114,12 +114,12 @@ items = ["Bread", "Iron Sword"]
 
 def label(value):
     copy = value
-    /tellraw @a {"text":"Value: {copy}","color":"gold"}
+    /tellraw @a {"text":f"Value: {copy}","color":"gold"}
 
 def main():
-    /tellraw @a {"text":"Title: {title}"}
+    /tellraw @a {"text":f"Title: {title}"}
     name = items[1]
-    /tellraw @a ["Item: {name}"]
+    /tellraw @a [f"Item: {name}"]
     label("Steak")
     label(42)
     label([1, 2])
@@ -151,7 +151,7 @@ from stdlib import text
 
 def main():
     left = 3
-    text.tellraw("@a", {"text": "Starts in {left}", "color": "yellow"})
+    text.tellraw("@a", {"text": f"Starts in {left}", "color": "yellow"})
 "#;
     let mut sim = Sim::load(source, &[]);
     sim.call("main");
@@ -163,7 +163,7 @@ from stdlib import text
 
 def main():
     left = 3
-    text.actionbar("@a", "Wait {left}s")
+    text.actionbar("@a", f"Wait {left}s")
 "#,
     )
     .unwrap_or_else(|error| panic!("build failed: {error}"));
@@ -445,7 +445,7 @@ fn parameters_with_quotes_show_in_text_commands() {
     let mut sim = Sim::load(
         r#"
 def announce(msg):
-    /tellraw @a {"text":"[News] {msg}","color":"gold"}
+    /tellraw @a {"text":f"[News] {msg}","color":"gold"}
     /say {msg}
 
 def main():
@@ -696,7 +696,7 @@ def main():
     e = price("a.b")
     f = shop["Iron Sword"]["cost"]
     n = len(prices)
-    /tellraw @a ["{a} {b} {c} {d} {e} {f} {n}"]
+    /tellraw @a [f"{a} {b} {c} {d} {e} {f} {n}"]
 "#,
         &[],
     );
@@ -737,7 +737,7 @@ def main():
     if (x > 0
         and x < 9):
         f += 1
-    /tellraw @a ["{a} {b} {c} {d} {e} {f}"]
+    /tellraw @a [f"{a} {b} {c} {d} {e} {f}"]
 "#,
         &[],
     );

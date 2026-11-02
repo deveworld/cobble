@@ -155,7 +155,7 @@ impl Transpiler {
         if let Some(actual_selector) = self.symbols.selector_aliases.get(selector_name) {
             // The header's placeholders are read later, and the alias's
             // escapes are read already.
-            return Ok(placeholders::escape_braces(actual_selector));
+            return Ok(placeholders::escape_unquoted_braces(actual_selector));
         }
         let variable = selector_name.split('[').next().unwrap_or("");
         if !matches!(variable, "a" | "e" | "p" | "r" | "s" | "n") {
@@ -750,6 +750,17 @@ impl Transpiler {
     ) -> Result<(), TranspileError> {
         // An alias holds its text with escapes already read, so its braces
         // are escaped again for the placeholder reading below.
+        let mut template_error = None;
+        chain.map_text(|text| match placeholders::command_template(text) {
+            Ok(template) => template,
+            Err(error) => {
+                template_error.get_or_insert(error);
+                text.to_string()
+            }
+        });
+        if let Some(error) = template_error {
+            return Err(error.into());
+        }
         let aliases: std::collections::HashMap<String, String> = self
             .symbols
             .selector_aliases

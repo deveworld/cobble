@@ -71,13 +71,13 @@ score = 5
 name = "Steve"
 
 def greet(who):
-    /tellraw @a [{text:"Hi ",color:yellow},{text:"{who}",color:aqua}]
+    /tellraw @a [{text:"Hi ",color:yellow},{text:f"{who}",color:aqua}]
 
 def main():
-    /tellraw @a {text:"Score {score}",color:yellow}
-    /tellraw @a [{text:"Score ",color:yellow},{text:"{score}",color:aqua}]
-    /tellraw @a {text:"Hi ",extra:[{text:"{name}",bold:true}]}
-    /tellraw @a {text:"it's {score}",italic:1b}
+    /tellraw @a {text:f"Score {score}",color:yellow}
+    /tellraw @a [{text:"Score ",color:yellow},{text:f"{score}",color:aqua}]
+    /tellraw @a {text:"Hi ",extra:[{text:f"{name}",bold:true}]}
+    /tellraw @a {text:f"it's {score}",italic:1b}
     greet("Alex")
 "#,
         &[],
@@ -89,7 +89,7 @@ def main():
     );
 
     let error =
-        compile("n = 5\n\ndef main():\n    /tellraw @a {text:\"x\",font:\"{n}\"}\n").unwrap_err();
+        compile("n = 5\n\ndef main():\n    /tellraw @a {text:\"x\",font:f\"{n}\"}\n").unwrap_err();
     assert!(error.contains("Other fields take no variables"), "{error}");
 }
 
@@ -99,7 +99,7 @@ fn words_with_one_use_as_keywords_work_as_names() {
         "end", "to", "by", "at", "create", "define", "match", "case", "const", "asat",
     ] {
         let source = format!(
-            "{word} = 4\n\ndef {word}_copy({word}):\n    return {word} + 1\n\ndef main():\n    x = {word}_copy({word})\n    /tellraw @a [\"{{x}}\"]\n"
+            "{word} = 4\n\ndef {word}_copy({word}):\n    return {word} + 1\n\ndef main():\n    x = {word}_copy({word})\n    /tellraw @a [f\"{{x}}\"]\n"
         );
         let mut sim = Sim::load(&source, &[]);
         sim.call("main");

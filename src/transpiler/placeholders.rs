@@ -32,13 +32,39 @@ enum Open {
 
 /// The pieces of `text`, in order.
 pub(in crate::transpiler) fn pieces(text: &str) -> Vec<Piece<'_>> {
-    scan(text).0
+    scan(text, false).0
+}
+
+/// Source command fields: quoted strings interpolate only with an `f`
+/// prefix. Text pieces retain their original slices for source rewrites.
+pub(in crate::transpiler) fn command_pieces(text: &str) -> Vec<Piece<'_>> {
+    scan(text, true).0
+}
+
+/// Translate source string syntax to the internal command template. Literal
+/// braces are protected from the internal template reader; `f` is removed.
+pub(in crate::transpiler) fn command_template(text: &str) -> Result<String, String> {
+    crate::parser::strings::validate_command_strings(text)?;
+    let (pieces, single_close) = scan(text, true);
+    if single_close.is_some() {
+        return Err(
+            "A single `}` closes the `{{` escape. Use `}}` for a literal closing brace."
+                .to_string(),
+        );
+    }
+    Ok(pieces
+        .into_iter()
+        .map(|piece| match piece {
+            Piece::Text { text, .. } => text,
+            Piece::Field { raw, .. } => raw.to_string(),
+        })
+        .collect())
 }
 
 /// The pieces of `text`, or an error when a single `}` closes a `{{`
 /// escape, as in `{{k}:1}`, which a Python format string refuses too.
 pub(in crate::transpiler) fn checked_pieces(text: &str) -> Result<Vec<Piece<'_>>, String> {
-    let (pieces, single_close) = scan(text);
+    let (pieces, single_close) = scan(text, false);
     match single_close {
         None => Ok(pieces),
         Some(_) => Err(format!(
@@ -77,15 +103,42 @@ pub(in crate::transpiler) fn escape_braces(text: &str) -> String {
     text.replace('{', "{{").replace('}', "}}")
 }
 
+/// A resolved alias enters source-string normalization once more. Protect
+/// only its unquoted braces here; quoted literal braces are protected there.
+pub(in crate::transpiler) fn escape_unquoted_braces(text: &str) -> String {
+    let mut out = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active {
+                quote = None;
+            }
+        } else if matches!(ch, '\'' | '"')
+            && crate::parser::strings::command_quote_start(text, index).is_some()
+        {
+            quote = Some(ch);
+        } else if matches!(ch, '{' | '}') {
+            out.push(ch);
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// The pieces of `text`, and the offset of the first single `}` that
 /// closes a `{{` escape.
-fn scan(text: &str) -> (Vec<Piece<'_>>, Option<usize>) {
+fn scan(text: &str, source_strings: bool) -> (Vec<Piece<'_>>, Option<usize>) {
     let mut single_close = None;
     let bytes = text.as_bytes();
     let mut pieces: Vec<Piece<'_>> = Vec::new();
     let mut open: Vec<Open> = Vec::new();
     // The quote of the string being read, and the braces open outside it.
-    let mut quote: Option<(u8, Vec<Open>)> = None;
+    let mut quote: Option<(u8, Vec<Open>, bool)> = None;
     let mut escaped = false;
     let mut text_start = 0;
     let mut decoded = String::new();
@@ -114,17 +167,34 @@ fn scan(text: &str) -> (Vec<Piece<'_>>, Option<usize>) {
             escaped = true;
         } else if byte == b'"' || byte == b'\'' {
             match &quote {
-                Some((open_quote, _)) if *open_quote == byte => {
-                    let (_, outside) = quote.take().expect("checked above");
+                Some((open_quote, _, _)) if *open_quote == byte => {
+                    let (_, outside, _) = quote.take().expect("checked above");
                     open = outside;
                 }
                 Some(_) => {}
-                None => quote = Some((byte, std::mem::take(&mut open))),
+                None => {
+                    let start = crate::parser::strings::command_quote_start(text, index);
+                    if !source_strings || start.is_some() {
+                        let formatted = !source_strings || start.is_some_and(|start| start < index);
+                        if source_strings && formatted {
+                            decoded.pop();
+                        }
+                        quote = Some((byte, std::mem::take(&mut open), formatted));
+                    }
+                }
             }
+        } else if source_strings
+            && quote.as_ref().is_some_and(|(_, _, formatted)| !formatted)
+            && matches!(byte, b'{' | b'}')
+        {
+            decoded.push(byte as char);
         } else if byte == b'{' {
             if bytes.get(index + 1) == Some(&b'{') {
                 open.push(Open::Escape);
                 decoded.push('{');
+                if source_strings {
+                    decoded.push('{');
+                }
                 index += 2;
                 continue;
             }
@@ -152,11 +222,17 @@ fn scan(text: &str) -> (Vec<Piece<'_>>, Option<usize>) {
                 Some(Open::Escape) if double => {
                     open.pop();
                     decoded.push('}');
+                    if source_strings {
+                        decoded.push('}');
+                    }
                     index += 2;
                     continue;
                 }
                 None if double => {
                     decoded.push('}');
+                    if source_strings {
+                        decoded.push('}');
+                    }
                     index += 2;
                     continue;
                 }

@@ -677,13 +677,11 @@ impl Transpiler {
             }
             Statement::MinecraftCommand(cmd) => {
                 if self.in_module_code {
-                    if let Ok(pieces) = placeholders::checked_pieces(cmd) {
-                        for piece in pieces {
-                            if let placeholders::Piece::Field { name, .. } = piece {
-                                self.check_module_level_reads(&Expression::Identifier(
-                                    name.to_string(),
-                                ))?;
-                            }
+                    for piece in placeholders::command_pieces(cmd) {
+                        if let placeholders::Piece::Field { name, .. } = piece {
+                            self.check_module_level_reads(&Expression::Identifier(
+                                name.to_string(),
+                            ))?;
                         }
                     }
                 }

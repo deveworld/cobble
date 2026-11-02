@@ -162,7 +162,7 @@ def a_early():
     /execute if score early_hits temp matches 1.. run say early load ok
 
 def hover_container(value):
-    /tellraw @a {text:'hover',hover_event:{action:'show_entity',id:'minecraft:pig',uuid:[I;0,0,0,1],name:'{value}'}}
+    /tellraw @a {text:'hover',hover_event:{action:'show_entity',id:'minecraft:pig',uuid:[I;0,0,0,1],name:f'{value}'}}
 
 def hover_container_check():
     positioned 0 64 0:
@@ -343,7 +343,7 @@ def probe():
     runtime_values_len = len(runtime_values)
     map_key_len = len(map_key)
     if runtime_values_len == 2 and map_key_len == 6:
-        /tellraw @a [{"text":"runtime array len {runtime_values_len}","color":"green"},{"text":" key {map_key}"}]
+        /tellraw @a [{"text":f"runtime array len {runtime_values_len}","color":"green"},{"text":f" key {map_key}"}]
         /say runtime len ok
         /say runtime json array ok
     pow_base = 3

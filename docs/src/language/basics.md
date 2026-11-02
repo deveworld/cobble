@@ -48,6 +48,21 @@ Strings take the escapes Python takes: `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, and
 stays in the string. Generated commands keep the escapes, so a `\n` reaches
 storage and text components as a line break.
 
+Ordinary strings keep braces literally. Add `f` to insert named values:
+
+```python
+wave = 3
+label = f"Wave {wave}"   # "Wave 3"
+literal = "Wave {wave}"  # "Wave {wave}"
+```
+
+`f"..."`, `f'...'`, and uppercase `F` are supported. Fields use names such
+as `{wave}`; expressions, conversions (`!r`), format specifiers (`:02`), and
+multiline f-strings are not supported. Write `{{` and `}}` for literal braces
+inside an f-string. A stored f-string accepts text and numbers, with at most
+256 fields. A list or map can be displayed directly in a command f-string as
+SNBT (see [Minecraft Commands](commands.md#json-and-snbt-text)).
+
 ### Booleans
 ```python
 is_active = True

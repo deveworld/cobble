@@ -38,6 +38,7 @@ pub enum Token {
     // Literals
     Number(String), // Store as string to avoid f64 Eq/Hash issues
     String(String),
+    FString(String),
     True_,
     False_,
     None_,
@@ -148,6 +149,7 @@ impl std::fmt::Display for Token {
                 "{}",
                 serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s))
             ),
+            Token::FString(s) => f.write_str(s),
             Token::Number(n) => write!(f, "{}", n),
             Token::MinecraftCommand(s) => write!(f, "/{}", s),
             Token::Dot => write!(f, "."),
@@ -580,13 +582,41 @@ fn tokenize_line(
                 tokenizer.chars.next();
             }
             '#' => tokenizer.tag_or_comment(start),
-            '/' => tokenizer.command_or_slash(start),
+            '/' => tokenizer.command_or_slash(start)?,
             '"' | '\'' if line[start..].starts_with(triple_quote_pattern(ch)) => {
                 if let Some(open) = tokenizer.triple_quoted_string(start, ch) {
                     return Ok(Some(open));
                 }
             }
-            '"' | '\'' => tokenizer.string_literal(start),
+            '"' | '\'' => {
+                tokenizer.string_literal(start);
+            }
+            'f' | 'F' if line[start + 1..].starts_with(['"', '\'']) => {
+                if line[start + 1..].starts_with("\"\"\"") || line[start + 1..].starts_with("'''") {
+                    return Err(tokenizer.error_at(
+                        start,
+                        "Triple-quoted f-strings aren't supported. Use a single-line f-string."
+                            .to_string(),
+                    ));
+                }
+                tokenizer.chars.next();
+                if !tokenizer.string_literal(start) {
+                    return Err(tokenizer.error_at(
+                        start,
+                        "Unterminated f-string: add the closing quote.".to_string(),
+                    ));
+                }
+                let Some(token) = tokenizer.tokens.last() else {
+                    unreachable!()
+                };
+                let end = token.span.end - tokenizer.line_offset;
+                let raw = tokenizer.line[start..end].to_string();
+                super::strings::format_parts(&raw[2..raw.len() - 1])
+                    .map_err(|error| tokenizer.error_at(start, error))?;
+                if let Some(token) = tokenizer.tokens.last_mut() {
+                    token.token = Token::FString(raw);
+                }
+            }
             '0'..='9' => tokenizer.number(start, String::new())?,
             '-' => tokenizer.minus_or_negative_number(start)?,
             'a'..='z' | 'A'..='Z' | '_' => tokenizer.identifier_or_keyword(start),
@@ -726,7 +756,7 @@ impl LineTokenizer<'_> {
         self.skip_to(end);
     }
 
-    fn command_or_slash(&mut self, start: usize) {
+    fn command_or_slash(&mut self, start: usize) -> Result<(), TokenizeError> {
         // Check if this is a Minecraft command (starts with / followed by letter)
         // or a division operator
         self.chars.next();
@@ -742,6 +772,8 @@ impl LineTokenizer<'_> {
                 // Minecraft command - consume rest of line
                 let rest = &self.line[next_index..];
                 let stripped = trim_command_end(strip_minecraft_inline_comment(rest));
+                super::strings::validate_command_strings(stripped)
+                    .map_err(|error| self.error_at(start, error))?;
                 self.push(
                     Token::MinecraftCommand(stripped.to_string()),
                     start,
@@ -752,6 +784,7 @@ impl LineTokenizer<'_> {
             // Division operator, or a `/` at the end of the line
             _ => self.push(Token::Slash, start, start + 1),
         }
+        Ok(())
     }
 
     /// Triple-quoted string: closed on this line, or returned open so the
@@ -775,11 +808,12 @@ impl LineTokenizer<'_> {
         None
     }
 
-    fn string_literal(&mut self, start: usize) {
+    fn string_literal(&mut self, start: usize) -> bool {
         let (quote_index, quote) = self.chars.next().unwrap();
         let mut s = String::new();
         let mut escaped = false;
         let mut end = quote_index + quote.len_utf8();
+        let mut closed = false;
         while let Some((index, ch)) = self.chars.next() {
             end = index + ch.len_utf8();
             if escaped {
@@ -806,12 +840,14 @@ impl LineTokenizer<'_> {
             } else if ch == '\\' {
                 escaped = true;
             } else if ch == quote {
+                closed = true;
                 break;
             } else {
                 s.push(ch);
             }
         }
         self.push(Token::String(s), start, end);
+        closed
     }
 
     /// The character of a `\uXXXX` escape whose `\u` was just read, and the

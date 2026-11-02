@@ -1081,7 +1081,7 @@ stdlib.addEventListener(event.TICK, tick)
     #[test]
     fn compile_returns_raw_command_placeholder_diagnostics() {
         let diagnostics = match compile_default(
-            "def greet(player):\n    /tellraw {player} {\"text\":\"Hello {message}\"}\n",
+            "def greet(player):\n    /tellraw {player} {\"text\":f\"Hello {message}\"}\n",
             "web_test",
             "Web test",
         ) {

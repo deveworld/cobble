@@ -367,9 +367,26 @@ impl Sim {
             let (_, json) = split_selector(rest);
             let rendered = self.render_text(
                 &serde_json::from_str(json.trim())
-                    .unwrap_or_else(|e| panic!("tellraw JSON did not parse ({e}): {json}")),
+                    .map_err(|error| error.to_string())
+                    .or_else(|_| parse_snbt(json.trim()))
+                    .unwrap_or_else(|error| panic!("Invalid tellraw component: {error}: {json}")),
                 context,
             );
+            self.log.push(rendered);
+            return Some(1);
+        }
+        if let Some(rest) = command.strip_prefix("title ") {
+            let (_, rest) = split_selector(rest);
+            let (action, message) = rest
+                .trim()
+                .split_once(' ')
+                .expect("title action and message");
+            assert!(matches!(action, "title" | "subtitle" | "actionbar"));
+            let value = serde_json::from_str(message)
+                .map_err(|error| error.to_string())
+                .or_else(|_| parse_snbt(message))
+                .expect("title component");
+            let rendered = self.render_text(&value, context);
             self.log.push(rendered);
             return Some(1);
         }

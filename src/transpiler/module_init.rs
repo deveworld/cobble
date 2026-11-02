@@ -465,6 +465,10 @@ impl Transpiler {
             })
         }
         match statement {
+            Statement::Assignment(assign) => super::desugar::has_format_field(&assign.value),
+            Statement::MultiAssign(assign) => {
+                assign.values.iter().any(super::desugar::has_format_field)
+            }
             Statement::For(for_loop) => {
                 !self.expands_at_compile_time(for_loop) || !declarations_only(&for_loop.body)
             }

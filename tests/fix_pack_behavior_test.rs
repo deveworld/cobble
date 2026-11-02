@@ -509,7 +509,7 @@ resource_pack.item_model("main:wand", {"parent": "minecraft:item/handheld"})
 datapack.function_tag("main:order", ["main:show"])
 
 def braces(n):
-    /summon pig ~ ~ ~ {{Tags:["{n}"]}}
+    /summon pig ~ ~ ~ {{Tags:[f"{n}"]}}
     /say {{{n}}}
     /say {{plain}}
 "#,

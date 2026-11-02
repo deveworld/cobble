@@ -1579,6 +1579,20 @@ pub(super) fn check_undefined_variable_references(
     let mut reported = HashSet::new();
     for scan in scans {
         let line_text = context.line_text(scan.line);
+        for field in scan_command_fields(line_text, 0, false) {
+            if !symbols.contains(&field.name)
+                && !scan.params.contains(&field.name)
+                && !crate::diagnostics::is_builtin_symbol(&field.name)
+                && reported.insert((scan.line, field.name.clone()))
+            {
+                diagnostics.push(SourceDiagnostic::error(
+                    "undefined-variable",
+                    scan.line,
+                    field.column,
+                    format!("Undefined variable `{}` in f-string", field.name),
+                ));
+            }
+        }
         let masked = mask_non_code(line_text);
         let trimmed = masked.trim_start();
         if trimmed.is_empty() || trimmed.starts_with('/') {
@@ -3522,7 +3536,7 @@ fn infer_expression_type_for_diagnostics(
     }) {
         match builtin.name.as_str() {
             "sorted" => return Some(CobbleType::List),
-            "str" => return Some(CobbleType::String),
+            "str" | "_cobble_format" => return Some(CobbleType::String),
             "abs" | "max" | "min" | "sum" => return Some(CobbleType::Integer),
             _ => {}
         }
@@ -4186,9 +4200,14 @@ struct CommandPlaceholder {
 }
 
 fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder> {
+    scan_command_fields(line, indent, true)
+}
+
+fn scan_command_fields(line: &str, indent: usize, unquoted: bool) -> Vec<CommandPlaceholder> {
     let mut placeholders = Vec::new();
     let mut index = indent;
     let mut quote = None;
+    let mut formatted_quote = false;
     let mut escaped = false;
     // Both scans would otherwise start over for every brace or placeholder,
     // which a long line makes quadratic.
@@ -4211,7 +4230,7 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
                 index = next_index;
                 continue;
             }
-            if ch == '{' {
+            if formatted_quote && ch == '{' {
                 // `{{` is a literal brace; a placeholder between escapes is
                 // still a placeholder, as in a Python format string.
                 if line[index..].starts_with("{{") {
@@ -4239,8 +4258,19 @@ fn raw_command_placeholders(line: &str, indent: usize) -> Vec<CommandPlaceholder
         }
 
         if matches!(ch, '"' | '\'') {
-            quote = Some(ch);
+            if let Some(start) = crate::parser::strings::command_quote_start(line, index) {
+                quote = Some(ch);
+                formatted_quote = start < index;
+            }
             escaped = false;
+            index = next_index;
+            continue;
+        }
+
+        if !unquoted {
+            if ch == '#' && crate::parser::tokenizer::hash_starts_comment(line, index) {
+                break;
+            }
             index = next_index;
             continue;
         }

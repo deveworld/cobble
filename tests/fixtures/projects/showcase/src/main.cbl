@@ -193,7 +193,7 @@ def start_round():
         /tp @s 0 101 0
         /dialog show @s cobble_showcase:welcome
         /advancement grant @s only cobble_showcase:arena/root
-    /tellraw @a [{"text":"Round {round} ","color":"gold","bold":true},{"text":"status: {status}","color":"gray"}]
+    /tellraw @a [{"text":f"Round {round} ","color":"gold","bold":true},{"text":f"status: {status}","color":"gray"}]
     text.title("@a", text.colored("Round start", "gold"))
     bossbar.add("waves", {"text": "Waves"})
     bossbar.set_max("waves", MAX_WAVES)
@@ -211,7 +211,7 @@ def spawn_wave(number):
         positioned 0 100 0:
             create @Mob
         spawned += 1
-    /tellraw @a {"text":"Wave {number} with {count} mobs","color":"red"}
+    /tellraw @a {"text":f"Wave {number} with {count} mobs","color":"red"}
     store result bossbar cobble_showcase:waves value:
         /scoreboard players get wave temp
 
@@ -242,7 +242,7 @@ def give_reward(player, amount):
     /give {player} minecraft:diamond[minecraft:custom_name={"text":"Arena Reward","color":"gold"}] {amount}
     /loot give {player} loot cobble_showcase:chests/reward
     /item modify entity {player} weapon.mainhand cobble_showcase:items/reward_name
-    /tellraw {player} {"text":"You received {amount} diamonds","color":"gold"}
+    /tellraw {player} {"text":f"You received {amount} diamonds","color":"gold"}
 
 
 def sneak_check():

@@ -2961,7 +2961,7 @@ fn substitute_expression(
 /// processor reads placeholders: an escape `{{` or `}}` stays for it, and a
 /// placeholder between escapes is replaced too.
 fn replace_unroll_placeholder(text: &str, target: &str, replacement: &str) -> String {
-    placeholders::pieces(text)
+    placeholders::command_pieces(text)
         .into_iter()
         .map(|piece| match piece {
             Piece::Field { name, .. } if name == target => replacement,

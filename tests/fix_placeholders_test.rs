@@ -102,7 +102,7 @@ fn a_parameter_in_helper_display_text_is_a_macro_argument() {
         r#"from stdlib import team, bossbar, score.objective, text
 def mk(d):
     team.add("t", d)
-    team.add("t2", "Team {d}")
+    team.add("t2", f"Team {d}")
     bossbar.add("b", d)
     bossbar.set_name("b", text.plain(d))
     score.objective.add("o", "dummy", d)
@@ -233,8 +233,8 @@ fn a_single_close_inside_an_escape_is_a_compile_error() {
 #[test]
 fn an_alias_escape_is_read_once_in_a_header() {
     let main = function(
-        r#"@A = @e[name="{{a}}"]
-@B = @e[type=minecraft:pig,name="{{{{a}}}}"]
+        r#"@A = @e[name=f"{{a}}"]
+@B = @e[type=minecraft:pig,name=f"{{{{a}}}}"]
 def main():
     /kill @A
     as @A:
@@ -268,7 +268,7 @@ fn a_loop_value_is_placed_as_it_is() {
     let main = function(
         r#"def main():
     for n in ["{a}", "b"]:
-        as @e[name="{n}"]:
+        as @e[name=f"{n}"]:
             /say x
 "#,
         "main",
@@ -325,7 +325,7 @@ fn a_variable_in_title_times_is_a_compile_error() {
 #[test]
 fn a_parameter_in_a_quoted_selector_value_is_a_macro_argument() {
     let f = function(
-        "def f(m):\n    /tellraw @a[name=\"{m}\", tag=x] {\"text\":\"hit\"}\ndef main():\n    f(\"hb\")\n",
+        "def f(m):\n    /tellraw @a[name=f\"{m}\", tag=x] {\"text\":\"hit\"}\ndef main():\n    f(\"hb\")\n",
         "f",
     );
     assert_eq!(f, "$tellraw @a[name=\"$(m)\", tag=x] {\"text\":\"hit\"}");
@@ -498,15 +498,15 @@ fn a_unicode_space_does_not_start_a_comment() {
 fn show_entity_and_show_item_hover_strings_keep_quotes_and_backslashes() {
     for (component, pointer) in [
         (
-            r#"{"text":"e","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,0,0,1],"name":"{note}"}}"#,
+            r#"{"text":"e","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,0,0,1],"name":f"{note}"}}"#,
             "/hover_event/name",
         ),
         (
-            r#"{text:"e",hover_event:{action:"show_entity",id:"minecraft:pig",uuid:[I;0,0,0,1],name:{text:"{note}"}}}"#,
+            r#"{text:"e",hover_event:{action:"show_entity",id:"minecraft:pig",uuid:[I;0,0,0,1],name:{text:f"{note}"}}}"#,
             "/hover_event/name/text",
         ),
         (
-            r#"{"text":"i","hover_event":{"action":"show_item","id":"minecraft:stone","components":{"minecraft:custom_name":"{note}"}}}"#,
+            r#"{"text":"i","hover_event":{"action":"show_item","id":"minecraft:stone","components":{"minecraft:custom_name":f"{note}"}}}"#,
             "/hover_event/components/minecraft:custom_name",
         ),
     ] {
@@ -552,7 +552,7 @@ fn an_explicit_hover_macro_keeps_the_authors_text() {
 #[test]
 fn a_quoted_execute_selector_parameter_precedes_the_hover_component() {
     let source = r#"def hover(target, note):
-    /execute as @a[name="{target}"] run tellraw @s {"text":"h","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,0,0,1],"name":"{note}"}}
+    /execute as @a[name=f"{target}"] run tellraw @s {"text":"h","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":[0,0,0,1],"name":f"{note}"}}
 def main():
     hover("Steve", "say \"hi\"")
 "#;
@@ -596,7 +596,7 @@ def main():
 #[test]
 fn a_placeholder_cobble_cannot_fill_is_a_compile_error() {
     for source in [
-        "l = [4, 6]\nfor v in l:\n    pass\ndef go():\n    /tellraw @a {\"text\":\"{v}\"}\n",
+        "l = [4, 6]\nfor v in l:\n    pass\ndef go():\n    /tellraw @a {\"text\":f\"{v}\"}\n",
         "def go():\n    /scoreboard players set x temp {LATER}\nconst LATER = 3\n",
     ] {
         match compile(source) {

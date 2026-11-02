@@ -4373,7 +4373,7 @@ def main():
     greet("@a")
 
 def greet(player, message):
-    /tellraw {player} {"text":"{message}"}
+    /tellraw {player} {"text":f"{message}"}
 "#,
     );
 
@@ -4454,7 +4454,7 @@ fn cli_check_reports_undefined_command_placeholders() {
         temp_dir.path(),
         r#"
 def main(player):
-    /tellraw {player} {"text":"{message}"}
+    /tellraw {player} {"text":f"{message}"}
 "#,
     );
 
@@ -4772,7 +4772,7 @@ fn cli_check_reports_imported_function_argument_count() {
     );
     fs::write(
         temp_dir.path().join("helper.cbl"),
-        "def greet(player, message):\n    /tellraw {player} {\"text\":\"{message}\"}\n",
+        "def greet(player, message):\n    /tellraw {player} {\"text\":f\"{message}\"}\n",
     )
     .unwrap();
 

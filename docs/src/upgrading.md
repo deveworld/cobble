@@ -30,7 +30,7 @@ cobble migrate --json
    with step 3. It also marks the lines whose output changes for the reasons
    under [Other Output Changes](#other-output-changes): `say-variable-text`,
    `load-function-tag`, `function-tag-order`, `brace-escape`,
-   `entity-template-tag`, and `item-model-definition`.
+   `entity-template-tag`, `item-model-definition`, and `string-interpolation`.
    `function-local-variable` marks each function that assigns a module
    variable without `global`; see
    [Function-Local Variables](#function-local-variables).
@@ -46,6 +46,29 @@ cobble build --validate
    name, such as command blocks, other data packs, plugins, or commands typed
    in chat. `/scoreboard players get round temp` becomes
    `/scoreboard players get round <namespace>.vars`.
+
+### Explicit String Interpolation
+
+Quoted strings now interpolate only with an `f` prefix. Update text that
+previously relied on automatic substitution:
+
+```python
+# Before
+/title @a title {"text": "Wave {wave}"}
+
+# After
+/title @a title f"Wave {wave}"
+/title @a title {"text": f"Wave {wave}", "color": "gold"}
+```
+
+Ordinary strings such as `"Wave {wave}"` now print literally, including
+doubled braces. The same rule applies to strings passed to text component
+helpers: use `text.plain(f"Wave {wave}")` for interpolation. Command arguments
+outside strings, such as `/tp {player} {x} {y} {z}`, are unchanged.
+
+F-string fields accept names. Expressions, format specifiers, conversions,
+and multiline f-strings are not supported. See
+[Strings](language/basics.md#strings) for the supported forms.
 
 ### Per-Pack Variable Objective
 

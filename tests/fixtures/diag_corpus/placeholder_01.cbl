@@ -1,3 +1,3 @@
 
 def main(player):
-    /tellraw {player} {"text":"{message}"}
+    /tellraw {player} {"text":f"{message}"}

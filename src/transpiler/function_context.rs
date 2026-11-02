@@ -293,9 +293,11 @@ impl FunctionContext {
 
     /// `{name}` placeholders in raw command and header text.
     fn check_text(&self, text: &str, assigned: &HashSet<String>) -> Result<(), String> {
-        for local in &self.locals {
-            if !assigned.contains(local) && text.contains(&format!("{{{}}}", local)) {
-                return Err(local.clone());
+        for piece in super::placeholders::command_pieces(text) {
+            if let super::placeholders::Piece::Field { name, .. } = piece {
+                if self.is_local(name) && !assigned.contains(name) {
+                    return Err(name.to_string());
+                }
             }
         }
         Ok(())
@@ -492,7 +494,15 @@ fn visit_read_sites(body: &[Statement], visit: &mut impl FnMut(ReadSite<'_>)) {
                 }
             }
             Statement::Execute(exec_block) => {
-                visit(ReadSite::Text(&format!("{:?}", exec_block.modifiers)));
+                for modifier in &exec_block.modifiers {
+                    use crate::ast::ExecuteModifier::*;
+                    let text = match modifier {
+                        As(text) | At(text) | IfRaw(text) | UnlessRaw(text) | Positioned(text)
+                        | Rotated(text) | In(text) | Anchored(text) | Align(text) | Store(text)
+                        | Other(text) => text,
+                    };
+                    visit(ReadSite::Text(text));
+                }
                 visit_read_sites(&exec_block.body, visit);
             }
             _ => {}
@@ -505,7 +515,6 @@ fn visit_read_sites(body: &[Statement], visit: &mut impl FnMut(ReadSite<'_>)) {
 /// using it as a `for` target, is not a read. Nested function definitions
 /// are not searched.
 pub(in crate::transpiler) fn count_reads(body: &[Statement], name: &str) -> usize {
-    let placeholder = format!("{{{name}}}");
     let mut count = 0;
     visit_read_sites(body, &mut |site| match site {
         ReadSite::Expression(expr) => {
@@ -513,7 +522,14 @@ pub(in crate::transpiler) fn count_reads(body: &[Statement], name: &str) -> usiz
             expression_reads(expr, &mut reads);
             count += reads.into_iter().filter(|read| *read == name).count();
         }
-        ReadSite::Text(text) => count += text.matches(placeholder.as_str()).count(),
+        ReadSite::Text(text) => {
+            for piece in super::placeholders::command_pieces(text) {
+                if matches!(piece, super::placeholders::Piece::Field { name: field, .. } if field == name)
+                {
+                    count += 1;
+                }
+            }
+        }
     });
     count
 }
@@ -528,14 +544,9 @@ pub(in crate::transpiler) fn read_names(body: &[Statement]) -> HashSet<String> {
             names.extend(reads.into_iter().map(str::to_string));
         }
         ReadSite::Text(text) => {
-            let mut rest = text;
-            while let Some(open) = rest.find('{') {
-                rest = &rest[open + 1..];
-                let end = rest
-                    .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                    .unwrap_or(rest.len());
-                if end > 0 && rest[end..].starts_with('}') {
-                    names.insert(rest[..end].to_string());
+            for piece in super::placeholders::command_pieces(text) {
+                if let super::placeholders::Piece::Field { name, .. } = piece {
+                    names.insert(name.to_string());
                 }
             }
         }
@@ -911,7 +922,7 @@ pub(in crate::transpiler) fn expression_reads<'a>(expr: &'a Expression, reads: &
                     }
                 }
             }
-            for piece in super::placeholders::pieces(raw) {
+            for piece in super::placeholders::command_pieces(raw) {
                 if let super::placeholders::Piece::Field { name, .. } = piece {
                     reads.push(name);
                 }
@@ -990,6 +1001,11 @@ pub(in crate::transpiler) fn params_read_or_passed(
     ) {
         if let Expression::Call(func, args) = expr {
             if let Expression::Identifier(callee) = &**func {
+                // Formatting reads the original text/NBT value. It must not
+                // make a fractional argument pass through an integer score.
+                if callee == "_cobble_format" {
+                    return;
+                }
                 for (index, arg) in args.iter().enumerate() {
                     match arg {
                         Expression::Identifier(name) => {
@@ -1000,8 +1016,35 @@ pub(in crate::transpiler) fn params_read_or_passed(
                 }
                 return;
             }
+            if super::desugar::has_format_field(expr) {
+                expression_reads(func, reads);
+                for arg in args {
+                    walk(arg, reads, passes);
+                }
+                return;
+            }
         }
         match expr {
+            Expression::MinecraftCondition(raw) => {
+                if let Some(expr) = super::minecraft_condition_expression(raw) {
+                    let mut names = Vec::new();
+                    walk(&expr, &mut names, passes);
+                    for name in names {
+                        if let Some(start) = raw.find(name) {
+                            reads.push(&raw[start..start + name.len()]);
+                        }
+                    }
+                }
+                let formatted =
+                    crate::parser::strings::formatted_string_ranges(raw).unwrap_or_default();
+                for piece in super::placeholders::command_pieces(raw) {
+                    if let super::placeholders::Piece::Field { name, start, .. } = piece {
+                        if !formatted.iter().any(|range| range.contains(&start)) {
+                            reads.push(name);
+                        }
+                    }
+                }
+            }
             Expression::Binary(left, _, right) => {
                 walk(left, reads, passes);
                 walk(right, reads, passes);

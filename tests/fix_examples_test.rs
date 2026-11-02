@@ -21,7 +21,7 @@ fn styled_text_components_keep_their_style_for_variables() {
         r#"
 def main():
     secs = 7
-    /tellraw @a {"text":"Ready in {secs}s","color":"red","bold":true}
+    /tellraw @a {"text":f"Ready in {secs}s","color":"red","bold":true}
 "#,
         &[],
     );

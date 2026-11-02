@@ -48,10 +48,23 @@ def announce():
     score = 10
     /tellraw @a {"text":"Game Started!", "color":"gold", "bold":true}
     /title @a title {"text":"Welcome", "color":"aqua"}
-    /tellraw @a [{"text":"Score: {score}", "color":"gold"}, {"text":" ready"}]
+    /tellraw @a [{"text":f"Score: {score}", "color":"gold"}, {"text":" ready"}]
 ```
 
-In `tellraw` and `title`, a `{variable}` inside a `text` field, a string in a
+Quoted strings interpolate only with an `f` prefix. A whole message can be
+written as an f-string, without a component wrapper:
+
+```python
+def announce():
+    wave = 3
+    /title @a title f"Wave {wave}"
+    /tellraw @a {"text": f"Wave {wave}", "color": "gold"}
+    /tellraw @a "Wave {wave}"  # prints Wave {wave}
+```
+
+Ordinary quoted strings keep every brace as written. The braces that form
+JSON or SNBT objects are unchanged. In `tellraw` and `title`, a `{variable}`
+inside an f-string in a `text` field, a string in a
 component list, `extra`, the `with` arguments of a translation, or hover text
 becomes a score or NBT text component. The styling of the surrounding text is
 kept. A string shows as its text, and a list or a map
@@ -129,12 +142,12 @@ macro substitution inside a text wrapper, so quotes and backslashes in an
 inline value need JSON escaping as well as SNBT escaping. Cobble calls handle
 this automatically by reading the argument from storage.
 
-Writing a component yourself, as `/tellraw @a {"text":"{msg}"}`, also reads
+Writing a component yourself, as `/tellraw @a {"text":f"{msg}"}`, also reads
 the value from storage and accepts any text when Cobble calls the function
 (see [Arguments](../reference/calling-convention.md#arguments)). The same holds
 for hover text. In `show_entity` names and quoted `show_item` component values,
 Cobble escapes the parameter before the command runs, so quotes and
-backslashes survive there too. Single-quoted text works the same way. Lists
+backslashes survive there too. Single-quoted f-strings work the same way. Lists
 and maps in these quoted hover fields display their SNBT text, including
 quoted strings and nested containers. A parameter that stands for the action, as in `/title @a {kind}
 {text}`, is taken for `title`, `subtitle`, or `actionbar`.
@@ -169,7 +182,8 @@ def reward():
 
 Unknown, invalid, and unclosed placeholders are errors, and so is a
 placeholder for a name Cobble has no value for where the command runs.
-Write `{{` and `}}` for literal braces. They work as in a Python format
+Outside quoted strings, and inside f-strings, write `{{` and `}}` for literal
+braces. Ordinary quoted strings need no brace escapes. The escapes work as in a Python format
 string: they nest, a placeholder between them is still filled in, so
 `{{{x}}}` is `{`, the placeholder `x`, and `}`, and a single `}` that closes
 a `{{`, as in `{{k}:1}`, is an error:

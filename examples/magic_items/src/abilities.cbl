@@ -42,7 +42,7 @@ def heal():
         /effect give @s minecraft:regeneration 5 0 true
     /particle minecraft:heart ~ ~1 ~ 2 0.5 2 0 25
     /playsound minecraft:block.amethyst_block.chime player @a ~ ~ ~ 1 1.2
-    /title @s actionbar {"text":"Healed {healed} players","color":"light_purple"}
+    /title @s actionbar {"text":f"Healed {healed} players","color":"light_purple"}
 
 
 def frost():

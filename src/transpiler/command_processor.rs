@@ -219,7 +219,9 @@ impl<'a> CommandProcessor<'a> {
         if params.is_empty() || command.contains("$(") {
             return false;
         }
-        let command = command.strip_prefix('/').unwrap_or(command);
+        let prepared = placeholders::command_template(command.strip_prefix('/').unwrap_or(command));
+        let Ok(command) = prepared else { return false };
+        let command = command.as_str();
         let Ok(pieces) = placeholders::checked_pieces(command) else {
             return false;
         };
@@ -236,6 +238,14 @@ impl<'a> CommandProcessor<'a> {
     }
 
     pub fn process_command_string(&self, cmd: &str) -> Result<String, TranspileError> {
+        let prepared = placeholders::command_template(cmd)?;
+        self.process_template_string(&prepared)
+    }
+
+    pub(in crate::transpiler) fn process_template_string(
+        &self,
+        cmd: &str,
+    ) -> Result<String, TranspileError> {
         // Special handling for tellraw/title commands with scoreboard variables
         let Substituted {
             text: mut result,
@@ -292,6 +302,11 @@ impl<'a> CommandProcessor<'a> {
     /// helper. Returns `None` for other commands and for `say` text without
     /// variables.
     pub fn say_macro(&self, cmd: &str) -> Result<Option<SayMacro>, TranspileError> {
+        let prepared = placeholders::command_template(cmd)?;
+        self.template_say_macro(&prepared)
+    }
+
+    fn template_say_macro(&self, cmd: &str) -> Result<Option<SayMacro>, TranspileError> {
         if !cmd.trim().starts_with("say ") {
             return Ok(None);
         }
@@ -560,6 +575,14 @@ impl<'a> CommandProcessor<'a> {
     /// `_text.<name>`, and a list or a map, which has no text, gets a copy
     /// in `_text_snbt.<name>` (see [`Self::storage_text_component`]).
     pub fn text_copy_commands(&self, cmd: &str) -> Result<Vec<String>, TranspileError> {
+        let prepared = placeholders::command_template(cmd)?;
+        self.template_copy_commands(&prepared)
+    }
+
+    pub(in crate::transpiler) fn template_copy_commands(
+        &self,
+        cmd: &str,
+    ) -> Result<Vec<String>, TranspileError> {
         let trimmed = cmd.trim();
         if text_command_start(trimmed).is_none() && !trimmed.starts_with("say ") {
             return Ok(Vec::new());
@@ -1523,7 +1546,7 @@ mod tests {
         };
 
         let result = processor
-            .process_command_string("tellraw @a {\"text\":\"안녕하세요 {msg}\"}")
+            .process_command_string("tellraw @a {\"text\":f\"안녕하세요 {msg}\"}")
             .unwrap();
         assert!(
             result.contains("안녕하세요 hello"),

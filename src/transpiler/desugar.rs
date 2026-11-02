@@ -21,21 +21,36 @@ const PRELUDE: &str = include_str!("prelude.cbl");
 
 type LoweredValue = Result<Expression, TranspileError>;
 
+pub(in crate::transpiler) fn has_format_field(expr: &Expression) -> bool {
+    matches!(expr, Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "_cobble_format"))
+        || sub_expressions(expr).into_iter().any(has_format_field)
+}
+
 /// Where a prelude helper leaves a result that isn't a number. The name is
 /// also a variable of that path, so Cobble code can read it.
 pub(in crate::transpiler) const RESULT: &str = "_cobble_result";
 
 /// Prelude helpers that call the runtime text functions.
-const TEXT_ESCAPE_HELPERS: [&str; 4] = [
+const TEXT_ESCAPE_HELPERS: [&str; 5] = [
     "_cobble_text_join",
     "_cobble_text_repeat",
     "_cobble_str",
+    "_cobble_format_value",
     "_cobble_has_key",
 ];
 
 /// `str` and the list forms of `min`, `max`, and `sum` aren't functions of
 /// their own in a pack, but a function with the same name replaces them.
-const BUILTIN_FUNCTIONS: [&str; 7] = ["abs", "enumerate", "max", "min", "sorted", "str", "sum"];
+const BUILTIN_FUNCTIONS: [&str; 8] = [
+    "abs",
+    "enumerate",
+    "max",
+    "min",
+    "sorted",
+    "str",
+    "sum",
+    "_cobble_format",
+];
 
 /// List methods that change the list where it is.
 const LIST_COMMAND_METHODS: [&str; 3] = ["append", "clear", "extend"];
@@ -306,6 +321,13 @@ impl Transpiler {
 
     /// Whether `expr` holds a form this module lowers.
     pub(in crate::transpiler) fn needs_lowering(&self, expr: &Expression) -> bool {
+        if let Expression::Call(func, args) = expr {
+            if self.is_template_call(func) {
+                return args
+                    .iter()
+                    .any(|arg| !has_format_field(arg) && self.needs_lowering(arg));
+            }
+        }
         let lowers = match expr {
             Expression::Conditional(..) | Expression::Slice(..) => true,
             Expression::Binary(_, BinaryOp::In | BinaryOp::NotIn, _) => true,
@@ -355,7 +377,8 @@ impl Transpiler {
     fn is_python_call(&self, func: &Expression) -> bool {
         match func {
             Expression::Identifier(name) => {
-                matches!(name.as_str(), "sum" | "str" | "sorted") && self.is_builtin_name(name)
+                matches!(name.as_str(), "sum" | "str" | "_cobble_format" | "sorted")
+                    && self.is_builtin_name(name)
             }
             Expression::Attribute(base, method) => {
                 self.is_list_value(base)
@@ -364,6 +387,12 @@ impl Transpiler {
             }
             _ => false,
         }
+    }
+
+    fn is_template_call(&self, func: &Expression) -> bool {
+        matches!(func, Expression::Attribute(base, _)
+            if !self.is_list_value(base) && Self::expression_path(base).is_some_and(|path|
+                matches!(path.as_str(), "text" | "item_component" | "team" | "bossbar" | "score.objective" | "datapack" | "resource_pack")))
     }
 
     fn is_builtin_name(&self, name: &str) -> bool {
@@ -504,7 +533,7 @@ impl Transpiler {
             }
             Expression::Call(func, _)
                 if matches!(&**func, Expression::Identifier(name)
-                    if name == "str" && self.is_builtin_name(name)) =>
+                    if matches!(name.as_str(), "str" | "_cobble_format") && self.is_builtin_name(name)) =>
             {
                 CobbleType::String
             }
@@ -1515,12 +1544,12 @@ impl Transpiler {
 
     /// The text of `expr` when it is known when the pack is built: a text
     /// literal, `str()` of a value known then, or a join of such texts.
-    fn compile_time_text(&self, expr: &Expression) -> Option<String> {
+    pub(in crate::transpiler) fn compile_time_text(&self, expr: &Expression) -> Option<String> {
         match expr {
             Expression::String(text) => Some(text.clone()),
             Expression::Call(func, args)
                 if matches!(&**func, Expression::Identifier(name)
-                    if name == "str" && self.is_builtin_name(name))
+                    if matches!(name.as_str(), "str" | "_cobble_format") && self.is_builtin_name(name))
                     && args.len() == 1 =>
             {
                 match &args[0] {
@@ -1823,7 +1852,25 @@ impl Transpiler {
             let held = self.helper_value(helper, parts, CobbleType::Unknown, out)?;
             return Ok(Expression::Call(Box::new(func.clone()), vec![held]));
         }
-        let lowered_args = self.lower_values(args, out)?;
+        // Text component helpers consume formatted fields as command
+        // templates. Lowering those to storage first would lose the field
+        // names that their macro arguments must read.
+        let template_call = self.is_template_call(func);
+        let lowered_args = if template_call {
+            self.lower_in_order(
+                &args.iter().collect::<Vec<_>>(),
+                out,
+                &|transpiler, arg, out| {
+                    if has_format_field(arg) {
+                        Ok(arg.clone())
+                    } else {
+                        transpiler.lower_passed(arg, out)
+                    }
+                },
+            )?
+        } else {
+            self.lower_values(args, out)?
+        };
         if let Expression::Identifier(name) = func {
             if self.is_builtin_name(name) {
                 let list_helper = match (name.as_str(), lowered_args.len()) {
@@ -1836,7 +1883,7 @@ impl Transpiler {
                     self.require_prelude(helper)?;
                     return Ok(call(helper, lowered_args));
                 }
-                if name == "str" {
+                if matches!(name.as_str(), "str" | "_cobble_format") {
                     if lowered_args.len() != 1 {
                         return Err(format!(
                             "`str()` takes one value, but {} were given.",
@@ -1844,7 +1891,18 @@ impl Transpiler {
                         )
                         .into());
                     }
-                    return self.helper_value("_cobble_str", lowered_args, CobbleType::String, out);
+                    let helper = if name == "_cobble_format" {
+                        if matches!(
+                            self.value_type(&lowered_args[0]),
+                            CobbleType::List | CobbleType::Map
+                        ) {
+                            return Err("A stored f-string can format text and numbers. To display a list or map as SNBT, use it directly in `/tellraw @a f\"{name}\"`.".into());
+                        }
+                        "_cobble_format_value"
+                    } else {
+                        "_cobble_str"
+                    };
+                    return self.helper_value(helper, lowered_args, CobbleType::String, out);
                 }
                 if name == "sorted" {
                     return self.helper_value(

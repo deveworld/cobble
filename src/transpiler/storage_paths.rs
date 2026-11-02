@@ -185,7 +185,7 @@ pub(in crate::transpiler) trait StoragePathOps {
                     known => known,
                 }
             }
-            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "str") => {
+            Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if matches!(name.as_str(), "str" | "_cobble_format")) => {
                 CobbleType::String
             }
             Expression::Binary(..) | Expression::Unary(..) | Expression::Call(..) => {

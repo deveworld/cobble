@@ -139,9 +139,9 @@ fn module_commands_and_execute_headers_cannot_read_later_declarations() {
 fn single_quoted_text_parameters_preserve_quotes_and_backslashes() {
     let mut sim = Sim::load(
         r#"def show(msg):
-    /tellraw @a 'Hello {msg}'
-    /tellraw @a {text:'{msg}',color:gold}
-    /tellraw @a {text:'a " b',extra:["{msg}"]}
+    /tellraw @a f'Hello {msg}'
+    /tellraw @a {text:f'{msg}',color:gold}
+    /tellraw @a {text:'a " b',extra:[f"{msg}"]}
 def main():
     show("it's")
     show("back\\slash")

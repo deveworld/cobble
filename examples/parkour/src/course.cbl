@@ -30,11 +30,11 @@ def add_checkpoint():
         /forceload add ~ ~
     /scoreboard players operation @e[type=minecraft:marker,tag=pk_new] pk_index = #checkpoints pk_data
     /tag @e[tag=pk_new] remove pk_new
-    /tellraw @s {"text":"Checkpoint {number} placed.","color":"aqua"}
+    /tellraw @s {"text":f"Checkpoint {number} placed.","color":"aqua"}
 
 
 def label_checkpoint(number):
-    /summon minecraft:text_display ~ ~1.8 ~ {Tags:["pk_course"],billboard:"center",text:{text:"Checkpoint {number}",color:"aqua"}}
+    /summon minecraft:text_display ~ ~1.8 ~ {Tags:["pk_course"],billboard:"center",text:{text:f"Checkpoint {number}",color:"aqua"}}
 
 
 def set_finish():

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Explicit f-strings in commands and expressions: `f"Wave {wave}"`,
+  `f'...'`, and `F"..."` insert named values, with `{{` and `}}` for literal
+  braces. Whole `tellraw` and `title` messages need no JSON wrapper.
 - `cobble check --namespace` checks the pack's own namespace as `cobble build
   --namespace` does.
 - `datapack.*` checks every field Minecraft 26.3 reads, nested anywhere:
@@ -72,6 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"required": False`.
 
 ### Changed
+- Quoted strings keep braces literally; interpolation requires an `f`
+  prefix, including inside JSON/SNBT components and text helper arguments.
+  Unquoted command arguments such as `/tp {player} {x} {y} {z}` are unchanged.
+  F-strings support named fields; expressions and format specifications are
+  not supported. See the upgrading guide for the source change.
 - Module-level code that runs commands, such as a `for` over a list, `while`, a
   call, `out.append(8)`, or a raw command, runs in the load function in source
   order, imported files included. It was dropped before.

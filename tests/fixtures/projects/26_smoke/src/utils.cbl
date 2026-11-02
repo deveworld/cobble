@@ -2,7 +2,7 @@
 @Survivors = @a[gamemode=survival]
 
 def announce(message):
-    /tellraw @a {"text":"{message}","color":"aqua"}
+    /tellraw @a {"text":f"{message}","color":"aqua"}
 
 def reward(player, amount):
     /give {player} minecraft:diamond {amount}

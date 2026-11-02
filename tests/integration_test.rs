@@ -783,7 +783,7 @@ fn test_dynamic_for_range_body_preserves_macro_params() {
 def greet(player):
     limit = 2
     for i in range(limit):
-        /tellraw {player} {"text":"loop {i}"}
+        /tellraw {player} {"text":f"loop {i}"}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -950,7 +950,7 @@ def test():
 fn test_function_parameters() {
     let source = r#"
 def greet(player, message):
-    /tellraw {player} {"text":"{message}"}
+    /tellraw {player} {"text":f"{message}"}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -1020,7 +1020,7 @@ def outer(player, item, count):
 fn test_nested_json_variables() {
     let source = r#"
 def give_item(player, item_name):
-    /give {player} minecraft:stone{display:{Name:'{"text":"{item_name}"}'}}
+    /give {player} minecraft:stone{display:{Name:f'{{"text":"{item_name}"}}'}}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -1367,7 +1367,7 @@ fn test_string_variable_in_tellraw_works() {
     let source = r#"
 def test():
     message = "Hello"
-    /tellraw @a {"text": "{message}"}
+    /tellraw @a {"text": f"{message}"}
 "#;
 
     // String variables in tellraw are converted to nbt storage components
@@ -1732,7 +1732,7 @@ fn test_for_loop_variable_in_tellraw() {
     let source = r#"
 def test():
     for i in range(3):
-        /tellraw @a {"text":"Value: {i}"}
+        /tellraw @a {"text":f"Value: {i}"}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -1750,7 +1750,7 @@ fn test_scoreboard_variable_in_tellraw() {
     let source = r#"
 def test():
     score = 100
-    /tellraw @a {"text":"Score: {score}"}
+    /tellraw @a {"text":f"Score: {score}"}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -2147,7 +2147,7 @@ fn test_for_loop_body_keeps_outer_function_params() {
     let source = r#"
 def repeat(player):
     for i in range(2):
-        /tellraw {player} {"text":"loop {i}"}
+        /tellraw {player} {"text":f"loop {i}"}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -4504,7 +4504,7 @@ fn test_tellraw_styling_preserved() {
     let source = r#"
 def test():
     score = 100
-    /tellraw @a {"text":"Score: {score}","color":"gold","bold":true,"click_event":{"action":"run_command","command":"/say clicked"}}
+    /tellraw @a {"text":f"Score: {score}","color":"gold","bold":true,"click_event":{"action":"run_command","command":"/say clicked"}}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -4523,8 +4523,8 @@ fn test_json_array_text_components_accept_variables() {
 def test():
     score = 42
     message = "ready"
-    /tellraw @a [{"text":"Score: {score}","color":"gold"},{"text":" Message: {message}","italic":true}]
-    /title @a actionbar [{"text":"Action {score}","color":"aqua"}]
+    /tellraw @a [{"text":f"Score: {score}","color":"gold"},{"text":f" Message: {message}","italic":true}]
+    /title @a actionbar [{"text":f"Action {score}","color":"aqua"}]
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -4712,7 +4712,7 @@ fn test_string_assignment_still_works() {
     let source = r#"
 def test():
     message = "Hello World"
-    /tellraw @a {"text":"{message}"}
+    /tellraw @a {"text":f"{message}"}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -4743,7 +4743,7 @@ fn test_boolean_assignment_still_works() {
 def test():
     enabled = True
     disabled = False
-    /tellraw @a {"text":"Enabled: {enabled}, Disabled: {disabled}"}
+    /tellraw @a {"text":f"Enabled: {enabled}, Disabled: {disabled}"}
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();

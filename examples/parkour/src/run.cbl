@@ -63,7 +63,7 @@ def check_checkpoint():
         total = 0
         store result score total temp:
             /scoreboard players get #checkpoints pk_data
-        /tellraw @s ["",{"text":"Checkpoint {wanted}/{total}","color":"aqua"},{"text":" at {time_seconds}.{time_tenths}s","color":"gray"}]
+        /tellraw @s ["",{"text":f"Checkpoint {wanted}/{total}","color":"aqua"},{"text":f" at {time_seconds}.{time_tenths}s","color":"gray"}]
         /playsound minecraft:entity.experience_orb.pickup master @s
         /particle minecraft:happy_villager ~ ~1 ~ 0.4 0.6 0.4 0 15
 
@@ -106,7 +106,7 @@ def show_hud():
         /scoreboard players get @s pk_cp
     store result score hud_total temp:
         /scoreboard players get #checkpoints pk_data
-    /title @s actionbar ["",{"text":"Time {time_seconds}.{time_tenths}s","color":"yellow"},{"text":"   Checkpoint {hud_progress}/{hud_total}","color":"aqua"}]
+    /title @s actionbar ["",{"text":f"Time {time_seconds}.{time_tenths}s","color":"yellow"},{"text":f"   Checkpoint {hud_progress}/{hud_total}","color":"aqua"}]
 
 
 def try_finish():
@@ -136,7 +136,7 @@ def finish_run():
         /scoreboard players get @s pk_best
     store result score record_ticks temp:
         /scoreboard players get #record pk_data
-    /tellraw @a ["",{"selector":"@s","color":"gold"},{"text":" finished the parkour in {time_seconds}.{time_tenths}s","color":"yellow"}]
+    /tellraw @a ["",{"selector":"@s","color":"gold"},{"text":f" finished the parkour in {time_seconds}.{time_tenths}s","color":"yellow"}]
     if best_ticks == 0 or run_ticks < best_ticks:
         /scoreboard players operation @s pk_best = @s pk_time
         text.tellraw("@s", text.colored("New personal best!", "green"))

@@ -1206,6 +1206,37 @@ fn atom<'a>(
         .map(Expression::Map);
 
     choice((
+        select_ref! { Token::FString(text) => text.clone() }.try_map(|text, span| {
+            let (quote, body) = super::strings::format_literal_body(&text)
+                .ok_or_else(|| Rich::custom(span, "Invalid f-string literal"))?;
+            let parts = super::strings::format_parts(body)
+                .map_err(|message| Rich::custom(span, message))?;
+            let mut value = Expression::String(String::new());
+            for part in parts {
+                let next = match part {
+                    super::strings::FormatPart::Text(mut text) => {
+                        // A backslash before a field is literal. Keep it
+                        // from escaping the quote used to decode this chunk.
+                        if text.bytes().rev().take_while(|ch| *ch == b'\\').count() % 2 == 1 {
+                            text.push('\\');
+                        }
+                        let source = format!("{quote}{text}{quote}");
+                        let tokens = super::tokenizer::tokenize(&source)
+                            .map_err(|message| Rich::custom(span, message))?;
+                        let Some(Token::String(decoded)) = tokens.first() else {
+                            return Err(Rich::custom(span, "Invalid f-string literal"));
+                        };
+                        Expression::String(decoded.clone())
+                    }
+                    super::strings::FormatPart::Name(name) => Expression::Call(
+                        Box::new(Expression::Identifier("_cobble_format".to_string())),
+                        vec![Expression::Identifier(name.to_string())],
+                    ),
+                };
+                value = Expression::Binary(Box::new(value), BinaryOp::Add, Box::new(next));
+            }
+            Ok(value)
+        }),
         select_ref! {
             Token::Number(n) => Expression::Number(n.parse().unwrap_or(0.0)),
             Token::String(s) => Expression::String(s.clone()),
@@ -2244,6 +2275,7 @@ impl<'a> SpanTreeBuilder<'a> {
             Some(
                 Token::Number(_)
                 | Token::String(_)
+                | Token::FString(_)
                 | Token::True_
                 | Token::False_
                 | Token::None_

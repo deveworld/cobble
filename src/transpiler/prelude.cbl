@@ -154,6 +154,14 @@ def _cobble_text_find(text, part):
 def _cobble_str(value):
     /function NS:_cobble_esc_str
 
+def _cobble_format_value(value):
+    /data modify storage NS:global _cobble_result set value ""
+    /data remove storage NS:global _cobble_format_probe
+    /execute store success score #format_ok temp run data modify storage NS:global _cobble_format_probe set string storage NS:global args.value
+    /execute if score #format_ok temp matches 0 run tellraw @a {"text":"An f-string value must be text or a number.","color":"red"}
+    /execute if score #format_ok temp matches 0 run return 0
+    /function NS:_cobble_esc_str
+
 def _cobble_has_key(box, key):
     # A number is never a key. Its text differs from it, so the second
     # `set` succeeds; for text it changes nothing and fails.

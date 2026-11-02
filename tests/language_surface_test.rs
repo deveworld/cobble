@@ -260,7 +260,7 @@ def main():
     greet("@a")
 
 def greet(player, message):
-    /tellraw {player} {"text":"{message}"}
+    /tellraw {player} {"text":f"{message}"}
 "#;
 
     let diagnostics = parse_source(source).expect_err("argument count should be rejected");

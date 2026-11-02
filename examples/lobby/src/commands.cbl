@@ -26,7 +26,7 @@ def use_spawn():
         /execute if entity @Spawn
     if cooldown_left > 0:
         wait_seconds = (cooldown_left + 19) / 20
-        /tellraw @s {"text":"You can teleport to spawn again in {wait_seconds}s.","color":"red"}
+        /tellraw @s {"text":f"You can teleport to spawn again in {wait_seconds}s.","color":"red"}
     elif spawn_exists == 0:
         /tellraw @s {"text":"No spawn is set yet. An operator can run /function lobby:set_spawn.","color":"red"}
     else:
@@ -53,6 +53,6 @@ def use_stats():
     played_hours = played_minutes / 60
     played_minutes = played_minutes % 60
     /tellraw @s {"text":"Your stats","color":"gold","bold":true}
-    /tellraw @s ["",{"text":"Playtime: ","color":"gray"},{"text":"{played_hours}h {played_minutes}m","color":"white"}]
-    /tellraw @s ["",{"text":"Deaths: ","color":"gray"},{"text":"{deaths}","color":"white"}]
-    /tellraw @s ["",{"text":"Mob kills: ","color":"gray"},{"text":"{kills}","color":"white"}]
+    /tellraw @s ["",{"text":"Playtime: ","color":"gray"},{"text":f"{played_hours}h {played_minutes}m","color":"white"}]
+    /tellraw @s ["",{"text":"Deaths: ","color":"gray"},{"text":f"{deaths}","color":"white"}]
+    /tellraw @s ["",{"text":"Mob kills: ","color":"gray"},{"text":f"{kills}","color":"white"}]

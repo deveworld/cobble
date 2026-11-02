@@ -84,6 +84,13 @@ pub fn find_too_deep_statement(tokens: &[SpannedToken]) -> Option<(SourceSpan, u
             Some(Token::RParen | Token::RBracket | Token::RBrace)
         );
         match token {
+            Token::FString(text) => {
+                let fields = super::strings::format_literal_body(text)
+                    .and_then(|(_, body)| super::strings::format_parts(body).ok())
+                    .map(|parts| parts.len())
+                    .unwrap_or(1000);
+                groups.last_mut().expect("never empty").current.operators += fields * 2;
+            }
             Token::LParen | Token::LBracket | Token::LBrace => {
                 if after_postfix {
                     groups.last_mut().expect("never empty").current.operators += 1;

@@ -249,3 +249,19 @@ test("home page links to the documentation book", async ({ page }) => {
   await expect(page).toHaveURL(/\/cobble\/docs\/language\/variables\.html$/);
   await expect(page.getByRole("heading", { name: "Persistent Variables" })).toBeVisible();
 });
+
+test("try page distinguishes formatted and literal strings", async ({ page }) => {
+  await page.goto("/cobble/try/");
+  await expect(page.getByText("2 functions")).toBeVisible();
+  await page.getByLabel("Cobble source").fill(`def show():
+    wave = 3
+    /title @a title f"Wave {wave}"
+    /tellraw @a "Wave {wave}"
+`);
+  await page.getByRole("button", { name: /compile/i }).click();
+  await page.getByRole("button", { name: "data/demo/function/show.mcfunction" }).click();
+  await expect(page.locator(".output-code")).toContainText("title @a title");
+  await expect(page.locator(".output-code")).toContainText('"score"');
+  await expect(page.locator(".output-code")).toContainText('tellraw @a "Wave {wave}"');
+  await expect(page.locator(".editor-highlight .tok-string").filter({ hasText: /^f"Wave \{wave\}"$/ })).toBeVisible();
+});

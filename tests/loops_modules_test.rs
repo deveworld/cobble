@@ -137,7 +137,7 @@ fn a_loop_variable_keeps_its_earlier_value_or_takes_the_last_item() {
     assert_eq!(call("[7, 8]"), vec!["8"]);
     assert_eq!(call("[]"), vec!["0"]);
     assert_eq!(
-        said("def main():\n    a = []\n    v = 5\n    for v in a:\n        pass\n    /tellraw @a {\"text\":\"{v}\"}\n"),
+        said("def main():\n    a = []\n    v = 5\n    for v in a:\n        pass\n    /tellraw @a {\"text\":f\"{v}\"}\n"),
         vec!["5"]
     );
     assert_eq!(
@@ -181,7 +181,7 @@ fn module_level_runtime_loops_run_in_source_order() {
         vec!["3"]
     );
     assert_eq!(
-        said("n = 3\nfor i in range(n):\n    pass\n\ndef main():\n    w = i + 1\n    /tellraw @a {\"text\":\"{i} {w}\"}\n"),
+        said("n = 3\nfor i in range(n):\n    pass\n\ndef main():\n    w = i + 1\n    /tellraw @a {\"text\":f\"{i} {w}\"}\n"),
         vec!["2 3"]
     );
     assert_eq!(
@@ -246,7 +246,7 @@ fn a_const_declared_below_a_function_has_its_value_there() {
     for (body, expected) in [
         ("x = LATER\n/say {x}", "3"),
         ("/say {LATER}", "3"),
-        ("/tellraw @a {\"text\":\"{LATER}\"}", "3"),
+        ("/tellraw @a {\"text\":f\"{LATER}\"}", "3"),
         ("y = LATER + 1\n/say {y}", "4"),
         ("x = -LATER\n/say {x}", "-3"),
         ("x = abs(LATER)\n/say {x}", "3"),

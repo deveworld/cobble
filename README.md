@@ -16,7 +16,7 @@ wave = 0
 def next_wave():
     global wave
     wave += 1
-    /title @a title {"text":"Wave {wave}"}
+    /title @a title f"Wave {wave}"
     for i in range(3):
         /summon minecraft:zombie ~ ~ ~
     if wave % 5 == 0:
@@ -24,8 +24,9 @@ def next_wave():
 ```
 
 Each `def` becomes a function you can run with `/function`, lines that start
-with `/` are Minecraft commands, and `{wave}` shows the variable's current value
-in the title. Paste it into the
+with `/` are Minecraft commands, and `f"Wave {wave}"` inserts the current value
+into the title. Ordinary quoted strings keep their text as written. This uses
+the upcoming 0.11 syntax; paste it into the
 [browser compiler](https://deveworld.github.io/cobble/try/) to see the
 generated commands.
 
@@ -62,21 +63,11 @@ walks through these steps in more detail.
 
 ## Features
 
-- Python-like syntax: indentation blocks, `if`/`elif`/`else`, `for`, `while`,
-  `match`, functions with parameters and integer return values, and modules.
-- Raw Minecraft commands with `{placeholders}` for parameters, constants, and
-  the values of loops expanded at compile time. `say`, `tellraw`, and `title`
-  text can also show variables.
-- Command validation: `--validate` checks every generated command against the
-  command tree from the Minecraft 26.3 server at build time.
-- Variables in scoreboards and storage, with type checking.
-- Load and tick events.
-- Data pack resources declared in code: tags, predicates, advancements, loot
-  tables, recipes, item modifiers, and dialogs.
-- Standard library helpers for text, scores, storage, timers, bossbars, teams,
-  and entities.
-- A CLI with project templates, a formatter, watch mode, and ZIP output.
-- Diagnostics with file, line, and column, also available as JSON.
+- Python-like syntax with functions, modules, and control flow.
+- Minecraft commands with `{placeholders}` and build-time validation.
+- Typed variables backed by scoreboards and storage.
+- Load/tick events, data pack resources, and a standard library.
+- CLI tools for formatting, watch mode, diagnostics, and ZIP builds.
 
 The [documentation](https://deveworld.github.io/cobble/docs/) covers each of
 these.

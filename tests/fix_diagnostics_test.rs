@@ -314,7 +314,7 @@ fn vendored_diag_corpus_pins_kinds_and_positions() {
         ),
         ("none_01.cbl", &[("unsupported-none", 3, 13)]),
         ("noop_01.cbl", &[("no-op-expression", 3, 5)]),
-        ("placeholder_01.cbl", &[("undefined-placeholder", 3, 32)]),
+        ("placeholder_01.cbl", &[("undefined-placeholder", 3, 33)]),
         (
             "storage_03.cbl",
             &[

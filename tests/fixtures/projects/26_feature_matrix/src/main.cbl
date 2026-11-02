@@ -94,7 +94,7 @@ def tick():
         energy = energy - 1
 
     for i in range(6) by 2:
-        /tellraw @a {"text":"even loop {i}","color":"green"}
+        /tellraw @a {"text":f"even loop {i}","color":"green"}
 
     for n in range(8) by -3:
         /say reverse loop {n}
@@ -103,7 +103,7 @@ def tick():
         /particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 3
 
     /execute positioned ~ ~2 ~ rotated ~ 0 run particle minecraft:flame ~ ~ ~ 0 0 0 0 1
-    /tellraw @a {"text":"Status: {status}","color":"blue"}
+    /tellraw @a {"text":f"Status: {status}","color":"blue"}
 
 def admin_audit(player):
     """Exercise parameterized commands and nested Minecraft commands"""

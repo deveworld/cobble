@@ -167,7 +167,7 @@ fn brace_escapes_follow_python_format_strings() {
     let functions = functions(
         r#"
 def tags(n):
-    /summon pig ~ ~ ~ {{Tags:["{n}"]}}
+    /summon pig ~ ~ ~ {{Tags:[f"{n}"]}}
 
 def wrap(x):
     /say {{ {x} }}
@@ -336,7 +336,7 @@ def whole(msg):
     /title @a[tag=x, limit=1] actionbar {msg}
 
 def shown():
-    /tellraw @a[name="a b"] {"text":"score {score}"}
+    /tellraw @a[name="a b"] {"text":f"score {score}"}
 
 def main():
     times(10, 20, 30)
@@ -376,9 +376,9 @@ fn a_parameter_in_hover_text_is_shown_from_storage() {
     let functions = functions(
         r#"
 def hover(note):
-    /tellraw @a {"text":"hover","hover_event":{"action":"show_text","value":"{note}"}}
-    /tellraw @a {text:"snbt",hover_event:{value:"{note}",action:"show_text"}}
-    /tellraw @a {"text":"click","click_event":{"action":"copy_to_clipboard","value":"{note}"}}
+    /tellraw @a {"text":"hover","hover_event":{"action":"show_text","value":f"{note}"}}
+    /tellraw @a {text:"snbt",hover_event:{value:f"{note}",action:"show_text"}}
+    /tellraw @a {"text":"click","click_event":{"action":"copy_to_clipboard","value":f"{note}"}}
 
 def main():
     hover("say \"hi\"")
@@ -588,7 +588,7 @@ fn an_escaped_name_is_text_next_to_a_variable() {
 coins = 3
 
 def main():
-    /tellraw @a {"text":"{{coins}} is {coins}"}
+    /tellraw @a {"text":f"{{coins}} is {coins}"}
     /say {{coins}} is {coins}
 "#,
         &[],

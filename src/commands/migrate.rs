@@ -1289,6 +1289,10 @@ fn output_change_notes(raw_line: &str) -> Vec<(usize, &'static str, &'static str
             ));
         }
     }
+    if trimmed.starts_with('/') && quoted_interpolation_without_f(trimmed) {
+        notes.push((leading + 1, "string-interpolation",
+            "Quoted strings are now literal. Add an f prefix to interpolate named values, as in f\"Wave {wave}\"; unquoted command arguments are unchanged."));
+    }
     if trimmed.starts_with('/') && changes_with_python_brace_escapes(trimmed) {
         notes.push((
             leading + 1,
@@ -1320,6 +1324,33 @@ fn output_change_notes(raw_line: &str) -> Vec<(usize, &'static str, &'static str
         ));
     }
     notes
+}
+
+fn quoted_interpolation_without_f(text: &str) -> bool {
+    let mut quote: Option<(char, usize, bool)> = None;
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if let Some((active, open, formatted)) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active {
+                let body = &text[open + 1..index];
+                if !formatted
+                    && (has_simple_placeholder(body) || body.contains("{{") || body.contains("}}"))
+                {
+                    return true;
+                }
+                quote = None;
+            }
+        } else if matches!(ch, '\'' | '"') {
+            if let Some(start) = crate::parser::strings::command_quote_start(text, index) {
+                quote = Some((ch, index, start < index));
+            }
+        }
+    }
+    false
 }
 
 /// Whether a raw command reads differently now that `{{` and `}}` follow
@@ -1632,4 +1663,33 @@ fn path_display_relative(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
         .map(path_display)
         .unwrap_or_else(|_| path_display(path))
+}
+
+#[cfg(test)]
+mod string_interpolation_tests {
+    use super::*;
+
+    #[test]
+    fn old_quoted_interpolation_is_reported_for_migration() {
+        let notes = output_change_notes(r#"    /title @a title {"text":"Wave {wave}"}"#);
+        assert!(notes
+            .iter()
+            .any(|(_, kind, _)| *kind == "string-interpolation"));
+    }
+
+    #[test]
+    fn explicit_formatting_and_unquoted_fields_need_no_string_migration() {
+        for line in [
+            r#"/title @a title f"Wave {wave}""#,
+            "/tp {player} {x} {y} {z}",
+            r#"/tellraw @a "literal""#,
+        ] {
+            assert!(
+                !output_change_notes(line)
+                    .iter()
+                    .any(|(_, kind, _)| *kind == "string-interpolation"),
+                "{line}"
+            );
+        }
+    }
 }

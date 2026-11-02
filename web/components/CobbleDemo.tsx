@@ -131,7 +131,7 @@ def on_load():
     name: "Diagnostic Example",
     namespace: "diagnostic_demo",
     source: `def greet(player):
-    /tellraw {player} {"text":"Hello {message}"}
+    /tellraw {player} {"text":f"Hello {message}"}
 
 def on_load():
     greet("@a")`

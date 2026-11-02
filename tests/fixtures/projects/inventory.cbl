@@ -51,7 +51,7 @@ def check_inventory(player):
 
     # Check for empty slots
     /execute store result score {player} empty_slots run data get entity {player} Inventory
-    /tellraw {player} [{"text":"Inventory slots used: ","color":"gray"},{"score":{"name":"{player}","objective":"empty_slots"},"color":"white"}]
+    /tellraw {player} [{"text":"Inventory slots used: ","color":"gray"},{"score":{"name":f"{player}","objective":"empty_slots"},"color":"white"}]
 
 def organize_chest():
     """Create an organized storage chest"""

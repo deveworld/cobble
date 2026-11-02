@@ -8,6 +8,7 @@ mod combinators;
 
 // Nesting limit checked before parsing
 mod depth;
+pub(crate) mod strings;
 
 // Re-export public API
 pub use combinators::{
