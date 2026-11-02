@@ -28,6 +28,9 @@ pub(in crate::transpiler) const RAW_CONDITION_KEYWORDS: [&str; 13] = [
 /// Shared with the diagnostics layer so both agree on which `if` headers
 /// carry raw syntax rather than variable references.
 pub(crate) fn raw_minecraft_condition_verdict(condition: &str) -> Option<bool> {
+    if raw_score_condition_end(condition).is_some() {
+        return Some(true);
+    }
     let rest = RAW_CONDITION_KEYWORDS
         .iter()
         .find_map(|keyword| condition.strip_prefix(keyword))?;
@@ -36,6 +39,22 @@ pub(crate) fn raw_minecraft_condition_verdict(condition: &str) -> Option<bool> {
         next_token,
         "==" | "!=" | ">=" | "<=" | ">" | "<" | "and" | "or" | "not" | "+" | "-" | "*" | "/" | "%"
     ))
+}
+
+/// The end of a score condition's required arguments. A holder or objective
+/// named `and`, `or`, or `not` is part of those arguments, not a logical
+/// operator separating conditions.
+pub(in crate::transpiler) fn raw_score_condition_end(condition: &str) -> Option<usize> {
+    if !condition.starts_with("score ") {
+        return None;
+    }
+    let words = super::command_processor::split_command_words(condition, usize::MAX);
+    let end = match *words.get(3)? {
+        "matches" => *words.get(4)?,
+        "=" | "<" | ">" | "<=" | ">=" => *words.get(5)?,
+        _ => return None,
+    };
+    Some(end.as_ptr() as usize - condition.as_ptr() as usize + end.len())
 }
 
 /// The Python portion of a mixed Minecraft header, for semantic walks.
@@ -50,12 +69,33 @@ pub(crate) fn minecraft_condition_expression(raw: &str) -> Option<Expression> {
 /// parses as Python. Returns the masked text and (identifier, condition)
 /// pairs; while the masked text is translated, each identifier translates to
 /// its condition (`Symbols::minecraft_conditions`). A condition that is all
-/// Minecraft conditions joined by `and` or `or`, or has none, gives `None`.
+/// Minecraft conditions joined by `and` or `or` gives `None` unless it has
+/// a `function` operand, whose side effects need short-circuit lowering.
+/// A condition without Minecraft operands also gives `None`.
 pub(crate) fn mask_minecraft_conditions(
     condition: &str,
 ) -> Option<(String, Vec<(String, String)>)> {
+    let (masked, conditions, _, mixed) = scan_minecraft_conditions(condition)?;
+    mixed.then_some((masked, conditions))
+}
+
+pub(crate) fn minecraft_condition_ranges(condition: &str) -> Vec<std::ops::Range<usize>> {
+    scan_minecraft_conditions(condition)
+        .map(|(_, _, ranges, _)| ranges)
+        .unwrap_or_default()
+}
+
+type ScannedConditions = (
+    String,
+    Vec<(String, String)>,
+    Vec<std::ops::Range<usize>>,
+    bool,
+);
+
+fn scan_minecraft_conditions(condition: &str) -> Option<ScannedConditions> {
     let mut masked = String::with_capacity(condition.len());
     let mut conditions: Vec<(String, String)> = Vec::new();
+    let mut ranges = Vec::new();
     let mut python_operand = false;
     let mut negated_or_grouped = false;
     let mut rest = condition.trim();
@@ -78,6 +118,8 @@ pub(crate) fn mask_minecraft_conditions(
             return None;
         }
         if raw_minecraft_condition_verdict(operand) == Some(true) {
+            let start = condition.trim_end().len() - rest.len();
+            ranges.push(start..start + operand.len());
             let identifier = format!("__cobble_mc_condition_{}__", conditions.len());
             masked.push_str(&identifier);
             conditions.push((identifier, operand.to_string()));
@@ -100,8 +142,14 @@ pub(crate) fn mask_minecraft_conditions(
         masked.push_str(&format!(" {operator} "));
         rest = after.trim_start();
     }
-    (!conditions.is_empty() && (python_operand || negated_or_grouped))
-        .then_some((masked, conditions))
+    let mixed = !conditions.is_empty()
+        && (python_operand
+            || negated_or_grouped
+            || (conditions.len() > 1
+                && conditions
+                    .iter()
+                    .any(|(_, raw)| raw.starts_with("function "))));
+    Some((masked, conditions, ranges, mixed))
 }
 
 /// The parser reads `if entity @a and x in items:` as the condition
@@ -136,7 +184,7 @@ fn operand_end(text: &str) -> usize {
     let bytes = text.as_bytes();
     let mut depth = 0usize;
     let mut quote: Option<u8> = None;
-    let mut index = 0;
+    let mut index = raw_score_condition_end(text).unwrap_or(0);
     while index < bytes.len() {
         let byte = bytes[index];
         if let Some(open) = quote {
@@ -166,10 +214,28 @@ fn operand_end(text: &str) -> usize {
 }
 
 impl Transpiler {
+    fn condition_runs_user_code(&self, condition: &Expression) -> bool {
+        match condition {
+            Expression::Identifier(name) => self
+                .symbols
+                .minecraft_conditions
+                .get(name)
+                .is_some_and(|raw| raw.trim_start().starts_with("function ")),
+            Expression::Binary(left, _, right) => {
+                self.condition_runs_user_code(left) || self.condition_runs_user_code(right)
+            }
+            Expression::Unary(_, inner) => self.condition_runs_user_code(inner),
+            _ => ExpressionEvaluator::calls_user_code(condition),
+        }
+    }
+
     pub(in crate::transpiler) fn preprocess_condition(
         &mut self,
         condition: &Expression,
     ) -> Result<Expression, TranspileError> {
+        if self.in_module_code {
+            self.check_module_level_reads(condition)?;
+        }
         // Boolean literals read the `#true_const`/`#false_const` scores.
         if Self::contains_boolean_literal(condition) {
             self.data_pack.track_boolean_constants();
@@ -240,9 +306,7 @@ impl Transpiler {
                 } else {
                     // Not a comparison, might be And/Or - recursively preprocess
                     match op {
-                        BinaryOp::And | BinaryOp::Or
-                            if ExpressionEvaluator::calls_user_code(right) =>
-                        {
+                        BinaryOp::And | BinaryOp::Or if self.condition_runs_user_code(right) => {
                             self.lower_short_circuit_condition(left, op, right)
                         }
                         BinaryOp::And | BinaryOp::Or => {
@@ -269,6 +333,7 @@ impl Transpiler {
             Expression::Unary(..) => self.lower_condition_value_to_temp(condition),
             // A number literal is true when it is not 0, like a variable.
             Expression::Number(value) => {
+                self.warn_score_value(*value);
                 self.data_pack.track_boolean_constants();
                 Ok(Expression::Boolean(*value as i32 != 0))
             }
@@ -407,6 +472,26 @@ impl Transpiler {
         &self,
         expr: &Expression,
     ) -> Option<Expression> {
+        // A sign belongs to a literal threshold, including a fractional
+        // literal or const; it must not first pass through an integer score.
+        fn signed_literal(transpiler: &Transpiler, expr: &Expression) -> Option<f64> {
+            match expr {
+                Expression::Number(value) => Some(*value),
+                Expression::Identifier(name) => {
+                    transpiler.symbols.compile_time_constants.get(name).copied()
+                }
+                Expression::Unary(UnaryOp::Neg, inner) => {
+                    signed_literal(transpiler, inner).map(|value| -value)
+                }
+                Expression::Unary(UnaryOp::Pos, inner) => signed_literal(transpiler, inner),
+                _ => None,
+            }
+        }
+        if matches!(expr, Expression::Unary(UnaryOp::Neg | UnaryOp::Pos, _)) {
+            if let Some(value) = signed_literal(self, expr) {
+                return Some(Expression::Number(value));
+            }
+        }
         if !matches!(expr, Expression::Binary(..) | Expression::Unary(..)) {
             return None;
         }
@@ -628,7 +713,7 @@ impl Transpiler {
         // (`{count} >= 3`) are valid in raw execute conditions but cannot be
         // parsed as Python expressions; mask them with synthetic identifiers
         // and restore the original spelling after translation.
-        let (masked, operand_tokens) = Self::mask_condition_operand_tokens(condition);
+        let (masked, operand_tokens) = self.mask_condition_operand_tokens(condition);
         let Some(expr) = Self::parse_raw_condition_expression(&masked) else {
             return Ok(None);
         };
@@ -669,6 +754,7 @@ impl Transpiler {
     /// restore the original spelling in the translated condition and any
     /// captured commands.
     pub(in crate::transpiler) fn mask_condition_operand_tokens(
+        &self,
         condition: &str,
     ) -> (String, Vec<(String, String)>) {
         let bytes = condition.as_bytes();
@@ -679,19 +765,18 @@ impl Transpiler {
             let ch = bytes[i] as char;
             if ch == '"' || ch == '\'' {
                 let quote = bytes[i];
-                masked.push(ch);
+                let start = i;
                 i += 1;
                 while i < bytes.len() {
                     let c = bytes[i];
-                    masked.push(c as char);
                     i += 1;
                     if c == b'\\' && i < bytes.len() {
-                        masked.push(bytes[i] as char);
                         i += 1;
                     } else if c == quote {
                         break;
                     }
                 }
+                masked.push_str(&condition[start..i]);
                 continue;
             }
 
@@ -722,12 +807,38 @@ impl Transpiler {
                     continue;
                 }
             } else {
+                let ch = condition[i..]
+                    .chars()
+                    .next()
+                    .expect("a remaining character");
                 masked.push(ch);
-                i += 1;
+                i += ch.len_utf8();
                 continue;
             }
 
             let original = condition[token_start..i].to_string();
+            if original.starts_with('{') {
+                let name = &original[1..original.len() - 1];
+                let word_char = |c: char| {
+                    c.is_alphanumeric()
+                        || matches!(c, '_' | '.' | ':' | '~' | '^' | '$' | '}' | '{')
+                };
+                let standalone = !condition[..token_start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(word_char)
+                    && !condition[i..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | ':' | '{'));
+                if standalone
+                    && (self.current_context.is_param(name)
+                        || self.symbols.compile_time_constants.contains_key(name))
+                {
+                    masked.push_str(name);
+                    continue;
+                }
+            }
             let placeholder = format!("__cobble_cond_operand_{}__", operand_tokens.len());
             masked.push_str(&placeholder);
             operand_tokens.push((placeholder, original));

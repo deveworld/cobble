@@ -1074,18 +1074,17 @@ fn render_execute_condition(
     // Convert tokens to string, but be smart about spacing
     let mut result = String::new();
     let mut prev_token: Option<&Token> = None;
+    let mut literals = Vec::new();
 
     for (i, token) in tokens.iter().enumerate() {
-        // Raw conditions are re-stringified for Minecraft, so keyword
-        // literals must render as SNBT literals here. This is scoped
-        // to execute conditions on purpose: the global `Display` impl
-        // keeps the Cobble spellings (`True`/`False`/`None`).
+        // Keep Python literals until the raw Minecraft operands have been
+        // identified below. Only those operands use SNBT spellings.
         // Identifiers may carry glued SNBT (e.g. `@s[nbt={x:True}]`,
         // `x:True`), which gets the same lowering.
         let token_str = match token {
-            Token::True_ => "true".to_string(),
-            Token::False_ => "false".to_string(),
-            Token::None_ => "null".to_string(),
+            Token::True_ => "True".to_string(),
+            Token::False_ => "False".to_string(),
+            Token::None_ => "None".to_string(),
             Token::Ident(s) => normalize_snbt_booleans(s),
             _ => format!("{}", token),
         };
@@ -1140,8 +1139,27 @@ fn render_execute_condition(
         if need_space {
             result.push(' ');
         }
+        let start = result.len();
         result.push_str(&token_str);
+        let snbt = match token {
+            Token::True_ => Some("true"),
+            Token::False_ => Some("false"),
+            Token::None_ => Some("null"),
+            _ => None,
+        };
+        if let Some(snbt) = snbt {
+            literals.push((start..result.len(), snbt));
+        }
         prev_token = Some(token);
+    }
+    let raw_ranges = crate::transpiler::minecraft_condition_ranges(&result);
+    for (range, snbt) in literals.into_iter().rev() {
+        if raw_ranges
+            .iter()
+            .any(|raw| raw.start <= range.start && range.end <= raw.end)
+        {
+            result.replace_range(range, snbt);
+        }
     }
     result
 }

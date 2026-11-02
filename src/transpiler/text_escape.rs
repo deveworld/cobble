@@ -31,6 +31,59 @@ const LEVELS: usize = 7;
 /// the key is empty or missing, which no path can name.
 pub(in crate::transpiler) const ESCAPE_KEY: &str = "_cobble_esc_key";
 
+/// Like a quoted key, but a container is shown as SNBT text as it is in an
+/// NBT text component. Hover names and item components can't resolve one
+/// themselves, so a temporary text display resolves it before the macro.
+pub(in crate::transpiler) const ESCAPE_HOVER: &str = "_cobble_esc_hover";
+
+pub(in crate::transpiler) fn add_hover_functions(data_pack: &mut DataPack) {
+    add_functions(data_pack);
+    if data_pack.functions.contains_key(ESCAPE_HOVER) {
+        return;
+    }
+    let ns = &data_pack.namespace;
+    let global = format!("storage {ns}:global");
+    let esc = format!("{global} _cobble_esc");
+    let parts = format!("{global} _cobble_text_parts");
+    let part = format!("{global} _cobble_text_part");
+    let functions = [
+        (ESCAPE_HOVER, vec![
+            format!("data remove {esc}.probe"),
+            format!("execute store success score #esc_v temp run data modify {esc}.probe set string {esc}.key"),
+            format!("execute if score #esc_v temp matches 1 run return run function {ns}:{ESCAPE_KEY}"),
+            format!("data modify {parts} set value []"),
+            // Resolve in a loaded chunk and remove the display before
+            // Minecraft ticks or sends it to clients. A console caller's
+            // position may be unloaded; any recipient supplies a fallback.
+            format!("execute if loaded ~ ~ ~ summon minecraft:text_display run function {ns}:_cobble_text_resolve"),
+            format!("execute unless loaded ~ ~ ~ at @a[limit=1] summon minecraft:text_display run function {ns}:_cobble_text_resolve"),
+            format!("function {ns}:_cobble_esc_side_from"),
+            format!("execute if data {parts}[0] run function {ns}:_cobble_text_parts"),
+            "scoreboard players set #esc_k temp 1".to_string(),
+            format!("function {ns}:_cobble_esc_build"),
+            format!("data modify {esc}.done set from {esc}.out"),
+        ]),
+        ("_cobble_text_resolve", vec![
+            format!("data modify entity @s text set value {{nbt:\"_cobble_esc.key\",storage:\"{ns}:global\"}}"),
+            format!("data modify {parts} set from entity @s text.extra"),
+            "kill @s".to_string(),
+        ]),
+        ("_cobble_text_parts", vec![
+            format!("data modify {part} set from {parts}[0]"),
+            format!("data remove {parts}[0]"),
+            format!("data modify {esc}.text set value \"\""),
+            format!("execute if data {part}.text run data modify {esc}.text set string {part}.text"),
+            format!("execute unless data {part}.text run data modify {esc}.text set string {part}"),
+            format!("function {ns}:_cobble_esc_split"),
+            format!("data modify {parts} prepend from {part}.extra[]"),
+            format!("execute if data {parts}[0] run function {ns}:_cobble_text_parts"),
+        ]),
+    ];
+    for (name, commands) in functions {
+        data_pack.add_function(name.to_string(), commands);
+    }
+}
+
 /// Adds the functions behind runtime text to `data_pack`, once.
 pub(in crate::transpiler) fn add_functions(data_pack: &mut DataPack) {
     if data_pack.functions.contains_key(ESCAPE_KEY) {

@@ -10,6 +10,39 @@ use crate::transpiler::{
 };
 use std::collections::HashMap;
 
+/// Statements that execute at module scope, including compound bodies but
+/// excluding function bodies.
+pub(crate) fn module_statements(statements: &[Statement]) -> Vec<&Statement> {
+    let mut out = Vec::new();
+    fn visit<'a>(statements: &'a [Statement], out: &mut Vec<&'a Statement>) {
+        for statement in statements {
+            out.push(statement);
+            match statement {
+                Statement::If(branch) => {
+                    visit(&branch.then_branch, out);
+                    for (_, body) in &branch.elif_branches {
+                        visit(body, out);
+                    }
+                    if let Some(body) = &branch.else_branch {
+                        visit(body, out);
+                    }
+                }
+                Statement::For(loop_) => visit(&loop_.body, out),
+                Statement::While(loop_) => visit(&loop_.body, out),
+                Statement::Execute(block) => visit(&block.body, out),
+                Statement::Match(branch) => {
+                    for case in &branch.cases {
+                        visit(&case.body, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    visit(statements, &mut out);
+    out
+}
+
 #[derive(Clone)]
 pub(in crate::transpiler) enum ModuleLevelAssignment {
     Variable {
@@ -68,7 +101,8 @@ impl Transpiler {
         // A `const` has its value before any function body is lowered, so
         // a function above it reads it. Module-level code still can't read
         // it before its line.
-        for statement in &program.statements {
+        let declarations = module_statements(&program.statements);
+        for statement in &declarations {
             let Statement::ConstAssignment(constant) = statement else {
                 continue;
             };
@@ -93,7 +127,7 @@ impl Transpiler {
                 .variables
                 .insert(name.clone(), Expression::Number(value));
         }
-        for statement in &program.statements {
+        for statement in declarations {
             let assignments: Vec<Assignment> = match statement {
                 Statement::Assignment(assign) if assign.assigns_name() => vec![assign.clone()],
                 Statement::MultiAssign(multi) if multi.targets.len() == multi.values.len() => multi
@@ -195,6 +229,7 @@ impl Transpiler {
                     }
                 };
                 self.symbols.variable_types.insert(name.clone(), value_type);
+                self.symbols.module_variables.insert(name.clone());
                 if known_here {
                     self.symbols
                         .variables
@@ -415,8 +450,8 @@ impl Transpiler {
     /// a loop over a list, a `while`, a call, or a raw command, rather than
     /// a declaration. Such code runs in `_cobble_init`, in source order with
     /// the module variables' assignments. A loop expanded at compile time,
-    /// or an `if` on a constant, whose body only assigns, stays a list of
-    /// declarations.
+    /// whose body only assigns stays a list of declarations. An `if`
+    /// always needs a capture for its branch-selection commands.
     pub(in crate::transpiler) fn is_module_code(&self, statement: &Statement) -> bool {
         fn declarations_only(body: &[Statement]) -> bool {
             body.iter().all(|statement| {
@@ -433,14 +468,7 @@ impl Transpiler {
             Statement::For(for_loop) => {
                 !self.expands_at_compile_time(for_loop) || !declarations_only(&for_loop.body)
             }
-            Statement::If(if_stmt) => {
-                self.try_eval_const(&if_stmt.condition).is_none()
-                    || !declarations_only(&if_stmt.then_branch)
-                    || if_stmt.elif_branches.iter().any(|(condition, branch)| {
-                        self.try_eval_const(condition).is_none() || !declarations_only(branch)
-                    })
-                    || !if_stmt.else_branch.as_deref().is_none_or(declarations_only)
-            }
+            Statement::If(_) => true,
             Statement::While(_)
             | Statement::Match(_)
             | Statement::Expression(_)

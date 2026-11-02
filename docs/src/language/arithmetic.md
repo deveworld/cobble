@@ -72,6 +72,10 @@ so `/` in a `const` declaration is real division: `const HALF = 1 / 2`
 substitutes `0.5` into `{HALF}`. `%` is the same floor modulus there. Storing
 a fractional constant in a score truncates it, with a precision warning.
 
+Comparisons keep a numeric literal's full value when it never enters a score:
+`0.5 > 0` is true, and an integer score compared with `2.5` uses that exact
+threshold. Assigning `2.5` to a numeric variable still stores `2` and warns.
+
 ## Division By Zero
 
 Dividing by a constant zero is a compile error:

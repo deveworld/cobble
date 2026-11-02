@@ -49,7 +49,7 @@ use symbols::{FunctionTable, Symbols};
 
 pub(crate) use condition_lowering::{
     mask_minecraft_conditions, merged_execute_in_condition, minecraft_condition_expression,
-    raw_minecraft_condition_verdict,
+    minecraft_condition_ranges, raw_minecraft_condition_verdict,
 };
 pub use function_context::module_variables_made_local;
 pub(crate) use function_context::{function_locals, global_assignments, module_loop_variables};
@@ -57,6 +57,7 @@ pub(crate) use function_context::{function_locals, global_assignments, module_lo
 pub(in crate::transpiler) use capture::FunctionCapture;
 pub(in crate::transpiler) use const_eval::const_mod;
 pub(in crate::transpiler) use function_context::{FunctionContext, ReturnContext};
+pub(crate) use module_init::module_statements;
 pub(in crate::transpiler) use module_init::ModuleLevelAssignment;
 pub(in crate::transpiler) use storage_paths::StoragePathPlan;
 pub(in crate::transpiler) use types::FunctionReturnKind;
@@ -675,6 +676,17 @@ impl Transpiler {
                 }
             }
             Statement::MinecraftCommand(cmd) => {
+                if self.in_module_code {
+                    if let Ok(pieces) = placeholders::checked_pieces(cmd) {
+                        for piece in pieces {
+                            if let placeholders::Piece::Field { name, .. } = piece {
+                                self.check_module_level_reads(&Expression::Identifier(
+                                    name.to_string(),
+                                ))?;
+                            }
+                        }
+                    }
+                }
                 // Strip leading slash and process variable/parameter substitution
                 let clean_cmd = Self::strip_command_prefix(cmd);
                 let source_location = if self.unroll.depth > 0 || self.in_prelude {

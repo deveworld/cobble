@@ -204,8 +204,8 @@ impl<'a> ConditionTranslator<'a> {
 
         let left_score = self.extract_scoreboard(left);
         let right_score = self.extract_scoreboard(right);
-        let left_literal = self.extract_literal(left);
-        let right_literal = self.extract_literal(right);
+        let left_literal = self.extract_literal_value(left);
+        let right_literal = self.extract_literal_value(right);
 
         match (left_score, right_score, left_literal, right_literal) {
             (Some((var_name, objective)), Some((other_var, other_objective)), _, _) => match op {
@@ -326,19 +326,6 @@ impl<'a> ConditionTranslator<'a> {
         })
     }
 
-    fn extract_literal(&self, expr: &Expression) -> Option<i32> {
-        match expr {
-            Expression::Number(n) => Some(*n as i32),
-            Expression::Boolean(b) => Some(if *b { 1 } else { 0 }),
-            Expression::Identifier(name) => self
-                .symbols
-                .compile_time_constants
-                .get(name)
-                .map(|value| *value as i32),
-            _ => None,
-        }
-    }
-
     fn extract_scoreboard(&self, expr: &Expression) -> Option<(String, String)> {
         if let Expression::Identifier(name) = expr {
             if self.symbols.compile_time_constants.contains_key(name) {
@@ -413,8 +400,8 @@ impl<'a> ConditionTranslator<'a> {
 
     fn literal_vs_literal_condition(
         &self,
-        left: i32,
-        right: i32,
+        left: f64,
+        right: f64,
         op: &BinaryOp,
     ) -> Result<String, TranspileError> {
         use BinaryOp::*;

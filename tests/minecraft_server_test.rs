@@ -161,6 +161,17 @@ def a_early():
     /scoreboard players add early_hits temp 1
     /execute if score early_hits temp matches 1.. run say early load ok
 
+def hover_container(value):
+    /tellraw @a {text:'hover',hover_event:{action:'show_entity',id:'minecraft:pig',uuid:[I;0,0,0,1],name:'{value}'}}
+
+def hover_container_check():
+    positioned 0 64 0:
+        hover_container(["a", "b"])
+        # Decode the escaped argument as the hover macro does. No client
+        # needs to be connected to observe whether its text is preserved.
+        /function cobble_server_smoke:_cobble_esc_paste_done with storage cobble_server_smoke:global _cobble_esc
+        /execute if data storage cobble_server_smoke:global _cobble_esc{rt:'["a", "b"]'} run say hover container ok
+
 def init():
     /say Cobble quiet load ok
     /execute if predicate cobble_server_smoke:checks/always run say predicate ok
@@ -678,6 +689,15 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
     wait_for_log(child, &log_path, "template tags ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "unless or ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "return command ok", COMMAND_TIMEOUT)?;
+
+    // Force-loading is asynchronous; run after the chunk reaches entity
+    // ticking status so the temporary text display can resolve its value.
+    send_command(child, "forceload add 0 0")?;
+    send_command(
+        child,
+        &format!("schedule function {NAMESPACE}:hover_container_check 20t"),
+    )?;
+    wait_for_log(child, &log_path, "hover container ok", COMMAND_TIMEOUT)?;
 
     run_showcase_selftest(child, &log_path)?;
 

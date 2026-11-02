@@ -134,7 +134,9 @@ the value from storage and accepts any text when Cobble calls the function
 (see [Arguments](../reference/calling-convention.md#arguments)). The same holds
 for hover text. In `show_entity` names and quoted `show_item` component values,
 Cobble escapes the parameter before the command runs, so quotes and
-backslashes survive there too. A parameter that stands for the action, as in `/title @a {kind}
+backslashes survive there too. Single-quoted text works the same way. Lists
+and maps in these quoted hover fields display their SNBT text, including
+quoted strings and nested containers. A parameter that stands for the action, as in `/title @a {kind}
 {text}`, is taken for `title`, `subtitle`, or `actionbar`.
 
 To pass a ready text component, such as `{text:"hi",color:"red"}`, write the

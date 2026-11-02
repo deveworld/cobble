@@ -1,7 +1,7 @@
 use super::INIT_FUNCTION;
 use super::{DataPack, SourceLocation};
 use crate::stdlib::EventType;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// A typed tag as its declarations are merged: its values without repeats,
 /// in declaration order, and its `replace`. [`DataPack::flush_tags`] writes
@@ -14,6 +14,8 @@ pub(crate) struct MergedTag {
     function_tag: bool,
     /// Changed since it was last written to `json_resources`.
     dirty: bool,
+    /// The first declaration contributing each normalized entry.
+    pub(crate) entry_sources: HashMap<String, SourceLocation>,
 }
 
 impl MergedTag {
@@ -115,6 +117,14 @@ impl DataPack {
             .merged_tags
             .get_mut(key)
             .expect("the merged tag was just added");
+        if let Some(source) = &source {
+            for value in &new_values {
+                merged
+                    .entry_sources
+                    .entry(value.to_string())
+                    .or_insert_with(|| source.clone());
+            }
+        }
         merged.extend(new_values);
         merged.replace = Self::merged_tag_replace(merged.replace, new_replace);
         merged.dirty = true;

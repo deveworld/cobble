@@ -38,7 +38,7 @@ const TAG_FOLDERS: &[(&str, RefKind)] = &[
 struct DeclaredTag {
     id: String,
     source: Option<SourceLocation>,
-    entries: Vec<(String, bool)>,
+    entries: Vec<(String, bool, Option<SourceLocation>)>,
 }
 
 impl Transpiler {
@@ -58,7 +58,8 @@ impl Transpiler {
                 .find(|(name, _)| name == folder)
                 .map(|(_, kind)| *kind);
             for tag in tags.values() {
-                for (entry, required) in &tag.entries {
+                for (entry, required, source) in &tag.entries {
+                    let source = source.as_ref().or(tag.source.as_ref());
                     if !required {
                         continue;
                     }
@@ -86,7 +87,7 @@ impl Transpiler {
                                 },
                                 full_id(entry),
                             );
-                            return Err(Self::reference_error(message, tag.source.as_ref()));
+                            return Err(Self::reference_error(message, source));
                         }
                         continue;
                     };
@@ -116,7 +117,7 @@ impl Transpiler {
                             "; use {{\"id\": \"{entry}\", \"required\": False}} to skip it when it's missing"
                         ));
                     }
-                    return Err(Self::reference_error(message, tag.source.as_ref()));
+                    return Err(Self::reference_error(message, source));
                 }
             }
             if let Some((tag, cycle)) = find_cycle(tags) {
@@ -300,17 +301,24 @@ impl Transpiler {
                 .and_then(|values| values.as_array())
                 .into_iter()
                 .flatten()
-                .filter_map(|entry| match entry {
-                    serde_json::Value::String(id) => Some((id.clone(), true)),
-                    serde_json::Value::Object(object) => {
-                        let id = object.get("id")?.as_str()?.to_string();
-                        let required = object
-                            .get("required")
-                            .and_then(|required| required.as_bool())
-                            .unwrap_or(true);
-                        Some((id, required))
+                .filter_map(|entry| {
+                    let source = pack
+                        .merged_tags
+                        .get(key)
+                        .and_then(|tag| tag.entry_sources.get(&entry.to_string()))
+                        .cloned();
+                    match entry {
+                        serde_json::Value::String(id) => Some((id.clone(), true, source)),
+                        serde_json::Value::Object(object) => {
+                            let id = object.get("id")?.as_str()?.to_string();
+                            let required = object
+                                .get("required")
+                                .and_then(|required| required.as_bool())
+                                .unwrap_or(true);
+                            Some((id, required, source))
+                        }
+                        _ => None,
                     }
-                    _ => None,
                 })
                 .collect();
             let id = format!("{namespace}:{path}");
@@ -352,7 +360,7 @@ fn find_cycle(tags: &BTreeMap<String, DeclaredTag>) -> Option<(&DeclaredTag, Vec
         path.push(id);
         // Minecraft skips an optional entry that would close a cycle, and
         // the tags load.
-        for (entry, _) in tag.entries.iter().filter(|(_, required)| *required) {
+        for (entry, _, _) in tag.entries.iter().filter(|(_, required, _)| *required) {
             let Some(next) = entry.strip_prefix('#') else {
                 continue;
             };

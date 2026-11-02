@@ -131,6 +131,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- Mixed Minecraft headers keep Python boolean literals and standalone
+  `{const}` or `{parameter}` operands as values. Macro arguments reach every
+  `while` test, raw function conditions short-circuit, and score holders or
+  objectives named `and`, `or`, or `not` remain valid Minecraft syntax.
+- Module assignments inside branches and loops are visible to earlier
+  functions and checked for cross-file duplicates. Module commands and
+  execute headers report reads before assignment, and constant module branches
+  emit their initialization commands.
+- Single-quoted text parameters preserve quotes and backslashes. Quoted hover
+  values also display lists and maps containing text, including empty and
+  nested containers.
+- Literal comparisons retain fractional and large values that never enter a
+  score. A missing entry in a merged tag points to the declaration adding it.
 - A fresh name assigned a choice of a number and a comparison, as
   `x = 7 if c else c > 0`, keeps the selected value instead of failing as if the
   two branches were reassignments of one type.

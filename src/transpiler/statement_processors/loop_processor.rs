@@ -2284,6 +2284,8 @@ impl Transpiler {
             None
         };
         let (condition_execute_args, condition_capture) = condition(self)?;
+        let loop_needs_storage =
+            condition_capture.requires_macro_context() || condition_execute_args.contains("$(");
         let loop_func_name = loop_func_name
             .take()
             .unwrap_or_else(|| format!("{}_temp_{}", helper_prefix, self.next_temp_id()));
@@ -2300,7 +2302,7 @@ impl Transpiler {
         if !binding_commands.is_empty() {
             capture = self.prepend_runtime_list_item_commands(capture, binding_commands);
         }
-        let next_iteration = format!("function {}:{}", self.data_pack.namespace, loop_func_name);
+        let next_iteration = self.function_call_command(&loop_func_name, loop_needs_storage);
         capture.metadata.insert(
             capture.commands.len(),
             GeneratedCommand::new(
@@ -2342,11 +2344,9 @@ impl Transpiler {
 
         // Start the loop.
         let return_cmd = self.return_propagation_command();
+        let loop_call = self.function_call_command(&loop_func_name, loop_needs_storage);
         if let Some(ref mut commands) = self.current_function {
-            commands.push(format!(
-                "function {}:{}",
-                self.data_pack.namespace, loop_func_name
-            ));
+            commands.push(loop_call);
             commands.extend(cleanup_commands);
             if let Some(return_cmd) = return_cmd {
                 commands.push(return_cmd);

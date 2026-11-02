@@ -1210,8 +1210,9 @@ fn wrap_plain_message(command: &str) -> String {
 struct QuoteScan {
     scanned: usize,
     escaped: bool,
-    /// The byte offset of the `"` that opens the string the scan is in.
+    /// The byte offset of the single or double quote opening the string.
     open: Option<usize>,
+    delimiter: Option<char>,
 }
 
 impl QuoteScan {
@@ -1220,13 +1221,14 @@ impl QuoteScan {
         for (index, ch) in text[self.scanned..to].char_indices() {
             if self.escaped {
                 self.escaped = false;
-            } else if ch == '\\' {
+            } else if ch == '\\' && self.open.is_some() {
                 self.escaped = true;
-            } else if ch == '"' {
-                self.open = match self.open {
-                    Some(_) => None,
-                    None => Some(self.scanned + index),
-                };
+            } else if self.delimiter == Some(ch) {
+                self.open = None;
+                self.delimiter = None;
+            } else if self.open.is_none() && matches!(ch, '\'' | '"') {
+                self.open = Some(self.scanned + index);
+                self.delimiter = Some(ch);
             }
         }
         self.scanned = to;
@@ -1462,7 +1464,7 @@ fn split_text_command(cmd: &str) -> Result<(&str, &str, Option<&str>, &str), Tra
 /// `command` split at spaces into at most `limit` words, the last holding
 /// the rest. A space inside a selector's `[...]`, braces, or quotes, as in
 /// `@a[tag=x, limit=1]` or `@a[name="a b"]`, doesn't split.
-fn split_command_words(command: &str, limit: usize) -> Vec<&str> {
+pub(in crate::transpiler) fn split_command_words(command: &str, limit: usize) -> Vec<&str> {
     let mut words = Vec::new();
     let mut depth = 0usize;
     let mut quote: Option<char> = None;

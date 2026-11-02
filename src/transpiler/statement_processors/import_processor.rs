@@ -35,9 +35,8 @@ impl Default for ImportState {
 /// The module variables of `program` that hold a list, a map, or text,
 /// with that kind.
 fn storage_module_variables(program: &Program) -> Vec<(&str, &'static str)> {
-    program
-        .statements
-        .iter()
+    crate::transpiler::module_statements(&program.statements)
+        .into_iter()
         .filter_map(|statement| match statement {
             Statement::Assignment(assign) if assign.assigns_name() => {
                 let kind = match &assign.value {

@@ -457,14 +457,20 @@ fn expands_at_compile_time(iter: &Expression) -> bool {
 pub(super) fn collect_module_variable_defs(
     context: &SemanticContext<'_>,
 ) -> Vec<ModuleVariableDef> {
-    let nodes = context.spans.map(|tree| tree.statements.as_slice());
     let mut seen = HashSet::new();
     let mut variables = Vec::new();
     // The variable of a module-level loop exists only when the loop keeps
     // it in a real variable.
     let loop_variables = crate::transpiler::module_loop_variables(&context.program.statements);
-    for (index, statement) in context.program.statements.iter().enumerate() {
-        let node = nodes.and_then(|nodes| nodes.get(index));
+    let module_nodes: HashSet<usize> =
+        crate::transpiler::module_statements(&context.program.statements)
+            .into_iter()
+            .map(|statement| statement as *const Statement as usize)
+            .collect();
+    context.walk(&mut |statement, node| {
+        if !module_nodes.contains(&(statement as *const Statement as usize)) {
+            return;
+        }
         let names: Vec<&str> = match statement {
             Statement::Assignment(assignment) if assignment.assigns_name() => {
                 vec![assignment.target.as_str()]
@@ -511,7 +517,7 @@ pub(super) fn collect_module_variable_defs(
                 });
             }
         }
-    }
+    });
     variables
 }
 

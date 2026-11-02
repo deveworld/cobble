@@ -526,7 +526,7 @@ impl Transpiler {
         masked: &str,
         condition: &str,
     ) -> Result<Option<TranslatedCondition>, TranspileError> {
-        let (masked_tokens, operand_tokens) = Self::mask_condition_operand_tokens(masked);
+        let (masked_tokens, operand_tokens) = self.mask_condition_operand_tokens(masked);
         let expression = Self::parse_raw_condition_expression(&masked_tokens)
             .filter(|expression| self.needs_lowering(expression));
         let Some(expression) = expression else {
@@ -1256,7 +1256,13 @@ impl Transpiler {
                 '"' | '\'' => quote = Some(ch),
                 '(' | '[' | '{' => depth += 1,
                 ')' | ']' | '}' => depth = depth.saturating_sub(1),
-                ' ' if depth == 0 && condition[index..].starts_with(separator) => {
+                ' ' if depth == 0
+                    && condition[index..].starts_with(separator)
+                    && super::super::condition_lowering::raw_score_condition_end(
+                        &condition[start..],
+                    )
+                    .is_none_or(|end| index >= start + end) =>
+                {
                     let part = condition[start..index].trim();
                     if !part.is_empty() {
                         parts.push(part.to_string());

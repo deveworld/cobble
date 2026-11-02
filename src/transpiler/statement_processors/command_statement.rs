@@ -19,7 +19,7 @@ impl Transpiler {
         let Some(plan) = crate::transpiler::command_processor::quoted_hover_macro(&command) else {
             return vec![command];
         };
-        crate::transpiler::text_escape::add_functions(&mut self.data_pack);
+        crate::transpiler::text_escape::add_hover_functions(&mut self.data_pack);
         let ns = self.data_pack.namespace.clone();
         let id = self.next_temp_id();
         let path = format!("_cobble_quoted_args_{id}");
@@ -33,7 +33,7 @@ impl Transpiler {
                 format!("data modify {storage} _cobble_esc.key set from {storage} args.{name}"),
                 format!(
                     "function {ns}:{}",
-                    crate::transpiler::text_escape::ESCAPE_KEY
+                    crate::transpiler::text_escape::ESCAPE_HOVER
                 ),
                 format!(
                     "data modify {storage} {path}.{escaped} set from {storage} _cobble_esc.done"
