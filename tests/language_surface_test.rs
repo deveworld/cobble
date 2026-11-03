@@ -9,7 +9,7 @@ fn supported_language_surface_parses_representative_programs() {
             r#"
 score = 10
 offset = -2
-power = 2 ^ 3 ^ 2
+power = 2 ** 3 ** 2
 flag = not False or True and score >= 10
 items = [1, 2, 3]
 config = {"foo": 1, enabled: True}
@@ -183,10 +183,6 @@ from helpers import setup as renamed
     assert!(messages
         .iter()
         .any(|message| message.contains("Wildcard imports are not supported")));
-    assert!(messages.iter().any(|message| message.contains("`break`")));
-    assert!(messages
-        .iter()
-        .any(|message| message.contains("`continue`")));
     assert!(messages.iter().any(|message| message.contains("`assert`")));
     assert!(messages.iter().any(|message| message.contains("`raise`")));
     assert!(messages.iter().any(|message| message.contains("`del`")));

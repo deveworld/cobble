@@ -197,7 +197,7 @@ def main():
     choose(3)
     choose(0)
 "#);
-    assert_eq!(sim.storage["vars"]["out"], json!([-1, -1]));
+    assert_eq!(sim.storage["vars"]["out"], json!([-1.0, -1.0]));
 }
 
 #[test]

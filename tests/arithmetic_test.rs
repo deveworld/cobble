@@ -12,9 +12,10 @@ fn assignments_read_the_old_value_before_writing_the_result() {
         &[],
     );
     sim.call("compute");
-    for (name, expected) in [("x", -3), ("y", 2), ("z", 20), ("#compute.w", 3)] {
+    for (name, expected) in [("x", -3), ("z", 20), ("#compute.w", 3)] {
         assert_eq!(sim.var(name), expected, "{name}");
     }
+    assert_eq!(sim.storage["vars"]["y"], 2.0);
 }
 
 #[test]
@@ -39,14 +40,14 @@ fn nested_operators_and_math_calls_preserve_each_operand() {
     for (name, expected) in [
         ("product", 324),
         ("difference", -4),
-        ("root", 4),
         ("maximum", 9),
         ("minimum", 4),
         ("mixed", 9),
-        ("argument", 3),
     ] {
         assert_eq!(sim.var(&format!("#compute.{name}")), expected, "{name}");
     }
+    assert_eq!(sim.storage["locals"]["compute"]["root"], 4.0);
+    assert_eq!(sim.storage["locals"]["compute"]["argument"], 3.0);
 }
 
 #[test]
@@ -54,12 +55,12 @@ fn integer_powers_handle_zero_and_compound_assignment() {
     let mut sim = Sim::load(
         r#"def main():
     base = 2
-    positive = base ^ 3
-    limit = base ^ 100
-    zero = base ^ 0
+    positive = base ** 3
+    limit = base ** 100
+    zero = base ** 0
     zero_base = 0
-    zero_to_zero = zero_base ^ 0
-    base ^= 0
+    zero_to_zero = zero_base ** 0
+    base **= 0
     negative = (-2) ** 3
 "#,
         &[],

@@ -7,6 +7,7 @@ const PYTHON_COMPAT_BOOLEAN_GUARDS: &str =
     "boolean and/or/not expressions in supported command guards";
 const PYTHON_COMPAT_COMPARISONS: &str = "comparison expressions over scores and literals";
 const PYTHON_COMPAT_PASS: &str = "pass statement as an explicit no-op";
+const PYTHON_COMPAT_LOOP_CONTROL: &str = "break and continue in loops";
 
 const PYTHON_COMPAT_SUPPORTED_CONSTRUCTS: &[&str] = &[
     PYTHON_COMPAT_DEF_FUNCTIONS,
@@ -15,6 +16,7 @@ const PYTHON_COMPAT_SUPPORTED_CONSTRUCTS: &[&str] = &[
     PYTHON_COMPAT_BOOLEAN_GUARDS,
     PYTHON_COMPAT_COMPARISONS,
     PYTHON_COMPAT_PASS,
+    PYTHON_COMPAT_LOOP_CONTROL,
 ];
 
 pub fn python_compat_supported_constructs() -> Vec<String> {
@@ -38,6 +40,9 @@ pub fn python_compat_observed_constructs(source: &str) -> Vec<String> {
         }
         if line == "pass" {
             seen.insert(PYTHON_COMPAT_PASS);
+        }
+        if matches!(line, "break" | "continue") {
+            seen.insert(PYTHON_COMPAT_LOOP_CONTROL);
         }
         if line.starts_with("if ") || line.starts_with("elif ") || line == "else:" {
             seen.insert(PYTHON_COMPAT_IF_BLOCKS);
@@ -94,7 +99,7 @@ pub fn python_compat_suggestion_for_kind(
             "Use an explicit compile-time `for` loop or a literal array/map instead of a comprehension."
         }
         "unsupported-control-flow" => {
-            "Use Cobble `if`, `elif`, `else`, and compile-time `for` blocks; early loop exits are not supported."
+            "Use Cobble `if`, `elif`, `else`, `for`, and `while` blocks; break and continue belong inside loops."
         }
         "unsupported-none" => {
             "Use `null` only inside supported JSON resource values, or omit the value."
@@ -128,12 +133,7 @@ pub fn python_compat_suggestion_for_keyword(keyword: &str) -> &'static str {
             "Minecraft functions do not have exception handling; use explicit conditions and commands."
         }
         "with" => "Use explicit function calls or resource declarations instead of context managers.",
-        "break" => {
-            "Cobble compile-time loops cannot break early; restructure the loop bounds or guard generated commands."
-        }
-        "continue" => {
-            "Cobble compile-time loops cannot continue early; use an `if` guard inside the loop body."
-        }
+        "break" | "continue" => "Place loop control inside a for or while loop.",
         "assert" => "Use an explicit `if` block and command output to report failed conditions.",
         "del" => "Use explicit scoreboard/storage updates; delete statements are not supported.",
         "nonlocal" => "Use module-level state or function parameters; Cobble has no nested runtime scopes.",

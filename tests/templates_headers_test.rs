@@ -445,36 +445,30 @@ def main():
 }
 
 #[test]
-fn a_helper_rejects_a_value_known_only_at_run_time() {
-    for (source, value) in [
-        (
-            "from stdlib import entity\nmodtag = \"m\"\ndef main():\n    entity.tag_add(\"@s\", modtag)\n",
-            "not the variable `modtag`",
-        ),
-        (
-            "from stdlib import entity\ndef main():\n    local = \"x\"\n    entity.tag_add(\"@s\", local)\n",
-            "not the variable `local`",
-        ),
-        (
-            "from stdlib import entity\ndef main():\n    n = 1\n    for i in range(2):\n        entity.tag_add(\"@s\", \"m\" + str(n + i))\n",
-            "not a value computed when the function runs",
-        ),
-        (
-            "from stdlib import score\nkey = 1\ndef main():\n    score.set(key, 1)\n",
-            "not the variable `key`",
-        ),
-        (
-            "from stdlib import storage\nkey = 1\ndef main():\n    storage.set(key, 1)\n",
-            "not the variable `key`",
-        ),
-    ] {
-        let error = compile(source).expect_err(source);
-        assert!(
-            error.contains("must be a literal, a const, or a parameter of this function")
-                && error.contains(value),
-            "{source}\n{error}"
-        );
+fn helpers_accept_values_known_only_at_run_time() {
+    let mut sim = Sim::load(
+        r#"
+from stdlib import entity, score, storage
+modtag = "m"
+key = "counter"
+def main():
+    entity.tag_add("@s", modtag)
+    local = "x"
+    entity.tag_add("@s", local)
+    n = 1
+    for i in range(2):
+        entity.tag_add("@s", "m" + str(n + i))
+    score.set(key, n + 1)
+    storage.set(key, {"count": n + 1})
+"#,
+        &["Alex"],
+    );
+    sim.call_as("main", "Alex");
+    for tag in ["m", "x", "m1", "m2"] {
+        assert!(sim.tags["Alex"].contains(tag), "{tag}");
     }
+    assert_eq!(sim.score("counter", "sim.vars"), 2);
+    assert_eq!(sim.storage["counter"], serde_json::json!({"count":2}));
 }
 
 #[test]

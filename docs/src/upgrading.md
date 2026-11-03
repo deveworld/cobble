@@ -73,6 +73,15 @@ Decimal and exponent literals now use float32. Use `double(value)` for
 software float64 calculations or `int(value)` to truncate toward zero.
 See [Arithmetic](language/arithmetic.md) for promotion rules and limits.
 
+`/` now returns a real quotient, including for integers. Replace `/` and `/=`
+with `//` and `//=` where integer division is intended. Use `**` and `**=` for
+powers; `^` and `^=` are no longer accepted. `math.sqrt` returns a real value.
+Numeric variables can change between integer, float, and double values.
+
+Command helpers accept runtime expressions directly. `storage.get(path)` and
+`timer.done(name)` return values, and user functions can return strings, lists,
+and maps. F-string fields accept expressions; loops support `break` and `continue`.
+
 ### Other Output Changes
 
 - **Load and tag order:** setup runs first; event listeners and function tag
@@ -93,8 +102,8 @@ See [Arithmetic](language/arithmetic.md) for promotion rules and limits.
 - **Stricter checks:** invalid names, unresolved placeholders, conflicting
   module definitions, and malformed resources may now be compile errors.
 
-Packs with runtime loops, recursion, or runtime powers raise
-`max_command_sequence_length` on load; other packs now leave it alone.
+Packs leave `max_command_sequence_length` unchanged unless `[build] command_limit`
+is explicitly configured. This option changes a world-wide gamerule on load.
 A world that loaded an older pack keeps its previous gamerule value until
 changed explicitly.
 

@@ -6,8 +6,6 @@ use crate::transpiler::vars_objective;
 /// initializers.
 pub const INIT_FUNCTION: &str = "_cobble_init";
 
-const MAX_COMMAND_SEQUENCE_LENGTH_COMMAND: &str = "gamerule max_command_sequence_length 1000000000";
-
 impl DataPack {
     /// Records an objective the init function must create. The source-level
     /// `temp` objective is recorded as this pack's `<namespace>.vars`.
@@ -28,15 +26,15 @@ impl DataPack {
 
     /// Records that the pack has a runtime loop. A loop runs every iteration
     /// in one tick and can pass Minecraft's default limit of 65536 commands,
-    /// so the init function raises `max_command_sequence_length`.
+    /// but world settings change only when explicitly configured.
     pub fn track_runtime_loop(&mut self) {
         self.uses_runtime_loops = true;
     }
 
     fn runtime_setup_commands(&self) -> Vec<String> {
         let mut commands = Vec::new();
-        if self.uses_runtime_loops {
-            commands.push(MAX_COMMAND_SEQUENCE_LENGTH_COMMAND.to_string());
+        if let Some(limit) = self.command_limit {
+            commands.push(format!("gamerule max_command_sequence_length {limit}"));
         }
 
         let mut objectives: Vec<_> = self.used_objectives.iter().collect();
@@ -64,7 +62,7 @@ impl DataPack {
         Self::is_runtime_setup_command_for(
             &self.used_objectives,
             &self.boolean_constant_commands(),
-            self.uses_runtime_loops,
+            self.command_limit,
             command,
         )
     }
@@ -72,12 +70,13 @@ impl DataPack {
     fn is_runtime_setup_command_for(
         used_objectives: &std::collections::HashSet<String>,
         boolean_constants: &[String; 2],
-        uses_runtime_loops: bool,
+        command_limit: Option<u32>,
         command: &str,
     ) -> bool {
         // The gamerule only counts as setup when Cobble emits it, so the same
         // command written in a load handler stays.
-        if (uses_runtime_loops && command == MAX_COMMAND_SEQUENCE_LENGTH_COMMAND)
+        if command_limit
+            .is_some_and(|limit| command == format!("gamerule max_command_sequence_length {limit}"))
             || boolean_constants.iter().any(|constant| constant == command)
         {
             return true;
@@ -114,7 +113,7 @@ impl DataPack {
 
         let used_objectives = self.used_objectives.clone();
         let boolean_constants = self.boolean_constant_commands();
-        let uses_runtime_loops = self.uses_runtime_loops;
+        let command_limit = self.command_limit;
         let original_commands = self
             .functions
             .get(INIT_FUNCTION)
@@ -133,7 +132,7 @@ impl DataPack {
             if Self::is_runtime_setup_command_for(
                 &used_objectives,
                 &boolean_constants,
-                uses_runtime_loops,
+                command_limit,
                 &command,
             ) {
                 continue;

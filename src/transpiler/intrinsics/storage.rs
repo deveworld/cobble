@@ -176,7 +176,7 @@ impl Transpiler {
 
     /// A command on the storage path `path`, with `command(path_text)`
     /// giving its text. A path computed at runtime runs it as a macro.
-    fn command_at_storage_path(
+    pub(in crate::transpiler) fn command_at_storage_path(
         &mut self,
         path: &StoragePathPlan,
         command: impl Fn(&str) -> String,

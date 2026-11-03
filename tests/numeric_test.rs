@@ -133,7 +133,7 @@ fn square_roots_use_the_operands_precision() {
     sim.set_command_budget(80_000_000);
     sim.call("main");
     let local = &sim.storage["locals"]["main"];
-    assert_eq!(local["integer"], json!(3));
+    assert_eq!(local["integer"], json!(f64::from(10_f32.sqrt())));
     assert_eq!(local["single"], json!(f64::from(2.0_f32.sqrt())));
     assert_eq!(local["wide"], json!(2.0_f64.sqrt()));
     assert_eq!(local["tiny"], json!(f64::from_bits(1).sqrt()));

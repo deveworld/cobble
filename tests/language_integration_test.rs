@@ -45,6 +45,196 @@ use std::path::Path;
 use std::process::Command;
 
 #[test]
+fn storage_return_values_and_expression_fields_compose() {
+    let mut sim = Sim::load(
+        r#"
+counter = 0
+def bump():
+    global counter
+    counter += 1
+    return counter
+def make(depth):
+    if depth == 0:
+        return {"name": "Alex", "items": [1, 2], "rate": 0.25}
+    return make(depth - 1)
+def choose(flag):
+    return ["ready"] if flag else "waiting"
+def identity(value):
+    return value
+def fractional(value):
+    shown = f"{value / 2}"
+    /tellraw @a f"{value + 1}"
+    return shown
+def recurse_label(depth):
+    if depth > 0:
+        /tellraw @a f"{recurse_label(depth - 1)}"
+    return depth
+def probe():
+    data = make(2)
+    name = identity(data.name)
+    message = name + "!"
+    selected = choose(True)
+    alternative = choose(False)
+    shown = f"{data.name}: {len(data.items) + 1}"
+    /tellraw @a f"{counter} {bump()} {data['name']} {1 + 2}"
+    direct = make(0).name
+    first = identity(["x"])[0]
+    popped = identity([4, 5]).pop()
+    total = 0
+    for item in identity([1, 2]):
+        total += item
+    fraction = fractional(0.5)
+    recursive_field = recurse_label(2)
+"#,
+        &["Alex"],
+    );
+    sim.call("probe");
+    let values = &sim.storage["locals"]["probe"];
+    assert_eq!(
+        values["data"],
+        serde_json::json!({"name":"Alex", "items":[1,2], "rate":0.25})
+    );
+    assert_eq!(values["message"], "Alex!");
+    assert_eq!(values["selected"], serde_json::json!(["ready"]));
+    assert_eq!(values["alternative"], "waiting");
+    assert_eq!(values["shown"], "Alex: 3");
+    assert_eq!(values["direct"], "Alex");
+    assert_eq!(values["first"], "x");
+    assert_eq!(values["popped"], 5);
+    assert_eq!(values["total"], 3);
+    assert_eq!(values["fraction"], "0.25");
+    assert_eq!(values["recursive_field"], 2);
+    assert_eq!(sim.log, ["0 1 Alex 3", "1.5", "0", "1"]);
+}
+
+#[test]
+fn break_and_continue_stop_only_the_enclosing_loop() {
+    let mut sim = Sim::load(
+        r#"
+def early():
+    for i in range(5):
+        if i == 1:
+            continue
+        if i == 3:
+            return 7
+    return 0
+def probe():
+    total = 0
+    for i in range(6):
+        if i == 1:
+            continue
+        if i == 4:
+            break
+        total += i
+    nested = 0
+    for i in range(3):
+        for j in [1, 2, 3]:
+            if j == 2:
+                break
+            nested += 1
+    count = 0
+    while True:
+        count += 1
+        if count < 3:
+            continue
+        break
+    after = 9
+    returned = early()
+    forked = 0
+    for i in range(3):
+        as @a:
+            forked += 1
+            break
+"#,
+        &["Alex", "Bo"],
+    );
+    sim.call("probe");
+    for (name, expected) in [
+        ("total", 5),
+        ("nested", 3),
+        ("count", 3),
+        ("after", 9),
+        ("returned", 7),
+        ("forked", 1),
+    ] {
+        assert_eq!(sim.var(&format!("#probe.{name}")), expected, "{name}");
+    }
+    for keyword in ["break", "continue"] {
+        let error = compile(&format!("def invalid():\n    {keyword}\n")).unwrap_err();
+        assert!(error.contains("inside a loop"), "{error}");
+        assert!(!error.contains("no-op-expression"), "{error}");
+    }
+}
+
+#[test]
+fn command_helpers_accept_values_and_getters_return_values_without_changing_world_settings() {
+    let mut sim = Sim::load(
+        r#"
+from stdlib import score, timer, storage, text, random
+points = 0
+def next_value(value):
+    return value + 1
+def probe():
+    amount = 10
+    score.set("points", next_value(amount))
+    score.set("constant_score", 2 + 3)
+    score.set("negative_score", -2)
+    timer.set("cooldown", amount - 9)
+    before = timer.done("cooldown")
+    timer.tick("cooldown")
+    after = timer.done("cooldown")
+    path = "status"
+    storage.set(path, {"name": "Alex", "count": points})
+    status = storage.get(path)
+    text.tellraw("@a", {"text": status.name})
+    roll = random.randint(1, 6)
+"#,
+        &["Alex"],
+    );
+    assert!(!sim
+        .functions
+        .values()
+        .flatten()
+        .any(|line| line.contains("gamerule ")));
+    sim.call("probe");
+    assert_eq!(sim.var("points"), 11);
+    assert_eq!(sim.score("constant_score", "sim.vars"), 5);
+    assert_eq!(sim.score("negative_score", "sim.vars"), -2);
+    assert_eq!(sim.var("#probe.before"), 0);
+    assert_eq!(sim.var("#probe.after"), 1);
+    assert_eq!(
+        sim.storage["locals"]["probe"]["status"],
+        serde_json::json!({"name":"Alex", "count":11})
+    );
+    assert_eq!(sim.log, ["Alex"]);
+}
+
+#[test]
+fn division_and_square_root_have_consistent_real_results() {
+    let mut sim = Sim::load(
+        r#"
+from stdlib import math
+const HALF = 1 / 2
+def probe():
+    half = 1 / 2
+    constant = HALF
+    down = -5 // 2
+    root = math.sqrt(2)
+    power = 2 ** 3
+"#,
+        &[],
+    );
+    sim.call("probe");
+    let values = &sim.storage["locals"]["probe"];
+    assert_eq!(values["half"], 0.5);
+    assert_eq!(values["constant"], 0.5);
+    assert_eq!(values["down"], -3);
+    assert_eq!(values["root"], serde_json::json!(f64::from(2_f32.sqrt())));
+    assert_eq!(values["power"], 8);
+    assert!(compile("value = 2 ^ 3\n").is_err());
+}
+
+#[test]
 fn a_quoted_message_with_a_variable_shows_without_its_quotes() {
     let mut sim = Sim::load(
         r#"
@@ -167,10 +357,9 @@ def main():
 "#,
     )
     .unwrap_or_else(|error| panic!("build failed: {error}"));
-    assert_eq!(
-        load_functions(&output_dir)["main"].last().unwrap(),
-        r##"title @a actionbar {"extra":[{"score":{"name":"#main.left","objective":"sim.vars"}},{"text":"s"}],"text":"Wait "}"##
-    );
+    let mut sim = Sim::from_output(&output_dir, &[]);
+    sim.call("main");
+    assert_eq!(sim.log, ["Wait 3s"]);
 }
 
 #[test]

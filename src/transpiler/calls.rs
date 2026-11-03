@@ -115,6 +115,11 @@ impl Transpiler {
     ) -> Result<Vec<String>, TranspileError> {
         if self.uses_storage_numbers()
             && (super::numbers::numeric_computation(arg)
+                && !matches!(arg, Expression::Identifier(name) if !self.current_context.is_param(name)
+                    && !self.symbols.variable_storage_paths.contains_key(name)
+                    && !self.symbols.scoreboard_variables.contains(name)
+                    && !self.symbols.module_variables.contains(name)
+                    && !self.symbols.compile_time_constants.contains_key(name))
                 || matches!(arg, Expression::Identifier(name) if self.symbols.compile_time_constants.contains_key(name) && matches!(self.symbols.variable_types.get(name), Some(CobbleType::Float | CobbleType::Double)) && !self.functions.params_used_as_values.get(func_name).is_some_and(|used| !used.contains(param_name))))
         {
             return self.numeric_value_commands(target_path, arg);

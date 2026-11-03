@@ -789,7 +789,7 @@ impl Transpiler {
                 Token::Comma
                     if matches!(next, Some(Token::RParen | Token::RBracket | Token::RBrace)) => {}
                 Token::Star if next == Some(&Token::Star) => {
-                    key.push('^');
+                    key.push_str("**");
                     index += 1;
                 }
                 Token::Slash if next == Some(&Token::Slash) => {
@@ -873,6 +873,8 @@ impl Transpiler {
                 )
             }
             Statement::CreateEntity(name) => format!("create{}", name),
+            Statement::Break => "break".to_string(),
+            Statement::Continue => "continue".to_string(),
             Statement::Import(_) | Statement::FunctionDef(_) | Statement::Pass => return None,
         };
 
@@ -1017,7 +1019,7 @@ impl Transpiler {
             BinaryOp::Div => "/",
             BinaryOp::FloorDiv => "//",
             BinaryOp::Mod => "%",
-            BinaryOp::Pow => "^",
+            BinaryOp::Pow => "**",
             BinaryOp::Eq => "==",
             BinaryOp::NotEq => "!=",
             BinaryOp::Lt => "<",

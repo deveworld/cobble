@@ -389,7 +389,7 @@ def compute():
     b = x
     x = C + x
     c = x
-    x = 12 / x
+    x = 12 // x
     d = x
     x = 7
     x = 50 % x
@@ -404,7 +404,7 @@ def compute():
     assert_eq!(sim.var("#compute.a"), 7, "x = 10 - x with x = 3");
     assert_eq!(sim.var("#compute.b"), 13, "x = y - x with x = 7, y = 20");
     assert_eq!(sim.var("#compute.c"), 17, "x = C + x with x = 13");
-    assert_eq!(sim.var("#compute.d"), 0, "x = 12 / x with x = 17");
+    assert_eq!(sim.var("#compute.d"), 0, "x = 12 // x with x = 17");
     assert_eq!(sim.var("#compute.e"), 1, "x = 50 % x with x = 7");
     assert_eq!(sim.var("#compute.f"), 10, "x = x + x with x = 5");
 }
@@ -441,11 +441,11 @@ def compute():
 #[test]
 fn constant_division_uses_floor_division() {
     let vars = "    a = 0 - 7\n    b = 2";
-    assert_eq!(folded_and_runtime("-7 / 2", "a / b", vars), (-4, -4));
+    assert_eq!(folded_and_runtime("-7 // 2", "a // b", vars), (-4, -4));
     let vars = "    a = 7\n    b = 0 - 2";
-    assert_eq!(folded_and_runtime("7 / -2", "a / b", vars), (-4, -4));
+    assert_eq!(folded_and_runtime("7 // -2", "a // b", vars), (-4, -4));
     let vars = "    a = 7\n    b = 2";
-    assert_eq!(folded_and_runtime("7 / 2", "a / b", vars), (3, 3));
+    assert_eq!(folded_and_runtime("7 // 2", "a // b", vars), (3, 3));
 }
 
 #[test]
@@ -459,7 +459,7 @@ fn constant_modulo_uses_floor_modulus() {
 #[test]
 fn constant_division_truncates_each_step() {
     let vars = "    a = 1\n    b = 3";
-    assert_eq!(folded_and_runtime("1 / 3 * 3", "a / b * b", vars), (0, 0));
+    assert_eq!(folded_and_runtime("1 // 3 * 3", "a // b * b", vars), (0, 0));
 }
 
 #[test]
@@ -471,10 +471,10 @@ const D = 2
 const M = N % 3
 
 def compute():
-    q = N / D
+    q = N // D
     r = M
     total = 0
-    for i in range(N / D, 0):
+    for i in range(N // D, 0):
         total += 1
 "#,
         &[],
@@ -514,8 +514,8 @@ def compute():
 fn const_powers_keep_real_arithmetic() {
     let sim = Sim::load(
         r#"
-const BIG = 2 ^ 40
-const SMALL = 3 ^ 4
+const BIG = 2 ** 40
+const SMALL = 3 ** 4
 
 def show():
     /say {BIG} {SMALL}
@@ -548,9 +548,9 @@ def compute():
         &[],
     );
     sim.call("compute");
-    assert_eq!(sim.var("#compute.x"), 4);
-    assert_eq!(sim.var("#compute.y"), 5);
-    assert_eq!(sim.var("#compute.z"), 2);
+    assert_eq!(sim.storage["locals"]["compute"]["x"], 4.0);
+    assert_eq!(sim.storage["locals"]["compute"]["y"], 5.0);
+    assert_eq!(sim.storage["locals"]["compute"]["z"], 2.0);
     assert_eq!(sim.log, vec!["Server: done"]);
 }
 

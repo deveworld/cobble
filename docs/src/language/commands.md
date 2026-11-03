@@ -49,7 +49,7 @@ def announce(wave):
 ```
 
 Plain quoted strings never interpolate. Inside an f-string, `{{` and `}}`
-produce literal braces. Fields accept names, as described under
+produce literal braces. Fields accept expressions such as `{wave + 1}`, as described under
 [Strings](basics.md#strings).
 
 `tellraw` and `title` can show runtime variables, including in styled

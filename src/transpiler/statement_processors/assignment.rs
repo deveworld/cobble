@@ -447,6 +447,7 @@ impl Transpiler {
                         | CobbleType::Float
                         | CobbleType::Double
                         | CobbleType::Boolean
+                        | CobbleType::Unknown
                 )
             )
             && self.may_hold_float(&assign.value)
@@ -454,7 +455,7 @@ impl Transpiler {
         {
             let path = self.variable_storage_path(&assign.target);
             self.real_variables.insert(path.clone());
-            let commands = self.numeric_value_commands(&path, &assign.value)?;
+            let commands = self.storage_value_commands(&path, &assign.value)?;
             self.symbols
                 .variable_storage_paths
                 .insert(assign.target.clone(), path);

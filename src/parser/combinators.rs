@@ -144,6 +144,8 @@ pub enum StatementSpanKind {
     Match,
     Return,
     Pass,
+    Break,
+    Continue,
     MinecraftCommand,
     Global,
     Execute,
@@ -168,6 +170,8 @@ impl StatementSpanKind {
             Statement::Match(_) => Self::Match,
             Statement::Return(_) => Self::Return,
             Statement::Pass => Self::Pass,
+            Statement::Break => Self::Break,
+            Statement::Continue => Self::Continue,
             Statement::MinecraftCommand(_) => Self::MinecraftCommand,
             Statement::Global(_) => Self::Global,
             Statement::Execute(_) => Self::Execute,
@@ -338,6 +342,8 @@ fn simple_statement<'a>(
         global,
         return_stmt,
         pass,
+        just(&Token::Break).to(Statement::Break),
+        just(&Token::Continue).to(Statement::Continue),
         selector_def(),
         entity_def(expr.clone()),
         create_entity(),
@@ -506,9 +512,6 @@ fn compound_assignment<'a>(
         just(&Token::Percent)
             .then_ignore(just(&Token::Equals))
             .to(BinaryOp::Mod),
-        just(&Token::Caret)
-            .then_ignore(just(&Token::Equals))
-            .to(BinaryOp::Pow),
     ));
 
     assignment_target(expr.clone())
@@ -1230,7 +1233,8 @@ fn atom<'a>(
                     }
                     super::strings::FormatPart::Name(name) => Expression::Call(
                         Box::new(Expression::Identifier("_cobble_format".to_string())),
-                        vec![Expression::Identifier(name.to_string())],
+                        vec![super::strings::parse_format_expression(name)
+                            .map_err(|message| Rich::custom(span, message))?],
                     ),
                 };
                 value = Expression::Binary(Box::new(value), BinaryOp::Add, Box::new(next));
@@ -1275,6 +1279,7 @@ fn atom<'a>(
 /// What can follow an expression in a postfix chain.
 #[derive(Clone)]
 enum Postfix {
+    Call(Vec<Expression>),
     Attribute(String),
     Index(Expression),
     Slice(Option<Expression>, Option<Expression>),
@@ -1284,8 +1289,17 @@ fn call_expression<'a>(
     expr: impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expression, Extra<'a>> + Clone {
     // Attribute access (e.g., stdlib.event)
-    let postfix = atom(expr.clone()).foldl(
+    atom(expr.clone()).foldl(
         choice((
+            just(&Token::LParen)
+                .ignore_then(
+                    expr.clone()
+                        .separated_by(just(&Token::Comma))
+                        .allow_trailing()
+                        .collect(),
+                )
+                .then_ignore(just(&Token::RParen))
+                .map(Postfix::Call),
             just(&Token::Dot)
                 .ignore_then(select_ref! { Token::Ident(s) => s.clone() })
                 .map(Postfix::Attribute),
@@ -1305,34 +1319,14 @@ fn call_expression<'a>(
         ))
         .repeated(),
         |base, postfix| match postfix {
+            Postfix::Call(args) => Expression::Call(Box::new(base), args),
             Postfix::Attribute(attr) => Expression::Attribute(Box::new(base), attr),
             Postfix::Index(index) => Expression::Subscript(Box::new(base), Box::new(index)),
             Postfix::Slice(start, stop) => {
                 Expression::Slice(Box::new(base), start.map(Box::new), stop.map(Box::new))
             }
         },
-    );
-
-    // Function call
-    postfix
-        .then(
-            just(&Token::LParen)
-                .ignore_then(
-                    expr.clone()
-                        .separated_by(just(&Token::Comma))
-                        .allow_trailing()
-                        .collect(),
-                )
-                .then_ignore(just(&Token::RParen))
-                .or_not(),
-        )
-        .map(|(func, args)| {
-            if let Some(args) = args {
-                Expression::Call(Box::new(func), args)
-            } else {
-                func
-            }
-        })
+    )
 }
 
 fn arithmetic_expression<'a>(
@@ -1359,15 +1353,12 @@ fn arithmetic_expression<'a>(
     })
     .boxed();
 
-    // Highest precedence: ^ (power) - right-associative
-    // Power operator is right-associative: 2^3^2 = 2^(3^2) = 512
+    // Highest precedence: ** (power) - right-associative
+    // Power operator is right-associative: 2**3**2 = 2**(3**2) = 512
     // We parse left-to-right but fold right-to-left for right-associativity
-    let power_op = choice((
-        just(&Token::Caret).to(BinaryOp::Pow),
-        just(&Token::Star)
-            .then(just(&Token::Star))
-            .to(BinaryOp::Pow),
-    ));
+    let power_op = just(&Token::Star)
+        .then(just(&Token::Star))
+        .to(BinaryOp::Pow);
     let power = unary
         .clone()
         .then(power_op.then(unary.clone()).repeated().collect::<Vec<_>>())
@@ -1984,6 +1975,10 @@ impl<'a> SpanTreeBuilder<'a> {
                 self.expect(|token| matches!(token, Token::Pass | Token::String(_)))?;
                 self.leaf_from(kind, start_index)
             }
+            Statement::Break | Statement::Continue => {
+                self.expect(|token| matches!(token, Token::Break | Token::Continue))?;
+                self.leaf_from(kind, start_index)
+            }
             Statement::MinecraftCommand(_) => {
                 self.expect(|token| matches!(token, Token::MinecraftCommand(_)))?;
                 self.leaf_from(kind, start_index)
@@ -2282,9 +2277,7 @@ impl<'a> SpanTreeBuilder<'a> {
         }
     }
 
-    /// One operand: unary prefixes, an atom, `.ident`/`[index]` accessor
-    /// chains, then at most one call-argument group — the grammar's `call`
-    /// rule allows a single parenthesized group after the postfix chain.
+    /// One operand followed by any chain of calls, fields, and indexes.
     fn scan_operand(&mut self) -> Option<()> {
         while matches!(self.peek(), Some(Token::Not | Token::Minus | Token::Plus)) {
             self.index += 1;
@@ -2302,8 +2295,11 @@ impl<'a> SpanTreeBuilder<'a> {
             Some(Token::LParen | Token::LBracket | Token::LBrace) => self.scan_balanced_group()?,
             _ => return None,
         }
-        self.scan_postfix_accessors()?;
-        if matches!(self.peek(), Some(Token::LParen)) {
+        loop {
+            self.scan_postfix_accessors()?;
+            if !matches!(self.peek(), Some(Token::LParen)) {
+                break;
+            }
             self.scan_balanced_group()?;
         }
         Some(())

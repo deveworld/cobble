@@ -187,6 +187,64 @@ def numeric_twice(value):
 def random_pick(low, high):
     return random.randint(low, high)
 
+def return_payload(depth):
+    if depth == 0:
+        return {"name": "Alex", "items": [1, 2]}
+    return return_payload(depth - 1)
+
+def change_visibility(visible):
+    bossbar.set_visible("runtime_ui", visible)
+
+def formatted_header(value):
+    as @e[tag=format_probe,name=f"Name {value + 1}"]:
+        value += 1
+    return value
+
+def consistency_probe():
+    payload = return_payload(2)
+    message = f"{payload.name}: {len(payload.items) + 1}"
+    half = 1 / 2
+    integer_root = math.sqrt(2)
+    /execute if data storage cobble_server_smoke:global locals.consistency_probe{message:"Alex: 3",half:0.5f,integer_root:1.4142135f} run say storage returns and expressions ok
+    amount = 12
+    bossbar.add("runtime_ui", "Runtime")
+    bossbar.set_max("runtime_ui", amount + 3)
+    bossbar.set_value("runtime_ui", amount)
+    visible = False
+    bossbar.set_visible("runtime_ui", visible)
+    change_visibility(True)
+    /execute store result storage cobble_server_smoke:global ui_value int 1 run bossbar get cobble_server_smoke:runtime_ui value
+    /execute if data storage cobble_server_smoke:global {ui_value:12} run say runtime helper arguments ok
+    timer.set("probe_timer", amount - 11)
+    timer.tick("probe_timer")
+    ready = timer.done("probe_timer")
+    path = "probe_status"
+    storage.set(path, payload)
+    saved = storage.get(path)
+    storage.set("probe_list", [10, 20])
+    index = 1
+    indexed = storage.get(storage.index("probe_list", index))
+    /execute if data storage cobble_server_smoke:global locals.consistency_probe{ready:1,indexed:20,saved:{name:"Alex",items:[1,2]}} run say value getters ok
+    total = 0
+    for i in range(6):
+        if i == 1:
+            continue
+        if i == 4:
+            break
+        total += i
+    count = 0
+    while True:
+        count += 1
+        if count < 3:
+            continue
+        break
+    /execute if data storage cobble_server_smoke:global locals.consistency_probe{total:5,count:3} run say loop control ok
+    /summon minecraft:marker ~ ~ ~ {Tags:["format_probe"],CustomName:"Name 3"}
+    header_value = formatted_header(2)
+    /execute if data storage cobble_server_smoke:global locals.consistency_probe{header_value:3} run say formatted header arguments ok
+    /kill @e[tag=format_probe]
+    bossbar.remove("runtime_ui")
+
 def random_probe():
     low = 1
     high = 6
@@ -393,8 +451,8 @@ def probe():
         /say runtime json array ok
     pow_base = 3
     pow_exp = 4
-    pow_result = pow_base ^ pow_exp
-    pow_zero = pow_base ^ (pow_exp - 4)
+    pow_result = pow_base ** pow_exp
+    pow_zero = pow_base ** (pow_exp - 4)
     if pow_result == 81 and pow_zero == 1:
         /say runtime power ok
     compound_score = 10
@@ -404,7 +462,7 @@ def probe():
     compound_score /= 4
     compound_score %= 5
     compound_base = 2
-    compound_base ^= pow_exp
+    compound_base **= pow_exp
     if compound_score == 1 and compound_base == 16:
         /say compound assignment ok
 
@@ -613,6 +671,8 @@ fn spawn_server(jar: &Path, server_dir: &Path) -> Child {
 fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> {
     let log_path = server_dir.join("logs/latest.log");
     wait_for_log(child, &log_path, "Done (", STARTUP_TIMEOUT)?;
+    // Test-world opt-in: production packs no longer change this gamerule.
+    send_command(child, "gamerule max_command_sequence_length 1000000000")?;
     wait_for_log(child, &log_path, "Cobble quiet load ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "predicate ok", COMMAND_TIMEOUT)?;
     wait_for_log(child, &log_path, "early load ok", COMMAND_TIMEOUT)?;
@@ -639,6 +699,16 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         )?;
     }
 
+    send_command(child, &format!("function {NAMESPACE}:consistency_probe"))?;
+    for expected in [
+        "storage returns and expressions ok",
+        "runtime helper arguments ok",
+        "value getters ok",
+        "loop control ok",
+        "formatted header arguments ok",
+    ] {
+        wait_for_log(child, &log_path, expected, COMMAND_TIMEOUT)?;
+    }
     send_command(child, &format!("function {NAMESPACE}:random_probe"))?;
     for expected in ["random fixed and guards ok", "random ranges ok"] {
         wait_for_log(child, &log_path, expected, COMMAND_TIMEOUT)?;

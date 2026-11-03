@@ -97,10 +97,8 @@ def use_stdlib():
     assert!(content.contains(
         "execute if score cooldown stdlib_v1.vars matches 1.. run scoreboard players remove cooldown stdlib_v1.vars 1"
     ));
-    assert!(content.contains("scoreboard players set cooldown_done stdlib_v1.vars 0"));
-    assert!(content.contains(
-        "execute if score cooldown stdlib_v1.vars matches ..0 run scoreboard players set cooldown_done stdlib_v1.vars 1"
-    ));
+    assert!(content.contains("function stdlib_v1:_cobble_timer_done"));
+    assert!(!content.contains("cooldown_done"));
     assert!(content.contains("scoreboard players reset cooldown stdlib_v1.vars"));
     assert!(content
         .contains("data modify storage stdlib_v1:global status set value {ready:1b,count:3}"));
@@ -114,7 +112,7 @@ def use_stdlib():
         .contains(r#"data modify storage stdlib_v1:global players.current set value "alex""#));
     assert!(content
         .contains(r#"data modify storage stdlib_v1:global players.events append value "joined""#));
-    assert!(content.contains("data get storage stdlib_v1:global players.events[0]"));
+    assert!(content.contains("function stdlib_v1:_cobble_storage_get_"));
     assert!(content.contains("data remove storage stdlib_v1:global status.extra"));
 }
 
@@ -551,11 +549,9 @@ def use_math():
     )
     .unwrap();
 
-    let helper = read_function(&output_dir, "_cobble_math_sqrt");
+    let helper = read_function(&output_dir, "_cobble_numeric_float_sqrt");
     assert!(!helper.contains("implementation placeholder"));
-    assert!(helper.contains(
-        "scoreboard players operation #sqrt_square stdlib_v1.vars *= #sqrt_mid stdlib_v1.vars"
-    ));
+    assert!(helper.contains("minecraft:sqrt"));
 
     let content = read_function(&output_dir, "use_math");
     assert!(content.contains("function stdlib_v1:_cobble_numeric_sqrt"));
@@ -564,7 +560,7 @@ def use_math():
         &[],
     );
     sim.call("use_math");
-    assert_eq!(sim.var("#use_math.root"), 10);
+    assert_eq!(sim.storage["locals"]["use_math"]["root"], 10.0);
     assert_eq!(sim.var("#use_math.lower"), 3);
 }
 

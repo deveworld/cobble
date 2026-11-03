@@ -1056,11 +1056,12 @@ impl Transpiler {
         if matches!(
             Self::analyze_function_return_kind(body),
             FunctionReturnKind::None
-        ) {
+        ) && !super::loop_processor::contains_loop_control(body)
+        {
             return capture;
         }
         let guard = format!(
-            "execute if score {} temp matches 1 run return 0",
+            "execute if score {} temp matches 1.. run return 0",
             context.flag_score
         );
         capture.metadata = capture

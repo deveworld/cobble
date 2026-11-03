@@ -83,7 +83,7 @@ impl Transpiler {
                     return Err("bossbar.set_visible() takes 2 arguments".into());
                 }
                 let id = self.expr_to_plain_arg(&args[0], "bossbar id")?;
-                let visible = self.expr_to_bool(&args[1], "bossbar visibility")?;
+                let visible = self.expr_to_bool_arg(&args[1], "bossbar visibility")?;
                 format!(
                     "bossbar set {} visible {}",
                     self.qualify_namespaced_id(&id),

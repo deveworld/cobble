@@ -144,6 +144,11 @@ pub(super) fn add_functions(pack: &mut DataPack) {
                 "execute if score #numeric_right_kind temp matches 2 run return fail".into(),
             );
         }
+        if op == "div" {
+            commands.push(format!(
+                "return run function {ns}:_cobble_numeric_float_div"
+            ));
+        }
         if op == "compare" {
             commands.extend([
                 "scoreboard players set #numeric_left_order temp 0".into(),
@@ -242,12 +247,9 @@ pub(super) fn add_functions(pack: &mut DataPack) {
     if pack.functions.contains_key("_cobble_numeric_double_sqrt") {
         sqrt.push(format!("execute if score #numeric_left_kind temp matches 2 run return run function {ns}:_cobble_numeric_dispatch_double_sqrt"));
     }
-    sqrt.extend([
-        format!("execute if score #numeric_left_kind temp matches 1 run return run function {ns}:_cobble_numeric_float_sqrt"),
-        format!("execute store result score #math_input temp run data get storage {ns}:global _cobble_numeric.left 1"),
-        format!("function {ns}:_cobble_math_sqrt"),
-        format!("execute store result storage {ns}:global _cobble_numeric.result int 1 run scoreboard players get #math_result temp"),
-    ]);
+    sqrt.push(format!(
+        "return run function {ns}:_cobble_numeric_float_sqrt"
+    ));
     pack.add_function("_cobble_numeric_sqrt".into(), sqrt);
     pack.add_function("_cobble_numeric_float_sqrt".into(), vec![
         format!("data remove storage {ns}:global _cobble_numeric.result"),

@@ -65,11 +65,11 @@ def tick():
     doubled = score * 2
     combined = doubled + 5
     remainder = combined % 4
-    power = 3 ^ 3
+    power = 3 ** 3
     status = "running"
 
     timer.tick("matrix_timer")
-    timer.done("matrix_timer")
+    ready = timer.done("matrix_timer")
 
     if score > 20 and not energy == 0:
         /tellraw @Players {"text":"High score ","color":"gold"}

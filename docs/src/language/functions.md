@@ -33,7 +33,7 @@ Arithmetic and return values preserve integer, float, and double values.
 
 ## Calling Functions
 
-Calls can forward arguments to other functions and return numeric values:
+Calls can forward arguments and return numbers, strings, lists, and maps:
 
 ```python
 def twice(value):
@@ -44,8 +44,9 @@ def reward(amount):
 ```
 
 `return` ends the enclosing function, including inside a loop or execute
-block. A returned condition gives `1` or `0`. Use a module variable or
-storage for strings, lists, and maps.
+block. A returned condition gives `1` or `0`. Returned containers are copied,
+as with assignments and arguments. A function containing `return` yields `0`
+when a path falls through, or when it executes a bare `return`.
 
 Calls also work in conditions:
 

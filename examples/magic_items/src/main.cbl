@@ -107,8 +107,8 @@ def try_frost():
 
 
 def show_recharge(ticks):
-    seconds = ticks / 20
-    tenths = (ticks % 20) / 2
+    seconds = ticks // 20
+    tenths = (ticks % 20) // 2
     /title @s actionbar {"text":f"Recharging: {seconds}.{tenths}s","color":"red"}
     /playsound minecraft:block.note_block.bass player @s ~ ~ ~ 0.6 0.5
 

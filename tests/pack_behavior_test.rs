@@ -2,7 +2,7 @@
 //! - the runtime setup handler runs before other `minecraft:load` entries
 //! - raw `unless A or B` headers compile to `unless A unless B`
 //! - `say` text with variables keeps `say`'s own output
-//! - only packs with a runtime loop raise `max_command_sequence_length`
+//! - world settings change only with explicit opt-in
 //! - entity templates apply the selector's `tag=` values
 //! - compiler errors point at the statement that caused them
 //! - `--zip` refuses a world's `datapacks` folder
@@ -243,20 +243,24 @@ stdlib.addEventListener(event.LOAD, on_load)
 }
 
 #[test]
-fn packs_with_runtime_loops_raise_the_command_limit_first() {
+fn runtime_loops_change_the_command_limit_only_with_explicit_configuration() {
     for source in [
         "def count_down(n):\n    i = n\n    while i > 0:\n        i -= 1\n",
         "def total(limit):\n    sum = 0\n    for i in range(limit):\n        sum += i\n",
     ] {
         let (_temp, output_dir) = compile(source).unwrap();
-        let functions = load_functions(&output_dir);
-        let init = &functions["_cobble_init"];
-        assert_eq!(
-            init.first().map(String::as_str),
-            Some("gamerule max_command_sequence_length 1000000000"),
-            "{source}\n{init:?}"
-        );
+        assert!(!all_commands(&output_dir).contains("gamerule "));
     }
+    let (_temp, output_dir) = common::mcsim::compile_project(&[
+        ("../cobble.toml", "[project]\nname = \"Limit\"\ndescription = \"Explicit command limit\"\nnamespace = \"sim\"\n[build]\ncommand_limit = 75000\n"),
+        ("main.cbl", "def countdown(n):\n    while n > 0:\n        n -= 1\n"),
+    ]).unwrap();
+    assert_eq!(
+        load_functions(&output_dir)["_cobble_init"]
+            .first()
+            .map(String::as_str),
+        Some("gamerule max_command_sequence_length 75000")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -727,14 +731,9 @@ stdlib.addEventListener(event.LOAD, on_load)
 }
 
 #[test]
-fn runtime_power_raises_the_command_limit() {
-    let (_temp, output_dir) = compile("def f(e):\n    base = 2\n    x = base ^ e\n").unwrap();
-    assert_eq!(
-        load_functions(&output_dir)["_cobble_init"]
-            .first()
-            .map(String::as_str),
-        Some("gamerule max_command_sequence_length 1000000000")
-    );
+fn runtime_power_leaves_the_world_command_limit_alone() {
+    let (_temp, output_dir) = compile("def f(e):\n    base = 2\n    x = base ** e\n").unwrap();
+    assert!(!all_commands(&output_dir).contains("gamerule "));
 }
 
 #[test]

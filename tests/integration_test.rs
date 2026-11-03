@@ -2107,12 +2107,12 @@ fn test_runtime_power_exponent() {
 def test():
     base = 3
     exp = 4
-    result = base ^ exp
-    result2 = 2 ^ (exp - 1)
-    zero = base ^ (exp - 4)
-    negative = base ^ (exp - 5)
+    result = base ** exp
+    result2 = 2 ** (exp - 1)
+    zero = base ** (exp - 4)
+    negative = base ** (exp - 5)
     self_exp = 4
-    self_exp = 3 ^ self_exp
+    self_exp = 3 ** self_exp
     if result == 81 and result2 == 8 and zero == 1 and negative == 0 and self_exp == 81:
         /say runtime power ok
 "#;
@@ -2142,11 +2142,11 @@ def test():
     score += 5
     score -= 3
     score *= 2
-    score /= 4
+    score //= 4
     score %= 5
     base = 2
     exp = 3
-    base ^= exp
+    base **= exp
     if score == 1 and base == 8:
         /say compound ok
 "#;
@@ -2505,7 +2505,7 @@ def test():
 }
 
 #[test]
-fn test_expression_call_requires_integer_return_value() {
+fn test_expression_call_requires_a_return_value() {
     let no_return = r#"
 def side_effect():
     /say side effect only
@@ -2525,12 +2525,7 @@ def test():
     x = bad()
 "#;
 
-    let error = compile_source(non_integer_return).expect_err("non-integer return should fail");
-    assert!(
-        error.contains("Functions can return numbers")
-            || error.contains("returns non-integer data"),
-        "{error}"
-    );
+    compile_source(non_integer_return).expect("text return values are supported");
 
     let imported_no_return = r#"
 import helpers
@@ -2556,16 +2551,11 @@ def test():
 def imported_bad():
     return "text"
 "#;
-    let error = compile_source_with_files(
+    compile_source_with_files(
         imported_non_integer_return,
         &[("helpers.cbl", helper_source)],
     )
-    .expect_err("imported non-integer return should fail");
-    assert!(
-        error.contains("Functions can return numbers")
-            || error.contains("returns non-integer data"),
-        "{error}"
-    );
+    .expect("imported functions can return text");
 }
 
 #[test]
@@ -3072,9 +3062,9 @@ fn test_regression_power_operator_context_aware() {
     // Previously: 2^3 was incorrectly tokenized (^ treated as coordinate marker)
     let source = r#"
 def test():
-    a = 2^3
-    b = (2+3)^2
-    c = 10^2
+    a = 2**3
+    b = (2+3)**2
+    c = 10**2
 "#;
 
     let (_temp, output_dir) = compile_source(source).unwrap();
@@ -3225,7 +3215,7 @@ fn test_regression_power_exponent_limit() {
     let source = r#"
 def test():
     base = 2
-    result = base ^ 500
+    result = base ** 500
 "#;
 
     let result = compile_source(source);
@@ -3244,7 +3234,7 @@ fn test_regression_power_const_exponent_limit() {
 def test():
     const EXP = 500
     base = 2
-    result = base ^ EXP
+    result = base ** EXP
 "#;
 
     let result = compile_source(source);
@@ -3262,7 +3252,7 @@ fn test_regression_power_nested_const_exponent_limit() {
 def test():
     const EXP = 500
     base = 2
-    result = (base + 1) ^ EXP
+    result = (base + 1) ** EXP
 "#;
 
     let result = compile_source(source);
@@ -3563,7 +3553,7 @@ fn test_power_overflow_handling() {
     let source = r#"
 const BIG = 50000
 def test():
-    result = BIG ^ 2
+    result = BIG ** 2
 "#;
 
     let result = compile_source(source);

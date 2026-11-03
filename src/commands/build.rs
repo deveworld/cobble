@@ -125,6 +125,7 @@ struct BuildProject {
     pack_format: PackFormat,
     experimental_resource_pack: bool,
     stdlib_version: u8,
+    command_limit: Option<u32>,
     configured_entry_points: Vec<String>,
     files_to_compile: Vec<PathBuf>,
     source_display_root: PathBuf,
@@ -214,6 +215,7 @@ fn resolve_project(options: &BuildOptions) -> Result<BuildProject, String> {
         pack_format,
         experimental_resource_pack,
         stdlib_version: config.as_ref().map(|cfg| cfg.stdlib.version).unwrap_or(2),
+        command_limit: config.as_ref().and_then(|cfg| cfg.build.command_limit),
         configured_entry_points,
         files_to_compile,
         source_display_root,
@@ -376,6 +378,7 @@ fn compile_project(
         description: Some(project.description.clone()),
         pack_format: project.pack_format,
         stdlib_version: Some(project.stdlib_version),
+        command_limit: project.command_limit,
         experimental_resource_pack: project.experimental_resource_pack,
         source_display_root: Some(source_display_root.clone()),
         project_identity: Some((

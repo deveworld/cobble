@@ -25,7 +25,7 @@ def use_spawn():
     store result score spawn_exists temp:
         /execute if entity @Spawn
     if cooldown_left > 0:
-        wait_seconds = (cooldown_left + 19) / 20
+        wait_seconds = (cooldown_left + 19) // 20
         /tellraw @s {"text":f"You can teleport to spawn again in {wait_seconds}s.","color":"red"}
     elif spawn_exists == 0:
         /tellraw @s {"text":"No spawn is set yet. An operator can run /function lobby:set_spawn.","color":"red"}
@@ -49,8 +49,8 @@ def use_stats():
         /scoreboard players get @s lobby_deaths
     store result score kills temp:
         /scoreboard players get @s lobby_kills
-    played_minutes = played_ticks / 1200
-    played_hours = played_minutes / 60
+    played_minutes = played_ticks // 1200
+    played_hours = played_minutes // 60
     played_minutes = played_minutes % 60
     /tellraw @s {"text":"Your stats","color":"gold","bold":true}
     /tellraw @s ["",{"text":"Playtime: ","color":"gray"},{"text":f"{played_hours}h {played_minutes}m","color":"white"}]

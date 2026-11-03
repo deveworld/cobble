@@ -586,7 +586,7 @@ def test():
         5,
     );
     assert_entry(
-        "scoreboard players set cooldown_done source_map.vars 0",
+        "function source_map:_cobble_timer_done",
         GeneratedCommandKind::StdLib,
         9,
         5,
@@ -999,7 +999,7 @@ def alpha():
 def beta():
     x = 1 + 2
     l = [1, 2]
-    y = 2 ^ 3
+    y = 2 ** 3
     z = 7 / 2
 def h(a, b):
     /say {a}

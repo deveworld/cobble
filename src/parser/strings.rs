@@ -51,8 +51,7 @@ pub(crate) fn format_literal_body(raw: &str) -> Option<(char, &str)> {
     Some((quote as char, raw.get(2..raw.len().checked_sub(1)?)?))
 }
 
-/// Named fields and doubled literal braces in a formatted string. This
-/// release shares the `{name}` field syntax with command arguments.
+/// Expression fields and doubled literal braces in a formatted string.
 pub(crate) fn format_parts(text: &str) -> Result<Vec<FormatPart<'_>>, String> {
     let mut parts = Vec::new();
     let mut literal = String::new();
@@ -65,23 +64,43 @@ pub(crate) fn format_parts(text: &str) -> Result<Vec<FormatPart<'_>>, String> {
             index += 2;
             continue;
         }
-        if rest.starts_with('{') {
+        if let Some(field_body) = rest.strip_prefix('{') {
             fields += 1;
             if fields > 256 {
                 return Err("An f-string can contain at most 256 fields.".to_string());
             }
-            let close = rest
-                .find('}')
-                .ok_or("Unclosed f-string field: add `}` after the name.")?;
-            let name = rest[1..close].trim();
-            let mut chars = name.chars();
-            if !chars
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
-                return Err("An f-string field needs a name, as in `{wave}`. Expressions, conversions, and format specifiers aren't supported.".to_string());
+            let mut depth = 0usize;
+            let mut quote = None;
+            let mut escaped = false;
+            let mut closing = None;
+            for (offset, ch) in field_body.char_indices() {
+                if let Some(delimiter) = quote {
+                    if escaped {
+                        escaped = false;
+                    } else if ch == '\\' {
+                        escaped = true;
+                    } else if ch == delimiter {
+                        quote = None;
+                    }
+                    continue;
+                }
+                match ch {
+                    '\'' | '"' => quote = Some(ch),
+                    '(' | '[' | '{' => depth += 1,
+                    '}' if depth == 0 => {
+                        closing = Some(offset + 1);
+                        break;
+                    }
+                    ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
             }
+            let close = closing.ok_or("Unclosed f-string field: add `}` after the expression.")?;
+            let name = rest[1..close].trim();
+            if name.is_empty() {
+                return Err("An f-string field needs an expression.".into());
+            }
+            parse_format_expression(name)?;
             if !literal.is_empty() {
                 parts.push(FormatPart::Text(std::mem::take(&mut literal)));
             }
@@ -143,4 +162,17 @@ pub(crate) fn formatted_string_ranges(text: &str) -> Result<Vec<std::ops::Range<
         return Err("Unterminated f-string: add the closing quote.".to_string());
     }
     Ok(ranges)
+}
+
+/// Parse a field with the same expression grammar and limits as source code.
+pub(crate) fn parse_format_expression(text: &str) -> Result<crate::ast::Expression, String> {
+    let program = crate::parser::parse(&format!("_field = {text}\n"))
+        .map_err(|errors| format!("Invalid f-string expression: {}", errors.join("; ")))?;
+    if program.statements.len() != 1 || !program.imports.is_empty() {
+        return Err("An f-string field must contain one expression.".into());
+    }
+    match program.statements.into_iter().next() {
+        Some(crate::ast::Statement::Assignment(assign)) => Ok(assign.value),
+        _ => Err("An f-string field must contain one expression.".into()),
+    }
 }

@@ -22,17 +22,19 @@ pub(in crate::transpiler) fn numeric_literal(expr: &Expression) -> Option<f64> {
 pub(in crate::transpiler) fn numeric_computation(expr: &Expression) -> bool {
     matches!(
         expr,
-        Expression::Binary(
-            _,
-            BinaryOp::Add
-                | BinaryOp::Sub
-                | BinaryOp::Mul
-                | BinaryOp::Div
-                | BinaryOp::FloorDiv
-                | BinaryOp::Mod
-                | BinaryOp::Pow,
-            _
-        ) | Expression::Unary(UnaryOp::Neg | UnaryOp::Pos, _)
+        Expression::Identifier(_)
+            | Expression::Binary(
+                _,
+                BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::FloorDiv
+                    | BinaryOp::Mod
+                    | BinaryOp::Pow,
+                _
+            )
+            | Expression::Unary(UnaryOp::Neg | UnaryOp::Pos, _)
             | Expression::Call(..)
     )
 }
@@ -244,7 +246,6 @@ impl ExpressionEvaluator<'_> {
                         let input = self.numeric_temporary();
                         let mut commands = self.numeric_value_commands(&input, arg)?;
                         super::numeric_runtime::add_functions(self.data_pack);
-                        self.data_pack.ensure_math_helper("sqrt");
                         commands.extend([
                             format!("data modify storage {ns}:global _cobble_numeric.left set from storage {ns}:global {input}"),
                             format!("data modify storage {ns}:global _cobble_numeric.right set value 0"),
@@ -432,6 +433,19 @@ impl ExpressionEvaluator<'_> {
                     self.data_pack.track_objective(objective);
                     return Ok(vec![format!("execute store result storage {ns}:global {path} int 1 run scoreboard players get {name} {objective}")]);
                 }
+                if !self.current_params.contains(name)
+                    && !self.numeric_locals.contains(name)
+                    && !self.symbols.variable_storage_paths.contains_key(name)
+                    && !self.symbols.variables.contains_key(name)
+                    && !self.symbols.module_variables.contains(name)
+                    && !self.symbols.global_variables.contains(name)
+                    && self.symbols.scoreboard_objective(name).is_none()
+                {
+                    return Err(format!(
+                        "Unknown identifier '{name}': define or quote the value first"
+                    )
+                    .into());
+                }
                 let source = if self.current_params.contains(name) {
                     format!("args.{name}")
                 } else if let Some(source) = self.symbols.variable_storage_paths.get(name) {
@@ -527,7 +541,7 @@ impl ExpressionEvaluator<'_> {
                 let scratch = format!("#numeric_call_{}", self.next_temp_id());
                 let mut commands = self.call_to_target(func, args, &scratch, "temp")?;
                 let callee = self.resolve_user_function_call_name(func);
-                if callee.is_some_and(|name| self.functions.numeric_returns.contains(name)) {
+                if callee.is_some_and(|name| self.functions.storage_returns.contains(name)) {
                     commands.push(format!("data modify storage {ns}:global {path} set from storage {ns}:global _cobble_return"));
                 } else {
                     commands.push(format!("execute store result storage {ns}:global {path} int 1 run scoreboard players get {scratch} temp"));
@@ -625,6 +639,7 @@ impl Transpiler {
                         Some(CobbleType::Float | CobbleType::Double | CobbleType::Unknown) | None
                     )
             }
+            Expression::Binary(_, BinaryOp::Div, _) if self.uses_storage_numbers() => true,
             Expression::Binary(left, _, right) => {
                 self.may_hold_float(left) || self.may_hold_float(right)
             }

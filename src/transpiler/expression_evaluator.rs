@@ -716,6 +716,8 @@ impl<'a> ExpressionEvaluator<'a> {
         };
         match self.functions.returns.get(&func_name) {
             Some(FunctionReturnKind::Integer) => {}
+            Some(FunctionReturnKind::NonInteger)
+                if self.functions.storage_returns.contains(&func_name) => {}
             Some(FunctionReturnKind::NonInteger) => {
                 return Err(format!(
                     "Function '{}' cannot be used as an expression value because it returns non-integer data.",

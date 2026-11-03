@@ -423,23 +423,24 @@ def main():
 }
 
 #[test]
-fn a_runtime_helper_argument_in_an_expanded_loop_is_reported_at_the_call() {
-    for (source, at) in [
-        (
-            "from stdlib import entity\ndef main():\n    n = 1\n    for i in range(2):\n        if n > 0:\n            entity.tag_add(\"@s\", \"t\" + str(n))\n",
-            "main.cbl:6:13",
-        ),
-        (
-            "from stdlib import entity\ndef main():\n    n = 1\n    for j in range(2):\n        for i in range(2):\n            as @a:\n                pass\n            as @a:\n                entity.tag_add(\"@s\", \"t\" + str(n))\n",
-            "main.cbl:9:17",
-        ),
-    ] {
-        let error = compile_error(source);
-        assert!(error.contains(at), "{at}: {error}");
-        assert!(
-            error.contains("must be a literal, a const, or a parameter"),
-            "{error}"
-        );
+fn runtime_helper_arguments_work_inside_expanded_loops() {
+    let mut sim = Sim::load(
+        r#"
+from stdlib import entity
+def main():
+    n = 1
+    for j in range(2):
+        for i in range(2):
+            as @a:
+                entity.tag_add("@s", "t" + str(n + i + j))
+"#,
+        &["Alex", "Bo"],
+    );
+    sim.call("main");
+    for player in ["Alex", "Bo"] {
+        for tag in ["t1", "t2", "t3"] {
+            assert!(sim.tags[player].contains(tag), "{player}: {tag}");
+        }
     }
 }
 

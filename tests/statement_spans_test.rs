@@ -99,6 +99,8 @@ fn kind_name(kind: StatementSpanKind) -> &'static str {
         StatementSpanKind::Match => "Match",
         StatementSpanKind::Return => "Return",
         StatementSpanKind::Pass => "Pass",
+        StatementSpanKind::Break => "Break",
+        StatementSpanKind::Continue => "Continue",
         StatementSpanKind::MinecraftCommand => "MinecraftCommand",
         StatementSpanKind::Global => "Global",
         StatementSpanKind::Execute => "Execute",

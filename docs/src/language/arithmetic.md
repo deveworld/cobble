@@ -12,7 +12,7 @@ Use `int(value)`, `float(value)`, or `double(value)` to convert a number;
 
 ```python
 def calculate():
-    integer = 5 / 2                      # 2
+    integer = 5 // 2                     # 2
     fraction = 5.0 / 2                   # 2.5, float
     rounded_down = -5.0 // 2             # -3.0
     remainder = -5.5 % 2                 # 0.5
@@ -25,15 +25,15 @@ the float's rounded value; write `double(0.1)` to start at double precision.
 
 ## Operators
 
-From highest to lowest: power (`^`, `**`), multiplication and division
+From highest to lowest: power (`**`), multiplication and division
 (`*`, `/`, `//`, `%`), addition and subtraction (`+`, `-`), then comparisons.
 Power groups right to left; the other arithmetic operators group left to
 right. Compound assignments work on variables, list items, and map fields.
 
-For two integers, `/` and `//` both round down, including negative results.
-For real numbers, `/` divides and `//` rounds the quotient down. `%` follows
+`/` returns a real quotient, including for integer operands. `//` rounds
+the quotient down. `%` follows
 the divisor's sign. `abs`, `min`, `max`, `sum`, sorting, and `math.sqrt`
-preserve real values. An integer square root remains an integer.
+preserve real values. `math.sqrt` returns a float, or a double for double input.
 
 Double arithmetic supports `+`, `-`, `*`, `/`, `//`, `%`, comparisons,
 square roots, and powers with a signed 32-bit integer exponent. Its software
@@ -53,8 +53,8 @@ def share(total, players):
     return 0
 ```
 
-A constant zero divisor is a compile error. An unguarded integer division by
-runtime zero keeps Minecraft's behavior: the operation fails and leaves the
+A constant zero divisor is a compile error. An unguarded integer `//` or `%`
+with runtime zero keeps Minecraft's behavior: the operation fails and leaves the
 left operand unchanged. Out-of-range integer literals are clamped with a warning.
 
 A `const` declaration is evaluated at build time; `/` can produce a fraction

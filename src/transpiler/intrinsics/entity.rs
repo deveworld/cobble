@@ -36,11 +36,7 @@ impl Transpiler {
                 }
                 if args.len() == 5 {
                     command.push(' ');
-                    command.push_str(
-                        &self
-                            .expr_to_bool(&args[4], "effect hide particles")?
-                            .to_string(),
-                    );
+                    command.push_str(&self.expr_to_bool_arg(&args[4], "effect hide particles")?);
                 }
                 command
             }

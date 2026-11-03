@@ -17,19 +17,19 @@ The examples below cover command helpers. See [Events](../language/events.md),
 
 ## Helper Arguments
 
-Most helpers take literals, constants, or function parameters. To pass a
-runtime variable to a command helper, call it through a function:
+Command helpers accept literals, constants, parameters, and runtime expressions:
 
 ```python
 from stdlib import entity
 
-def mark(who, label):
+def mark():
+    who = "@a"
+    label = "ready"
     entity.tag_add(who, label)
 ```
 
 Text helpers can also display runtime values with f-strings. JSON resource
-contents must be known at build time. Boolean helper options, such as
-`bossbar.set_visible`, require a literal or constant.
+contents must be known at build time.
 
 ## Text
 
@@ -104,7 +104,7 @@ from stdlib import timer
 def cooldown():
     timer.set("cooldown", 20)
     timer.tick("cooldown")
-    timer.done("cooldown")   # writes cooldown_done as 0 or 1
+    ready = timer.done("cooldown")
     timer.reset("cooldown")
 ```
 
@@ -119,7 +119,7 @@ def save_status():
     storage.copy("status_copy", "status")
     storage.set(storage.path("players", "current"), "alex")
     storage.append("events", "loaded")
-    storage.get(storage.index("events", 0))
+    first_event = storage.get(storage.index("events", 0))
     storage.read_score("event_count", "events")
     storage.read_score("ready_flag", "status.ready", 10)
     storage.remove("status.extra")
@@ -129,6 +129,9 @@ Storage helpers use `<namespace>:global`. `storage.read_score` reads a
 number or a container's size into a score. Its optional third argument
 scales numeric values. `storage.path`, `storage.child`, and `storage.index`
 build paths for use in other storage helpers.
+`storage.get(path)` returns the stored value, including strings, lists, and maps;
+a missing path returns `0`. `timer.done(name)` returns `1` when the timer has
+reached zero, otherwise `0`.
 
 ## Schedule, Bossbar, Team, Entity, Selector, And Position
 
@@ -160,7 +163,7 @@ from stdlib import math
 
 def calculate():
     root = math.sqrt(100)
-    magnitude = math.abs(-50)
-    low = math.min(10, 20)
-    high = math.max(10, 20)
+    magnitude = abs(-50)
+    low = min(10, 20)
+    high = max(10, 20)
 ```

@@ -34,11 +34,11 @@ pub struct Import {
 /// Type system for Cobble variables
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CobbleType {
-    Integer, // i32 - stored in scoreboard
+    Integer, // i32, stored as an NBT int
     Float,   // IEEE 754 binary32, stored as an NBT float
     Double,  // IEEE 754 binary64, stored as an NBT double
-    Boolean, // bool - stored as 0/1 in scoreboard
-    String,  // String - only in function params/macros
+    Boolean, // bool, stored as 0/1
+    String,  // NBT string
     List,    // List/Array - stored in storage
     Map,     // Dictionary/Object - stored in storage
     Unknown, // Type not yet inferred
@@ -74,6 +74,8 @@ pub enum Statement {
     Match(MatchStatement), // match/switch statement
     Return(Option<Expression>),
     Pass,
+    Break,
+    Continue,
     MinecraftCommand(String), // Commands starting with /
     Global(Vec<String>),      // global var1, var2, ...
     Execute(ExecuteBlock),    // as @s at @s: ... or asat @s: ...

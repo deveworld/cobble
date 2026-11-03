@@ -31,6 +31,9 @@ pub struct ProjectConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildConfig {
+    /// Explicit opt-in to changing the world's command limit on load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_limit: Option<u32>,
     #[serde(default = "default_source")]
     pub source: String,
     #[serde(default = "default_output")]
@@ -45,6 +48,7 @@ pub struct BuildConfig {
 impl Default for BuildConfig {
     fn default() -> Self {
         Self {
+            command_limit: None,
             source: default_source(),
             output: default_output(),
             entry_points: Vec::new(),
@@ -117,6 +121,13 @@ impl CobbleConfig {
         let config: Self =
             toml::from_str(&contents).map_err(|e| format!("Failed to parse config file: {}", e))?;
         config.validate_stdlib_version()?;
+        if config
+            .build
+            .command_limit
+            .is_some_and(|limit| limit == 0 || limit > i32::MAX as u32)
+        {
+            return Err("build.command_limit must be between 1 and 2147483647".into());
+        }
         Ok(config)
     }
 
@@ -177,6 +188,7 @@ impl CobbleConfig {
                 pack_format: default_pack_format(),
             },
             build: BuildConfig {
+                command_limit: None,
                 source: default_source(),
                 output: default_output(),
                 entry_points: vec![],

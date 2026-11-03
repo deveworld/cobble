@@ -520,6 +520,7 @@ fn semantic_check(
     let mut transpiler = Transpiler::with_options(TranspilerOptions {
         pack_format,
         stdlib_version: Some(stdlib_version),
+        command_limit: config.and_then(|config| config.build.command_limit),
         experimental_resource_pack,
         source_display_root: Some(config_dir.to_path_buf()),
         ..TranspilerOptions::new(namespace, output_dir)

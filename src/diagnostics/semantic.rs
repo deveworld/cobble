@@ -1193,6 +1193,59 @@ fn argument_word(count: usize) -> &'static str {
     }
 }
 
+/// Validate lexical loop scope even in branches the compiler can eliminate.
+pub(super) fn check_loop_control(
+    context: &SemanticContext<'_>,
+    diagnostics: &mut Vec<SourceDiagnostic>,
+) {
+    fn invalid_controls(body: &[Statement], depth: usize, invalid: &mut HashSet<usize>) {
+        for statement in body {
+            match statement {
+                Statement::Break | Statement::Continue if depth == 0 => {
+                    invalid.insert(statement as *const Statement as usize);
+                }
+                Statement::FunctionDef(function) => invalid_controls(&function.body, 0, invalid),
+                Statement::For(loop_) => invalid_controls(&loop_.body, depth + 1, invalid),
+                Statement::While(loop_) => invalid_controls(&loop_.body, depth + 1, invalid),
+                Statement::Execute(block) => invalid_controls(&block.body, depth, invalid),
+                Statement::If(branch) => {
+                    invalid_controls(&branch.then_branch, depth, invalid);
+                    for (_, body) in &branch.elif_branches {
+                        invalid_controls(body, depth, invalid);
+                    }
+                    if let Some(body) = &branch.else_branch {
+                        invalid_controls(body, depth, invalid);
+                    }
+                }
+                Statement::Match(branch) => {
+                    for case in &branch.cases {
+                        invalid_controls(&case.body, depth, invalid);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut invalid = HashSet::new();
+    invalid_controls(&context.program.statements, 0, &mut invalid);
+    context.walk(&mut |statement, node| {
+        if invalid.contains(&(statement as *const Statement as usize)) {
+            let keyword = if matches!(statement, Statement::Break) {
+                "break"
+            } else {
+                "continue"
+            };
+            let (line, column) = node.map_or((1, 1), |node| (node.span.line, node.span.column));
+            diagnostics.push(SourceDiagnostic::error(
+                "loop-control-outside-loop",
+                line,
+                column,
+                format!("`{keyword}` can only be used inside a loop"),
+            ));
+        }
+    });
+}
+
 /// Reports `no-op-expression` for standalone expression statements whose
 /// root is not a function call: the transpiler compiles root calls and
 /// silently drops every other expression statement, so these lines generate
@@ -1590,17 +1643,28 @@ pub(super) fn check_undefined_variable_references(
     for scan in scans {
         let line_text = context.line_text(scan.line);
         for field in scan_command_fields(line_text, 0, false) {
-            if !symbols.contains(&field.name)
-                && !scan.params.contains(&field.name)
-                && !crate::diagnostics::is_builtin_symbol(&field.name)
-                && reported.insert((scan.line, field.name.clone()))
-            {
-                diagnostics.push(SourceDiagnostic::error(
-                    "undefined-variable",
-                    scan.line,
-                    field.column,
-                    format!("Undefined variable `{}` in f-string", field.name),
-                ));
+            let masked_field = mask_non_code(&field.name);
+            for reference in identifier_references_in_expression(&masked_field) {
+                let name = &reference.name;
+                if !symbols.contains(name)
+                    && !scan.params.contains(name)
+                    && !crate::diagnostics::is_builtin_symbol(name)
+                    && reported.insert((scan.line, name.clone()))
+                {
+                    diagnostics.push(SourceDiagnostic::error(
+                        "undefined-variable",
+                        scan.line,
+                        field.column
+                            + field.name[..raw_offset_from_masked(
+                                &field.name,
+                                &masked_field,
+                                reference.offset,
+                            )]
+                                .chars()
+                                .count(),
+                        format!("Undefined variable `{name}` in f-string"),
+                    ));
+                }
             }
         }
         let masked = mask_non_code(line_text);
@@ -2751,7 +2815,17 @@ pub(super) fn check_type_mismatches(
                     .get(&assignment.target)
                     .filter(|existing| **existing != CobbleType::Unknown)
                 {
-                    if *existing_type != new_type {
+                    let numeric = |kind: &CobbleType| {
+                        matches!(
+                            kind,
+                            CobbleType::Integer
+                                | CobbleType::Float
+                                | CobbleType::Double
+                                | CobbleType::Boolean
+                        )
+                    };
+                    if *existing_type != new_type && !(numeric(existing_type) && numeric(&new_type))
+                    {
                         diagnostics.push(
                             SourceDiagnostic::error(
                                 "type-mismatch",
@@ -3551,9 +3625,9 @@ fn infer_expression_type_for_diagnostics(
             "str" | "_cobble_format" => return Some(CobbleType::String),
             "float" | "_cobble_float" => return Some(CobbleType::Float),
             "double" => return Some(CobbleType::Double),
-            "int" | "random.randint" => return Some(CobbleType::Integer),
+            "int" | "random.randint" | "timer.done" => return Some(CobbleType::Integer),
             "abs" | "max" | "min" | "sum" => return Some(CobbleType::Unknown),
-            _ => {}
+            _ => return Some(CobbleType::Unknown),
         }
     }
     if expression.starts_with("len(") && function_calls.len() == 1 {
@@ -3649,12 +3723,15 @@ fn infer_expression_type_for_diagnostics(
                     },
                     _ => CobbleType::Unknown,
                 },
-                Expression::Binary(left, _, right) => {
+                Expression::Binary(left, op, right) => {
                     let left = numeric_type(left, types);
                     let right = numeric_type(right, types);
                     if left == CobbleType::Double || right == CobbleType::Double {
                         CobbleType::Double
-                    } else if left == CobbleType::Float || right == CobbleType::Float {
+                    } else if matches!(op, crate::ast::BinaryOp::Div)
+                        || left == CobbleType::Float
+                        || right == CobbleType::Float
+                    {
                         CobbleType::Float
                     } else if left == CobbleType::Unknown || right == CobbleType::Unknown {
                         CobbleType::Unknown
@@ -4187,6 +4264,29 @@ fn scan_command_placeholders(
         }
 
         if !is_simple_module_name(&placeholder.name) {
+            let byte = line
+                .char_indices()
+                .nth(placeholder.column.saturating_sub(1))
+                .map(|(offset, _)| offset)
+                .unwrap_or(line.len());
+            if crate::parser::strings::formatted_string_ranges(line)
+                .unwrap_or_default()
+                .iter()
+                .any(|range| range.contains(&byte))
+            {
+                let masked_field = mask_non_code(&placeholder.name);
+                for reference in identifier_references_in_expression(&masked_field) {
+                    if !scopes.is_visible(&reference.name) && !is_builtin_symbol(&reference.name) {
+                        diagnostics.push(SourceDiagnostic::error(
+                            "undefined-placeholder",
+                            line_number,
+                            placeholder.column + reference.offset,
+                            format!("Undefined variable `{}` in f-string", reference.name),
+                        ));
+                    }
+                }
+                continue;
+            }
             diagnostics.push(
                 SourceDiagnostic::error(
                     "invalid-placeholder",

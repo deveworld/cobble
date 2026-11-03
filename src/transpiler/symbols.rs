@@ -167,8 +167,8 @@ pub(in crate::transpiler) struct FunctionTable {
     pub(in crate::transpiler) params: HashMap<String, Vec<String>>,
     /// Whether each function can be used as a value.
     pub(in crate::transpiler) returns: HashMap<String, FunctionReturnKind>,
-    /// Functions that also return their full numeric value in storage.
-    pub(in crate::transpiler) numeric_returns: HashSet<String>,
+    /// Functions that also return their full NBT value in storage.
+    pub(in crate::transpiler) storage_returns: HashSet<String>,
     /// `module.func` calls of imported modules, mapped to `func`.
     pub(in crate::transpiler) qualified_aliases: HashMap<String, String>,
     /// Functions that can call themselves, directly or through other

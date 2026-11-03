@@ -146,12 +146,12 @@ def main():
         slots.contains("$scoreboard players operation x sim.vars $(op) y sim.vars"),
         "{slots}"
     );
-    let error =
-        compile_error("from stdlib import score\nx = 1\ndef main():\n    score.set(\"x\", x)\n");
-    assert!(
-        error.contains("score value must be a literal integer, a const, or a parameter"),
-        "{error}"
+    let mut sim = Sim::load(
+        "from stdlib import score\nx = 1\ndef main():\n    score.set(\"x\", x + 2)\n",
+        &[],
     );
+    sim.call("main");
+    assert_eq!(sim.var("x"), 3);
 }
 
 #[test]

@@ -213,7 +213,7 @@ fn large_unrolls_print_an_expansion_warning() {
 }
 
 #[test]
-fn rejects_function_call_iterables() {
+fn function_iterables_require_a_return_value() {
     let error = compile_error(
         r#"
 def gen():
@@ -225,7 +225,7 @@ def test():
 "#,
     );
 
-    assert!(error.contains("unroll-non-literal"), "{error}");
+    assert!(error.contains("has no integer return value"), "{error}");
 }
 
 #[test]

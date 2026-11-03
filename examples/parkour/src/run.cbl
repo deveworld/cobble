@@ -15,8 +15,8 @@ def split_run_time():
     run_ticks = 0
     store result score run_ticks temp:
         /scoreboard players get @s pk_time
-    time_seconds = run_ticks / 20
-    time_tenths = (run_ticks % 20) / 2
+    time_seconds = run_ticks // 20
+    time_tenths = (run_ticks % 20) // 2
 
 
 def start_run():

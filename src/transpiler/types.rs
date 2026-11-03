@@ -49,7 +49,9 @@ impl Transpiler {
                     | BinaryOp::Pow => {
                         if left_type == CobbleType::Double || right_type == CobbleType::Double {
                             CobbleType::Double
-                        } else if left_type == CobbleType::Float || right_type == CobbleType::Float
+                        } else if (matches!(op, BinaryOp::Div) && self.uses_storage_numbers())
+                            || left_type == CobbleType::Float
+                            || right_type == CobbleType::Float
                         {
                             CobbleType::Float
                         } else {
@@ -100,6 +102,13 @@ impl Transpiler {
             Expression::Call(func, _)
                 if self
                     .resolve_user_function_call_name(func)
+                    .is_some_and(|name| self.functions.storage_returns.contains(name)) =>
+            {
+                CobbleType::Unknown
+            }
+            Expression::Call(func, _)
+                if self
+                    .resolve_user_function_call_name(func)
                     .is_some_and(|name| {
                         matches!(
                             self.functions.returns.get(name),
@@ -110,7 +119,10 @@ impl Transpiler {
                 CobbleType::Integer
             }
             Expression::Call(func, _) if matches!(&**func, Expression::Attribute(obj, _) if matches!(&**obj, Expression::Identifier(module) if module == "math")) => {
-                CobbleType::Integer
+                match &**func {
+                    Expression::Attribute(_, method) if method == "sqrt" => CobbleType::Float,
+                    _ => CobbleType::Unknown,
+                }
             }
             Expression::Call(func, _) if matches!(&**func, Expression::Attribute(obj, method) if method == "randint" && Self::expression_path(obj).as_deref() == Some("random") && !self.is_list_value(obj)) => {
                 CobbleType::Integer
@@ -206,7 +218,7 @@ impl Transpiler {
         use crate::ast::CobbleType;
 
         if let Some(existing_type) = self.symbols.variable_types.get(var_name) {
-            // A hidden local can hold `1 if a else b > 2`.
+            // Storage-backed numbers can change precision without losing their kind.
             let numbers = |value_type: &CobbleType| {
                 matches!(
                     value_type,
@@ -216,11 +228,9 @@ impl Transpiler {
                         | CobbleType::Double
                 )
             };
-            let hidden_number = var_name.starts_with("_cobble_hold_")
-                && numbers(existing_type)
-                && numbers(new_type);
+            let compatible_number = numbers(existing_type) && numbers(new_type);
             if existing_type != new_type
-                && !hidden_number
+                && !compatible_number
                 && *existing_type != CobbleType::Unknown
                 && *new_type != CobbleType::Unknown
             {
@@ -228,8 +238,8 @@ impl Transpiler {
                     "Type mismatch for variable '{}'.\n\n\
                     Variable was previously defined as type: {}\n\
                     Cannot reassign to type: {}\n\n\
-                    In Cobble, all variables have immutable types.\n\
-                    Once a variable is assigned a value, its type cannot change.\n\n\
+                    Text and container variables keep their types.\n\
+                    Numeric variables may change between numeric types.\n\n\
                     Solutions:\n\
                     1. Use a different variable name for the different type\n\
                     2. Ensure all assignments to '{}' use the same type",

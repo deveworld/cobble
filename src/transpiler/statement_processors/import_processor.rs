@@ -463,7 +463,7 @@ impl Transpiler {
                     && Self::analyze_function_return_kind(&func.body)
                         != super::super::types::FunctionReturnKind::None
                 {
-                    self.functions.numeric_returns.insert(func.name.clone());
+                    self.functions.storage_returns.insert(func.name.clone());
                 }
                 let (used, passed) =
                     crate::transpiler::function_context::params_read_or_passed(func);

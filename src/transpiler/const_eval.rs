@@ -108,7 +108,8 @@ impl Transpiler {
                         | BinaryOp::FloorDiv
                         | BinaryOp::Mod
                         | BinaryOp::Pow
-                ) {
+                ) && !(self.uses_storage_numbers() && matches!(op, BinaryOp::Div))
+                {
                     if let (Some(left), Some(right)) =
                         (score_integer(left_val), score_integer(right_val))
                     {
@@ -119,7 +120,13 @@ impl Transpiler {
                     BinaryOp::Add => Some(left_val + right_val),
                     BinaryOp::Sub => Some(left_val - right_val),
                     BinaryOp::Mul => Some(left_val * right_val),
-                    BinaryOp::Div | BinaryOp::FloorDiv => const_div(left_val, right_val),
+                    BinaryOp::Div if self.uses_storage_numbers() => {
+                        (right_val != 0.0).then_some(left_val / right_val)
+                    }
+                    BinaryOp::Div => const_div(left_val, right_val),
+                    BinaryOp::FloorDiv => {
+                        (right_val != 0.0).then_some((left_val / right_val).floor())
+                    }
                     BinaryOp::Mod => const_mod(left_val, right_val),
                     BinaryOp::Pow => {
                         let base = left_val as i32;

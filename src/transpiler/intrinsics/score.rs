@@ -206,18 +206,6 @@ impl Transpiler {
                     name, name
                 )
             }
-            "done" => {
-                if args.len() != 1 {
-                    return Err("timer.done() takes 1 argument".into());
-                }
-                let name = self.expr_to_plain_arg(&args[0], "timer name")?;
-                let flag = format!("{}_done", name);
-                self.push_current_command(format!("scoreboard players set {} temp 0", flag))?;
-                format!(
-                    "execute if score {} temp matches ..0 run scoreboard players set {} temp 1",
-                    name, flag
-                )
-            }
             "reset" => {
                 if args.len() != 1 {
                     return Err("timer.reset() takes 1 argument".into());

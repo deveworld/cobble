@@ -36,7 +36,7 @@ as a number.
 ## Strings
 
 Single and double quotes work, with escapes such as `\n`, `\t`, `\\`, `\"`,
-and `\u00a7`. Add `f` to insert named values:
+and `\u00a7`. Add `f` to insert values or expressions:
 
 ```python
 wave = 3
@@ -44,8 +44,9 @@ label = f"Wave {wave}"   # Wave 3
 literal = "Wave {wave}"  # Wave {wave}
 ```
 
-F-strings support `{name}` fields and `{{` / `}}` for literal braces. Fields
-cannot contain expressions, conversions, or format specifiers. Multiline
+F-strings accept expressions such as `{wave + 1}` and `{config.name}`, and
+`{{` / `}}` for literal braces. Fields run once, from left to right.
+Conversions and format specifiers are not supported. Multiline
 f-strings are not supported. A stored f-string formats text and numbers;
 [command text](commands.md#json-and-snbt-text) can also display lists and maps.
 
@@ -67,7 +68,8 @@ Indexes and keys may be variables. Slices such as `items[1:3]` and
 
 ## Type System
 
-A variable with a known type keeps that type:
+Text and container variables keep their type. Numeric variables may change
+between integer, float, and double values:
 
 ```python
 score = 5
@@ -75,6 +77,6 @@ score = 20     # OK
 score = "ten"  # type-mismatch
 ```
 
-Use a new variable for a value of another type. See
+Use a new variable when changing between numbers, text, and containers. See
 [Differences From Python](python.md) for copying, missing values, and other
 behavior that differs from Python.

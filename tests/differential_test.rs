@@ -147,9 +147,9 @@ impl Op {
             Op::Add => "+",
             Op::Sub => "-",
             Op::Mul => "*",
-            Op::Div => "/",
+            Op::Div => "//",
             Op::Mod => "%",
-            Op::Pow => "^",
+            Op::Pow => "**",
         }
     }
 

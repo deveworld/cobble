@@ -34,6 +34,8 @@ pub(in crate::transpiler) struct FunctionContext {
 #[derive(Clone)]
 pub(in crate::transpiler) struct ReturnContext {
     pub(in crate::transpiler) value_score: String,
+    /// 0 = running, 1 = return, 2 = continue, 3 = break. A loop consumes
+    /// its own break/continue signal before execution resumes after it.
     pub(in crate::transpiler) flag_score: String,
 }
 
@@ -293,6 +295,20 @@ impl FunctionContext {
 
     /// `{name}` placeholders in raw command and header text.
     fn check_text(&self, text: &str, assigned: &HashSet<String>) -> Result<(), String> {
+        if let Ok(ranges) = crate::parser::strings::formatted_string_ranges(text) {
+            for range in ranges {
+                if let Ok(parts) = crate::parser::strings::format_parts(&text[range]) {
+                    for part in parts {
+                        if let crate::parser::strings::FormatPart::Name(field) = part {
+                            if let Ok(expr) = crate::parser::strings::parse_format_expression(field)
+                            {
+                                self.check_expression(&expr, assigned)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for piece in super::placeholders::command_pieces(text) {
             if let super::placeholders::Piece::Field { name, .. } = piece {
                 if self.is_local(name) && !assigned.contains(name) {
@@ -984,6 +1000,13 @@ pub(in crate::transpiler) fn called_functions(body: &[Statement]) -> BTreeSet<St
     for expr in expressions {
         expression_calls(expr, &mut calls);
     }
+    let mut statements = Vec::new();
+    collect_statements(body, &mut statements);
+    for statement in statements {
+        for expr in statement_format_expressions(statement) {
+            expression_calls(&expr, &mut calls);
+        }
+    }
     calls
 }
 
@@ -1004,6 +1027,11 @@ pub(in crate::transpiler) fn params_read_or_passed(
                 // Formatting reads the original text/NBT value. It must not
                 // make a fractional argument pass through an integer score.
                 if callee == "_cobble_format" {
+                    for arg in args {
+                        if !matches!(arg, Expression::Identifier(_)) {
+                            walk(arg, reads, passes);
+                        }
+                    }
                     return;
                 }
                 for (index, arg) in args.iter().enumerate() {
@@ -1077,6 +1105,22 @@ pub(in crate::transpiler) fn params_read_or_passed(
         .map(|param| param.name.clone())
         .collect();
     used.extend(params_in_integer_commands(function));
+    let mut statements = Vec::new();
+    collect_statements(&function.body, &mut statements);
+    for statement in statements {
+        for expr in statement_format_expressions(statement) {
+            if !matches!(expr, Expression::Identifier(_)) {
+                let mut names = Vec::new();
+                walk(&expr, &mut names, &mut passes);
+                used.extend(
+                    names
+                        .into_iter()
+                        .filter(|name| is_param(name))
+                        .map(str::to_owned),
+                );
+            }
+        }
+    }
     passes.retain(|(name, _, _)| is_param(name));
     (used, passes)
 }
@@ -1290,4 +1334,42 @@ pub fn module_variables_made_local(program: &Program) -> Vec<(String, String)> {
         }
     }
     shadowed
+}
+
+fn statement_format_expressions(statement: &Statement) -> Vec<Expression> {
+    let texts: Vec<&str> = match statement {
+        Statement::MinecraftCommand(raw) => vec![raw],
+        Statement::Execute(block) => block
+            .modifiers
+            .iter()
+            .map(|modifier| {
+                let (crate::ast::ExecuteModifier::As(text)
+                | crate::ast::ExecuteModifier::At(text)
+                | crate::ast::ExecuteModifier::IfRaw(text)
+                | crate::ast::ExecuteModifier::UnlessRaw(text)
+                | crate::ast::ExecuteModifier::Positioned(text)
+                | crate::ast::ExecuteModifier::Rotated(text)
+                | crate::ast::ExecuteModifier::In(text)
+                | crate::ast::ExecuteModifier::Anchored(text)
+                | crate::ast::ExecuteModifier::Align(text)
+                | crate::ast::ExecuteModifier::Store(text)
+                | crate::ast::ExecuteModifier::Other(text)) = modifier;
+                text.as_str()
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut expressions = Vec::new();
+    for text in texts {
+        for range in crate::parser::strings::formatted_string_ranges(text).unwrap_or_default() {
+            for part in crate::parser::strings::format_parts(&text[range]).unwrap_or_default() {
+                if let crate::parser::strings::FormatPart::Name(field) = part {
+                    if let Ok(expr) = crate::parser::strings::parse_format_expression(field) {
+                        expressions.push(expr);
+                    }
+                }
+            }
+        }
+    }
+    expressions
 }

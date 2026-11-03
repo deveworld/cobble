@@ -55,18 +55,18 @@ def test_arithmetic():
     c = 3
     check("precedence", a + b * c, 25)
     check("parentheses", (a + b) * c, 45)
-    check("sub_div", a - b / c, 9)
+    check("sub_div", a - b // c, 9)
     check("mod_add", a % c + b, 6)
     check("chain", a + b + c - 1, 17)
-    check("power_const", 3 ^ 3, 27)
+    check("power_const", 3 ** 3, 27)
     exp = 4
-    check("power_runtime", c ^ exp, 81)
-    check("power_zero", c ^ (exp - 4), 1)
+    check("power_runtime", c ** exp, 81)
+    check("power_zero", c ** (exp - 4), 1)
     check("unary_minus", -a + 3, -7)
     n = -7
     d = 2
-    check("floor_div_runtime", n / d, -4)
-    check("floor_div_folded", -7 / 2, -4)
+    check("floor_div_runtime", n // d, -4)
+    check("floor_div_folded", -7 // 2, -4)
     check("floor_mod_runtime", n % 3, 2)
     check("floor_mod_folded", -7 % 3, 2)
     check("const_expr", BASE * BONUS + 1, 22)
@@ -77,11 +77,11 @@ def test_arithmetic():
     acc += 5
     acc -= 3
     acc *= 2
-    acc /= 5
+    acc //= 5
     acc %= 3
     check("compound_ops", acc, 1)
     base = 2
-    base ^= exp
+    base **= exp
     check("compound_power", base, 16)
     check("call_in_expr", double(5) + 1, 11)
     doubled = double(double(c))
@@ -92,7 +92,7 @@ def test_math():
     check("sqrt_const", math.sqrt(144), 12)
     v = 200
     root = math.sqrt(v)
-    check("sqrt_runtime", root, 14)
+    check("sqrt_runtime", root, 14.142135623730951)
     check("abs", math.abs(-50), 50)
     low = math.min(v, 30)
     high = math.max(v, 30)
@@ -134,7 +134,7 @@ def test_conditions():
         hits += 1
     if not (a > 5 or b > 5):
         hits += 100
-    if a % 3 == 1 and b ^ 2 == 400:
+    if a % 3 == 1 and b ** 2 == 400:
         hits += 1
     if (a == 10 or b == 0) and not b == 3:
         hits += 1
@@ -345,7 +345,7 @@ def test_helpers():
     timer.tick("cooldown")
     timer.tick("cooldown")
     cooldown_done = 0
-    timer.done("cooldown")
+    cooldown_done = timer.done("cooldown")
     check("timer_done", cooldown_done, 1)
 
     schedule.once("scheduled_check", "2t")
@@ -594,7 +594,7 @@ def test_python_semantics():
     check("assign_after_call", result_slot, 10)
 
     big = 100000
-    check("fold_overflow", 100000 * 100000 / 100000, big * big / big)
+    check("fold_overflow", 100000 * 100000 // 100000, big * big // big)
 
 
 def fact(n):

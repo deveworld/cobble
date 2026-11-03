@@ -23,6 +23,7 @@ const DOUBLE_PRELUDE: &str = include_str!("double_prelude.cbl");
 
 pub(in crate::transpiler) fn software_result_type(name: &str) -> Option<CobbleType> {
     match name {
+        "_cobble_storage_get" => Some(CobbleType::Unknown),
         "_cobble_big_trim"
         | "_cobble_big_from_int"
         | "_cobble_big_add"
@@ -331,6 +332,7 @@ impl Transpiler {
             Statement::For(for_loop)
                 if for_loop.index.is_some()
                     || self.value_type(&for_loop.iter) == CobbleType::String
+                    || matches!(&for_loop.iter, Expression::Call(func, _) if !matches!(&**func, Expression::Identifier(name) if name == "range"))
                     || self.needs_lowering(&for_loop.iter) =>
             {
                 self.desugar_for(for_loop, &mut out)?
@@ -387,8 +389,11 @@ impl Transpiler {
             }
             Expression::Unary(UnaryOp::Neg | UnaryOp::Pos, inner) => is_condition(inner),
             Expression::Subscript(base, index) => {
-                is_condition(index) || self.reads_base_before_call(base, index)
+                matches!(&**base, Expression::Call(..))
+                    || is_condition(index)
+                    || self.reads_base_before_call(base, index)
             }
+            Expression::Attribute(base, _) if matches!(&**base, Expression::Call(..)) => true,
             Expression::Binary(left, BinaryOp::Add, right) => {
                 self.joins(left, right) || self.adds_at_run_time(left, right)
             }
@@ -436,6 +441,11 @@ impl Transpiler {
                 (Self::expression_path(base).as_deref() == Some("random")
                     && method == "randint"
                     && !self.is_list_value(base))
+                    || (!self.is_list_value(base)
+                        && matches!(
+                            (Self::expression_path(base).as_deref(), method.as_str()),
+                            (Some("storage"), "get") | (Some("timer"), "done")
+                        ))
                     || self.is_list_value(base)
                         && (LIST_HELPER_METHODS.contains(&method.as_str())
                             || LIST_VALUE_METHODS.contains(&method.as_str()))
@@ -463,6 +473,9 @@ impl Transpiler {
                     || self.current_context.is_param(name)
             }
             Expression::Subscript(..) => true,
+            Expression::Call(func, _) => self
+                .resolve_user_function_call_name(func)
+                .is_some_and(|name| self.functions.storage_returns.contains(name)),
             Expression::Attribute(base, _) => self.is_list_value(base),
             _ => false,
         }
@@ -1173,8 +1186,11 @@ impl Transpiler {
     ) -> Result<(), TranspileError> {
         if let Expression::Call(func, args) = expr {
             if let Expression::Attribute(base, method) = &**func {
-                if self.is_list_value(base) && self.needs_lowering(base) {
+                if self.is_list_value(base)
+                    && (self.needs_lowering(base) || matches!(&**base, Expression::Call(..)))
+                {
                     let base = self.lower_value(base, out)?;
+                    let base = self.hold_call(base, out);
                     if self.needs_lowering(&base) {
                         return Err(
                             "Cobble can't compute the list this method changes. Copy the key into a variable first, as `k = ...`, then use `items[k]`."
@@ -1353,6 +1369,9 @@ impl Transpiler {
                 lowered.body = body;
                 lowered.target = position;
                 call("range", vec![call("len", vec![text])])
+            }
+            iter @ Expression::Call(..) if !matches!(&iter, Expression::Call(func, _) if matches!(&**func, Expression::Identifier(name) if name == "range")) => {
+                self.hold_call(iter, out)
             }
             iter => iter,
         };
@@ -1570,12 +1589,14 @@ impl Transpiler {
                 Box::new(self.lower_number(inner, out)?),
             )),
             Expression::Call(func, args) => self.lower_call(func, args, out),
-            Expression::Attribute(base, name) => Ok(Expression::Attribute(
-                Box::new(self.lower_value(base, out)?),
-                name.clone(),
-            )),
+            Expression::Attribute(base, name) => {
+                let value = self.lower_value(base, out)?;
+                let value = self.hold_call(value, out);
+                Ok(Expression::Attribute(Box::new(value), name.clone()))
+            }
             Expression::Subscript(base, index) => {
                 let mut value = self.lower_value(base, out)?;
+                value = self.hold_call(value, out);
                 if self.reads_base_before_call(&value, index) {
                     let holder = self.hidden_local(self.value_type(base));
                     out.push(assign(&holder, value));
@@ -1871,6 +1892,74 @@ impl Transpiler {
         args: &[Expression],
         out: &mut Vec<Statement>,
     ) -> Result<Expression, TranspileError> {
+        if let Expression::Attribute(base, method) = func {
+            if !self.is_list_value(base) {
+                let module = Self::expression_path(base);
+                let helper = match (module.as_deref(), method.as_str()) {
+                    (Some("storage"), "get") => Some("_cobble_storage_get"),
+                    (Some("timer"), "done") => Some("_cobble_timer_done"),
+                    _ => None,
+                };
+                if let Some(helper) = helper {
+                    self.require_stdlib_module(module.as_deref().unwrap())?;
+                    if args.len() != 1 {
+                        return Err(
+                            format!("{}.{}() takes 1 argument", module.unwrap(), method).into()
+                        );
+                    }
+                    if helper == "_cobble_storage_get" {
+                        if let Ok(plan) = self.expr_to_storage_path_plan(&args[0], "storage path") {
+                            let ns = self.data_pack.namespace.clone();
+                            let mut commands = vec![format!(
+                                "data modify storage {ns}:global {RESULT} set value 0"
+                            )];
+                            commands.extend(self.command_at_storage_path(&plan, |path| format!("data modify storage {ns}:global {RESULT} set from storage {ns}:global {path}"))?);
+                            for command in &mut commands {
+                                if command.contains("$(") && !command.starts_with('$') {
+                                    command.insert(0, '$');
+                                }
+                            }
+                            let needs_storage =
+                                commands.iter().any(|command| command.starts_with('$'));
+                            let name = format!("_cobble_storage_get_{}", self.next_temp_id());
+                            self.add_generated_helper_function(
+                                name.clone(),
+                                commands,
+                                crate::transpiler::GeneratedCommandKind::StdLib,
+                            );
+                            out.push(Statement::MinecraftCommand(
+                                self.function_call_command(&name, needs_storage),
+                            ));
+                            self.symbols
+                                .variable_storage_paths
+                                .insert(RESULT.to_string(), RESULT.to_string());
+                            self.symbols.variable_types.remove(RESULT);
+                            let holder = self.hidden_local(CobbleType::Unknown);
+                            out.push(assign(&holder, Expression::Identifier(RESULT.to_string())));
+                            return Ok(Expression::Identifier(holder));
+                        }
+                    }
+                    let args = if helper == "_cobble_storage_get" {
+                        match &args[0] {
+                            Expression::Call(func, parts) => {
+                                match self.storage_path_helper_string(func, parts)? {
+                                    Some(path) => vec![Expression::String(path)],
+                                    None => self.lower_values(args, out)?,
+                                }
+                            }
+                            _ => self.lower_values(args, out)?,
+                        }
+                    } else {
+                        self.lower_values(args, out)?
+                    };
+                    if helper == "_cobble_storage_get" {
+                        return self.helper_value(helper, args, CobbleType::Unknown, out);
+                    }
+                    self.require_prelude(helper)?;
+                    return Ok(call(helper, args));
+                }
+            }
+        }
         if matches!(func, Expression::Attribute(base, method)
             if Self::expression_path(base).as_deref() == Some("random")
                 && method == "randint" && !self.is_list_value(base))
@@ -1928,10 +2017,12 @@ impl Transpiler {
         let lowered_func;
         let func = match func {
             Expression::Attribute(base, method)
-                if self.is_list_value(base) && self.needs_lowering(base) =>
+                if self.is_list_value(base)
+                    && (self.needs_lowering(base) || matches!(&**base, Expression::Call(..))) =>
             {
+                let base = self.lower_value(base, out)?;
                 lowered_func =
-                    Expression::Attribute(Box::new(self.lower_value(base, out)?), method.clone());
+                    Expression::Attribute(Box::new(self.hold_call(base, out)), method.clone());
                 &lowered_func
             }
             func => func,

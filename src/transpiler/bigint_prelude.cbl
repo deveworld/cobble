@@ -126,7 +126,7 @@ def _cobble_big_mul(a, b):
 
 def _cobble_big_shl(a, shift):
     words = shift / 15
-    factor = 2 ^ (shift % 15)
+    factor = 2 ** (shift % 15)
     tail = _cobble_big_mul_small(a, factor)
     out = []
     i = 0
@@ -138,7 +138,7 @@ def _cobble_big_shl(a, shift):
 
 def _cobble_big_shr(a, shift):
     words = shift / 15
-    factor = 2 ^ (shift % 15)
+    factor = 2 ** (shift % 15)
     out = []
     carry = 0
     i = len(a) - 1
@@ -176,7 +176,7 @@ def _cobble_big_divmod(a, b):
         if _cobble_big_compare(a, divisor) >= 0:
             a = _cobble_big_sub(a, divisor)
             at = shift / 15
-            quotient[at] += 2 ^ (shift % 15)
+            quotient[at] += 2 ** (shift % 15)
         divisor = _cobble_big_shr(divisor, 1)
         shift -= 1
     return {"q": _cobble_big_trim(quotient), "r": a}

@@ -145,6 +145,7 @@ impl Transpiler {
         let previous_metadata = self.current_function_metadata.take();
         let previous_context = self.current_context.clone();
         let previous_return = self.current_return.clone();
+        let previous_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
         let previous_function_name = self.current_function_name.take();
         let symbols_mark = self.symbols.open_scope();
         let functions_mark = self.data_pack.created_functions.len();
@@ -178,7 +179,7 @@ impl Transpiler {
         let return_kind = Self::analyze_function_return_kind(&func.body);
         if self.uses_storage_numbers() && return_kind != FunctionReturnKind::None {
             self.functions
-                .numeric_returns
+                .storage_returns
                 .insert(function_name.to_string());
         }
         // Only functions that actually contain a `return` statement need the
@@ -286,6 +287,7 @@ impl Transpiler {
         self.current_function_metadata = previous_metadata;
         self.current_context = previous_context;
         self.current_return = previous_return;
+        self.loop_depth = previous_loop_depth;
         self.current_function_name = previous_function_name;
         // Variables assigned in the body don't outlive it. Constants,
         // selector aliases, and entity templates it declares stay visible.
@@ -653,19 +655,20 @@ impl Transpiler {
         let context = self.current_return.clone();
         if self.uses_storage_numbers() {
             let value = expr.cloned().unwrap_or(Expression::Number(0.0));
-            if matches!(
-                self.value_type(&value),
-                CobbleType::String | CobbleType::List | CobbleType::Map
-            ) {
-                return Err("Functions can return numbers; use a module variable or storage for other values.".into());
-            }
             let result = context
                 .as_ref()
                 .map(|context| context.value_score.clone())
                 .unwrap_or_else(|| format!("#return_value_{}", self.next_temp_id()));
             self.data_pack.track_objective("temp");
-            if self.may_hold_float(&value) || matches!(value, Expression::Identifier(_)) {
-                commands.extend(self.numeric_value_commands("_cobble_return", &value)?);
+            if self.may_hold_float(&value)
+                || !matches!(
+                    self.value_type(&value),
+                    CobbleType::Integer | CobbleType::Boolean
+                )
+                || matches!(value, Expression::Identifier(_))
+            {
+                commands.extend(self.storage_value_commands("_cobble_return", &value)?);
+                commands.push(format!("scoreboard players set {result} temp 0"));
                 commands.push(format!("execute store result score {result} temp run data get storage {}:global _cobble_return 1", self.data_pack.namespace));
             } else {
                 commands.extend(self.evaluate_expression_to_target(&value, &result)?);
@@ -758,7 +761,7 @@ impl Transpiler {
     pub(in crate::transpiler) fn return_propagation_command(&self) -> Option<String> {
         let context = self.current_return.as_ref()?;
         Some(format!(
-            "execute if score {} temp matches 1 run return run scoreboard players get {} temp",
+            "execute if score {} temp matches 1.. run return run scoreboard players get {} temp",
             context.flag_score, context.value_score
         ))
     }

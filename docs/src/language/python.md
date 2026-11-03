@@ -8,10 +8,10 @@ the differences to keep in mind when porting code.
 | Area | Cobble behavior |
 | --- | --- |
 | Numbers | Signed 32-bit integers, 32-bit floats, and explicit 64-bit doubles. Integer overflow wraps. |
-| Division | Integer `/` rounds down; real `/` divides. `//` rounds down. `^` and `**` both mean power. |
+| Division | `/` returns a real quotient; `//` rounds down. `**` means power; `^` is unsupported. |
 | Lists and maps | Assignment and function arguments copy values rather than sharing an object. |
 | Map keys | Non-empty strings only. |
-| Function results | Numbers only; conditions return `1` or `0`. |
+| Function results | Numbers, strings, lists, and maps; conditions return `1` or `0`. |
 | Text indexing | Runtime positions count UTF-16 units; an emoji may occupy two positions. |
 | Missing values | Missing items and fields give `0`, or an empty value when the type is known, rather than raising an exception. |
 | Searching | `index()` returns `-1` when no item matches. |
@@ -46,7 +46,8 @@ These forms are supported:
 
 Conditional expressions and `and` / `or` evaluate only the chosen branch or
 needed operand. A new variable can hold alternatives of different types;
-an existing variable with a known type still requires that type.
+existing text and container variables keep their type. Numeric variables may
+change between integer, float, and double values.
 
 When both operands are untyped parameters, `+` and `*` use numeric
 arithmetic. Use `str(a) + b` to request text joining.
@@ -55,11 +56,11 @@ arithmetic. Use `str(a) + b` to request text joining.
 
 - Classes, decorators, exceptions, context managers, lambdas, generators,
   and async code.
-- `break`, `continue`, `for ... else`, comprehensions, and iteration over map keys.
+- `for ... else`, comprehensions, and iteration over map keys.
 - Default arguments, `*args`, and `**kwargs`.
 - Slice steps such as `items[::2]`, and assignment to string characters.
 - Import aliases, wildcard imports, and dotted or relative module names.
-- General Python f-string expressions or format specifiers; see
+- F-string conversions or format specifiers; see
   [Strings](basics.md#strings).
 
 `cobble check --experimental-python-compat` reports unsupported constructs

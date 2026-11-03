@@ -3,6 +3,15 @@
 # namespace. A result that isn't a number goes to the storage path
 # `_cobble_result`.
 
+def _cobble_storage_get(path):
+    /data modify storage NS:global _cobble_result set value 0
+    /data modify storage NS:global _cobble_result set from storage NS:global {path}
+
+def _cobble_timer_done(name):
+    result = 0
+    /execute if score {name} temp matches ..0 run scoreboard players set result temp 1
+    return result
+
 def _cobble_random_draw(minimum, maximum):
     # Only called for a strict range: Minecraft rejects a singleton range
     # while instantiating a macro, before it can execute a guard.

@@ -65,9 +65,8 @@ wrapper for text arguments that need escaping or for nested calls.
 
 ## Return Values
 
-Cobble calls preserve the complete numeric result in `mypack:global
-_cobble_return`. Read or copy it immediately after the call to retain a float
-or double. Minecraft's command result remains a rounded-down integer for
+Cobble calls preserve the complete return value in `mypack:global
+_cobble_return`. Read or copy it immediately after the call to retain its type, including strings, lists, and maps. Minecraft's command result remains a rounded-down integer for
 `execute store` compatibility:
 
 ```mcfunction

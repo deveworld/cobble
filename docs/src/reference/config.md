@@ -34,6 +34,7 @@ python_compat = false
 | `build.source` | Source directory. Default `src`. |
 | `build.output` | Output directory. Default `output`. |
 | `build.entry_points` | Files to compile, relative to `build.source`. Imports are resolved from these files. Empty means every file in the source directory. |
+| `build.command_limit` | Optional world-wide command limit set on load, between `1` and `2147483647`. Omit it to leave the gamerule unchanged. |
 | `stdlib.version` | `2` (default) requires per-module stdlib imports; `1` is deprecated. See [Standard Library Modules](../stdlib/modules.md). |
 | `experimental.resource_pack` | Enables [resource-pack output](../stdlib/resource-packs.md). |
 | `experimental.plugins` | Enables the plugin diagnostics in `cobble check`. See [Experimental Features](experimental.md). |

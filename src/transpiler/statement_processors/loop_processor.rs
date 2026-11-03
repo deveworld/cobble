@@ -350,7 +350,14 @@ impl Transpiler {
         for_loop: &ForLoop,
     ) -> Result<(), TranspileError> {
         let loop_source_key = Self::for_loop_source_key(for_loop);
-        let values = match self.unroll_values(for_loop) {
+        let values = match if contains_loop_control(&for_loop.body) {
+            Err(TranspileError::new(
+                TranspileErrorKind::UnrollNonLiteral,
+                "loop control requires a runtime loop",
+            ))
+        } else {
+            self.unroll_values(for_loop)
+        } {
             Ok(values) => values,
             Err(error) if error.kind == TranspileErrorKind::UnrollNonLiteral => {
                 if Self::is_range_iterable(&for_loop.iter) {
@@ -869,6 +876,7 @@ impl Transpiler {
 
         let index_var = format!("#for_list_index_{}", self.next_temp_id());
         let len_var = format!("#for_list_len_{}", self.next_temp_id());
+        let valid_var = format!("#for_list_valid_{}", self.next_temp_id());
         let step_var = if matches!(step, RuntimeRangeStep::Dynamic(_)) {
             let name = format!("#for_list_step_{}", self.next_temp_id());
             Some(name)
@@ -925,7 +933,7 @@ impl Transpiler {
                 init_commands
                     .extend(transpiler.runtime_storage_list_len_commands(&walked_plan, &len_var)?);
                 init_commands.extend(
-                    transpiler.runtime_list_type_guard(&walked_plan, &len_var)?,
+                    transpiler.runtime_list_type_guard(&walked_plan, &len_var, &valid_var)?,
                 );
                 match (&step, &step_var) {
                     (RuntimeRangeStep::Static(step), _) if *step < 0 => {
@@ -965,16 +973,15 @@ impl Transpiler {
                 let mut before = watch_sync.clone();
                 match (&step, &step_var) {
                     (RuntimeRangeStep::Static(step), _) if *step > 0 => {
-                        before.extend(
-                            transpiler.runtime_storage_list_len_commands(&walked_plan, &len_var)?,
-                        );
+                        let length = transpiler.runtime_storage_list_len_commands(&walked_plan, &len_var)?;
+                        before.extend(guard_commands(&length, &format!("if score {valid_var} temp matches 1")));
                     }
                     (RuntimeRangeStep::Dynamic(_), Some(step_var)) => {
                         let length =
                             transpiler.runtime_storage_list_len_commands(&walked_plan, &len_var)?;
                         before.extend(guard_commands(
                             &length,
-                            &format!("if score {step_var} temp matches 1.."),
+                            &format!("if score {step_var} temp matches 1.. if score {valid_var} temp matches 1"),
                         ));
                     }
                     _ => {}
@@ -1506,10 +1513,11 @@ impl Transpiler {
         &mut self,
         list_plan: &StoragePathPlan,
         len_var: &str,
+        valid_var: &str,
     ) -> Result<Vec<String>, TranspileError> {
         let namespace = self.data_pack.namespace.clone();
         let id = self.next_temp_id();
-        let string_score = format!("#for_string_{id}");
+        let string_score = valid_var.to_string();
         let copy_len = format!("#for_copy_len_{id}");
         let copy_path = format!("_cobble_for_copy_{id}");
         let refusal = match &self.current_statement_source {
@@ -2223,11 +2231,12 @@ impl Transpiler {
                 Self::analyze_function_return_kind(&while_loop.body),
                 FunctionReturnKind::None
             )
+            && !contains_loop_break(&while_loop.body)
         {
             self.warn(
                 "infinite-loop",
-                "`while True` has no `return` in its body, so it runs until the game stops it at the command limit, which Cobble raises to 1,000,000,000 commands.",
-                Some("Use a condition that becomes false, or `return` from the loop."),
+                "`while True` has no `return` or `break` in its body, so it runs until the game stops it at the world command limit.",
+                Some("Use a condition that becomes false, or exit with `break` or `return`."),
             );
         }
 
@@ -2292,13 +2301,60 @@ impl Transpiler {
         let body_func_name = format!("{}_body_{}", helper_prefix, self.next_temp_id());
 
         let RuntimeLoopBody {
-            statements,
+            mut statements,
             binding_commands,
         } = body(self)?;
-
+        let has_control = contains_loop_control(&statements);
+        let saved_return = self.current_return.clone();
+        if has_control && self.current_return.is_none() {
+            let id = self.next_temp_id();
+            self.current_return = Some(crate::transpiler::function_context::ReturnContext {
+                value_score: format!("#loop_value_{id}"),
+                flag_score: format!("#loop_flag_{id}"),
+            });
+            let flag = self.current_return.as_ref().unwrap().flag_score.clone();
+            self.extend_current_function(vec![format!("scoreboard players set {flag} temp 0")]);
+        }
+        let advance = if has_control && helper_prefix != "while" {
+            statements.pop().into_iter().collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let saved_context = self.current_context.clone();
-        let mut capture = self.capture_statements(&statements)?;
-        let body_needs_storage = capture.requires_macro_context();
+        let saved_loop_depth = self.loop_depth;
+        self.loop_depth = saved_loop_depth + 1;
+        let captured = self.capture_statements(&statements);
+        self.loop_depth = saved_loop_depth;
+        let mut capture = captured?;
+        let mut body_needs_storage = capture.requires_macro_context();
+        if has_control {
+            let user_name = format!("loop_statements_{}", self.next_temp_id());
+            self.add_captured_function(user_name.clone(), capture);
+            let user_call = self.function_call_command(&user_name, body_needs_storage);
+            capture = self.capture_statements(&advance)?;
+            let context = self.current_return.as_ref().unwrap();
+            let mut prefix = vec![
+                user_call,
+                format!(
+                    "execute if score {} temp matches 1 run return 0",
+                    context.flag_score
+                ),
+                format!(
+                    "execute if score {} temp matches 3 run return 0",
+                    context.flag_score
+                ),
+                format!("scoreboard players set {} temp 0", context.flag_score),
+            ];
+            let shift = prefix.len();
+            prefix.extend(capture.commands);
+            capture.commands = prefix;
+            capture.metadata = capture
+                .metadata
+                .into_iter()
+                .map(|(i, entry)| (i + shift, entry))
+                .collect();
+            body_needs_storage |= capture.requires_macro_context();
+        }
         if !binding_commands.is_empty() {
             capture = self.prepend_runtime_list_item_commands(capture, binding_commands);
         }
@@ -2348,11 +2404,19 @@ impl Transpiler {
         if let Some(ref mut commands) = self.current_function {
             commands.push(loop_call);
             commands.extend(cleanup_commands);
+            if has_control {
+                let context = self.current_return.as_ref().unwrap();
+                commands.push(format!(
+                    "execute if score {} temp matches 2.. run scoreboard players set {} temp 0",
+                    context.flag_score, context.flag_score
+                ));
+            }
             if let Some(return_cmd) = return_cmd {
                 commands.push(return_cmd);
             }
         }
 
+        self.current_return = saved_return;
         Ok(())
     }
 
@@ -2721,6 +2785,8 @@ fn substitute_statement(
             })
         }
         Statement::Pass => Statement::Pass,
+        Statement::Break => Statement::Break,
+        Statement::Continue => Statement::Continue,
         Statement::MinecraftCommand(command) => Statement::MinecraftCommand(
             replace_unroll_placeholder(command, target, &value.as_placed_text()),
         ),
@@ -2968,4 +3034,37 @@ fn replace_unroll_placeholder(text: &str, target: &str, replacement: &str) -> St
             Piece::Field { raw, .. } | Piece::Text { raw, .. } => raw,
         })
         .collect()
+}
+
+pub(in crate::transpiler) fn contains_loop_control(statements: &[Statement]) -> bool {
+    contains_loop_control_matching(statements, true)
+}
+
+fn contains_loop_break(statements: &[Statement]) -> bool {
+    contains_loop_control_matching(statements, false)
+}
+
+fn contains_loop_control_matching(statements: &[Statement], include_continue: bool) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::Break => true,
+        Statement::Continue => include_continue,
+        Statement::If(branch) => {
+            contains_loop_control_matching(&branch.then_branch, include_continue)
+                || branch
+                    .elif_branches
+                    .iter()
+                    .any(|(_, body)| contains_loop_control_matching(body, include_continue))
+                || branch
+                    .else_branch
+                    .as_deref()
+                    .is_some_and(|body| contains_loop_control_matching(body, include_continue))
+        }
+        Statement::Match(branch) => branch
+            .cases
+            .iter()
+            .any(|case| contains_loop_control_matching(&case.body, include_continue)),
+        Statement::Execute(block) => contains_loop_control_matching(&block.body, include_continue),
+        Statement::For(_) | Statement::While(_) | Statement::FunctionDef(_) => false,
+        _ => false,
+    })
 }

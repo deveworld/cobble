@@ -115,7 +115,8 @@ A zero literal step is an error; a runtime zero step runs no iterations.
 
 Literal ranges and scalar lists are expanded at build time. Large expansions
 have [compiler limits](../reference/diagnostics.md#compiler-limits).
-`break`, `continue`, and `for ... else` are not supported.
+`break` exits the innermost loop; `continue` skips to its next iteration.
+`for ... else` is not supported.
 
 ## While Loops
 
@@ -131,9 +132,9 @@ The complete condition is checked before each pass, including any function
 calls. All loop iterations run in one game tick. Bound the work; use a
 [tick handler](events.md) or `/schedule` to spread it across ticks.
 
-Packs with runtime loops, recursion, or runtime powers raise the world's
-`max_command_sequence_length` gamerule to `1000000000` on load. This setting
-affects every pack in the world.
+Packs leave the world's command limit unchanged by default. If a pack needs
+a higher limit, explicitly set `build.command_limit` in
+[cobble.toml](../reference/config.md). This changes a world-wide gamerule on load.
 
 ## Match Statements
 

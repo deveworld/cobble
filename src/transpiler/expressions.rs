@@ -106,6 +106,9 @@ impl Transpiler {
     ) -> Result<(), TranspileError> {
         match expr {
             Expression::Call(func, args) => {
+                if self.runtime_intrinsic_call(func, args)? {
+                    return Ok(());
+                }
                 // Handle both Identifier and Attribute (for stdlib.addEventListener)
                 match &**func {
                     Expression::Identifier(func_name) => {
@@ -256,6 +259,16 @@ impl Transpiler {
             Expression::Identifier(name) => self.helper_name_arg(name, label),
             Expression::Number(n) if n.fract() == 0.0 => Ok((*n as i32).to_string()),
             Expression::Number(n) => Ok(n.to_string()),
+            Expression::Binary(..) | Expression::Unary(..)
+                if self.try_eval_const(expr).is_some() =>
+            {
+                let value = self.try_eval_const(expr).unwrap();
+                Ok(if value.fract() == 0.0 {
+                    format!("{value:.0}")
+                } else {
+                    value.to_string()
+                })
+            }
             Expression::Call(func, args) => {
                 if let Some(value) = self.storage_path_helper_string(func, args)? {
                     Ok(value)
@@ -296,17 +309,20 @@ impl Transpiler {
         expr: &Expression,
         label: &str,
     ) -> Result<i32, TranspileError> {
-        match expr {
-            Expression::Number(n) => Ok(*n as i32),
-            Expression::Identifier(name) => self
-                .symbols
-                .compile_time_constants
-                .get(name)
-                .map(|value| *value as i32)
-                .ok_or_else(|| format!("{} must be a literal integer or const", label))
-                .map_err(TranspileError::from),
-            _ => Err(format!("{} must be a literal integer or const", label).into()),
-        }
+        let value = self
+            .try_eval_const(expr)
+            .filter(|value| {
+                value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= f64::from(i32::MIN)
+                    && *value <= f64::from(i32::MAX)
+            })
+            .ok_or_else(|| {
+                TranspileError::from(format!(
+                    "{label} must be a 32-bit integer literal or constant expression"
+                ))
+            })?;
+        Ok(value as i32)
     }
 
     pub(in crate::transpiler) fn expr_to_bool(
@@ -317,6 +333,21 @@ impl Transpiler {
         match expr {
             Expression::Boolean(value) => Ok(*value),
             _ => Err(format!("{} must be a literal boolean", label).into()),
+        }
+    }
+
+    pub(in crate::transpiler) fn expr_to_bool_arg(
+        &self,
+        expr: &Expression,
+        label: &str,
+    ) -> Result<String, TranspileError> {
+        match expr {
+            Expression::Identifier(name) if self.current_context.is_param(name) => {
+                Ok(format!("$({name})"))
+            }
+            _ => self
+                .expr_to_bool(expr, label)
+                .map(|value| value.to_string()),
         }
     }
 
@@ -406,6 +437,8 @@ impl Transpiler {
             Expression::Identifier(name) => {
                 if let Some(value) = self.symbols.compile_time_constants.get(name) {
                     self.json_number(*value)
+                } else if self.current_context.is_param(name) || self.symbols.variable_storage_paths.contains_key(name) {
+                    Ok(serde_json::Value::String(format!("{{{name}}}")))
                 } else {
                     Err(format!(
                         "Identifier '{}' cannot be serialized to JSON here; use a literal or const",

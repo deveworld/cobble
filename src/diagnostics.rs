@@ -264,6 +264,7 @@ fn analyze_source_stages(source: &str) -> SourceAnalysis {
     let datapack_arguments = semantic::check_datapack_resource_arguments(&context);
     diagnostics.extend(datapack_arguments.inline);
     semantic::check_noop_expression_statements(&context, &mut diagnostics);
+    semantic::check_loop_control(&context, &mut diagnostics);
     let function_defs = semantic::collect_function_signatures(&context, &mut diagnostics);
 
     if diagnostics.is_empty() {
@@ -600,14 +601,6 @@ fn check_unsupported_keywords(
         (
             "with",
             "Use explicit function calls or resource declarations instead.",
-        ),
-        (
-            "break",
-            "Cobble loops compile to Minecraft function commands and do not support early loop exits.",
-        ),
-        (
-            "continue",
-            "Cobble loops compile to Minecraft function commands and do not support early loop continuation.",
         ),
         (
             "raise",
@@ -1497,6 +1490,11 @@ fn is_allowed_value_function_call(name: &str) -> bool {
             | "int"
             | "sum"
             | "random.randint"
+            | "storage.get"
+            | "storage.path"
+            | "storage.child"
+            | "storage.index"
+            | "timer.done"
     ) || math_value_function_arity(name).is_some()
 }
 
@@ -1639,7 +1637,7 @@ def main():
     score *= 2
     score /= 2
     score %= 2
-    score ^= other
+    score **= other
 "#,
         );
 
@@ -1672,8 +1670,6 @@ import foo.bar
             .iter()
             .any(|m| m.contains("Unsupported assignment target")));
         assert!(diagnostics.iter().any(|m| m.contains("Dotted imports")));
-        assert!(diagnostics.iter().any(|m| m.contains("`break`")));
-        assert!(diagnostics.iter().any(|m| m.contains("`continue`")));
         assert!(diagnostics.iter().any(|m| m.contains("`assert`")));
         assert!(diagnostics.iter().any(|m| m.contains("`raise`")));
         assert!(diagnostics.iter().any(|m| m.contains("`del`")));

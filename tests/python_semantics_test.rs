@@ -399,13 +399,13 @@ def main():
 fn constant_folding_matches_runtime_overflow() {
     let mut sim = Sim::load(
         r#"def main():
-    folded = 100000 * 100000 / 100000
+    folded = 100000 * 100000 // 100000
     v = 100000
-    computed = v * v / v
-    folded_pow = 2 ^ 31
+    computed = v * v // v
+    folded_pow = 2 ** 31
     two = 2
-    computed_pow = two ^ 31
-    folded_div = -7 / 2
+    computed_pow = two ** 31
+    folded_div = -7 // 2
     folded_mod = -7 % 3
 "#,
         &[],

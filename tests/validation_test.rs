@@ -356,7 +356,7 @@ def init():
     z = x + y
     w = x * y + 5
     r = x % 3
-    p = x ^ 2
+    p = x ** 2
     /tellraw @a {"text":"Loaded!","color":"green"}
 
 def game_tick():
