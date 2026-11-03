@@ -1002,7 +1002,7 @@ pub(crate) const STDLIB_MODULE_METHODS: &[(&str, &[&str])] = &[
         &["set", "add", "remove", "reset", "copy", "operation"],
     ),
     ("score.objective", &["add", "remove", "display"]),
-    ("random", &["int", "bool"]),
+    ("random", &["randint", "int", "bool"]),
     ("timer", &["set", "tick", "done", "reset"]),
     (
         "storage",
@@ -1496,6 +1496,7 @@ fn is_allowed_value_function_call(name: &str) -> bool {
             | "double"
             | "int"
             | "sum"
+            | "random.randint"
     ) || math_value_function_arity(name).is_some()
 }
 

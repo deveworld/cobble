@@ -128,6 +128,7 @@ pub struct Sim {
     /// Whether the command running came from a macro line. Text Minecraft
     /// can't read fails such a command; in a plain line it stops the load.
     in_macro_line: bool,
+    random_state: u64,
 }
 
 impl Sim {
@@ -167,6 +168,7 @@ impl Sim {
             load_tag: read_tag(output_dir, "load"),
             budget: 1_000_000,
             in_macro_line: false,
+            random_state: 0x434f_4242_4c45,
         };
         for handler in sim.load_tag.clone() {
             sim.call(&handler);
@@ -377,6 +379,26 @@ impl Sim {
         }
         if let Some(rest) = command.strip_prefix("data ") {
             return self.exec_data(rest);
+        }
+        if let Some(range) = command.strip_prefix("random value ") {
+            let (min, max) = range.split_once("..").expect("random range");
+            let min: i32 = min.parse().expect("random minimum");
+            let max: i32 = max.parse().expect("random maximum");
+            assert!(
+                min < max,
+                "Minecraft rejects empty and singleton random ranges"
+            );
+            assert!(
+                i64::from(max) - i64::from(min) < i64::from(i32::MAX),
+                "Minecraft rejects random ranges containing 2**31 or more values"
+            );
+            // Reproducible native draws for tests.
+            self.random_state = self
+                .random_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1);
+            let width = (i64::from(max) - i64::from(min) + 1) as u64;
+            return Some((i64::from(min) + ((self.random_state >> 32) % width) as i64) as i32);
         }
         if let Some(rest) = command.strip_prefix("tag ") {
             let (selector, rest) = split_selector(rest);

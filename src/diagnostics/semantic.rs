@@ -1131,6 +1131,16 @@ struct ValueFunctionDiagnostic {
 }
 
 fn invalid_value_function_call(call: &FunctionCallSpan) -> Option<ValueFunctionDiagnostic> {
+    if call.name == "random.randint" && call.arg_count != 2 {
+        return Some(ValueFunctionDiagnostic {
+            kind: "function-argument-count",
+            message: format!(
+                "random.randint() takes 2 arguments, but {} provided",
+                call.arg_count
+            ),
+            help: "Use random.randint(minimum, maximum) with integer bounds (both inclusive).",
+        });
+    }
     if call.name == "len" {
         if call.arg_count != 1 {
             return Some(ValueFunctionDiagnostic {
@@ -2173,7 +2183,9 @@ fn expression_has_unsupported_reference_shape(expression: &str) -> bool {
     let mut index = 0;
     while let Some(dot_offset) = expression[index..].find('.') {
         let dot = index + dot_offset;
-        if identifier_around_dot(expression, dot).is_some_and(|base| base != "math") {
+        if identifier_around_dot(expression, dot)
+            .is_some_and(|base| !matches!(base, "math" | "random"))
+        {
             return true;
         }
         index = dot + 1;
@@ -3539,7 +3551,7 @@ fn infer_expression_type_for_diagnostics(
             "str" | "_cobble_format" => return Some(CobbleType::String),
             "float" | "_cobble_float" => return Some(CobbleType::Float),
             "double" => return Some(CobbleType::Double),
-            "int" => return Some(CobbleType::Integer),
+            "int" | "random.randint" => return Some(CobbleType::Integer),
             "abs" | "max" | "min" | "sum" => return Some(CobbleType::Unknown),
             _ => {}
         }

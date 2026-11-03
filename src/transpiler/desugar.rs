@@ -433,9 +433,12 @@ impl Transpiler {
                     && self.is_builtin_name(name)
             }
             Expression::Attribute(base, method) => {
-                self.is_list_value(base)
-                    && (LIST_HELPER_METHODS.contains(&method.as_str())
-                        || LIST_VALUE_METHODS.contains(&method.as_str()))
+                (Self::expression_path(base).as_deref() == Some("random")
+                    && method == "randint"
+                    && !self.is_list_value(base))
+                    || self.is_list_value(base)
+                        && (LIST_HELPER_METHODS.contains(&method.as_str())
+                            || LIST_VALUE_METHODS.contains(&method.as_str()))
             }
             _ => false,
         }
@@ -1868,6 +1871,43 @@ impl Transpiler {
         args: &[Expression],
         out: &mut Vec<Statement>,
     ) -> Result<Expression, TranspileError> {
+        if matches!(func, Expression::Attribute(base, method)
+            if Self::expression_path(base).as_deref() == Some("random")
+                && method == "randint" && !self.is_list_value(base))
+        {
+            self.require_stdlib_module("random")?;
+            if args.len() != 2 {
+                return Err("random.randint() takes 2 arguments".into());
+            }
+            for bound in args {
+                if !matches!(
+                    self.value_type(bound),
+                    CobbleType::Integer | CobbleType::Unknown
+                ) {
+                    return Err("random.randint() bounds must be integers".into());
+                }
+                if self.try_eval_const(bound).is_some_and(|value| {
+                    !value.is_finite()
+                        || value.fract() != 0.0
+                        || value < f64::from(i32::MIN)
+                        || value > f64::from(i32::MAX)
+                }) {
+                    return Err("random.randint() bounds must fit in a 32-bit integer".into());
+                }
+            }
+            if let (Some(min), Some(max)) =
+                (self.try_eval_const(&args[0]), self.try_eval_const(&args[1]))
+            {
+                if min > max {
+                    return Err("random.randint() min cannot be greater than max".into());
+                }
+            }
+            self.require_prelude("_cobble_random_randint")?;
+            return Ok(call(
+                "_cobble_random_randint",
+                self.lower_values(args, out)?,
+            ));
+        }
         if let Expression::Identifier(name) = func {
             if let Some(kind) = software_result_type(name) {
                 let args = self.lower_values(args, out)?;

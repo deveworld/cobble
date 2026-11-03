@@ -3,6 +3,51 @@
 # namespace. A result that isn't a number goes to the storage path
 # `_cobble_result`.
 
+def _cobble_random_draw(minimum, maximum):
+    # Only called for a strict range: Minecraft rejects a singleton range
+    # while instantiating a macro, before it can execute a guard.
+    result = 0
+    /execute store result score result temp run random value {minimum}..{maximum}
+    return result
+
+def _cobble_random_wide(minimum, maximum):
+    # Native ranges must contain fewer than 2**31 values. Two 16-bit draws
+    # give a uniform signed i32; rejecting values outside the requested
+    # range avoids bias. Wide ranges accept at least half the candidates.
+    while True:
+        upper = _cobble_random_draw(0, 65535)
+        lower = _cobble_random_draw(0, 65535)
+        value = upper * 65536 + lower
+        if value >= minimum and value <= maximum:
+            return value
+
+def _cobble_random_randint(minimum, maximum):
+    # Comparing the original tag to an int copy also rejects floats, text,
+    # and containers passed through parameters, without truncating them.
+    changed = 0
+    /data modify storage NS:global _cobble_random_bounds set value {}
+    /execute store result storage NS:global _cobble_random_bounds.minimum int 1 run data get storage NS:global args.minimum 1
+    /execute store success score changed temp run data modify storage NS:global _cobble_random_bounds.minimum set from storage NS:global args.minimum
+    if changed != 0:
+        /tellraw @a {"text":"Cobble runtime error: random.randint() bounds must be integers","color":"red"}
+        return 0
+    /execute store result storage NS:global _cobble_random_bounds.maximum int 1 run data get storage NS:global args.maximum 1
+    /execute store success score changed temp run data modify storage NS:global _cobble_random_bounds.maximum set from storage NS:global args.maximum
+    if changed != 0:
+        /tellraw @a {"text":"Cobble runtime error: random.randint() bounds must be integers","color":"red"}
+        return 0
+    low = minimum
+    high = maximum
+    if low > high:
+        /tellraw @a {"text":"Cobble runtime error: random.randint() min cannot be greater than max","color":"red"}
+        return 0
+    if low == high:
+        return low
+    span = high - low
+    if span > 0 and span < 2147483647:
+        return _cobble_random_draw(low, high)
+    return _cobble_random_wide(low, high)
+
 def _cobble_list_sum(items):
     total = 0
     for item in items:

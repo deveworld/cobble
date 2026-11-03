@@ -112,6 +112,9 @@ impl Transpiler {
             Expression::Call(func, _) if matches!(&**func, Expression::Attribute(obj, _) if matches!(&**obj, Expression::Identifier(module) if module == "math")) => {
                 CobbleType::Integer
             }
+            Expression::Call(func, _) if matches!(&**func, Expression::Attribute(obj, method) if method == "randint" && Self::expression_path(obj).as_deref() == Some("random") && !self.is_list_value(obj)) => {
+                CobbleType::Integer
+            }
             Expression::Call(_, _) => CobbleType::Unknown,
             // A character of a string is a string.
             Expression::Subscript(base, _)

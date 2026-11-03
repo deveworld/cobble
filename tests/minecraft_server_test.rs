@@ -184,6 +184,30 @@ def init():
 def numeric_twice(value):
     return value + value
 
+def random_pick(low, high):
+    return random.randint(low, high)
+
+def random_probe():
+    low = 1
+    high = 6
+    fixed = random.randint(4, 4)
+    smallest = random_pick(-2147483648, -2147483648)
+    largest = random_pick(2147483647, 2147483647)
+    invalid = random_pick(float(1), 2)
+    /execute if data storage cobble_server_smoke:global locals.random_probe{fixed:4,smallest:-2147483648,largest:2147483647,invalid:0} run say random fixed and guards ok
+    passed = 0
+    for index in range(32):
+        value = random_pick(low, high)
+        if value >= 1 and value <= 6:
+            passed += 1
+        positive = random_pick(0, 2147483647)
+        negative = random_pick(-2147483648, -1)
+        full = random_pick(-2147483648, 2147483647)
+        if positive >= 0 and negative <= -1:
+            passed += 1
+    if passed == 64:
+        /say random ranges ok
+
 def numeric_probe():
     single = 0.6 + 0.2
     wide = double(0.1) + double(0.2)
@@ -615,6 +639,10 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         )?;
     }
 
+    send_command(child, &format!("function {NAMESPACE}:random_probe"))?;
+    for expected in ["random fixed and guards ok", "random ranges ok"] {
+        wait_for_log(child, &log_path, expected, COMMAND_TIMEOUT)?;
+    }
     send_command(child, &format!("function {NAMESPACE}:numeric_probe"))?;
     for expected in [
         "numeric values ok",

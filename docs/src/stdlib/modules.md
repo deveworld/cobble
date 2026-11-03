@@ -86,11 +86,15 @@ Score helpers use the pack's variable objective, `<namespace>.vars`.
 from stdlib import random
 
 def roll():
-    random.int("roll", 1, 6)
-    random.bool("coin")
+    dice = random.randint(1, 6)
+    coin = random.randint(0, 1)
+    return dice + coin
 ```
 
-Random helpers store the result in a scoreboard value.
+`random.randint(minimum, maximum)` returns an integer with both bounds included.
+Bounds can be integer variables or expressions; equal bounds return that value.
+The older `random.int(name, minimum, maximum)` and `random.bool(name)` helpers
+write directly to a scoreboard value.
 
 ## Timer
 

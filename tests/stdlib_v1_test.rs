@@ -326,6 +326,178 @@ def fixed_random():
 }
 
 #[test]
+fn randint_returns_values_in_expressions_with_runtime_bounds() {
+    use common::mcsim::Sim;
+    let mut sim = Sim::load(
+        r#"
+from stdlib import random
+loaded = random.randint(9, 9)
+
+def pick(low, high):
+    return random.randint(low, high)
+
+def twice(value):
+    return value * 2
+
+def recursive(count):
+    if count == 0:
+        return 0
+    return random.randint(count, count) + recursive(count - 1)
+
+def probe():
+    low = -3
+    high = 3
+    fixed = random.randint(4, 4)
+    smallest = random.randint(-2147483648, -2147483648)
+    largest = random.randint(2147483647, 2147483647)
+    nested = twice(random.randint(random.randint(2, 2), 2)) + 1
+    returned = pick(-7, -7)
+    total = recursive(4)
+    values = [random.randint(2, 2), {"roll": random.randint(3, 3)}]
+    draws = []
+    for index in range(64):
+        draws.append(random.randint(low, high))
+    if random.randint(1, 1):
+        conditional = 1
+    wide_range = random.randint(-2147483648, 2147483647)
+    positives = []
+    negatives = []
+    for index in range(32):
+        positives.append(random.randint(0, 2147483647))
+        negatives.append(random.randint(-2147483648, -1))
+"#,
+        &[],
+    );
+    assert_eq!(sim.var("loaded"), 9);
+    sim.call("probe");
+    for (name, expected) in [
+        ("fixed", 4),
+        ("smallest", i32::MIN),
+        ("largest", i32::MAX),
+        ("nested", 5),
+        ("returned", -7),
+        ("total", 10),
+        ("conditional", 1),
+    ] {
+        assert_eq!(sim.var(&format!("#probe.{name}")), expected, "{name}");
+    }
+    assert_eq!(
+        sim.storage["locals"]["probe"]["values"],
+        serde_json::json!([2, {"roll": 3}])
+    );
+    let draws = sim.storage["locals"]["probe"]["draws"].as_array().unwrap();
+    assert_eq!(draws.len(), 64);
+    assert!(draws
+        .iter()
+        .all(|value| (-3..=3).contains(&value.as_i64().unwrap())));
+    assert!(draws.contains(&serde_json::json!(-3)));
+    assert!(draws.contains(&serde_json::json!(3)));
+    let locals = &sim.storage["locals"]["probe"];
+    for (name, range) in [
+        ("positives", 0..=i64::from(i32::MAX)),
+        ("negatives", i64::from(i32::MIN)..=-1),
+    ] {
+        let values = locals[name].as_array().unwrap();
+        assert_eq!(values.len(), 32);
+        assert!(
+            values
+                .iter()
+                .all(|value| range.contains(&value.as_i64().unwrap())),
+            "{name}"
+        );
+    }
+    assert!(sim.log.is_empty(), "{:?}", sim.log);
+}
+
+#[test]
+fn randint_evaluates_bounds_once_in_order_and_only_when_selected() {
+    use common::mcsim::Sim;
+    let mut sim = Sim::load(
+        r#"
+from stdlib import random
+trace = 0
+
+def bound(digit):
+    global trace
+    trace = trace * 10 + digit
+    return 4
+
+def probe():
+    paired = random.randint(bound(1), bound(2))
+    skipped_and = 0 and random.randint(bound(3), bound(4))
+    skipped_or = 1 or random.randint(bound(3), bound(4))
+    selected = random.randint(bound(5), bound(6)) if True else random.randint(bound(7), bound(8))
+"#,
+        &[],
+    );
+    sim.call("probe");
+    assert_eq!(sim.var("trace"), 1256);
+    assert_eq!(sim.var("#probe.paired"), 4);
+    assert_eq!(sim.var("#probe.selected"), 4);
+}
+
+#[test]
+fn randint_validates_bounds_and_requires_the_module_import() {
+    for (expression, expected) in [
+        ("random.randint(1)", "takes 2 arguments"),
+        ("random.randint(1, 2, 3)", "takes 2 arguments"),
+        ("random.randint(6, 1)", "min cannot be greater than max"),
+        ("random.randint(1.5, 2)", "bounds must be integers"),
+        ("random.randint(1, double(2))", "bounds must be integers"),
+        ("random.randint(\"1\", 2)", "bounds must be integers"),
+        (
+            "random.randint(0, 2147483648)",
+            "bounds must fit in a 32-bit integer",
+        ),
+    ] {
+        let error =
+            compile_source(&format!("def probe():\n    value = {expression}\n")).unwrap_err();
+        assert!(error.contains(expected), "{expression}: {error}");
+    }
+    let error =
+        common::mcsim::compile("def probe():\n    value = random.randint(1, 6)\n").unwrap_err();
+    assert!(error.contains("module 'random' not imported"), "{error}");
+
+    let mut sim = common::mcsim::Sim::load(
+        r#"
+from stdlib import random
+
+def pick(low, high):
+    return random.randint(low, high)
+
+def probe():
+    inverted = pick(6, 1)
+    fraction = pick(float(1), 2)
+    wide = pick(double(1), 2)
+    text = pick("1", 2)
+    list_value = pick([1], 2)
+    map_value = pick({"value": 1}, 2)
+    wrong_max = pick(0, float(1))
+    recovered = pick(-4, -4)
+"#,
+        &[],
+    );
+    sim.call("probe");
+    for name in [
+        "inverted",
+        "fraction",
+        "wide",
+        "text",
+        "list_value",
+        "map_value",
+        "wrong_max",
+    ] {
+        assert_eq!(sim.var(&format!("#probe.{name}")), 0, "{name}");
+    }
+    assert_eq!(sim.var("#probe.recovered"), -4);
+    assert_eq!(sim.log.len(), 7, "{:?}", sim.log);
+    assert!(sim
+        .log
+        .iter()
+        .all(|message| message.contains("Cobble runtime error: random.randint()")));
+}
+
+#[test]
 fn selector_and_position_helpers_must_be_used_as_values() {
     let selector_error = compile_source(
         r#"
