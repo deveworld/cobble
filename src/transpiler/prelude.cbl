@@ -12,6 +12,19 @@ def _cobble_timer_done(name):
     /execute if score {name} temp matches ..0 run scoreboard players set result temp 1
     return result
 
+def _cobble_qualify_id(value):
+    if ":" in value:
+        /data modify storage NS:global _cobble_result set from storage NS:global args.value
+    else:
+        _cobble_text_join("NS:", value)
+
+def _cobble_component_value(value):
+    if _cobble_kind(value) == 2:
+        /data modify storage NS:global _cobble_result set from storage NS:global args.value
+    else:
+        out = {"text": f"{value}"}
+        /data modify storage NS:global _cobble_result set from storage NS:global locals._cobble_component_value.out
+
 def _cobble_random_draw(minimum, maximum):
     # Only called for a strict range: Minecraft rejects a singleton range
     # while instantiating a macro, before it can execute a guard.
@@ -303,3 +316,51 @@ def _cobble_slice(value, start, stop):
         _cobble_text_slice(value, start, stop)
     else:
         _cobble_list_slice(value, start, stop)
+
+def _cobble_text_show_tellraw(target, component):
+    if _cobble_kind(component) == 2:
+        _cobble_text_component_tellraw(target, component)
+    else:
+        _cobble_text_string_tellraw(target, component)
+
+def _cobble_text_component_tellraw(target, component):
+    /tellraw {target} $(component)
+
+def _cobble_text_string_tellraw(target, component):
+    /tellraw {target} {"text": f"{component}"}
+
+def _cobble_text_show_title(target, component):
+    if _cobble_kind(component) == 2:
+        _cobble_text_component_title(target, component)
+    else:
+        _cobble_text_string_title(target, component)
+
+def _cobble_text_component_title(target, component):
+    /title {target} title $(component)
+
+def _cobble_text_string_title(target, component):
+    /title {target} title {"text": f"{component}"}
+
+def _cobble_text_show_subtitle(target, component):
+    if _cobble_kind(component) == 2:
+        _cobble_text_component_subtitle(target, component)
+    else:
+        _cobble_text_string_subtitle(target, component)
+
+def _cobble_text_component_subtitle(target, component):
+    /title {target} subtitle $(component)
+
+def _cobble_text_string_subtitle(target, component):
+    /title {target} subtitle {"text": f"{component}"}
+
+def _cobble_text_show_actionbar(target, component):
+    if _cobble_kind(component) == 2:
+        _cobble_text_component_actionbar(target, component)
+    else:
+        _cobble_text_string_actionbar(target, component)
+
+def _cobble_text_component_actionbar(target, component):
+    /title {target} actionbar $(component)
+
+def _cobble_text_string_actionbar(target, component):
+    /title {target} actionbar {"text": f"{component}"}

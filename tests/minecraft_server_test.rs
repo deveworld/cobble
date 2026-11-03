@@ -200,6 +200,18 @@ def formatted_header(value):
         value += 1
     return value
 
+def scheduled_consistency_probe():
+    /say dynamic namespaced schedule ok
+
+def parameter_loop(value, count):
+    for value in range(count):
+        if value == 2:
+            break
+    return value
+
+def show_component(component):
+    text.tellraw("@a", component)
+
 def consistency_probe():
     payload = return_payload(2)
     message = f"{payload.name}: {len(payload.items) + 1}"
@@ -239,11 +251,27 @@ def consistency_probe():
             continue
         break
     /execute if data storage cobble_server_smoke:global locals.consistency_probe{total:5,count:3} run say loop control ok
-    /summon minecraft:marker ~ ~ ~ {Tags:["format_probe"],CustomName:"Name 3"}
+    /summon minecraft:marker 0 64 0 {Tags:["format_probe"],CustomName:"Name 3"}
     header_value = formatted_header(2)
     /execute if data storage cobble_server_smoke:global locals.consistency_probe{header_value:3} run say formatted header arguments ok
     /kill @e[tag=format_probe]
-    bossbar.remove("runtime_ui")
+    full_id = "cobble_server_smoke:runtime_ui"
+    bossbar.set_value(full_id, 13)
+    /execute store result storage cobble_server_smoke:global ui_value int 1 run bossbar get cobble_server_smoke:runtime_ui value
+    /execute if data storage cobble_server_smoke:global {ui_value:13} run say dynamic namespaced bossbar ok
+    scheduled = "cobble_server_smoke:scheduled_consistency_probe"
+    schedule.once(scheduled, "1t")
+    selected = parameter_loop(9, 5)
+    joined = return_payload(0).name + return_payload(0).name
+    destination = position.relative(0, 1, 0)
+    target = selector.all_players()
+    component = text.colored(f"{joined}", "gold")
+    show_component(component)
+    bossbar.set_name(full_id, component)
+    plain_component = text.plain("Quotes: \"hello\" and \\")
+    show_component(plain_component)
+    /execute if data storage cobble_server_smoke:global locals.consistency_probe{selected:2,joined:"AlexAlex",destination:"~ ~1 ~",target:"@a",component:{text:"AlexAlex",color:"gold"}} run say composed values and parameter loops ok
+    bossbar.remove(full_id)
 
 def random_probe():
     low = 1
@@ -699,13 +727,22 @@ fn run_server_smoke(child: &mut Child, server_dir: &Path) -> Result<(), String> 
         )?;
     }
 
-    send_command(child, &format!("function {NAMESPACE}:consistency_probe"))?;
+    // Entity selectors need a ticking chunk; the console's world spawn
+    // need not be loaded. Give force-loading time before the marker probe.
+    send_command(child, "forceload add 0 0")?;
+    send_command(
+        child,
+        &format!("schedule function {NAMESPACE}:consistency_probe 20t"),
+    )?;
     for expected in [
         "storage returns and expressions ok",
         "runtime helper arguments ok",
         "value getters ok",
         "loop control ok",
         "formatted header arguments ok",
+        "dynamic namespaced bossbar ok",
+        "dynamic namespaced schedule ok",
+        "composed values and parameter loops ok",
     ] {
         wait_for_log(child, &log_path, expected, COMMAND_TIMEOUT)?;
     }

@@ -98,7 +98,7 @@ def main():
 
 #[test]
 fn a_parameter_in_helper_display_text_is_a_macro_argument() {
-    let mk = function(
+    let (_temp, output) = compile(
         r#"from stdlib import team, bossbar, score.objective, text
 def mk(d):
     team.add("t", d)
@@ -109,16 +109,35 @@ def mk(d):
 def main():
     mk("Real Name")
 "#,
-        "mk",
-    );
-    assert_eq!(
-        mk,
-        "$team add t {\"text\":\"$(d)\"}\n\
-         $team add t2 {\"text\":\"Team $(d)\"}\n\
-         $bossbar add sim:b {\"text\":\"$(d)\"}\n\
-         $bossbar set sim:b name {\"text\":\"$(d)\"}\n\
-         $scoreboard objectives add o dummy {\"text\":\"$(d)\"}"
-    );
+    )
+    .unwrap();
+    let mut sim = Sim::from_output(&output, &[]);
+    for command in [
+        "$team add t $(_cobble_component_0)",
+        "$team add t2 $(_cobble_component_0)",
+        "$bossbar add sim:b $(_cobble_component_0)",
+        "$bossbar set sim:b name $(_cobble_component_0)",
+        "$scoreboard objectives add o dummy $(_cobble_component_0)",
+    ] {
+        assert!(
+            sim.functions.values().flatten().any(|line| line == command),
+            "{command}"
+        );
+    }
+    for value in [
+        serde_json::json!("Real Name"),
+        serde_json::json!("Quoted \"name\" \\"),
+        serde_json::json!({"text":"Styled", "color":"gold"}),
+    ] {
+        sim.storage["args"] = serde_json::json!({"value":value});
+        sim.call("_cobble_component_value");
+        let expected = if value.is_object() {
+            value
+        } else {
+            serde_json::json!({"text":value})
+        };
+        assert_eq!(sim.storage["_cobble_result"], expected);
+    }
 }
 
 #[test]

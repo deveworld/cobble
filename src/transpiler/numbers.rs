@@ -122,6 +122,12 @@ impl Transpiler {
         &mut self,
         expr: &Expression,
     ) -> Result<(), TranspileError> {
+        if matches!(expr, Expression::Call(func, _) if matches!(&**func,
+            Expression::Attribute(module, _) if matches!(&**module,
+                Expression::Identifier(name) if name == "math")))
+        {
+            self.require_stdlib_module("math")?;
+        }
         let worker = match expr {
             Expression::Binary(left, op, right)
                 if self.may_hold_double(left) || self.may_hold_double(right) =>

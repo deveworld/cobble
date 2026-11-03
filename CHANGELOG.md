@@ -152,6 +152,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error, because Minecraft reads it as the id `minecraft:5`.
 
 ### Fixed
+- Operators preserve strings and lists returned by functions, and use the
+  runtime types of parameters for joining and repetition. Constant real powers
+  keep fractional operands. Runtime schedule and bossbar ids keep their namespace.
+- Loop variables can reuse parameter names. Selector, position, storage-path,
+  and text-component builders produce ordinary stored values. Math value calls
+  enforce the same module imports as other stdlib calls.
 - Mixed Minecraft headers keep Python boolean literals and standalone
   `{const}` or `{parameter}` operands as values. Macro arguments reach every
   `while` test, raw function conditions short-circuit, and score holders or

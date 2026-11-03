@@ -126,6 +126,35 @@ impl Transpiler {
                 return Err(format!("{module}.{method}() argument {} must be an integer; use int(value) for an explicit conversion", index + 1).into());
             }
         }
+        let qualify_id = matches!(module.as_str(), "bossbar" | "schedule")
+            && args.first().is_some_and(|arg| {
+                self.compile_time_text(arg).is_none()
+                    && !matches!(arg, Expression::Identifier(name) if self.functions.params.contains_key(name) && !self.current_context.is_param(name))
+            });
+        let component_slot = |index: usize| match (module.as_str(), method.as_str(), index) {
+            ("bossbar", "add" | "set_name", 1)
+            | ("team", "add", 1)
+            | ("score.objective", "add", 2) => true,
+            ("team", "modify", 2) => args
+                .get(1)
+                .and_then(|arg| self.compile_time_text(arg))
+                .is_some_and(|option| {
+                    matches!(option.as_str(), "prefix" | "suffix" | "displayName")
+                }),
+            _ => false,
+        };
+        let component_slots: Vec<bool> = args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                component_slot(index)
+                    && !matches!(
+                        arg,
+                        Expression::String(_) | Expression::Map(_) | Expression::Array(_)
+                    )
+                    && self.compile_time_text(arg).is_none()
+            })
+            .collect();
         if !matches!(
             module.as_str(),
             "bossbar"
@@ -138,7 +167,9 @@ impl Transpiler {
                 | "schedule"
                 | "storage"
                 | "text"
-        ) || !(args.iter().any(|arg| self.intrinsic_needs_staging(arg))
+        ) || !(qualify_id
+            || component_slots.iter().any(|slot| *slot)
+            || args.iter().any(|arg| self.intrinsic_needs_staging(arg))
             || matches!(
                 (module.as_str(), method.as_str()),
                 ("bossbar", "set_visible") | ("entity", "effect_give")
@@ -153,11 +184,29 @@ impl Transpiler {
         let mut values = Vec::new();
         let mut rewritten = Vec::new();
         for (index, arg) in args.iter().enumerate() {
+            if component_slots[index] {
+                let name = format!("_cobble_component_{}", params.len());
+                params.push(Parameter {
+                    name: name.clone(),
+                    default: None,
+                });
+                values.push(Expression::Call(
+                    Box::new(Expression::Identifier("_cobble_component_value".into())),
+                    vec![arg.clone()],
+                ));
+                rewritten.push(Expression::Identifier(name));
+                continue;
+            }
             let boolean = matches!(
                 (module.as_str(), method.as_str(), index),
                 ("bossbar", "set_visible", 1) | ("entity", "effect_give", 4)
             );
-            let arg = if boolean && !matches!(arg, Expression::Boolean(_)) {
+            let arg = if qualify_id && index == 0 {
+                Expression::Call(
+                    Box::new(Expression::Identifier("_cobble_qualify_id".into())),
+                    vec![arg.clone()],
+                )
+            } else if boolean && !matches!(arg, Expression::Boolean(_)) {
                 Expression::Conditional(
                     Box::new(arg.clone()),
                     Box::new(Expression::String("true".into())),

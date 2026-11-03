@@ -82,6 +82,10 @@ Command helpers accept runtime expressions directly. `storage.get(path)` and
 `timer.done(name)` return values, and user functions can return strings, lists,
 and maps. F-string fields accept expressions; loops support `break` and `continue`.
 
+`+` and `*` also use the runtime types of parameters and returned values;
+text and lists join or repeat. Selector, position, storage-path, and text-component
+builders can be stored and returned. Import `math` before using its value helpers.
+
 ### Other Output Changes
 
 - **Load and tag order:** setup runs first; event listeners and function tag

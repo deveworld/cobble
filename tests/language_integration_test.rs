@@ -45,6 +45,147 @@ use std::path::Path;
 use std::process::Command;
 
 #[test]
+fn returned_values_and_parameters_choose_addition_or_repetition_by_type() {
+    let mut sim = Sim::load(
+        r#"
+def echo(value):
+    return value
+def add(left, right):
+    return left + right
+def multiply(left, right):
+    return left * right
+def main():
+    joined = echo("Hello") + echo("World")
+    combined = echo([1]) + echo([2])
+    generic = add("Hello", "World")
+    repeated = multiply("ha", 3)
+    repeated_list = echo([4]) * echo(2)
+    number = add(0.25, 0.5)
+"#,
+        &[],
+    );
+    sim.call("main");
+    let local = &sim.storage["locals"]["main"];
+    assert_eq!(local["joined"], "HelloWorld");
+    assert_eq!(local["combined"], serde_json::json!([1, 2]));
+    assert_eq!(local["generic"], "HelloWorld");
+    assert_eq!(local["repeated"], "hahaha");
+    assert_eq!(local["repeated_list"], serde_json::json!([4, 4]));
+    assert_eq!(local["number"], 0.75);
+}
+
+#[test]
+fn value_builders_can_be_stored_returned_and_displayed() {
+    let mut sim = Sim::load(
+        r#"
+from stdlib import selector, position, storage, text, entity
+calls = 0
+def coordinate():
+    global calls
+    calls += 1
+    return calls
+def notify(component):
+    text.tellraw("@a", component)
+def make_component(name):
+    return text.plain(name)
+def main():
+    target = selector.all_players()
+    tagged = selector.players_tagged("ready")
+    entity.tag_add(target, "ready")
+    destination = position.relative(0, coordinate(), 0)
+    absolute = position.absolute(1.5, 2, 3)
+    local_position = position.local(0, 0, 2)
+    path = storage.path("players", "current")
+    storage.set(path, ["Alex", "Bo"])
+    indexed = storage.index(path, 1)
+    player = storage.get(indexed)
+    message = text.colored(f"Hello {player}", "gold")
+    notify(message)
+    plain = text.plain("Quotes: \"hi\" and \\")
+    notify(plain)
+    text.title("@a", message)
+    text.subtitle("@a", message)
+    text.actionbar("@a", message)
+    text.tellraw("@a", "ordinary text")
+    returned = make_component("Returned")
+    notify(returned)
+    score_component = text.score("Alex", "kills")
+    notify(score_component)
+    selector_component = text.selector("@a")
+    notify(selector_component)
+"#,
+        &["Alex"],
+    );
+    sim.set_score("Alex", "kills", 7);
+    sim.call("main");
+    let local = &sim.storage["locals"]["main"];
+    assert_eq!(local["destination"], "~ ~1 ~");
+    assert_eq!(local["absolute"], "1.5 2 3");
+    assert_eq!(local["local_position"], "^ ^ ^2");
+    assert_eq!(local["tagged"], "@a[tag=ready]");
+    assert_eq!(local["path"], "players.current");
+    assert_eq!(local["indexed"], "players.current[1]");
+    assert_eq!(local["player"], "Bo");
+    assert_eq!(
+        local["message"],
+        serde_json::json!({"text":"Hello Bo","color":"gold"})
+    );
+    assert_eq!(sim.var("calls"), 1);
+    assert_eq!(
+        sim.log,
+        [
+            "Hello Bo",
+            "Quotes: \"hi\" and \\",
+            "Hello Bo",
+            "Hello Bo",
+            "Hello Bo",
+            "ordinary text",
+            "Returned",
+            "7",
+            "Alex"
+        ]
+    );
+}
+
+#[test]
+fn loop_targets_reassign_parameters_with_literal_and_runtime_iterables() {
+    let mut sim = Sim::load(
+        r#"
+def walk(index, limit):
+    for index in range(limit):
+        if index == 1:
+            continue
+        if index == 2:
+            break
+    return index
+def literal(index):
+    for index in range(3):
+        index += 10
+    return index
+def list_walk(item, values):
+    for item in values:
+        if item == "Bo":
+            break
+    return item
+def main():
+    limited = walk(9, 5)
+    empty = walk(9, 0)
+    expanded = literal(9)
+    selected = list_walk("old", ["Alex", "Bo", "Cat"])
+    unchanged = list_walk("old", [])
+"#,
+        &[],
+    );
+    sim.call("main");
+    let local = &sim.storage["locals"]["main"];
+    assert_eq!(local["limited"], 2);
+    assert_eq!(local["empty"], 9);
+    assert_eq!(local["expanded"], 12);
+    assert_eq!(local["selected"], "Bo");
+    assert_eq!(local["unchanged"], "old");
+}
+
+#[test]
 fn storage_return_values_and_expression_fields_compose() {
     let mut sim = Sim::load(
         r#"

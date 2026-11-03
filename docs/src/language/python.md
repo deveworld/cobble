@@ -49,8 +49,9 @@ needed operand. A new variable can hold alternatives of different types;
 existing text and container variables keep their type. Numeric variables may
 change between integer, float, and double values.
 
-When both operands are untyped parameters, `+` and `*` use numeric
-arithmetic. Use `str(a) + b` to request text joining.
+`+` and `*` use the runtime types of parameters and function results:
+numbers add or multiply, strings and lists join, and an integer can repeat
+a string or list.
 
 ## Not Supported
 

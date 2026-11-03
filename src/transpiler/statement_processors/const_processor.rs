@@ -58,7 +58,17 @@ impl Transpiler {
                         || matches!(&**func, Expression::Identifier(name) if name == "_cobble_float")
                             && args.len() == 2) =>
             {
-                let value = self.evaluate_const_expr(&args[0])?;
+                // Constructors read literal digits directly, as the runtime
+                // does; double(0.1) must not first round through float32.
+                let literal = crate::transpiler::numbers::numeric_literal(&args[0])
+                    .or_else(|| match &args[0] {
+                        Expression::String(text) => text.parse::<f64>().ok(),
+                        _ => None,
+                    });
+                let value = match literal {
+                    Some(value) => value,
+                    None => self.evaluate_const_expr(&args[0])?,
+                };
                 let Expression::Identifier(name) = &**func else {
                     unreachable!()
                 };
@@ -110,16 +120,13 @@ impl Transpiler {
                     BinaryOp::Mod => const_mod(left_val, right_val)
                         .ok_or_else(|| "Modulo by zero in const expression".into()),
                     BinaryOp::Pow => {
-                        let base = left_val as i32;
-                        let exp = right_val as i32;
-                        if exp < 0 {
+                        if right_val < 0.0 && !matches!(self.value_type(expr), CobbleType::Float | CobbleType::Double) {
                             return Err("Power exponent must be non-negative in const expression"
                                 .to_string()
                                 .into());
                         }
-                        // Real arithmetic, like `*`. A score that stores the
-                        // result warns when it can't hold it.
-                        Ok(f64::from(base).powi(exp))
+                        self.const_power(left_val, right_val, self.value_type(expr))
+                            .ok_or_else(|| "Invalid or non-finite power in const expression; double powers require a 32-bit integer exponent".into())
                     }
                     _ => {
                         Err(format!(

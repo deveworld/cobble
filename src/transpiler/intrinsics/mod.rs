@@ -157,6 +157,11 @@ impl Transpiler {
         expr: &Expression,
         label: &str,
     ) -> Result<String, TranspileError> {
+        if let Expression::Identifier(name) = expr {
+            if name.starts_with("_cobble_component_") && self.current_context.is_param(name) {
+                return Ok(format!("$({name})"));
+            }
+        }
         let component = self.expr_to_text_component(&text::protect_literal_strings(expr))?;
         self.fill_helper_placeholders(&component, label)
     }

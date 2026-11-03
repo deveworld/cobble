@@ -21,6 +21,35 @@ fn function(source: &str, name: &str) -> String {
 }
 
 #[test]
+fn dynamic_resource_ids_keep_their_namespace_or_use_the_pack_namespace() {
+    let mut sim = Sim::load(
+        r#"
+from stdlib import bossbar, schedule
+def update(target):
+    bossbar.set_value(target, 3)
+    schedule.once(target, "1t")
+def main():
+    target = "other:tick"
+    update(target)
+"#,
+        &[],
+    );
+    for (input, expected) in [("other:tick", "other:tick"), ("tick", "sim:tick")] {
+        sim.storage["args"] = serde_json::json!({"value":input});
+        sim.call("_cobble_qualify_id");
+        assert_eq!(sim.storage["_cobble_result"], expected);
+    }
+    for command in sim
+        .functions
+        .values()
+        .flatten()
+        .filter(|line| line.starts_with("$bossbar ") || line.starts_with("$schedule "))
+    {
+        assert!(!command.contains("sim:$("), "{command}");
+    }
+}
+
+#[test]
 fn modifier_words_inside_a_condition_stay_in_the_condition() {
     let mut sim = Sim::load(
         r#"
@@ -436,12 +465,14 @@ def main():
         "$scoreboard players set $(name) sim.vars 7\n\
          $scoreboard players add $(name) sim.vars 2"
     );
-    assert_eq!(
-        sim.function_text("mark"),
-        "$tag @s add $(label)\n\
-         schedule function sim:tick 1t\n\
-         $schedule clear sim:$(fn)"
-    );
+    let mark = sim.function_text("mark");
+    assert!(mark.starts_with("$tag @s add $(label)\nschedule function sim:tick 1t\n"));
+    assert!(mark.contains("function sim:_cobble_qualify_id with storage sim:global args"));
+    assert!(sim
+        .functions
+        .values()
+        .flatten()
+        .any(|line| line == "$schedule clear $(argument_0)"));
 }
 
 #[test]

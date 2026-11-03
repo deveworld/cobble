@@ -3,6 +3,55 @@ use common::mcsim::Sim;
 use serde_json::json;
 
 #[test]
+fn constant_real_powers_match_runtime_and_math_requires_an_import() {
+    let mut sim = Sim::load(
+        r#"
+from stdlib import math
+const SQUARE = 2.5 ** 2
+const ROOT = 4.0 ** 0.5
+const RECIPROCAL = 2.0 ** -1
+const WIDE = double(2.5) ** -2
+const DECIMAL = double(0.1) ** 2
+const PROMOTED = double(float(0.1)) ** 2
+def main():
+    square = SQUARE
+    runtime = 2.5 ** 2
+    root = ROOT
+    reciprocal = RECIPROCAL
+    wide = WIDE
+    wide_runtime = double(2.5) ** -2
+    decimal = DECIMAL
+    decimal_runtime = double(0.1) ** 2
+    promoted = PROMOTED
+    promoted_runtime = double(float(0.1)) ** 2
+    imported = math.sqrt(4)
+"#,
+        &[],
+    );
+    sim.set_command_budget(20_000_000);
+    sim.call("main");
+    let local = &sim.storage["locals"]["main"];
+    assert_eq!(local["square"], 6.25);
+    assert_eq!(local["runtime"], 6.25);
+    assert_eq!(local["root"], 2.0);
+    assert_eq!(local["reciprocal"], 0.5);
+    assert_eq!(local["wide"], local["wide_runtime"]);
+    assert_eq!(local["decimal"], local["decimal_runtime"]);
+    assert_eq!(local["promoted"], local["promoted_runtime"]);
+    assert_ne!(local["decimal"], local["promoted"]);
+    for call in [
+        "math.sqrt(4)",
+        "math.abs(-2)",
+        "math.min(1, 2)",
+        "math.max(1, 2)",
+    ] {
+        let error =
+            common::mcsim::compile(&format!("def main():\n    value = {call}\n")).unwrap_err();
+        assert!(error.contains("module 'math' not imported"), "{error}");
+    }
+}
+
+#[test]
 fn float_and_double_arithmetic_survive_storage_and_calls() {
     let mut sim = Sim::load(
         r#"a = 0.6
@@ -122,7 +171,8 @@ fn division_floor_modulus_and_double_precision_are_distinct() {
 #[test]
 fn square_roots_use_the_operands_precision() {
     let mut sim = Sim::load(
-        r#"def main():
+        r#"from stdlib import math
+def main():
     integer = math.sqrt(10)
     single = math.sqrt(float(2))
     wide = math.sqrt(double(2))
@@ -344,7 +394,7 @@ def main():
 #[test]
 fn native_float_only_arithmetic_does_not_emit_the_software_double_library() {
     let mut sim = Sim::load(
-        "def main():\n    x = float(0.6) + 0.2\n    y = math.sqrt(x)\n",
+        "from stdlib import math\ndef main():\n    x = float(0.6) + 0.2\n    y = math.sqrt(x)\n",
         &[],
     );
     assert!(!sim

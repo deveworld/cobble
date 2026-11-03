@@ -1069,7 +1069,7 @@ pub(super) fn check_assignment_value_function_calls(
                             ),
                         )
                         .with_help(
-                            "Use command helpers as standalone statements, or call a user function that returns an integer score value.",
+                            "Use command helpers as standalone statements, or use a value-returning helper or user function.",
                         ),
                     );
                     flagged_lines.insert(node.span.line);

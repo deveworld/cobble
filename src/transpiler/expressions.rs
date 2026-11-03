@@ -377,7 +377,7 @@ impl Transpiler {
     }
 
     pub(in crate::transpiler) fn qualify_namespaced_id(&self, value: &str) -> String {
-        if value.contains(':') {
+        if value.contains(':') || value.contains("$(") {
             value.to_string()
         } else {
             format!("{}:{}", self.data_pack.namespace, value)

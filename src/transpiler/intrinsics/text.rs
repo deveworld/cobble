@@ -220,6 +220,17 @@ impl Transpiler {
         if args.len() != 2 {
             return Err(format!("text.{}() takes 2 arguments", method).into());
         }
+        if matches!(method, "tellraw" | "title" | "subtitle" | "actionbar")
+            && matches!(&args[1], Expression::Identifier(name)
+                if self.current_context.is_param(name) || self.symbols.variable_storage_paths.contains_key(name))
+        {
+            let helper = format!("_cobble_text_show_{method}");
+            self.require_prelude(&helper)?;
+            return self.process_expression(&Expression::Call(
+                Box::new(Expression::Identifier(helper)),
+                args.to_vec(),
+            ));
+        }
 
         // The target is filled in already; the command processor reads the
         // placeholders of the text, so the target's braces are escaped again.

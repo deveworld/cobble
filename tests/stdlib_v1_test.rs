@@ -556,7 +556,7 @@ def use_math():
     let content = read_function(&output_dir, "use_math");
     assert!(content.contains("function stdlib_v1:_cobble_numeric_sqrt"));
     let mut sim = common::mcsim::Sim::load(
-        "def use_math():\n    root = math.sqrt(100)\n    lower = math.min(3, 4)\n",
+        "from stdlib import math\ndef use_math():\n    root = math.sqrt(100)\n    lower = math.min(3, 4)\n",
         &[],
     );
     sim.call("use_math");

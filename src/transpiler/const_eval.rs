@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expression};
+use crate::ast::{BinaryOp, CobbleType, Expression};
 use crate::transpiler::Transpiler;
 
 /// Exact integer value of a compile-time number, if it has no fractional part.
@@ -84,6 +84,43 @@ pub(in crate::transpiler) fn fold_score_operation(
 }
 
 impl Transpiler {
+    pub(in crate::transpiler) fn const_power(
+        &self,
+        left: f64,
+        right: f64,
+        kind: CobbleType,
+    ) -> Option<f64> {
+        let result = match kind {
+            CobbleType::Float => f64::from((left as f32).powf(right as f32)),
+            CobbleType::Double if right.fract() == 0.0 && score_integer(right).is_some() => {
+                // Match the software runtime's reciprocal-first, squaring
+                // order so constant and runtime binary64 results agree.
+                let exponent = right as i32;
+                let mut base = if exponent < 0 { 1.0 / left } else { left };
+                let mut result = if exponent == i32::MIN { base } else { 1.0 };
+                let mut count = if exponent == i32::MIN {
+                    i32::MAX as u32
+                } else {
+                    exponent.unsigned_abs()
+                };
+                while count > 0 {
+                    if count % 2 == 1 {
+                        result *= base;
+                    }
+                    count /= 2;
+                    if count > 0 {
+                        base *= base;
+                    }
+                }
+                result
+            }
+            CobbleType::Double => return None,
+            _ if right >= 0.0 && right.fract() == 0.0 => left.powf(right),
+            _ => return None,
+        };
+        result.is_finite().then_some(result)
+    }
+
     /// Infer the type of an expression
     /// Evaluate a constant expression to a number if possible
     pub(in crate::transpiler) fn try_eval_const(&self, expr: &Expression) -> Option<f64> {
@@ -128,17 +165,7 @@ impl Transpiler {
                         (right_val != 0.0).then_some((left_val / right_val).floor())
                     }
                     BinaryOp::Mod => const_mod(left_val, right_val),
-                    BinaryOp::Pow => {
-                        let base = left_val as i32;
-                        let exp = right_val as i32;
-                        if exp < 0 {
-                            None
-                        } else {
-                            // Real arithmetic, like `*` on these values. A score
-                            // that stores the result warns when it can't hold it.
-                            Some(f64::from(base).powi(exp))
-                        }
-                    }
+                    BinaryOp::Pow => self.const_power(left_val, right_val, self.value_type(expr)),
                     BinaryOp::Eq => Some((left_val == right_val) as i32 as f64),
                     BinaryOp::NotEq => Some((left_val != right_val) as i32 as f64),
                     BinaryOp::Lt => Some((left_val < right_val) as i32 as f64),

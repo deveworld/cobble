@@ -21,7 +21,8 @@ fn assignments_read_the_old_value_before_writing_the_result() {
 #[test]
 fn nested_operators_and_math_calls_preserve_each_operand() {
     let mut sim = Sim::load(
-        r#"def compute():
+        r#"from stdlib import math
+def compute():
     a = 6
     b = 9
     c = 2

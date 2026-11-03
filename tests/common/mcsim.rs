@@ -1020,6 +1020,9 @@ impl Sim {
                     self.try_score(&holder, score["objective"].as_str().unwrap())
                         .map(|v| v.to_string())
                         .unwrap_or_default()
+                } else if let Some(selector) = map.get("selector") {
+                    self.resolve_selector(selector.as_str().unwrap(), ctx)
+                        .join(", ")
                 } else if let Some(path) = map.get("nbt") {
                     // As Minecraft 26.3 shows it: an interpreted string is its
                     // text and an interpreted number or list shows nothing;

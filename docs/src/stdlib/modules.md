@@ -47,8 +47,9 @@ def notify():
     text.actionbar("@a", "Running")
 ```
 
-`text.plain`, `text.colored`, `text.score`, and `text.selector` return JSON
-text components for use inside other helpers or JSON resource declarations.
+`text.plain`, `text.colored`, `text.score`, and `text.selector` return text
+component maps. Store, return, or pass them to other helpers. Inline components
+with constant contents can also appear in JSON resource declarations.
 Colors accept Minecraft named colors or `#RRGGBB`.
 
 The text of `text.tellraw`, `text.title`, `text.subtitle`, and
@@ -128,7 +129,7 @@ def save_status():
 Storage helpers use `<namespace>:global`. `storage.read_score` reads a
 number or a container's size into a score. Its optional third argument
 scales numeric values. `storage.path`, `storage.child`, and `storage.index`
-build paths for use in other storage helpers.
+return path strings that can be stored and passed to other storage helpers.
 `storage.get(path)` returns the stored value, including strings, lists, and maps;
 a missing path returns `0`. `timer.done(name)` returns `1` when the timer has
 reached zero, otherwise `0`.
@@ -151,10 +152,11 @@ def setup_ui():
     entity.teleport(selector.current(), position.relative(0, 1, 0))
 ```
 
-Schedule helpers take a function name. A literal can name another namespace,
-such as `"other:tick"`; parameter names resolve inside the current pack.
-`selector.*` and `position.*` build strings for other helpers. Use raw
-commands for options a helper does not expose.
+Schedule helpers take a function name. A name with a namespace, such as
+`"other:tick"`, keeps it, including when passed through a variable or parameter;
+an unqualified name resolves inside the current pack.
+`selector.*` and `position.*` return strings that can be stored or passed
+to other helpers. Use raw commands for options a helper does not expose.
 
 ## Math
 

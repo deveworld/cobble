@@ -1495,6 +1495,21 @@ fn is_allowed_value_function_call(name: &str) -> bool {
             | "storage.child"
             | "storage.index"
             | "timer.done"
+            | "text.plain"
+            | "text.colored"
+            | "text.score"
+            | "text.selector"
+            | "selector.current"
+            | "selector.nearest_player"
+            | "selector.all_players"
+            | "selector.all_entities"
+            | "selector.tagged"
+            | "selector.players_tagged"
+            | "selector.entity_type"
+            | "position.here"
+            | "position.absolute"
+            | "position.relative"
+            | "position.local"
     ) || math_value_function_arity(name).is_some()
 }
 

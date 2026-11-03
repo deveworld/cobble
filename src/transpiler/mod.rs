@@ -30,6 +30,7 @@ mod storage_variables;
 mod symbols;
 mod text_escape;
 mod types;
+mod value_builders;
 pub mod vars_objective;
 
 pub use data_pack::{

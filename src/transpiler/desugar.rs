@@ -24,6 +24,8 @@ const DOUBLE_PRELUDE: &str = include_str!("double_prelude.cbl");
 pub(in crate::transpiler) fn software_result_type(name: &str) -> Option<CobbleType> {
     match name {
         "_cobble_storage_get" => Some(CobbleType::Unknown),
+        "_cobble_qualify_id" => Some(CobbleType::String),
+        "_cobble_component_value" => Some(CobbleType::Map),
         "_cobble_big_trim"
         | "_cobble_big_from_int"
         | "_cobble_big_add"
@@ -302,7 +304,10 @@ impl Transpiler {
             {
                 self.desugar_assignment(assign, &mut out)?
             }
-            Statement::Expression(expr) if self.needs_lowering(expr) => {
+            Statement::Expression(expr)
+                if self.needs_lowering(expr)
+                    && !matches!(expr, Expression::Call(func, _) if self.value_builder_type(func).is_some()) =>
+            {
                 self.desugar_expression_statement(expr, &mut out)?
             }
             Statement::Return(Some(expr))
@@ -368,10 +373,13 @@ impl Transpiler {
     /// Whether `expr` holds a form this module lowers.
     pub(in crate::transpiler) fn needs_lowering(&self, expr: &Expression) -> bool {
         if let Expression::Call(func, args) = expr {
+            if self.value_builder_type(func).is_some() {
+                return true;
+            }
             if self.is_template_call(func) {
-                return args
-                    .iter()
-                    .any(|arg| !has_format_field(arg) && self.needs_lowering(arg));
+                return args.iter().any(|arg| {
+                    !has_format_field(arg) && self.template_argument_needs_lowering(arg)
+                });
             }
         }
         let lowers = match expr {
@@ -536,6 +544,7 @@ impl Transpiler {
             Expression::Subscript(..) | Expression::Attribute(..) => {
                 self.resolve_storage_path_plan(expr).is_some()
             }
+            Expression::Call(..) => true,
             _ => false,
         }
     }
@@ -548,21 +557,16 @@ impl Transpiler {
     }
 
     /// Whether `left + right` adds, joins text, or joins lists by what the
-    /// running pack finds in them. Two parameters add as numbers, as the
-    /// docs say, and a number on one side keeps it arithmetic.
+    /// running pack finds in them.
     fn adds_at_run_time(&self, left: &Expression, right: &Expression) -> bool {
-        let is_param = |expr: &Expression| matches!(expr, Expression::Identifier(name) if self.current_context.is_param(name));
-        self.holds_any_value(left)
-            && self.holds_any_value(right)
-            && !(is_param(left) && is_param(right))
+        !self.in_prelude && self.holds_any_value(left) && self.holds_any_value(right)
     }
 
     /// Whether `left * right` multiplies or repeats by what the running pack
     /// finds in it: one side may be text or a list, and the other is a
-    /// number or may be one. Two parameters multiply as numbers.
+    /// number or may be one.
     fn multiplies_at_run_time(&self, left: &Expression, right: &Expression) -> bool {
-        let is_param = |expr: &Expression| matches!(expr, Expression::Identifier(name) if self.current_context.is_param(name));
-        if is_param(left) && is_param(right) {
+        if self.in_prelude {
             return false;
         }
         let (left_any, right_any) = (self.holds_any_value(left), self.holds_any_value(right));
@@ -573,6 +577,9 @@ impl Transpiler {
     /// The type of `expr`, as far as Cobble can tell before lowering it.
     pub(in crate::transpiler) fn value_type(&self, expr: &Expression) -> CobbleType {
         match expr {
+            Expression::Call(func, _) if self.value_builder_type(func).is_some() => {
+                self.value_builder_type(func).unwrap()
+            }
             Expression::Subscript(base, _) if self.is_string_base(base) => CobbleType::String,
             Expression::Subscript(..) | Expression::Attribute(..) => self.storage_read_type(expr),
             Expression::Slice(base, ..) => self.value_type(base),
@@ -1892,6 +1899,9 @@ impl Transpiler {
         args: &[Expression],
         out: &mut Vec<Statement>,
     ) -> Result<Expression, TranspileError> {
+        if let Some(value) = self.lower_value_builder(func, args, out)? {
+            return Ok(value);
+        }
         if let Expression::Attribute(base, method) = func {
             if !self.is_list_value(base) {
                 let module = Self::expression_path(base);

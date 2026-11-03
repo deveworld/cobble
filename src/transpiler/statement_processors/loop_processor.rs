@@ -349,6 +349,20 @@ impl Transpiler {
         &mut self,
         for_loop: &ForLoop,
     ) -> Result<(), TranspileError> {
+        if self.current_context.is_param(&for_loop.target) {
+            let mut lowered = for_loop.clone();
+            lowered.target = self.hidden_local(CobbleType::Unknown);
+            lowered.body.insert(
+                0,
+                Statement::Assignment(Assignment {
+                    target: for_loop.target.clone(),
+                    target_expr: None,
+                    persist: false,
+                    value: Expression::Identifier(lowered.target.clone()),
+                }),
+            );
+            return self.process_for(&lowered);
+        }
         let loop_source_key = Self::for_loop_source_key(for_loop);
         let values = match if contains_loop_control(&for_loop.body) {
             Err(TranspileError::new(
@@ -718,13 +732,6 @@ impl Transpiler {
         let plan = self.runtime_range_plan(for_loop)?;
         validate_runtime_loop_body_target(&for_loop.body, &for_loop.target)?;
 
-        if self.current_context.is_param(&for_loop.target) {
-            return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
-                "runtime-for-unsupported: dynamic range loop target '{}' cannot shadow a function parameter.",
-                for_loop.target
-            )));
-        }
-
         let stop_var = format!("#for_range_stop_{}", self.next_temp_id());
         let step_var = if matches!(plan.step, RuntimeRangeStep::Dynamic(_)) {
             let name = format!("#for_range_step_{}", self.next_temp_id());
@@ -840,13 +847,6 @@ impl Transpiler {
         for_loop: &ForLoop,
     ) -> Result<(), TranspileError> {
         validate_runtime_loop_body_target(&for_loop.body, &for_loop.target)?;
-        if self.current_context.is_param(&for_loop.target) {
-            return Err(TranspileError::new(TranspileErrorKind::RuntimeForUnsupported, format!(
-                "runtime-for-unsupported: dynamic list loop target '{}' cannot shadow a function parameter.",
-                for_loop.target
-            )));
-        }
-
         let step = match for_loop.step.as_ref() {
             Some(step) => self.runtime_range_step(step)?,
             None => RuntimeRangeStep::Static(1),
